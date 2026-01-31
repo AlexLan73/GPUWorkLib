@@ -213,4 +213,4 @@ inline void CheckCLError(cl_int error, const std::string& operation) {
     }
 }
 
-} // namespace ManagerOpenCL
+} // namespace drv_gpu_lib

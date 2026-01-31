@@ -22,7 +22,7 @@
 #include <string>
 #include <functional>
 
-namespace ManagerOpenCL {
+namespace drv_gpu_lib {
 
 // Forward declarations
 class IMemoryBuffer;

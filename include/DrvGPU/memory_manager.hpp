@@ -219,4 +219,4 @@ std::shared_ptr<GPUBuffer<T>> MemoryManager::CreateBuffer(
     return buffer;
 }
 
-} // namespace DrvGPU
+} // namespace drv_gpu_lib

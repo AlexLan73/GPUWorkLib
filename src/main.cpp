@@ -1,7 +1,7 @@
 #include <iostream>
 #include <string>
 
-#include "single_gpu.hpp"
+#include "../tests/single_gpu.hpp"
 
 
 int main(int argc, char* argv[]) {

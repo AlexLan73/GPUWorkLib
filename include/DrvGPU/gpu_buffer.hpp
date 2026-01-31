@@ -14,6 +14,8 @@
 #include "i_backend.hpp"
 #include <memory>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace drv_gpu_lib {
 

@@ -3,7 +3,7 @@
 # Для использования когда все файлы в одной папке
 # ════════════════════════════════════════════════════════════════════
 
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.27)
 project(DrvGPU VERSION 1.0.0 LANGUAGES CXX)
 
 # ════════════════════════════════════════════════════════════════════
@@ -45,18 +45,15 @@ find_package(Threads REQUIRED)
 
 # Все исходные файлы DrvGPU (с явными путями)
 set(DRVGPU_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/opencl_core.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/opencl_compute_engine.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/opencl_core.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/drv_gpu.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/module_registry.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/opencl_backend.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/command_queue_pool.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/kernel_program.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/memory/memory_manager.cpp"
 )
 
 # DrvGPU Core (файлы из src/)
 set(DRVGPU_CORE_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/drv_gpu.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/gpu_manager.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/opencl_backend.cpp"
 )
 
 # ════════════════════════════════════════════════════════════════════
@@ -99,14 +96,14 @@ add_library(DrvGPU::drvgpu ALIAS drvgpu)
 
 if(BUILD_EXAMPLES)
     # Single GPU пример
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/single_gpu.cpp")
-        add_executable(example_single_gpu single_gpu.cpp)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/single_gpu.hpp")
+        add_executable(example_single_gpu single_gpu.hpp)
         target_link_libraries(example_single_gpu PRIVATE DrvGPU::drvgpu)
     endif()
     
     # Multi-GPU пример
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/multi_gpu.cpp")
-        add_executable(example_multi_gpu multi_gpu.cpp)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/multi_gpu.hpp")
+        add_executable(example_multi_gpu multi_gpu.hpp)
         target_link_libraries(example_multi_gpu PRIVATE DrvGPU::drvgpu)
     endif()
 endif()

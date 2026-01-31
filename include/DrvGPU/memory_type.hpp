@@ -1,6 +1,6 @@
 #pragma once
 
-namespace ManagerOpenCL {
+namespace drv_gpu_lib {
 
 // ════════════════════════════════════════════════════════════════════════════
 // Enum для типов памяти GPU

@@ -31,4 +31,4 @@ inline const char* LoadBalancingStrategyToString(LoadBalancingStrategy strategy)
     }
 }
 
-} // namespace DrvGPU
+} // namespace drv_gpu_lib

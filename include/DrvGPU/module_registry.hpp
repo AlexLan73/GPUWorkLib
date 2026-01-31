@@ -187,4 +187,4 @@ std::shared_ptr<T> ModuleRegistry::GetModule(const std::string& name) {
     return typed_module;
 }
 
-} // namespace DrvGPU
+} // namespace drv_gpu_lib

@@ -12,9 +12,11 @@
  */
 
 #include <CL/cl.h>
+#include <cstdio>
 #include <string>
 #include <sstream>
 #include <iomanip>
+#include <type_traits>
 
 namespace drv_gpu_lib {
 
@@ -100,6 +102,8 @@ struct SVMCapabilities {
         SVMCapabilities caps;
         
         if (!device) {
+            // Логируем ошибку для диагностики
+            std::fprintf(stderr, "[SVM Capabilities] ERROR: device is null in Query() - returning empty capabilities\n");
             return caps;  // Пустые capabilities
         }
         
@@ -290,5 +294,5 @@ struct BufferUsageHint {
     }
 };
 
-} // namespace ManagerOpenCL
+} // namespace 
 

@@ -18,7 +18,7 @@
 // Включаем ваш OpenCL код
 #include "opencl_core.hpp"
 #include "command_queue_pool.hpp"
-#include "gpu_memory_manager.hpp"
+#include "memory_manager.hpp"
 #include "svm_capabilities.hpp"
 
 #include <memory>
@@ -36,10 +36,10 @@ namespace drv_gpu_lib {
  * @brief Реализация IBackend интерфейса для OpenCL API
  * 
  * Интегрирует вашу существующую OpenCL библиотеку:
- * - ManagerOpenCL::OpenCLCore - управление OpenCL контекстом
- * - ManagerOpenCL::CommandQueuePool - пул command queues
- * - ManagerOpenCL::GPUMemoryManager - управление памятью
- * - ManagerOpenCL::SVMCapabilities - проверка SVM
+ * - drv_gpu_lib::OpenCLCore - управление OpenCL контекстом
+ * - drv_gpu_lib::CommandQueuePool - пул command queues
+ * - drv_gpu_lib::GPUMemoryManager - управление памятью
+ * - drv_gpu_lib::SVMCapabilities - проверка SVM
  * 
  * Особенности:
  * - НЕ Singleton (каждый экземпляр для своей GPU)
@@ -139,19 +139,19 @@ public:
     /**
      * @brief Получить OpenCLCore (ваш класс)
      */
-    ManagerOpenCL::OpenCLCore& GetCore();
-    const ManagerOpenCL::OpenCLCore& GetCore() const;
+    drv_gpu_lib::OpenCLCore& GetCore();
+    const drv_gpu_lib::OpenCLCore& GetCore() const;
     
     /**
-     * @brief Получить GPUMemoryManager (ваш класс)
+     * @brief Получить MemoryManager (ваш класс)
      */
-    ManagerOpenCL::GPUMemoryManager& GetMemoryManager();
-    const ManagerOpenCL::GPUMemoryManager& GetMemoryManager() const;
+    drv_gpu_lib::MemoryManager& GetMemoryManager();
+    const drv_gpu_lib::MemoryManager& GetMemoryManager() const;
     
     /**
      * @brief Получить SVMCapabilities
      */
-    const ManagerOpenCL::SVMCapabilities& GetSVMCapabilities() const;
+    const drv_gpu_lib::SVMCapabilities& GetSVMCapabilities() const;
     
     /**
      * @brief Инициализировать CommandQueuePool
@@ -168,9 +168,8 @@ private:
     bool initialized_;
     
     // Интеграция с вашим OpenCL кодом
-    std::unique_ptr<ManagerOpenCL::OpenCLCore> opencl_core_;
-    std::unique_ptr<ManagerOpenCL::GPUMemoryManager> memory_manager_;
-    std::unique_ptr<ManagerOpenCL::SVMCapabilities> svm_capabilities_;
+    std::unique_ptr<drv_gpu_lib::MemoryManager> memory_manager_;
+    std::unique_ptr<drv_gpu_lib::SVMCapabilities> svm_capabilities_;
     
     // OpenCL objects (кэшируем для быстрого доступа)
     cl_context context_;
@@ -190,4 +189,4 @@ private:
     GPUDeviceInfo QueryDeviceInfo() const;
 };
 
-} // namespace DrvGPU
+} // namespace drv_gpu_lib
