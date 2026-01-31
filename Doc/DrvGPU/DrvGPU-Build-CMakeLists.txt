@@ -1,0 +1,204 @@
+cmake_minimum_required(VERSION 3.15)
+project(DrvGPU VERSION 1.0.0 LANGUAGES CXX)
+
+# ════════════════════════════════════════════════════════════════════════════
+# Опции сборки
+# ════════════════════════════════════════════════════════════════════════════
+
+option(DRVGPU_BUILD_EXAMPLES "Build examples" ON)
+option(DRVGPU_BUILD_TESTS "Build tests" ON)
+option(DRVGPU_ENABLE_OPENCL "Enable OpenCL backend" ON)
+option(DRVGPU_ENABLE_CUDA "Enable CUDA backend" OFF)
+option(DRVGPU_ENABLE_VULKAN "Enable Vulkan backend" OFF)
+
+# ════════════════════════════════════════════════════════════════════════════
+# C++ Standard
+# ════════════════════════════════════════════════════════════════════════════
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# ════════════════════════════════════════════════════════════════════════════
+# Директории
+# ════════════════════════════════════════════════════════════════════════════
+
+set(DRVGPU_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
+set(DRVGPU_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# ════════════════════════════════════════════════════════════════════════════
+# Зависимости
+# ════════════════════════════════════════════════════════════════════════════
+
+# OpenCL
+if(DRVGPU_ENABLE_OPENCL)
+    find_package(OpenCL REQUIRED)
+    add_definitions(-DDRVGPU_ENABLE_OPENCL)
+endif()
+
+# CUDA (будущее)
+if(DRVGPU_ENABLE_CUDA)
+    find_package(CUDA)
+    if(CUDA_FOUND)
+        add_definitions(-DDRVGPU_ENABLE_CUDA)
+    else()
+        message(WARNING "CUDA not found, disabling CUDA backend")
+        set(DRVGPU_ENABLE_CUDA OFF)
+    endif()
+endif()
+
+# ════════════════════════════════════════════════════════════════════════════
+# Основная библиотека DrvGPU
+# ════════════════════════════════════════════════════════════════════════════
+
+set(DRVGPU_SOURCES
+    # Core
+    ${DRVGPU_SRC_DIR}/core/drv_gpu.cpp
+    ${DRVGPU_SRC_DIR}/core/gpu_manager.cpp
+    ${DRVGPU_SRC_DIR}/core/gpu_device_info.cpp
+    
+    # Backend
+    ${DRVGPU_SRC_DIR}/backend/opencl_backend.cpp
+    
+    # Memory
+    ${DRVGPU_SRC_DIR}/memory/memory_manager.cpp
+    
+    # Modules
+    ${DRVGPU_SRC_DIR}/modules/module_registry.cpp
+    
+    # OpenCL интеграция (ваш код)
+    ${DRVGPU_SRC_DIR}/opencl/opencl_core.cpp
+    ${DRVGPU_SRC_DIR}/opencl/opencl_manager.cpp
+    ${DRVGPU_SRC_DIR}/opencl/opencl_compute_engine.cpp
+    ${DRVGPU_SRC_DIR}/opencl/command_queue_pool.cpp
+    ${DRVGPU_SRC_DIR}/opencl/kernel_program.cpp
+    ${DRVGPU_SRC_DIR}/opencl/gpu_memory_manager.cpp
+)
+
+set(DRVGPU_HEADERS
+    # Core
+    ${DRVGPU_INCLUDE_DIR}/drv_gpu.hpp
+    ${DRVGPU_INCLUDE_DIR}/gpu_manager.hpp
+    ${DRVGPU_INCLUDE_DIR}/gpu_device_info.hpp
+    ${DRVGPU_INCLUDE_DIR}/backend_type.hpp
+    ${DRVGPU_INCLUDE_DIR}/load_balancing_strategy.hpp
+    
+    # Backend
+    ${DRVGPU_INCLUDE_DIR}/i_backend.hpp
+    ${DRVGPU_INCLUDE_DIR}/opencl_backend.hpp
+    
+    # Memory
+    ${DRVGPU_INCLUDE_DIR}/memory_manager.hpp
+    ${DRVGPU_INCLUDE_DIR}/gpu_buffer.hpp
+    
+    # Modules
+    ${DRVGPU_INCLUDE_DIR}/module_registry.hpp
+    ${DRVGPU_INCLUDE_DIR}/i_compute_module.hpp
+    
+    # OpenCL интеграция
+    ${DRVGPU_INCLUDE_DIR}/opencl/opencl_core.hpp
+    ${DRVGPU_INCLUDE_DIR}/opencl/opencl_manager.h
+    ${DRVGPU_INCLUDE_DIR}/opencl/opencl_compute_engine.hpp
+    ${DRVGPU_INCLUDE_DIR}/opencl/command_queue_pool.hpp
+    ${DRVGPU_INCLUDE_DIR}/opencl/kernel_program.hpp
+    ${DRVGPU_INCLUDE_DIR}/opencl/gpu_memory_manager.hpp
+    ${DRVGPU_INCLUDE_DIR}/opencl/gpu_memory.hpp
+    ${DRVGPU_INCLUDE_DIR}/opencl/i_memory_buffer.hpp
+    ${DRVGPU_INCLUDE_DIR}/opencl/svm_buffer.hpp
+    ${DRVGPU_INCLUDE_DIR}/opencl/regular_buffer.hpp
+    ${DRVGPU_INCLUDE_DIR}/opencl/hybrid_buffer.hpp
+    ${DRVGPU_INCLUDE_DIR}/opencl/svm_capabilities.hpp
+    ${DRVGPU_INCLUDE_DIR}/opencl/memory_type.hpp
+)
+
+# Создать библиотеку
+add_library(drvgpu STATIC ${DRVGPU_SOURCES} ${DRVGPU_HEADERS})
+
+# Include директории
+target_include_directories(drvgpu
+    PUBLIC
+        $<BUILD_INTERFACE:${DRVGPU_INCLUDE_DIR}>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${DRVGPU_SRC_DIR}
+)
+
+# Линковка с OpenCL
+if(DRVGPU_ENABLE_OPENCL)
+    target_link_libraries(drvgpu PUBLIC OpenCL::OpenCL)
+endif()
+
+# ════════════════════════════════════════════════════════════════════════════
+# Примеры
+# ════════════════════════════════════════════════════════════════════════════
+
+if(DRVGPU_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
+
+# ════════════════════════════════════════════════════════════════════════════
+# Тесты
+# ════════════════════════════════════════════════════════════════════════════
+
+if(DRVGPU_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
+
+# ════════════════════════════════════════════════════════════════════════════
+# Установка
+# ════════════════════════════════════════════════════════════════════════════
+
+include(GNUInstallDirs)
+
+install(TARGETS drvgpu
+    EXPORT DrvGPUTargets
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(DIRECTORY ${DRVGPU_INCLUDE_DIR}/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/drvgpu
+)
+
+# ════════════════════════════════════════════════════════════════════════════
+# Package Config
+# ════════════════════════════════════════════════════════════════════════════
+
+include(CMakePackageConfigHelpers)
+
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/DrvGPUConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/DrvGPUConfig.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/DrvGPU
+)
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/DrvGPUConfig.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/DrvGPU
+)
+
+install(EXPORT DrvGPUTargets
+    FILE DrvGPUTargets.cmake
+    namespace drv_gpu_lib::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/DrvGPU
+)
+
+# ════════════════════════════════════════════════════════════════════════════
+# Сводка конфигурации
+# ════════════════════════════════════════════════════════════════════════════
+
+message(STATUS "")
+message(STATUS "═══════════════════════════════════════════════════════")
+message(STATUS "DrvGPU Configuration Summary")
+message(STATUS "═══════════════════════════════════════════════════════")
+message(STATUS "  Version:          ${PROJECT_VERSION}")
+message(STATUS "  C++ Standard:     ${CMAKE_CXX_STANDARD}")
+message(STATUS "  Build Examples:   ${DRVGPU_BUILD_EXAMPLES}")
+message(STATUS "  Build Tests:      ${DRVGPU_BUILD_TESTS}")
+message(STATUS "  OpenCL Backend:   ${DRVGPU_ENABLE_OPENCL}")
+message(STATUS "  CUDA Backend:     ${DRVGPU_ENABLE_CUDA}")
+message(STATUS "  Vulkan Backend:   ${DRVGPU_ENABLE_VULKAN}")
+message(STATUS "═══════════════════════════════════════════════════════")
+message(STATUS "")
