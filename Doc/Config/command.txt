@@ -1,0 +1,16 @@
+
+windows
+cd E:\C++\GPUWorkLib
+powershell -ExecutionPolicy Bypass -File backup_settings.ps1
+# Результат: DrvGPU-Settings-*.zip ✅
+
+На Ubuntu (каждый раз):
+# 1. Скопировать архив в папку проекта
+cd ~/GPUWorkLib
+
+# 2. Восстановить (всё автоматически!)
+chmod +x restore_settings.sh
+./restore_settings.sh
+
+# 3. Готово! 🎉
+code .

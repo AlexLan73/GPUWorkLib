@@ -5,24 +5,46 @@
 namespace drv_gpu_lib {
 
 // ════════════════════════════════════════════════════════════════════════════
-// Конструктор и деструктор
+// ModuleRegistry Implementation - Регистр вычислительных модулей
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Конструктор ModuleRegistry по умолчанию
+ * 
+ * Создаёт пустой реестр модулей.
+ */
 ModuleRegistry::ModuleRegistry() = default;
 
+/**
+ * @brief Деструктор ModuleRegistry
+ * 
+ * Вызывает Clear() для освобождения всех модулей.
+ */
 ModuleRegistry::~ModuleRegistry() {
     Clear();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Move конструктор и оператор
+// Move конструктор и оператор присваивания
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Move конструктор
+ * @param other Перемещаемый объект
+ * 
+ * Переносит все модули из other в новый объект.
+ * Thread-safe: блокирует mutex other.
+ */
 ModuleRegistry::ModuleRegistry(ModuleRegistry&& other) noexcept {
     std::lock_guard<std::mutex> lock(other.mutex_);
     modules_ = std::move(other.modules_);
 }
 
+/**
+ * @brief Move оператор присваивания
+ * @param other Перемещаемый объект
+ * @return Ссылка на this
+ */
 ModuleRegistry& ModuleRegistry::operator=(ModuleRegistry&& other) noexcept {
     if (this != &other) {
         std::lock_guard<std::mutex> lock_this(mutex_);
@@ -36,6 +58,21 @@ ModuleRegistry& ModuleRegistry::operator=(ModuleRegistry&& other) noexcept {
 // Регистрация модулей
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Зарегистрировать compute модуль
+ * @param name Уникальное имя модуля
+ * @param module Shared pointer на модуль
+ * 
+ * Добавляет модуль в реестр по уникальному имени.
+ * 
+ * @throws std::runtime_error если модуль с таким именем уже существует
+ * 
+ * Пример:
+ * @code
+ * auto fft_module = std::make_shared<FFTModule>(backend);
+ * registry.RegisterModule("FFT", fft_module);
+ * @endcode
+ */
 void ModuleRegistry::RegisterModule(const std::string& name, 
                                      std::shared_ptr<IComputeModule> module) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -47,11 +84,23 @@ void ModuleRegistry::RegisterModule(const std::string& name,
     modules_[name] = module;
 }
 
+/**
+ * @brief Удалить модуль из реестра
+ * @param name Имя модуля для удаления
+ * @return true если модуль был найден и удалён
+ * 
+ * Thread-safe метод для удаления модуля.
+ */
 bool ModuleRegistry::UnregisterModule(const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
     return modules_.erase(name) > 0;
 }
 
+/**
+ * @brief Проверить наличие модуля в реестре
+ * @param name Имя модуля
+ * @return true если модуль существует
+ */
 bool ModuleRegistry::HasModule(const std::string& name) const {
     std::lock_guard<std::mutex> lock(mutex_);
     return modules_.find(name) != modules_.end();
@@ -61,6 +110,13 @@ bool ModuleRegistry::HasModule(const std::string& name) const {
 // Доступ к модулям
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Получить модуль по имени (не-const версия)
+ * @param name Имя модуля
+ * @return Shared pointer на модуль
+ * 
+ * @throws std::runtime_error если модуль не найден
+ */
 std::shared_ptr<IComputeModule> ModuleRegistry::GetModule(const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
     
@@ -72,6 +128,11 @@ std::shared_ptr<IComputeModule> ModuleRegistry::GetModule(const std::string& nam
     return it->second;
 }
 
+/**
+ * @brief Получить модуль по имени (const версия)
+ * @param name Имя модуля
+ * @return Const shared pointer на модуль
+ */
 std::shared_ptr<const IComputeModule> ModuleRegistry::GetModule(const std::string& name) const {
     std::lock_guard<std::mutex> lock(mutex_);
     
@@ -87,11 +148,19 @@ std::shared_ptr<const IComputeModule> ModuleRegistry::GetModule(const std::strin
 // Информация о реестре
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Получить количество зарегистрированных модулей
+ * @return Количество модулей в реестре
+ */
 size_t ModuleRegistry::GetModuleCount() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return modules_.size();
 }
 
+/**
+ * @brief Получить список имён всех зарегистрированных модулей
+ * @return Вектор строк с именами модулей
+ */
 std::vector<std::string> ModuleRegistry::GetModuleNames() const {
     std::lock_guard<std::mutex> lock(mutex_);
     
@@ -105,6 +174,12 @@ std::vector<std::string> ModuleRegistry::GetModuleNames() const {
     return names;
 }
 
+/**
+ * @brief Вывести список зарегистрированных модулей в лог
+ * 
+ * Логирует все зарегистрированные модули с помощью DRVGPU_LOG_DEBUG.
+ * Если реестр пуст, логирует соответствующее сообщение.
+ */
 void ModuleRegistry::PrintModules() const {
     std::lock_guard<std::mutex> lock(mutex_);
     
@@ -123,6 +198,12 @@ void ModuleRegistry::PrintModules() const {
 // Очистка
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Очистить все модули из реестра
+ * 
+ * Удаляет все модули и освобождает память.
+ * Thread-safe через mutex.
+ */
 void ModuleRegistry::Clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     modules_.clear();

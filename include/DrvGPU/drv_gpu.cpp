@@ -9,9 +9,20 @@
 namespace drv_gpu_lib {
 
 // ════════════════════════════════════════════════════════════════════════════
-// MemoryManager Implementation
+// MemoryManager Implementation - Менеджер памяти GPU
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Конструктор MemoryManager
+ * @param backend Указатель на бэкенд для выделения памяти
+ * 
+ * Инициализирует статистику:
+ * - total_allocations_ = 0
+ * - total_frees_ = 0
+ * - current_allocations_ = 0
+ * - total_bytes_allocated_ = 0
+ * - peak_bytes_allocated_ = 0
+ */
 MemoryManager::MemoryManager(IBackend* backend)
     : backend_(backend),
       total_allocations_(0),
@@ -21,10 +32,21 @@ MemoryManager::MemoryManager(IBackend* backend)
       peak_bytes_allocated_(0) {
 }
 
+/**
+ * @brief Деструктор MemoryManager
+ * 
+ * Вызывает Cleanup() для освобождения ресурсов.
+ */
 MemoryManager::~MemoryManager() {
     Cleanup();
 }
 
+/**
+ * @brief Move конструктор
+ * @param other Перемещаемый объект
+ * 
+ * Переносит все данные из other в новый объект.
+ */
 MemoryManager::MemoryManager(MemoryManager&& other) noexcept
     : backend_(other.backend_),
       total_allocations_(other.total_allocations_),
@@ -35,6 +57,11 @@ MemoryManager::MemoryManager(MemoryManager&& other) noexcept
     other.backend_ = nullptr;
 }
 
+/**
+ * @brief Move оператор присваивания
+ * @param other Перемещаемый объект
+ * @return Ссылка на this
+ */
 MemoryManager& MemoryManager::operator=(MemoryManager&& other) noexcept {
     if (this != &other) {
         backend_ = other.backend_;
@@ -48,6 +75,16 @@ MemoryManager& MemoryManager::operator=(MemoryManager&& other) noexcept {
     return *this;
 }
 
+/**
+ * @brief Выделить память на GPU
+ * @param size_bytes Размер в байтах
+ * @param flags Флаги выделения (backend-specific)
+ * @return Указатель на выделенную память или nullptr при ошибке
+ * 
+ * Делегирует выделение памяти бэкенду и отслеживает статистику.
+ * 
+ * @throws std::runtime_error если backend_ == nullptr
+ */
 void* MemoryManager::Allocate(size_t size_bytes, unsigned int flags) {
     if (!backend_) {
         throw std::runtime_error("MemoryManager: backend is null");
@@ -59,20 +96,49 @@ void* MemoryManager::Allocate(size_t size_bytes, unsigned int flags) {
     return ptr;
 }
 
+/**
+ * @brief Освободить память на GPU
+ * @param ptr Указатель на память
+ * 
+ * @note Фактическое освобождение происходит через бэкенд.
+ *       Этот метод предназначен для обратной совместимости.
+ */
 void MemoryManager::Free(void* ptr) {
     [[maybe_unused]] void* p = ptr;
     // Note: actual deallocation happens via backend
     // We track the deallocation when buffer is destroyed
 }
 
+/**
+ * @brief Получить количество активных аллокаций
+ * @return Количество текущих аллокаций
+ */
 size_t MemoryManager::GetAllocationCount() const {
     return current_allocations_;
 }
 
+/**
+ * @brief Получить общее количество выделенных байт
+ * @return Общее количество байт с момента создания
+ */
 size_t MemoryManager::GetTotalAllocatedBytes() const {
     return total_bytes_allocated_;
 }
 
+/**
+ * @brief Вывести статистику в консоль
+ * 
+ * Форматированный вывод:
+ * ═══════════════════════════════════════════
+ * Memory Statistics
+ * ═══════════════════════════════════════════
+ * Total Allocations: X
+ * Total Frees: X
+ * Current Allocations: X
+ * Total Bytes Allocated: X
+ * Peak Bytes Allocated: X
+ * ═══════════════════════════════════════════
+ */
 void MemoryManager::PrintStatistics() const {
     const char separator = static_cast<char>(205);  // ═
     std::cout << "\n" << std::string(50, separator) << "\n";
@@ -86,6 +152,10 @@ void MemoryManager::PrintStatistics() const {
     std::cout << std::string(50, separator) << "\n\n";
 }
 
+/**
+ * @brief Получить статистику в виде строки
+ * @return Строка с статистикой
+ */
 std::string MemoryManager::GetStatistics() const {
     std::ostringstream oss;
     oss << "Memory Statistics:\n";
@@ -96,6 +166,12 @@ std::string MemoryManager::GetStatistics() const {
     return oss.str();
 }
 
+/**
+ * @brief Сбросить статистику на ноль
+ * 
+ * Обнуляет все счётчики статистики.
+ * Thread-safe через mutex.
+ */
 void MemoryManager::ResetStatistics() {
     std::lock_guard<std::mutex> lock(mutex_);
     total_allocations_ = 0;
@@ -105,12 +181,27 @@ void MemoryManager::ResetStatistics() {
     peak_bytes_allocated_ = 0;
 }
 
+/**
+ * @brief Очистить ресурсы MemoryManager
+ * 
+ * Сбрасывает счётчики current_allocations_ и total_bytes_allocated_.
+ */
 void MemoryManager::Cleanup() {
     std::lock_guard<std::mutex> lock(mutex_);
     current_allocations_ = 0;
     total_bytes_allocated_ = 0;
 }
 
+/**
+ * @brief Отслеживать выделение памяти (внутренний метод)
+ * @param size_bytes Размер выделенной памяти
+ * 
+ * Обновляет:
+ * - total_allocations_
+ * - current_allocations_
+ * - total_bytes_allocated_
+ * - peak_bytes_allocated_
+ */
 void MemoryManager::TrackAllocation(size_t size_bytes) {
     std::lock_guard<std::mutex> lock(mutex_);
     total_allocations_++;
@@ -121,6 +212,10 @@ void MemoryManager::TrackAllocation(size_t size_bytes) {
     }
 }
 
+/**
+ * @brief Отслеживать освобождение памяти (внутренний метод)
+ * @param size_bytes Размер освобождённой памяти
+ */
 void MemoryManager::TrackFree([[maybe_unused]] size_t size_bytes) {
     std::lock_guard<std::mutex> lock(mutex_);
     total_frees_++;
@@ -130,9 +225,20 @@ void MemoryManager::TrackFree([[maybe_unused]] size_t size_bytes) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// DrvGPU Implementation
+// DrvGPU Implementation - Главный класс библиотеки
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Конструктор DrvGPU
+ * @param backend_type Тип бэкенда (OPENCL, ROCm, etc.)
+ * @param device_index Индекс GPU устройства (0-based)
+ * 
+ * Создаёт бэкенд и инициализирует подсистемы:
+ * - MemoryManager
+ * - ModuleRegistry
+ * 
+ * @throws std::runtime_error если не удалось создать бэкенд
+ */
 DrvGPU::DrvGPU(BackendType backend_type, int device_index)
     : backend_type_(backend_type),
       device_index_(device_index),
@@ -144,10 +250,20 @@ DrvGPU::DrvGPU(BackendType backend_type, int device_index)
     InitializeSubsystems();
 }
 
+/**
+ * @brief Деструктор DrvGPU
+ * 
+ * Вызывает Cleanup() для освобождения всех ресурсов.
+ * RAII гарантирует корректную очистку.
+ */
 DrvGPU::~DrvGPU() {
     Cleanup();
 }
 
+/**
+ * @brief Move конструктор
+ * @param other Перемещаемый объект
+ */
 DrvGPU::DrvGPU(DrvGPU&& other) noexcept
     : backend_type_(other.backend_type_),
       device_index_(other.device_index_),
@@ -158,6 +274,11 @@ DrvGPU::DrvGPU(DrvGPU&& other) noexcept
     other.initialized_ = false;
 }
 
+/**
+ * @brief Move оператор присваивания
+ * @param other Перемещаемый объект
+ * @return Ссылка на this
+ */
 DrvGPU& DrvGPU::operator=(DrvGPU&& other) noexcept {
     if (this != &other) {
         Cleanup();
@@ -172,6 +293,16 @@ DrvGPU& DrvGPU::operator=(DrvGPU&& other) noexcept {
     return *this;
 }
 
+/**
+ * @brief Создать бэкенд на основе типа (внутренний метод)
+ * 
+ * Создаёт соответствующий бэкенд:
+ * - OPENCL -> OpenCLBackend
+ * - ROCm -> (не реализовано, throw)
+ * - OPENCLandROCm -> (не реализовано, throw)
+ * 
+ * @throws std::runtime_error если тип бэкенда не поддерживается
+ */
 void DrvGPU::CreateBackend() {
     switch (backend_type_) {
         case BackendType::OPENCL:
@@ -188,11 +319,32 @@ void DrvGPU::CreateBackend() {
     }
 }
 
+/**
+ * @brief Инициализировать подсистемы (внутренний метод)
+ * 
+ * Создаёт:
+ * - MemoryManager для управления памятью
+ * - ModuleRegistry для регистрации модулей
+ */
 void DrvGPU::InitializeSubsystems() {
     memory_manager_ = std::make_unique<MemoryManager>(backend_.get());
     module_registry_ = std::make_unique<ModuleRegistry>();
 }
 
+/**
+ * @brief Инициализировать GPU
+ * 
+ * Инициализирует бэкенд для указанного устройства.
+ * После инициализации DrvGPU готов к работе.
+ * 
+ * @throws std::runtime_error если backend_ == nullptr или инициализация не удалась
+ * 
+ * Пример:
+ * @code
+ * DrvGPU gpu(BackendType::OPENCL, 0);
+ * gpu.Initialize();  // Инициализировать GPU
+ * @endcode
+ */
 void DrvGPU::Initialize() {
     std::lock_guard<std::mutex> lock(mutex_);
     
@@ -211,6 +363,16 @@ void DrvGPU::Initialize() {
     DRVGPU_LOG_INFO("DrvGPU", "Initialized successfully");
 }
 
+/**
+ * @brief Очистить все ресурсы
+ * 
+ * Освобождает в порядке:
+ * 1. MemoryManager
+ * 2. ModuleRegistry
+ * 3. Backend
+ * 
+ * Вызывается автоматически в деструкторе.
+ */
 void DrvGPU::Cleanup() {
     std::lock_guard<std::mutex> lock(mutex_);
     
@@ -234,6 +396,12 @@ void DrvGPU::Cleanup() {
     DRVGPU_LOG_INFO("DrvGPU", "Cleaned up");
 }
 
+/**
+ * @brief Получить информацию об устройстве
+ * @return GPUDeviceInfo с информацией о GPU
+ * 
+ * @throws std::runtime_error если DrvGPU не инициализирован
+ */
 GPUDeviceInfo DrvGPU::GetDeviceInfo() const {
     if (!initialized_ || !backend_) {
         throw std::runtime_error("DrvGPU not initialized");
@@ -241,6 +409,10 @@ GPUDeviceInfo DrvGPU::GetDeviceInfo() const {
     return backend_->GetDeviceInfo();
 }
 
+/**
+ * @brief Получить название устройства
+ * @return Строка с названием или "Unknown"
+ */
 std::string DrvGPU::GetDeviceName() const {
     if (!initialized_ || !backend_) {
         return "Unknown";
@@ -249,6 +421,9 @@ std::string DrvGPU::GetDeviceName() const {
     return info.name;
 }
 
+/**
+ * @brief Вывести информацию об устройстве в лог
+ */
 void DrvGPU::PrintDeviceInfo() const {
     if (!initialized_ || !backend_) {
         DRVGPU_LOG_WARNING("DrvGPU", "Device not initialized");
@@ -258,6 +433,12 @@ void DrvGPU::PrintDeviceInfo() const {
     DRVGPU_LOG_INFO("DrvGPU", "Device Info - Name: " + info.name + ", Vendor: " + info.vendor);
 }
 
+/**
+ * @brief Получить менеджер памяти (не-const версия)
+ * @return Ссылка на MemoryManager
+ * 
+ * @throws std::runtime_error если MemoryManager не инициализирован
+ */
 MemoryManager& DrvGPU::GetMemoryManager() {
     if (!memory_manager_) {
         throw std::runtime_error("MemoryManager not initialized");
@@ -265,6 +446,10 @@ MemoryManager& DrvGPU::GetMemoryManager() {
     return *memory_manager_;
 }
 
+/**
+ * @brief Получить менеджер памяти (const версия)
+ * @return Константная ссылка на MemoryManager
+ */
 const MemoryManager& DrvGPU::GetMemoryManager() const {
     if (!memory_manager_) {
         throw std::runtime_error("MemoryManager not initialized");
@@ -272,6 +457,10 @@ const MemoryManager& DrvGPU::GetMemoryManager() const {
     return *memory_manager_;
 }
 
+/**
+ * @brief Получить регистр модулей (не-const версия)
+ * @return Ссылка на ModuleRegistry
+ */
 ModuleRegistry& DrvGPU::GetModuleRegistry() {
     if (!module_registry_) {
         throw std::runtime_error("ModuleRegistry not initialized");
@@ -279,6 +468,10 @@ ModuleRegistry& DrvGPU::GetModuleRegistry() {
     return *module_registry_;
 }
 
+/**
+ * @brief Получить регистр модулей (const версия)
+ * @return Константная ссылка на ModuleRegistry
+ */
 const ModuleRegistry& DrvGPU::GetModuleRegistry() const {
     if (!module_registry_) {
         throw std::runtime_error("ModuleRegistry not initialized");
@@ -286,6 +479,12 @@ const ModuleRegistry& DrvGPU::GetModuleRegistry() const {
     return *module_registry_;
 }
 
+/**
+ * @brief Получить бэкенд (не-const версия)
+ * @return Ссылка на IBackend
+ * 
+ * @warning Используйте только если абстракции недостаточно!
+ */
 IBackend& DrvGPU::GetBackend() {
     if (!backend_) {
         throw std::runtime_error("Backend not initialized");
@@ -293,6 +492,10 @@ IBackend& DrvGPU::GetBackend() {
     return *backend_;
 }
 
+/**
+ * @brief Получить бэкенд (const версия)
+ * @return Константная ссылка на IBackend
+ */
 const IBackend& DrvGPU::GetBackend() const {
     if (!backend_) {
         throw std::runtime_error("Backend not initialized");
@@ -300,6 +503,13 @@ const IBackend& DrvGPU::GetBackend() const {
     return *backend_;
 }
 
+/**
+ * @brief Синхронизировать (дождаться завершения всех операций)
+ * 
+ * Блокирует CPU до завершения всех GPU операций.
+ * 
+ * @throws std::runtime_error если DrvGPU не инициализирован
+ */
 void DrvGPU::Synchronize() {
     if (!initialized_ || !backend_) {
         throw std::runtime_error("DrvGPU not initialized");
@@ -307,6 +517,11 @@ void DrvGPU::Synchronize() {
     backend_->Synchronize();
 }
 
+/**
+ * @brief Flush всех команд (без ожидания)
+ * 
+ * Отправляет все команды на выполнение без ожидания.
+ */
 void DrvGPU::Flush() {
     if (!initialized_ || !backend_) {
         return;
@@ -314,6 +529,9 @@ void DrvGPU::Flush() {
     backend_->Flush();
 }
 
+/**
+ * @brief Вывести статистику в консоль
+ */
 void DrvGPU::PrintStatistics() const {
     const char separator = static_cast<char>(205);  // ═
     std::cout << "\n" << std::string(50, separator) << "\n";
@@ -330,6 +548,10 @@ void DrvGPU::PrintStatistics() const {
     std::cout << std::string(50, separator) << "\n\n";
 }
 
+/**
+ * @brief Получить статистику в виде строки
+ * @return Строка с статистикой
+ */
 std::string DrvGPU::GetStatistics() const {
     std::ostringstream oss;
     oss << "DrvGPU Statistics:\n";
@@ -341,6 +563,9 @@ std::string DrvGPU::GetStatistics() const {
     return oss.str();
 }
 
+/**
+ * @brief Сбросить статистику
+ */
 void DrvGPU::ResetStatistics() {
     if (memory_manager_) {
         memory_manager_->ResetStatistics();
