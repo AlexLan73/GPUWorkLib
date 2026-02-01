@@ -11,15 +11,17 @@
  * @date 2026-01-31
  */
 
-#include "i_backend.hpp"
-#include "backend_type.hpp"
-#include "gpu_device_info.hpp"
+#include "../../i_backend.hpp"
+#include "../../backend_type.hpp"
+#include "../../gpu_device_info.hpp"
 
-// Включаем ваш OpenCL код
+// Включаем ваш OpenCL код (из той же папки backends/opencl)
 #include "opencl_core.hpp"
 #include "command_queue_pool.hpp"
-#include "memory_manager.hpp"
-#include "svm_capabilities.hpp"
+
+// Включаем memory модуль (из папки memory)
+#include "../../memory/memory_manager.hpp"
+#include "../../memory/svm_capabilities.hpp"
 
 #include <memory>
 #include <string>
@@ -38,7 +40,7 @@ namespace drv_gpu_lib {
  * Интегрирует вашу существующую OpenCL библиотеку:
  * - drv_gpu_lib::OpenCLCore - управление OpenCL контекстом
  * - drv_gpu_lib::CommandQueuePool - пул command queues
- * - drv_gpu_lib::GPUMemoryManager - управление памятью
+ * - drv_gpu_lib::MemoryManager - управление памятью
  * - drv_gpu_lib::SVMCapabilities - проверка SVM
  * 
  * Особенности:
@@ -113,7 +115,7 @@ public:
     void MemcpyDeviceToHost(void* dst, const void* src, 
                            size_t size_bytes) override;
     void MemcpyDeviceToDevice(void* dst, const void* src, 
-                             size_t size_bytes) override;
+                              size_t size_bytes) override;
     
     // ═══════════════════════════════════════════════════════════════
     // Реализация IBackend: Синхронизация

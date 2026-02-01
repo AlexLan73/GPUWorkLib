@@ -1,6 +1,5 @@
 # ════════════════════════════════════════════════════════════════════
-# Упрощённый CMakeLists.txt для DrvGPU
-# Для использования когда все файлы в одной папке
+# Упрощённый CMakeLists.txt для DrvGPU с новой структурой папок
 # ════════════════════════════════════════════════════════════════════
 
 cmake_minimum_required(VERSION 3.27)
@@ -43,17 +42,22 @@ find_package(Threads REQUIRED)
 # Исходники
 # ════════════════════════════════════════════════════════════════════
 
-# Все исходные файлы DrvGPU (с явными путями)
-set(DRVGPU_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/opencl_core.cpp"
+# DrvGPU Core
+set(DRVGPU_CORE_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/drv_gpu.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/module_registry.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/opencl_backend.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/command_queue_pool.cpp"
 )
 
-# DrvGPU Core (файлы из src/)
-set(DRVGPU_CORE_SOURCES
+# Memory Module (абстрактная память)
+set(DRVGPU_MEMORY_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/memory/memory_manager.hpp"
+)
+
+# OpenCL Backend
+set(DRVGPU_OPENCL_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/opencl_core.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/opencl_backend.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/command_queue_pool.cpp"
 )
 
 # ════════════════════════════════════════════════════════════════════
@@ -61,14 +65,17 @@ set(DRVGPU_CORE_SOURCES
 # ════════════════════════════════════════════════════════════════════
 
 add_library(drvgpu
-    ${DRVGPU_SOURCES}
     ${DRVGPU_CORE_SOURCES}
+    ${DRVGPU_MEMORY_SOURCES}
+    ${DRVGPU_OPENCL_SOURCES}
 )
 
 # Include директории
 target_include_directories(drvgpu
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/memory
+        ${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl
         ${OpenCL_INCLUDE_DIRS}
 )
 

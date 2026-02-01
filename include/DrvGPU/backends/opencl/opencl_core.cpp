@@ -1,5 +1,5 @@
 #include "opencl_core.hpp"
-#include "svm_capabilities.hpp"
+#include "../../memory/svm_capabilities.hpp"
 #include <iostream>
 #include <iomanip>
 #include <vector>

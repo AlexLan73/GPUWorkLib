@@ -20,7 +20,7 @@
 #include "i_backend.hpp"
 #include "backend_type.hpp"
 #include "gpu_device_info.hpp"
-#include "memory_manager.hpp"
+#include "memory/memory_manager.hpp"
 #include "module_registry.hpp"
 #include <memory>
 #include <string>

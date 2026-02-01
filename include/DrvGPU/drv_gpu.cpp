@@ -1,7 +1,7 @@
 #include "drv_gpu.hpp"
-#include "memory_manager.hpp"
-#include "opencl_backend.hpp"
-#include "opencl_core.hpp"
+#include "memory/memory_manager.hpp"
+#include "backends/opencl/opencl_backend.hpp"
+#include "backends/opencl/opencl_core.hpp"
 #include <iostream>
 #include <sstream>
 
