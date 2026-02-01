@@ -17,7 +17,7 @@
  * @date 2026-01-31
  */
 
-#include "i_backend.hpp"
+#include "common/i_backend.hpp"
 #include "backend_type.hpp"
 #include "gpu_device_info.hpp"
 #include "memory/memory_manager.hpp"

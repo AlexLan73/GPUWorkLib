@@ -11,7 +11,7 @@
  * @date 2026-01-31
  */
 
-#include "i_compute_module.hpp"
+#include "common/i_compute_module.hpp"
 #include <memory>
 #include <string>
 #include <unordered_map>
