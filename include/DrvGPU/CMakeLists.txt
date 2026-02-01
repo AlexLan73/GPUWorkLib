@@ -60,6 +60,8 @@ set(DRVGPU_OPENCL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/command_queue_pool.cpp"
 )
 
+
+
 # ════════════════════════════════════════════════════════════════════
 # Библиотека DrvGPU
 # ════════════════════════════════════════════════════════════════════
