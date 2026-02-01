@@ -19,6 +19,7 @@
 #include "drv_gpu.hpp"
 #include "backend_type.hpp"
 #include "load_balancing.hpp"
+#include "common/logger.hpp"
 #include <vector>
 #include <memory>
 #include <string>
@@ -319,7 +320,7 @@ inline void GPUManager::InitializeAll(BackendType backend_type) {
         InitializeGPU(i);
     }
     
-    std::cout << "[GPUManager] Initialized " << gpus_.size() << " GPU(s)\n";
+    DRVGPU_LOG_INFO("GPUManager", "Initialized " + std::to_string(gpus_.size()) + " GPU(s)");
 }
 
 inline void GPUManager::InitializeSpecific(BackendType backend_type, 
@@ -333,7 +334,7 @@ inline void GPUManager::InitializeSpecific(BackendType backend_type,
         InitializeGPU(index);
     }
     
-    std::cout << "[GPUManager] Initialized " << gpus_.size() << " specific GPU(s)\n";
+    DRVGPU_LOG_INFO("GPUManager", "Initialized " + std::to_string(gpus_.size()) + " specific GPU(s)");
 }
 
 inline void GPUManager::Cleanup() {
@@ -341,7 +342,7 @@ inline void GPUManager::Cleanup() {
     gpus_.clear();
     gpu_task_count_.clear();
     round_robin_index_ = 0;
-    std::cout << "[GPUManager] Cleanup complete\n";
+    DRVGPU_LOG_INFO("GPUManager", "Cleanup complete");
 }
 
 inline DrvGPU& GPUManager::GetGPU(size_t index) {
@@ -455,7 +456,7 @@ inline void GPUManager::ResetStatistics() {
 
 inline int GPUManager::DiscoverGPUs(BackendType backend_type) {
     (void)backend_type;
-    std::cout << "[GPUManager] Discovering GPUs...\n";
+    DRVGPU_LOG_DEBUG("GPUManager", "Discovering GPUs...");
     
     // Для демонстрации возвращаем 1 GPU
     // TODO: реализовать полное обнаружение GPU
@@ -468,9 +469,9 @@ inline void GPUManager::InitializeGPU(int device_index) {
         gpu->Initialize();
         gpus_.push_back(std::move(gpu));
         gpu_task_count_.emplace_back(0);
-        std::cout << "[GPUManager] Initialized GPU " << device_index << "\n";
+        DRVGPU_LOG_INFO("GPUManager", "Initialized GPU " + std::to_string(device_index));
     } catch (const std::exception& e) {
-        std::cerr << "[GPUManager] Failed to initialize GPU " << device_index << ": " << e.what() << "\n";
+        DRVGPU_LOG_ERROR("GPUManager", "Failed to initialize GPU " + std::to_string(device_index) + ": " + e.what());
     }
 }
 

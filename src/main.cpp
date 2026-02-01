@@ -13,6 +13,8 @@ int main() {
   std::cout << "✅ Программа успешно запущена!" << std::endl;
 
   example_drv_gpu_singl::run();
+
+  
   example_drv_gpu_multi::run();
   external_context_example::run();
 

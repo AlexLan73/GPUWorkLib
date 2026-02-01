@@ -1,11 +1,7 @@
 #include "opencl_core.hpp"
 #include "../../memory/svm_capabilities.hpp"
+#include "../../common/logger.hpp"
 #include <iostream>
-#include <iomanip>
-#include <vector>
-#include <sstream>
-#include <array>
-#include <cstdio>
 
 namespace drv_gpu_lib {
 
@@ -25,7 +21,7 @@ void OpenCLCore::Initialize(DeviceType device_type) {
     std::lock_guard<std::mutex> lock(initialization_mutex_);
 
     if (initialized_) {
-        std::cerr << "[WARNING] OpenCLCore already initialized\n";
+        DRVGPU_LOG_WARNING("OpenCLCore", "Already initialized");
         return;
     }
 
@@ -33,8 +29,8 @@ void OpenCLCore::Initialize(DeviceType device_type) {
     instance_->InitializeOpenCL(device_type);
     initialized_ = true;
 
-    std::cout << "[OK] OpenCLCore initialized\n";
-    std::cout << instance_->GetDeviceInfo();
+    DRVGPU_LOG_INFO("OpenCLCore", "Initialized successfully");
+    DRVGPU_LOG_DEBUG("OpenCLCore", instance_->GetDeviceInfo());
 }
 
 OpenCLCore& OpenCLCore::GetInstance() {
@@ -56,7 +52,7 @@ void OpenCLCore::Cleanup() {
         instance_->ReleaseResources();
         instance_.reset();
         initialized_ = false;
-        std::cout << "[OK] OpenCLCore cleaned up\n";
+        DRVGPU_LOG_INFO("OpenCLCore", "Cleaned up");
     }
 }
 

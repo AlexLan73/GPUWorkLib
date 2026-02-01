@@ -1,4 +1,5 @@
 #include "module_registry.hpp"
+#include "common/logger.hpp"
 #include <iostream>
 
 namespace drv_gpu_lib {
@@ -107,19 +108,15 @@ std::vector<std::string> ModuleRegistry::GetModuleNames() const {
 void ModuleRegistry::PrintModules() const {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    std::cout << "\n" << std::string(50, '=') << "\n";
-    std::cout << "ModuleRegistry - Registered Modules\n";
-    std::cout << std::string(50, '=') << "\n";
+    DRVGPU_LOG_DEBUG("ModuleRegistry", "Printing registered modules");
     
     if (modules_.empty()) {
-        std::cout << "No modules registered.\n";
+        DRVGPU_LOG_DEBUG("ModuleRegistry", "No modules registered");
     } else {
         for (const auto& pair : modules_) {
-            std::cout << "  - " << pair.first << "\n";
+            DRVGPU_LOG_DEBUG("ModuleRegistry", "  - " + pair.first);
         }
     }
-    
-    std::cout << std::string(50, '=') << "\n";
 }
 
 // ════════════════════════════════════════════════════════════════════════════

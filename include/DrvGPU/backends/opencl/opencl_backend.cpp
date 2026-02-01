@@ -1,4 +1,5 @@
 #include "opencl_backend.hpp"
+#include "../../common/logger.hpp"
 #include <iostream>
 #include <cstring>
 
@@ -95,7 +96,7 @@ void OpenCLBackend::Initialize(int device_index) {
     
     initialized_ = true;
     
-    std::cout << "[OpenCLBackend] Initialized for device index: " << device_index << "\n";
+    DRVGPU_LOG_INFO("OpenCLBackend", "Initialized for device index: " + std::to_string(device_index));
 }
 
 void OpenCLBackend::Cleanup() {
@@ -118,7 +119,7 @@ void OpenCLBackend::Cleanup() {
     device_index_ = -1;
     initialized_ = false;
     
-    std::cout << "[OpenCLBackend] Cleaned up\n";
+    DRVGPU_LOG_INFO("OpenCLBackend", "Cleaned up");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -189,7 +190,7 @@ void OpenCLBackend::MemcpyHostToDevice(void* dst, const void* src, size_t size_b
     cl_int err = clEnqueueWriteBuffer(queue_, static_cast<cl_mem>(dst), 
                                        CL_TRUE, 0, size_bytes, src, 0, nullptr, nullptr);
     if (err != CL_SUCCESS) {
-        std::cerr << "[OpenCLBackend] MemcpyHostToDevice error: " << err << "\n";
+        DRVGPU_LOG_ERROR("OpenCLBackend", "MemcpyHostToDevice error: " + std::to_string(err));
     }
 }
 
@@ -202,7 +203,7 @@ void OpenCLBackend::MemcpyDeviceToHost(void* dst, const void* src, size_t size_b
     cl_mem src_mem = static_cast<cl_mem>(const_cast<void*>(src));
     cl_int err = clEnqueueReadBuffer(queue_, src_mem, CL_TRUE, 0, size_bytes, dst, 0, nullptr, nullptr);
     if (err != CL_SUCCESS) {
-        std::cerr << "[OpenCLBackend] MemcpyDeviceToHost error: " << err << "\n";
+        DRVGPU_LOG_ERROR("OpenCLBackend", "MemcpyDeviceToHost error: " + std::to_string(err));
     }
 }
 
@@ -216,7 +217,7 @@ void OpenCLBackend::MemcpyDeviceToDevice(void* dst, const void* src, size_t size
     cl_mem dst_mem = static_cast<cl_mem>(dst);
     cl_int err = clEnqueueCopyBuffer(queue_, src_mem, dst_mem, 0, 0, size_bytes, 0, nullptr, nullptr);
     if (err != CL_SUCCESS) {
-        std::cerr << "[OpenCLBackend] MemcpyDeviceToDevice error: " << err << "\n";
+        DRVGPU_LOG_ERROR("OpenCLBackend", "MemcpyDeviceToDevice error: " + std::to_string(err));
     }
 }
 

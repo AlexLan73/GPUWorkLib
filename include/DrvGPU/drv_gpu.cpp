@@ -2,6 +2,7 @@
 #include "memory/memory_manager.hpp"
 #include "backends/opencl/opencl_backend.hpp"
 #include "backends/opencl/opencl_core.hpp"
+#include "common/logger.hpp"
 #include <iostream>
 #include <sstream>
 
@@ -196,7 +197,7 @@ void DrvGPU::Initialize() {
     std::lock_guard<std::mutex> lock(mutex_);
     
     if (initialized_) {
-        std::cout << "[WARNING] DrvGPU already initialized\n";
+        DRVGPU_LOG_WARNING("DrvGPU", "Already initialized");
         return;
     }
     
@@ -207,7 +208,7 @@ void DrvGPU::Initialize() {
     backend_->Initialize(device_index_);
     initialized_ = true;
     
-    std::cout << "[OK] DrvGPU initialized successfully\n";
+    DRVGPU_LOG_INFO("DrvGPU", "Initialized successfully");
 }
 
 void DrvGPU::Cleanup() {
@@ -230,7 +231,7 @@ void DrvGPU::Cleanup() {
     backend_.reset();
     
     initialized_ = false;
-    std::cout << "[OK] DrvGPU cleaned up\n";
+    DRVGPU_LOG_INFO("DrvGPU", "Cleaned up");
 }
 
 GPUDeviceInfo DrvGPU::GetDeviceInfo() const {
@@ -250,14 +251,11 @@ std::string DrvGPU::GetDeviceName() const {
 
 void DrvGPU::PrintDeviceInfo() const {
     if (!initialized_ || !backend_) {
-        std::cout << "Device not initialized\n";
+        DRVGPU_LOG_WARNING("DrvGPU", "Device not initialized");
         return;
     }
     auto info = backend_->GetDeviceInfo();
-    std::cout << "Device Info:\n";
-    std::cout << "  Name: " << info.name << "\n";
-    std::cout << "  Vendor: " << info.vendor << "\n";
-    std::cout << "  Global Memory: " << info.GetGlobalMemoryGB() << " GB\n";
+    DRVGPU_LOG_INFO("DrvGPU", "Device Info - Name: " + info.name + ", Vendor: " + info.vendor);
 }
 
 MemoryManager& DrvGPU::GetMemoryManager() {

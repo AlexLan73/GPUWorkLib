@@ -21,7 +21,7 @@ option(BUILD_EXAMPLES "Build examples" ON)
 option(BUILD_EXTERNAL_CONTEXT_SUPPORT "Build External Context support" ON)
 
 # ════════════════════════════════════════════════════════════════════
-# Найти OpenCL (используем переменные из основного проекта)
+# Найти OpenCL и spdlog
 # ════════════════════════════════════════════════════════════════════
 
 # Проверяем - если OpenCL уже найден в основном проекте, используем его
@@ -35,6 +35,20 @@ else()
   message(STATUS "OpenCL not found in parent, searching...")
   find_package(OpenCL REQUIRED)
   set(OPENCL_FOUND_PARENT FALSE)
+endif()
+
+# Найти spdlog (из vcpkg или системы)
+# SPDLOG_ROOT может быть установлен извне (например, из vcpkg)
+if(DEFINED ENV{SPDLOG_ROOT})
+    set(SPDLOG_ROOT "$ENV{SPDLOG_ROOT}")
+    message(STATUS "Using spdlog from SPDLOG_ROOT: ${SPDLOG_ROOT}")
+endif()
+
+# Пробуем найти spdlog через CMake config или pkg-config
+find_package(spdlog CONFIG QUIET)
+if(NOT spdlog_FOUND)
+    # Если не найден, пробуем через FetchContent или указываем путь вручную
+    message(STATUS "spdlog not found via find_package, will use header-only mode")
 endif()
 
 find_package(Threads REQUIRED)
@@ -103,6 +117,17 @@ set(DRVGPU_COMMON_HEADERS
     "${CMAKE_CURRENT_SOURCE_DIR}/common/backend_type.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/common/gpu_device_info.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/common/load_balancing.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/common/logger_interface.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/common/config_logger.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/common/default_logger.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/common/logger.hpp"
+)
+
+# Logger Sources
+set(DRVGPU_LOGGER_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/common/config_logger.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/common/default_logger.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/common/logger.cpp"
 )
 
 # ════════════════════════════════════════════════════════════════════
@@ -112,6 +137,9 @@ set(DRVGPU_COMMON_HEADERS
 add_library(drvgpu
     # Core
     ${DRVGPU_CORE_SOURCES}
+    
+    # Logger
+    ${DRVGPU_LOGGER_SOURCES}
     
     # OpenCL Backend
     ${DRVGPU_OPENCL_SOURCES}
@@ -137,6 +165,31 @@ target_include_directories(drvgpu
         ${OpenCL_INCLUDE_DIRS}
 )
 
+# Линковка spdlog (header-only mode)
+if(spdlog_FOUND)
+    # Пробуем использовать header-only версию
+    if(TARGET spdlog::spdlog_header_only)
+        target_link_libraries(drvgpu PUBLIC spdlog::spdlog_header_only)
+        message(STATUS "Using spdlog: HEADER-ONLY")
+    else()
+        # Fallback: статическая версия spdlog
+        target_link_libraries(drvgpu PUBLIC spdlog::spdlog)
+        message(STATUS "Using spdlog: LIBRARY")
+    endif()
+    
+    # Также пробуем подключить fmt header-only для избежания конфликтов
+    if(TARGET fmt::fmt-header-only)
+        target_link_libraries(drvgpu PUBLIC fmt::fmt-header-only)
+        message(STATUS "Using fmt: HEADER-ONLY")
+    endif()
+else()
+    # Если spdlog не найден через find_package, добавляем путь к заголовкам
+    if(DEFINED SPDLOG_ROOT)
+        target_include_directories(drvgpu PUBLIC "${SPDLOG_ROOT}/include")
+        message(STATUS "Using spdlog: HEADER-ONLY (${SPDLOG_ROOT})")
+    endif()
+endif()
+
 # Линковка
 if(OPENCL_FOUND_PARENT)
     target_link_libraries(drvgpu
@@ -156,6 +209,9 @@ endif()
 if(BUILD_EXTERNAL_CONTEXT_SUPPORT)
     target_compile_definitions(drvgpu PUBLIC DRVGPU_EXTERNAL_CONTEXT_SUPPORT)
 endif()
+
+# Use header-only spdlog to avoid STL symbol issues
+target_compile_definitions(drvgpu PUBLIC SPDLOG_HEADER_ONLY)
 
 # Алиас
 add_library(DrvGPU::drvgpu ALIAS drvgpu)
@@ -214,5 +270,10 @@ message(STATUS "  External Context:    ${BUILD_EXTERNAL_CONTEXT_SUPPORT}")
 message(STATUS "  OpenCL version:      ${OpenCL_VERSION_STRING}")
 message(STATUS "  OpenCL include:      ${OpenCL_INCLUDE_DIRS}")
 message(STATUS "  OpenCL library:      ${OpenCL_LIBRARIES}")
+if(spdlog_FOUND)
+    message(STATUS "  spdlog:              FOUND")
+else()
+    message(STATUS "  spdlog:              HEADER-ONLY (${SPDLOG_ROOT})")
+endif()
 message(STATUS "═══════════════════════════════════════")
 message(STATUS "")

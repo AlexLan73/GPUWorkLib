@@ -1,5 +1,6 @@
 #include "command_queue_pool.hpp"
 #include "opencl_core.hpp"
+#include "../../common/logger.hpp"
 #include <iostream>
 
 namespace drv_gpu_lib {
@@ -32,7 +33,7 @@ bool CommandQueuePool::Initialize(cl_context context, cl_device_id device, size_
     for (size_t i = 0; i < num_queues; ++i) {
         cl_command_queue queue = clCreateCommandQueue(context, device, 0, &err);
         if (err != CL_SUCCESS) {
-            std::cerr << "[ERROR] Failed to create command queue: " << err << "\n";
+            DRVGPU_LOG_ERROR("CommandQueuePool", "Failed to create command queue: " + std::to_string(err));
             continue;
         }
         queues_.push_back(queue);

@@ -1,4 +1,5 @@
 #include "opencl_backend_external.hpp"
+#include "../../common/logger.hpp"
 #include <iostream>
 #include <cstring>
 
@@ -27,9 +28,8 @@ OpenCLBackendExternal::OpenCLBackendExternal(
         );
     }
 
-    std::cout << "[OpenCLBackendExternal] Created with external OpenCL context\n";
-    std::cout << "[OpenCLBackendExternal] Owns resources: " 
-              << (owns_resources_ ? "YES" : "NO") << "\n";
+    DRVGPU_LOG_INFO("OpenCLBackendExternal", "Created with external OpenCL context, owns resources: " + 
+        std::string(owns_resources_ ? "YES" : "NO"));
 }
 
 OpenCLBackendExternal::~OpenCLBackendExternal() {
@@ -45,11 +45,11 @@ void OpenCLBackendExternal::InitializeWithExternalContext() {
     std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex_));
 
     if (IsInitialized()) {
-        std::cout << "[OpenCLBackendExternal] Already initialized, cleaning up first\n";
+        DRVGPU_LOG_WARNING("OpenCLBackendExternal", "Already initialized, cleaning up first");
         Cleanup();
     }
 
-    std::cout << "[OpenCLBackendExternal] Initializing with external context...\n";
+    DRVGPU_LOG_INFO("OpenCLBackendExternal", "Initializing with external context...");
 
     // 1. Валидация внешних объектов
     ValidateExternalObjects();
@@ -72,15 +72,14 @@ void OpenCLBackendExternal::InitializeWithExternalContext() {
     // 5. Установить флаг инициализации
     initialized_ = true;
 
-    std::cout << "[OpenCLBackendExternal] Initialized successfully\n";
-    std::cout << "[OpenCLBackendExternal] Device: " << GetDeviceName() << "\n";
+    DRVGPU_LOG_INFO("OpenCLBackendExternal", "Initialized successfully, device: " + GetDeviceName());
 
     // Вывести SVM capabilities
     if (svm_capabilities_->HasAnySVM()) {
-        std::cout << "[OpenCLBackendExternal] SVM supported: YES ✅\n";
-        std::cout << svm_capabilities_->ToString();
+        DRVGPU_LOG_INFO("OpenCLBackendExternal", "SVM supported: YES");
+        DRVGPU_LOG_DEBUG("OpenCLBackendExternal", svm_capabilities_->ToString());
     } else {
-        std::cout << "[OpenCLBackendExternal] SVM supported: NO (using regular buffers)\n";
+        DRVGPU_LOG_INFO("OpenCLBackendExternal", "SVM not supported (using regular buffers)");
     }
 }
 
@@ -95,7 +94,7 @@ void OpenCLBackendExternal::Cleanup() {
         return;
     }
 
-    std::cout << "[OpenCLBackendExternal] Cleanup...\n";
+    DRVGPU_LOG_INFO("OpenCLBackendExternal", "Cleanup...");
 
     // Очистить внутренние менеджеры
     svm_capabilities_.reset();
@@ -103,19 +102,19 @@ void OpenCLBackendExternal::Cleanup() {
 
     // КРИТИЧЕСКИ ВАЖНО: НЕ уничтожаем внешние объекты!
     if (!owns_resources_) {
-        std::cout << "[OpenCLBackendExternal] External resources preserved (not owned)\n";
+        DRVGPU_LOG_INFO("OpenCLBackendExternal", "External resources preserved (not owned)");
         // Просто обнуляем указатели (не вызываем clRelease*)
         context_ = nullptr;
         device_ = nullptr;
         queue_ = nullptr;
     } else {
-        std::cout << "[OpenCLBackendExternal] Releasing owned resources...\n";
+        DRVGPU_LOG_INFO("OpenCLBackendExternal", "Releasing owned resources...");
         // Вызываем базовый Cleanup только если мы владеем ресурсами
         OpenCLBackend::Cleanup();
     }
 
     initialized_ = false;
-    std::cout << "[OpenCLBackendExternal] Cleanup complete\n";
+    DRVGPU_LOG_INFO("OpenCLBackendExternal", "Cleanup complete");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -266,7 +265,7 @@ void OpenCLBackendExternal::ValidateExternalObjects() {
         );
     }
 
-    std::cout << "[OpenCLBackendExternal] External objects validated successfully ✅\n";
+    DRVGPU_LOG_INFO("OpenCLBackendExternal", "External objects validated successfully");
 }
 
 size_t OpenCLBackendExternal::GetBufferSize(cl_mem buffer) const {
@@ -284,7 +283,7 @@ size_t OpenCLBackendExternal::GetBufferSize(cl_mem buffer) const {
     );
 
     if (err != CL_SUCCESS) {
-        std::cerr << "[OpenCLBackendExternal] GetBufferSize failed: " << err << "\n";
+        DRVGPU_LOG_ERROR("OpenCLBackendExternal", "GetBufferSize failed: " + std::to_string(err));
         return 0;
     }
 
