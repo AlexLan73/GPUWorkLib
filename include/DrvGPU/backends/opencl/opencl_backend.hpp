@@ -12,8 +12,8 @@
  */
 
 #include "../../i_backend.hpp"
-#include "../../backend_type.hpp"
-#include "../../gpu_device_info.hpp"
+#include "../../common/backend_type.hpp"
+#include "../../common/gpu_device_info.hpp"
 
 // Включаем ваш OpenCL код (из той же папки backends/opencl)
 #include "opencl_core.hpp"
@@ -189,6 +189,9 @@ private:
     void InitializeMemoryManager();
     void InitializeSVMCapabilities();
     GPUDeviceInfo QueryDeviceInfo() const;
+
+    // Дружественный класс для работы с внешним контекстом
+    friend class OpenCLBackendExternal;
 };
 
 } // namespace drv_gpu_lib

@@ -24,6 +24,9 @@
 #include <string>
 #include <mutex>
 #include <atomic>
+#include <stdexcept>
+#include <sstream>
+#include <iostream>
 
 namespace drv_gpu_lib {
 
@@ -241,8 +244,8 @@ private:
     // Round-Robin счётчик (thread-safe)
     std::atomic<size_t> round_robin_index_;
     
-    // Load tracking (простая метрика: количество задач)
-    std::vector<std::atomic<size_t>> gpu_task_count_;
+    // Load tracking (простая метрика: количество задач, защищено мьютексом)
+    std::vector<size_t> gpu_task_count_;
     
     // Thread-safety
     mutable std::mutex mutex_;
@@ -266,5 +269,224 @@ private:
      */
     size_t GetLeastLoadedGPUIndex() const;
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// GPUManager Inline Implementation (Header-Only)
+// ════════════════════════════════════════════════════════════════════════════
+
+inline GPUManager::GPUManager()
+    : backend_type_(BackendType::OPENCL)
+    , lb_strategy_(LoadBalancingStrategy::ROUND_ROBIN)
+    , round_robin_index_(0) {
+}
+
+inline GPUManager::~GPUManager() {
+    Cleanup();
+}
+
+inline GPUManager::GPUManager(GPUManager&& other) noexcept
+    : backend_type_(other.backend_type_)
+    , lb_strategy_(other.lb_strategy_)
+    , gpus_(std::move(other.gpus_))
+    , round_robin_index_(other.round_robin_index_.load())
+    , gpu_task_count_(std::move(other.gpu_task_count_)) {
+}
+
+inline GPUManager& GPUManager::operator=(GPUManager&& other) noexcept {
+    if (this != &other) {
+        Cleanup();
+        backend_type_ = other.backend_type_;
+        lb_strategy_ = other.lb_strategy_;
+        gpus_ = std::move(other.gpus_);
+        round_robin_index_ = other.round_robin_index_.load();
+        gpu_task_count_ = std::move(other.gpu_task_count_);
+    }
+    return *this;
+}
+
+inline void GPUManager::InitializeAll(BackendType backend_type) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    backend_type_ = backend_type;
+    
+    Cleanup();
+    
+    int gpu_count = DiscoverGPUs(backend_type);
+    if (gpu_count == 0) {
+        throw std::runtime_error("No GPUs available for backend type");
+    }
+    
+    for (int i = 0; i < gpu_count; ++i) {
+        InitializeGPU(i);
+    }
+    
+    std::cout << "[GPUManager] Initialized " << gpus_.size() << " GPU(s)\n";
+}
+
+inline void GPUManager::InitializeSpecific(BackendType backend_type, 
+                                           const std::vector<int>& device_indices) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    backend_type_ = backend_type;
+    
+    Cleanup();
+    
+    for (int index : device_indices) {
+        InitializeGPU(index);
+    }
+    
+    std::cout << "[GPUManager] Initialized " << gpus_.size() << " specific GPU(s)\n";
+}
+
+inline void GPUManager::Cleanup() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    gpus_.clear();
+    gpu_task_count_.clear();
+    round_robin_index_ = 0;
+    std::cout << "[GPUManager] Cleanup complete\n";
+}
+
+inline DrvGPU& GPUManager::GetGPU(size_t index) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (index >= gpus_.size()) {
+        throw std::out_of_range("GPU index out of range");
+    }
+    return *gpus_[index];
+}
+
+inline const DrvGPU& GPUManager::GetGPU(size_t index) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (index >= gpus_.size()) {
+        throw std::out_of_range("GPU index out of range");
+    }
+    return *gpus_[index];
+}
+
+inline DrvGPU& GPUManager::GetNextGPU() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (gpus_.empty()) {
+        throw std::runtime_error("No GPUs initialized");
+    }
+    
+    size_t index = round_robin_index_++ % gpus_.size();
+    return *gpus_[index];
+}
+
+inline DrvGPU& GPUManager::GetLeastLoadedGPU() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    size_t least_loaded_idx = GetLeastLoadedGPUIndex();
+    return *gpus_[least_loaded_idx];
+}
+
+inline std::vector<DrvGPU*> GPUManager::GetAllGPUs() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<DrvGPU*> result;
+    result.reserve(gpus_.size());
+    for (auto& gpu : gpus_) {
+        result.push_back(gpu.get());
+    }
+    return result;
+}
+
+inline std::vector<const DrvGPU*> GPUManager::GetAllGPUs() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<const DrvGPU*> result;
+    result.reserve(gpus_.size());
+    for (auto& gpu : gpus_) {
+        result.push_back(gpu.get());
+    }
+    return result;
+}
+
+inline void GPUManager::PrintAllDevices() const {
+    std::cout << "\n--- GPU Devices ---\n";
+    size_t idx = 0;
+    for (const auto& gpu : gpus_) {
+        std::cout << "GPU " << idx << ": " << gpu->GetDeviceName() << "\n";
+        ++idx;
+    }
+    std::cout << "------------------\n";
+}
+
+inline void GPUManager::SetLoadBalancingStrategy(LoadBalancingStrategy strategy) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    lb_strategy_ = strategy;
+}
+
+inline void GPUManager::SynchronizeAll() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& gpu : gpus_) {
+        gpu->Synchronize();
+    }
+}
+
+inline void GPUManager::FlushAll() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& gpu : gpus_) {
+        gpu->Flush();
+    }
+}
+
+inline void GPUManager::PrintStatistics() const {
+    std::cout << "\n=== GPU Manager Statistics ===\n";
+    std::cout << "Total GPUs: " << gpus_.size() << "\n";
+    
+    size_t idx = 0;
+    for (const auto& gpu : gpus_) {
+        std::cout << "GPU " << idx << ": " << gpu->GetDeviceName() << "\n";
+        std::cout << gpu->GetStatistics();
+        ++idx;
+    }
+    std::cout << "==============================\n\n";
+}
+
+inline std::string GPUManager::GetStatistics() const {
+    std::ostringstream oss;
+    oss << "GPU Manager Statistics:\n";
+    oss << "  Total GPUs: " << gpus_.size() << "\n";
+    oss << "  Load Balancing: " << LoadBalancingStrategyToString(lb_strategy_) << "\n";
+    return oss.str();
+}
+
+inline void GPUManager::ResetStatistics() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& gpu : gpus_) {
+        gpu->ResetStatistics();
+    }
+}
+
+inline int GPUManager::DiscoverGPUs(BackendType backend_type) {
+    (void)backend_type;
+    std::cout << "[GPUManager] Discovering GPUs...\n";
+    
+    // Для демонстрации возвращаем 1 GPU
+    // TODO: реализовать полное обнаружение GPU
+    return 1;
+}
+
+inline void GPUManager::InitializeGPU(int device_index) {
+    try {
+        auto gpu = std::make_unique<DrvGPU>(backend_type_, device_index);
+        gpu->Initialize();
+        gpus_.push_back(std::move(gpu));
+        gpu_task_count_.emplace_back(0);
+        std::cout << "[GPUManager] Initialized GPU " << device_index << "\n";
+    } catch (const std::exception& e) {
+        std::cerr << "[GPUManager] Failed to initialize GPU " << device_index << ": " << e.what() << "\n";
+    }
+}
+
+inline size_t GPUManager::GetLeastLoadedGPUIndex() const {
+    size_t min_tasks = SIZE_MAX;
+    size_t min_idx = 0;
+    
+    for (size_t i = 0; i < gpu_task_count_.size(); ++i) {
+        size_t tasks = gpu_task_count_[i];
+        if (tasks < min_tasks) {
+            min_tasks = tasks;
+            min_idx = i;
+        }
+    }
+    
+    return min_idx;
+}
 
 } // namespace drv_gpu_lib

@@ -11,8 +11,8 @@
  * @date 2026-01-31
  */
 
-#include "backend_type.hpp"
-#include "gpu_device_info.hpp"
+#include "common/backend_type.hpp"
+#include "common/gpu_device_info.hpp"
 #include <string>
 #include <cstddef>
 

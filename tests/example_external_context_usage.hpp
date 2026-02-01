@@ -10,8 +10,8 @@
  * @date 2026-02-01
  */
 
-#include "backends/opencl/opencl_backend_external.hpp"
-#include "drv_gpu.hpp"
+#include "DrvGPU/backends/opencl/opencl_backend_external.hpp"
+#include "DrvGPU/drv_gpu.hpp"
 #include <CL/cl.h>
 #include <vector>
 #include <iostream>

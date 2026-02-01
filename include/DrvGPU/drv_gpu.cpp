@@ -59,6 +59,7 @@ void* MemoryManager::Allocate(size_t size_bytes, unsigned int flags) {
 }
 
 void MemoryManager::Free(void* ptr) {
+    [[maybe_unused]] void* p = ptr;
     // Note: actual deallocation happens via backend
     // We track the deallocation when buffer is destroyed
 }
@@ -72,15 +73,16 @@ size_t MemoryManager::GetTotalAllocatedBytes() const {
 }
 
 void MemoryManager::PrintStatistics() const {
-    std::cout << "\n" << std::string(50, '═') << "\n";
+    const char separator = static_cast<char>(205);  // ═
+    std::cout << "\n" << std::string(50, separator) << "\n";
     std::cout << "Memory Statistics\n";
-    std::cout << std::string(50, '═') << "\n";
+    std::cout << std::string(50, separator) << "\n";
     std::cout << "Total Allocations: " << total_allocations_ << "\n";
     std::cout << "Total Frees: " << total_frees_ << "\n";
     std::cout << "Current Allocations: " << current_allocations_ << "\n";
     std::cout << "Total Bytes Allocated: " << total_bytes_allocated_ << "\n";
     std::cout << "Peak Bytes Allocated: " << peak_bytes_allocated_ << "\n";
-    std::cout << std::string(50, '═') << "\n\n";
+    std::cout << std::string(50, separator) << "\n\n";
 }
 
 std::string MemoryManager::GetStatistics() const {
@@ -118,7 +120,7 @@ void MemoryManager::TrackAllocation(size_t size_bytes) {
     }
 }
 
-void MemoryManager::TrackFree(size_t size_bytes) {
+void MemoryManager::TrackFree([[maybe_unused]] size_t size_bytes) {
     std::lock_guard<std::mutex> lock(mutex_);
     total_frees_++;
     if (current_allocations_ > 0) {
@@ -315,9 +317,10 @@ void DrvGPU::Flush() {
 }
 
 void DrvGPU::PrintStatistics() const {
-    std::cout << "\n" << std::string(50, '═') << "\n";
+    const char separator = static_cast<char>(205);  // ═
+    std::cout << "\n" << std::string(50, separator) << "\n";
     std::cout << "DrvGPU Statistics\n";
-    std::cout << std::string(50, '═') << "\n";
+    std::cout << std::string(50, separator) << "\n";
     std::cout << "Device Index: " << device_index_ << "\n";
     std::cout << "Backend Type: " << static_cast<int>(backend_type_) << "\n";
     std::cout << "Initialized: " << (initialized_ ? "Yes" : "No") << "\n";
@@ -326,7 +329,7 @@ void DrvGPU::PrintStatistics() const {
         memory_manager_->PrintStatistics();
     }
     
-    std::cout << std::string(50, '═') << "\n\n";
+    std::cout << std::string(50, separator) << "\n\n";
 }
 
 std::string DrvGPU::GetStatistics() const {

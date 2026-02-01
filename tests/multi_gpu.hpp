@@ -8,8 +8,7 @@
 
 #include "gpu_manager.hpp"
 #include "backend_type.hpp"
-//#include "load_balancing_strategy.hpp"
-#include "DrvGPU/balance_state.hpp"
+#include "common/load_balancing.hpp"
 #include <iostream>
 #include <vector>
 #include <thread>
