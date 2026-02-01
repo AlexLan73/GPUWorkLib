@@ -74,6 +74,8 @@ private:
       throw std::runtime_error("Context creation failed");
 
     // 4. Queue
+    // cl_queue_properties props[] = {0};    если OpenCL 2.0+
+    // queue_ = clCreateCommandQueue(context_, device_, props[], &err);
     queue_ = clCreateCommandQueue(context_, device_, 0, &err);
     if (err != CL_SUCCESS)
       throw std::runtime_error("Queue creation failed");
@@ -145,9 +147,9 @@ private:
 void Example1_BasicExternalContext()
 {
   std::cout << "\n"
-            << std::string(80, '═') << "\n";
+            << std::string(80, '=') << "\n";
   std::cout << "EXAMPLE 1: Базовое использование внешнего контекста\n";
-  std::cout << std::string(80, '═') << "\n\n";
+  std::cout << std::string(80, '=') << "\n\n";
 
   // ШАГ 1: У вас уже есть рабочий OpenCL код
   YourExistingOpenCL your_opencl;
@@ -178,9 +180,9 @@ void Example1_BasicExternalContext()
 void Example2_ExternalBufferAdapter()
 {
   std::cout << "\n"
-            << std::string(80, '═') << "\n";
+            << std::string(80, '=') << "\n";
   std::cout << "EXAMPLE 2: Работа с внешними cl_mem буферами\n";
-  std::cout << std::string(80, '═') << "\n\n";
+  std::cout << std::string(80, '=') << "\n\n";
 
   // ШАГ 1: Ваш существующий OpenCL код
   YourExistingOpenCL your_opencl;
@@ -259,9 +261,9 @@ void Example2_ExternalBufferAdapter()
 void Example3_DirectBufferUtilities()
 {
   std::cout << "\n"
-            << std::string(80, '═') << "\n";
+            << std::string(80, '=') << "\n";
   std::cout << "EXAMPLE 3: Прямые утилиты для работы с буферами\n";
-  std::cout << std::string(80, '═') << "\n\n";
+  std::cout << std::string(80, '=') << "\n\n";
 
   YourExistingOpenCL your_opencl;
 
@@ -316,9 +318,9 @@ void Example3_DirectBufferUtilities()
 void Example4_AsyncOperations()
 {
   std::cout << "\n"
-            << std::string(80, '═') << "\n";
+            << std::string(80, '=') << "\n";
   std::cout << "EXAMPLE 4: Асинхронные операции\n";
-  std::cout << std::string(80, '═') << "\n\n";
+  std::cout << std::string(80, '=') << "\n\n";
 
   YourExistingOpenCL your_opencl;
 
@@ -404,9 +406,9 @@ namespace external_context_example
       Example4_AsyncOperations();
 
       std::cout << "\n"
-                << std::string(80, '═') << "\n";
+                << std::string(80, '=') << "\n";
       std::cout << "✅ ВСЕ ПРИМЕРЫ ВЫПОЛНЕНЫ УСПЕШНО!\n";
-      std::cout << std::string(80, '═') << "\n\n";
+      std::cout << std::string(80, '=') << "\n\n";
 
       return 0;
     }

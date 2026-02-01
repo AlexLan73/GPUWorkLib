@@ -5,7 +5,8 @@
 #include "../tests/multi_gpu.hpp"
 #include "../tests/example_external_context_usage.hpp"
 
-int main(int argc, char* argv[]) {
+//int main(int argc, char* argv[]) {
+int main() {
    std::cout << "═══════════════════════════════════════════════════════════\n"
             << "Набор библиотек для работы с GPU\n"
             << "═══════════════════════════════════════════════════════════\n\n";

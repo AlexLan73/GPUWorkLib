@@ -298,9 +298,9 @@ SVMCapabilities OpenCLCore::GetSVMCapabilities() const {
 std::string OpenCLCore::GetSVMInfo() const {
     std::ostringstream oss;
     
-    oss << "\n" << std::string(60, '═') << "\n";
+    oss << "\n" << std::string(60, '=') << "\n";
     oss << "SVM Capabilities\n";
-    oss << std::string(60, '═') << "\n\n";
+    oss << std::string(60, '=') << "\n\n";
     
     cl_uint major = GetOpenCLVersionMajor();
     cl_uint minor = GetOpenCLVersionMinor();
@@ -309,7 +309,7 @@ std::string OpenCLCore::GetSVMInfo() const {
     
     if (major < 2) {
         oss << std::left << std::setw(25) << "SVM Supported:" << "NO (OpenCL < 2.0)\n";
-        oss << std::string(60, '═') << "\n";
+        oss << std::string(60, '=') << "\n";
         return oss.str();
     }
     
@@ -318,7 +318,7 @@ std::string OpenCLCore::GetSVMInfo() const {
     
     if (err != CL_SUCCESS || svm_caps == 0) {
         oss << std::left << std::setw(25) << "SVM Supported:" << "NO\n";
-        oss << std::string(60, '═') << "\n";
+        oss << std::string(60, '=') << "\n";
         return oss.str();
     }
     
@@ -334,7 +334,7 @@ std::string OpenCLCore::GetSVMInfo() const {
     oss << "  " << std::left << std::setw(23) << "Atomics:" 
         << ((svm_caps & CL_DEVICE_SVM_ATOMICS) ? "YES ✅" : "NO ❌") << "\n";
     
-    oss << "\n" << std::string(60, '═') << "\n";
+    oss << "\n" << std::string(60, '=') << "\n";
 
     return oss.str();
 }

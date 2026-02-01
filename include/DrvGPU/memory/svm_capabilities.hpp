@@ -190,7 +190,7 @@ struct SVMCapabilities {
     MemoryStrategy RecommendStrategy(size_t size_bytes) const {
         // Пороговые значения (можно настроить)
         constexpr size_t SMALL_BUFFER_THRESHOLD  = 1 * 1024 * 1024;     // 1 MB
-        constexpr size_t MEDIUM_BUFFER_THRESHOLD = 64 * 1024 * 1024;    // 64 MB
+        [[maybe_unused]] constexpr size_t MEDIUM_BUFFER_THRESHOLD = 64 * 1024 * 1024;    // 64 MB
         
         // Если SVM не поддерживается - только regular buffer
         if (!svm_supported) {
@@ -223,9 +223,9 @@ struct SVMCapabilities {
     std::string ToString() const {
         std::ostringstream oss;
         
-        oss << "\n" << std::string(60, '═') << "\n";
+        oss << "\n" << std::string(60, '=') << "\n";
         oss << "SVM Capabilities\n";
-        oss << std::string(60, '═') << "\n\n";
+        oss << std::string(60, '=') << "\n\n";
         
         oss << std::left << std::setw(25) << "OpenCL Version:" 
             << opencl_major_version << "." << opencl_minor_version << "\n";
@@ -247,7 +247,7 @@ struct SVMCapabilities {
         oss << "\n" << std::left << std::setw(25) << "Recommended Strategy:" 
             << MemoryStrategyToString(GetBestSVMStrategy()) << "\n";
         
-        oss << std::string(60, '═') << "\n";
+        oss << std::string(60, '=') << "\n";
         
         return oss.str();
     }

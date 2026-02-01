@@ -176,12 +176,12 @@ void DrvGPU::CreateBackend() {
         case BackendType::OPENCL:
             backend_ = std::make_unique<OpenCLBackend>();
             break;
-        case BackendType::CUDA:
+        case BackendType::ROCm:
             // CUDA backend would be implemented here
-            throw std::runtime_error("CUDA backend not yet implemented");
-        case BackendType::VULKAN:
+            throw std::runtime_error("ROCm backend not yet implemented");
+        case BackendType::OPENCLandROCm:
             // Vulkan backend would be implemented here
-            throw std::runtime_error("Vulkan backend not yet implemented");
+            throw std::runtime_error("OPENCLandROCm backend not yet implemented");
         default:
             throw std::runtime_error("Unknown backend type");
     }
