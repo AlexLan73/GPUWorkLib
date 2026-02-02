@@ -16,6 +16,8 @@
 #include <string>
 #include <unordered_map>
 #include <mutex>
+#include <vector>
+#include <stdexcept>
 
 namespace drv_gpu_lib {
 

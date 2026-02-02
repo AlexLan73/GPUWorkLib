@@ -149,8 +149,7 @@ set_target_properties(GPUWorkLib PROPERTIES
     VERSION 1.0.0
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
-    # Для Windows: выходная директория с учётом Debug/Release
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
 
 # ============================================================================
@@ -190,5 +189,5 @@ if(IS_WINDOWS AND CLFFT_FOUND)
 endif()
 
 message(STATUS "✅ Main executable configured: GPUWorkLib")
-message(STATUS "   Output: ${CMAKE_BINARY_DIR}/$<CONFIG>/GPUWorkLib.exe")
+message(STATUS "   Output: ${CMAKE_BINARY_DIR}/GPUWorkLib")
 message(STATUS "")

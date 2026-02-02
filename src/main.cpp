@@ -1,5 +1,4 @@
 #include <iostream>
-#include <string>
 
 #include "../tests/single_gpu.hpp"
 #include "../tests/multi_gpu.hpp"

@@ -1,7 +1,7 @@
 #include "opencl_backend.hpp"
 #include "../../common/logger.hpp"
-#include <iostream>
-#include <cstring>
+#include <sstream>
+#include <iomanip>
 
 namespace drv_gpu_lib {
 
@@ -17,7 +17,7 @@ namespace drv_gpu_lib {
  * - initialized_ = false (не инициализирован)
  * - context_/device_/queue_ = nullptr (дескрипторы OpenCL)
  */
-OpenCLBackend::OpenCLBackend() 
+OpenCLBackend::OpenCLBackend()
     : device_index_(-1)
     , initialized_(false)
     , context_(nullptr)
@@ -52,7 +52,6 @@ OpenCLBackend::OpenCLBackend(OpenCLBackend&& other) noexcept
     , context_(other.context_)
     , device_(other.device_)
     , queue_(other.queue_) {
-    
     // Обнуляем источник
     other.device_index_ = -1;
     other.initialized_ = false;
@@ -87,6 +86,7 @@ OpenCLBackend& OpenCLBackend::operator=(OpenCLBackend&& other) noexcept {
         other.device_ = nullptr;
         other.queue_ = nullptr;
     }
+    
     return *this;
 }
 
@@ -103,9 +103,10 @@ OpenCLBackend& OpenCLBackend::operator=(OpenCLBackend&& other) noexcept {
  * 3. Сохраняем индекс устройства
  * 4. Инициализируем OpenCLCore (Singleton)
  * 5. Получаем нативные хэндлы из OpenCLCore
- * 6. Инициализируем SVM capabilities
- * 7. Создаём MemoryManager
- * 8. Устанавливаем флаг initialized_
+ * 6. ✅ СОЗДАЁМ COMMAND QUEUE (исправление)
+ * 7. Инициализируем SVM capabilities
+ * 8. Создаём MemoryManager
+ * 9. Устанавливаем флаг initialized_
  * 
  * @param device_index Индекс GPU устройства (0 = первая GPU)
  * 
@@ -136,7 +137,6 @@ void OpenCLBackend::Initialize(int device_index) {
     // ═══════════════════════════════════════════════════════════════════════
     // Шаг 1: Инициализируем OpenCLCore (Singleton)
     // ═══════════════════════════════════════════════════════════════════════
-    
     // Выбираем тип устройства: device 0 = GPU, остальные = CPU
     // TODO: добавить поддержку нескольких GPU устройств
     DeviceType dev_type = (device_index == 0) ? DeviceType::GPU : DeviceType::CPU;
@@ -145,19 +145,39 @@ void OpenCLBackend::Initialize(int device_index) {
     // ═══════════════════════════════════════════════════════════════════════
     // Шаг 2: Получаем нативные хэндлы из OpenCLCore
     // ═══════════════════════════════════════════════════════════════════════
-    
     // OpenCLCore - Singleton, содержит контекст и устройство
     OpenCLCore& core = OpenCLCore::GetInstance();
     
     // Получаем нативные дескрипторы OpenCL
     context_ = core.GetContext();
     device_ = core.GetDevice();
-    // queue_ остаётся nullptr - используем DefaultQueue из OpenCLCore если нужен
     
     // ═══════════════════════════════════════════════════════════════════════
-    // Шаг 3: Инициализируем SVM capabilities
+    // ✅ Шаг 3: СОЗДАЁМ COMMAND QUEUE (исправление бага queue_ = nullptr)
     // ═══════════════════════════════════════════════════════════════════════
+    cl_int err;
     
+    #ifdef CL_VERSION_2_0
+        // OpenCL 2.0+ API (если доступен)
+        cl_queue_properties props[] = {0};
+        queue_ = clCreateCommandQueueWithProperties(context_, device_, props, &err);
+    #else
+        // OpenCL 1.x API (fallback для старых версий)
+        queue_ = clCreateCommandQueue(context_, device_, 0, &err);
+    #endif
+    
+    if (err != CL_SUCCESS || !queue_) {
+        throw std::runtime_error(
+            "OpenCLBackend::Initialize - Failed to create command queue. Error code: " + 
+            std::to_string(err)
+        );
+    }
+    
+    DRVGPU_LOG_INFO("OpenCLBackend", "Command queue created successfully ✅");
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // Шаг 4: Инициализируем SVM capabilities
+    // ═══════════════════════════════════════════════════════════════════════
     // SVMCapabilities определяет, какие типы SVM поддерживаются
     // SVM (Shared Virtual Memory) - общая память между CPU и GPU
     svm_capabilities_ = std::make_unique<SVMCapabilities>(
@@ -165,18 +185,15 @@ void OpenCLBackend::Initialize(int device_index) {
     );
     
     // ═══════════════════════════════════════════════════════════════════════
-    // Шаг 4: Инициализируем MemoryManager
+    // Шаг 5: Инициализируем MemoryManager
     // ═══════════════════════════════════════════════════════════════════════
-    
     // MemoryManager управляет выделением и освобождением GPU памяти
     memory_manager_ = std::make_unique<MemoryManager>(this);
     
     // ═══════════════════════════════════════════════════════════════════════
     // Завершение
     // ═══════════════════════════════════════════════════════════════════════
-    
     initialized_ = true;
-    
     DRVGPU_LOG_INFO("OpenCLBackend", "Initialized for device index: " + std::to_string(device_index));
 }
 
@@ -185,9 +202,10 @@ void OpenCLBackend::Initialize(int device_index) {
  * 
  * Порядок освобождения (обратный созданию):
  * 1. Сбрасываем unique_ptr'ы (освобождают MemoryManager, SVMCapabilities)
- * 2. Очищаем OpenCLCore (Singleton)
- * 3. Обнуляем дескрипторы
- * 4. Сбрасываем флаг initialized_
+ * 2. ✅ Освобождаем command queue (исправление)
+ * 3. Очищаем OpenCLCore (Singleton)
+ * 4. Обнуляем дескрипторы
+ * 5. Сбрасываем флаг initialized_
  */
 void OpenCLBackend::Cleanup() {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -205,6 +223,13 @@ void OpenCLBackend::Cleanup() {
     svm_capabilities_.reset();
     memory_manager_.reset();
     
+    // ✅ ИСПРАВЛЕНИЕ: Освобождаем command queue
+    if (queue_) {
+        clReleaseCommandQueue(queue_);
+        queue_ = nullptr;
+        DRVGPU_LOG_INFO("OpenCLBackend", "Command queue released ✅");
+    }
+    
     // Затем: OpenCLCore (Singleton)
     // Примечание: очищаем только если это последний пользователь
     // TODO: добавить счётчик ссылок на OpenCLCore
@@ -213,7 +238,6 @@ void OpenCLBackend::Cleanup() {
     // Обнуляем дескрипторы
     context_ = nullptr;
     device_ = nullptr;
-    queue_ = nullptr;
     device_index_ = -1;
     initialized_ = false;
     
@@ -247,6 +271,7 @@ std::string OpenCLBackend::GetDeviceName() const {
     if (!OpenCLCore::IsInitialized()) {
         return "Unknown";
     }
+    
     return OpenCLCore::GetInstance().GetDeviceName();
 }
 
@@ -289,10 +314,10 @@ void* OpenCLBackend::GetNativeQueue() const {
  * 
  * @param size_bytes Размер в байтах
  * @param flags Флаги выделения (битовая маска):
- *              0 = CL_MEM_READ_WRITE (по умолчанию)
- *              1 = CL_MEM_HOST_READ_ONLY
- *              2 = CL_MEM_HOST_WRITE_ONLY
- *              4 = CL_MEM_HOST_NO_ACCESS
+ *        0 = CL_MEM_READ_WRITE (по умолчанию)
+ *        1 = CL_MEM_HOST_READ_ONLY
+ *        2 = CL_MEM_HOST_WRITE_ONLY
+ *        4 = CL_MEM_HOST_NO_ACCESS
  * @return Указатель на cl_mem или nullptr при ошибке
  * 
  * @code
@@ -300,8 +325,8 @@ void* OpenCLBackend::GetNativeQueue() const {
  * void* buf = backend->Allocate(1024 * sizeof(float));
  * 
  * // Выделение с флагами
- * void* input = backend->Allocate(size, 1);   // HOST_READ_ONLY
- * void* output = backend->Allocate(size, 2);  // HOST_WRITE_ONLY
+ * void* input = backend->Allocate(size, 1);  // HOST_READ_ONLY
+ * void* output = backend->Allocate(size, 2); // HOST_WRITE_ONLY
  * @endcode
  */
 void* OpenCLBackend::Allocate(size_t size_bytes, unsigned int flags) {
@@ -326,7 +351,6 @@ void* OpenCLBackend::Allocate(size_t size_bytes, unsigned int flags) {
     //   host_ptr - указатель на хост-память (nullptr = выделить новую)
     //   errcode_ret - код ошибки
     cl_mem mem = clCreateBuffer(context_, mem_flags, size_bytes, nullptr, nullptr);
-    
     if (!mem) {
         return nullptr;
     }
@@ -366,6 +390,11 @@ void OpenCLBackend::Free(void* ptr) {
 void OpenCLBackend::MemcpyHostToDevice(void* dst, const void* src, size_t size_bytes) {
     // Проверяем валидность параметров
     if (!context_ || !queue_ || !dst || !src) {
+        DRVGPU_LOG_ERROR("OpenCLBackend", "MemcpyHostToDevice - Invalid parameters: " +
+            std::string("context=") + (context_ ? "OK" : "NULL") +
+            ", queue=" + (queue_ ? "OK" : "NULL") +
+            ", dst=" + (dst ? "OK" : "NULL") +
+            ", src=" + (src ? "OK" : "NULL"));
         return;
     }
     
@@ -380,8 +409,18 @@ void OpenCLBackend::MemcpyHostToDevice(void* dst, const void* src, size_t size_b
     //   num_events_in_wait_list = 0 (без зависимостей)
     //   event_wait_list = nullptr
     //   event = nullptr (не возвращаем event)
-    cl_int err = clEnqueueWriteBuffer(queue_, static_cast<cl_mem>(dst), 
-                                       CL_TRUE, 0, size_bytes, src, 0, nullptr, nullptr);
+    cl_int err = clEnqueueWriteBuffer(
+        queue_, 
+        static_cast<cl_mem>(dst),
+        CL_TRUE, 
+        0, 
+        size_bytes, 
+        src, 
+        0, 
+        nullptr, 
+        nullptr
+    );
+    
     if (err != CL_SUCCESS) {
         DRVGPU_LOG_ERROR("OpenCLBackend", "MemcpyHostToDevice error: " + std::to_string(err));
     }
@@ -406,7 +445,18 @@ void OpenCLBackend::MemcpyDeviceToHost(void* dst, const void* src, size_t size_b
     cl_mem src_mem = static_cast<cl_mem>(const_cast<void*>(src));
     
     // clEnqueueReadBuffer - читает данные из буфера
-    cl_int err = clEnqueueReadBuffer(queue_, src_mem, CL_TRUE, 0, size_bytes, dst, 0, nullptr, nullptr);
+    cl_int err = clEnqueueReadBuffer(
+        queue_, 
+        src_mem, 
+        CL_TRUE, 
+        0, 
+        size_bytes, 
+        dst, 
+        0, 
+        nullptr, 
+        nullptr
+    );
+    
     if (err != CL_SUCCESS) {
         DRVGPU_LOG_ERROR("OpenCLBackend", "MemcpyDeviceToHost error: " + std::to_string(err));
     }
@@ -433,7 +483,18 @@ void OpenCLBackend::MemcpyDeviceToDevice(void* dst, const void* src, size_t size
     
     // clEnqueueCopyBuffer - копирует между буферами
     // Быстрее чем Read+Write, т.к. данные не покидают GPU
-    cl_int err = clEnqueueCopyBuffer(queue_, src_mem, dst_mem, 0, 0, size_bytes, 0, nullptr, nullptr);
+    cl_int err = clEnqueueCopyBuffer(
+        queue_, 
+        src_mem, 
+        dst_mem, 
+        0, 
+        0, 
+        size_bytes, 
+        0, 
+        nullptr, 
+        nullptr
+    );
+    
     if (err != CL_SUCCESS) {
         DRVGPU_LOG_ERROR("OpenCLBackend", "MemcpyDeviceToDevice error: " + std::to_string(err));
     }
@@ -499,6 +560,7 @@ bool OpenCLBackend::SupportsDoublePrecision() const {
     if (!OpenCLCore::IsInitialized()) {
         return false;
     }
+    
     // TODO: проверить расширения для double precision (cl_khr_fp64)
     return false;
 }
@@ -510,6 +572,7 @@ size_t OpenCLBackend::GetMaxWorkGroupSize() const {
     if (!OpenCLCore::IsInitialized()) {
         return 0;
     }
+    
     return OpenCLCore::GetInstance().GetMaxWorkGroupSize();
 }
 
@@ -520,6 +583,7 @@ size_t OpenCLBackend::GetGlobalMemorySize() const {
     if (!OpenCLCore::IsInitialized()) {
         return 0;
     }
+    
     return OpenCLCore::GetInstance().GetGlobalMemorySize();
 }
 
@@ -530,6 +594,7 @@ size_t OpenCLBackend::GetLocalMemorySize() const {
     if (!OpenCLCore::IsInitialized()) {
         return 0;
     }
+    
     return OpenCLCore::GetInstance().GetLocalMemorySize();
 }
 
@@ -624,7 +689,7 @@ GPUDeviceInfo OpenCLBackend::QueryDeviceInfo() const {
     info.driver_version = core.GetDriverVersion();
     
     // Версия OpenCL
-    info.opencl_version = std::to_string(core.GetOpenCLVersionMajor()) + "." + 
+    info.opencl_version = std::to_string(core.GetOpenCLVersionMajor()) + "." +
                           std::to_string(core.GetOpenCLVersionMinor());
     
     // Индекс устройства
@@ -633,7 +698,7 @@ GPUDeviceInfo OpenCLBackend::QueryDeviceInfo() const {
     // Память
     info.global_memory_size = core.GetGlobalMemorySize();
     info.local_memory_size = core.GetLocalMemorySize();
-    info.max_mem_alloc_size = core.GetGlobalMemorySize();  // TODO: уточнить
+    info.max_mem_alloc_size = core.GetGlobalMemorySize(); // TODO: уточнить
     
     // Вычислительные возможности
     info.max_compute_units = core.GetComputeUnits();
@@ -642,7 +707,7 @@ GPUDeviceInfo OpenCLBackend::QueryDeviceInfo() const {
     // Возможности
     info.supports_svm = core.IsSVMSupported();
     info.supports_double = SupportsDoublePrecision();
-    info.supports_half = false;  // TODO: добавить проверку cl_khr_fp16
+    info.supports_half = false; // TODO: добавить проверку cl_khr_fp16
     info.supports_unified_memory = SupportsSVM();
     
     return info;

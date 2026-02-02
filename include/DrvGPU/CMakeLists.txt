@@ -2,8 +2,7 @@
 # Упрощённый CMakeLists.txt для DrvGPU с новой структурой папок
 # ════════════════════════════════════════════════════════════════════
 
-cmake_minimum_required(VERSION 3.27)
-project(DrvGPU VERSION 1.1.0 LANGUAGES CXX)
+# DrvGPU as subdirectory - no project() to avoid subproject
 
 # ════════════════════════════════════════════════════════════════════
 # Настройки
@@ -17,7 +16,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # ════════════════════════════════════════════════════════════════════
 
 option(BUILD_SHARED_LIBS "Build shared library" OFF)
-option(BUILD_EXAMPLES "Build examples" ON)
+option(BUILD_EXAMPLES "Build standalone example executables" OFF)
 option(BUILD_EXTERNAL_CONTEXT_SUPPORT "Build External Context support" ON)
 
 # ════════════════════════════════════════════════════════════════════
@@ -44,11 +43,12 @@ if(DEFINED ENV{SPDLOG_ROOT})
     message(STATUS "Using spdlog from SPDLOG_ROOT: ${SPDLOG_ROOT}")
 endif()
 
-# Пробуем найти spdlog через CMake config или pkg-config
-find_package(spdlog CONFIG QUIET)
-if(NOT spdlog_FOUND)
-    # Если не найден, пробуем через FetchContent или указываем путь вручную
-    message(STATUS "spdlog not found via find_package, will use header-only mode")
+# spdlog: используем из parent или ищем
+if(NOT spdlog_FOUND AND NOT TARGET spdlog::spdlog)
+    find_package(spdlog CONFIG QUIET)
+endif()
+if(NOT spdlog_FOUND AND NOT TARGET spdlog::spdlog)
+    message(STATUS "spdlog: using header-only mode (no link)")
 endif()
 
 find_package(Threads REQUIRED)
@@ -61,6 +61,7 @@ find_package(Threads REQUIRED)
 set(DRVGPU_CORE_SOURCES
   "${CMAKE_CURRENT_SOURCE_DIR}/drv_gpu.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/module_registry.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/memory/memory_manager.cpp"
 )
 
 # Memory Module (абстрактная память)
@@ -71,6 +72,7 @@ set(DRVGPU_MEMORY_SOURCES
   "${CMAKE_CURRENT_SOURCE_DIR}/memory/memory_type.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/memory/svm_buffer.hpp"
 )
+set(DRVGPU_MEMORY_HEADERS ${DRVGPU_MEMORY_SOURCES})
 
 # OpenCL Backend (БАЗОВЫЙ)
 set(DRVGPU_OPENCL_SOURCES
@@ -165,8 +167,11 @@ target_include_directories(drvgpu
         ${OpenCL_INCLUDE_DIRS}
 )
 
-# Линковка spdlog (header-only mode)
-if(spdlog_FOUND)
+# Линковка spdlog (header-only mode или library)
+if(TARGET spdlog::spdlog)
+    target_link_libraries(drvgpu PUBLIC spdlog::spdlog)
+    message(STATUS "Using spdlog: TARGET")
+elseif(spdlog_FOUND)
     # Пробуем использовать header-only версию
     if(TARGET spdlog::spdlog_header_only)
         target_link_libraries(drvgpu PUBLIC spdlog::spdlog_header_only)
@@ -182,11 +187,17 @@ if(spdlog_FOUND)
         target_link_libraries(drvgpu PUBLIC fmt::fmt-header-only)
         message(STATUS "Using fmt: HEADER-ONLY")
     endif()
+elseif(DEFINED SPDLOG_ROOT)
+    target_include_directories(drvgpu PUBLIC "${SPDLOG_ROOT}/include")
+    message(STATUS "Using spdlog: HEADER-ONLY (${SPDLOG_ROOT})")
 else()
-    # Если spdlog не найден через find_package, добавляем путь к заголовкам
-    if(DEFINED SPDLOG_ROOT)
-        target_include_directories(drvgpu PUBLIC "${SPDLOG_ROOT}/include")
-        message(STATUS "Using spdlog: HEADER-ONLY (${SPDLOG_ROOT})")
+    # spdlog: ищем системные заголовки
+    find_path(SPDLOG_INCLUDE_DIR spdlog/spdlog.h PATHS /usr/include /usr/local/include)
+    if(SPDLOG_INCLUDE_DIR)
+        target_include_directories(drvgpu PUBLIC "${SPDLOG_INCLUDE_DIR}")
+        message(STATUS "Using spdlog: system headers")
+    else()
+        message(WARNING "spdlog not found! Install: sudo apt install libspdlog-dev")
     endif()
 endif()
 
@@ -222,21 +233,21 @@ add_library(DrvGPU::drvgpu ALIAS drvgpu)
 
 if(BUILD_EXAMPLES)
     # Single GPU пример (из tests/)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../tests/single_gpu.hpp")
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/single_gpu.hpp")
         add_executable(example_single_gpu 
-            "${CMAKE_CURRENT_SOURCE_DIR}/../tests/single_gpu.hpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/single_gpu.hpp"
         )
         target_link_libraries(example_single_gpu PRIVATE DrvGPU::drvgpu)
         target_include_directories(example_single_gpu PRIVATE 
             ${CMAKE_CURRENT_SOURCE_DIR}
-            ${CMAKE_CURRENT_SOURCE_DIR}/..
+            ${CMAKE_CURRENT_SOURCE_DIR}/../..
         )
     endif()
     
     # Multi-GPU пример (из tests/)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../tests/multi_gpu.hpp")
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/multi_gpu.hpp")
         add_executable(example_multi_gpu 
-            "${CMAKE_CURRENT_SOURCE_DIR}/../tests/multi_gpu.hpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/multi_gpu.hpp"
         )
         target_link_libraries(example_multi_gpu PRIVATE DrvGPU::drvgpu)
         target_include_directories(example_multi_gpu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -244,9 +255,9 @@ if(BUILD_EXAMPLES)
     
     # External Context пример (из tests/)
     if(BUILD_EXTERNAL_CONTEXT_SUPPORT)
-        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../tests/example_external_context_usage.hpp")
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/example_external_context_usage.hpp")
             add_executable(example_external_context 
-                "${CMAKE_CURRENT_SOURCE_DIR}/../tests/example_external_context_usage.hpp"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/example_external_context_usage.hpp"
             )
             target_link_libraries(example_external_context PRIVATE DrvGPU::drvgpu)
             target_include_directories(example_external_context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

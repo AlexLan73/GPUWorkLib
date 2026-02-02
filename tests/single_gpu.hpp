@@ -76,7 +76,11 @@ namespace example_drv_gpu_singl
       std::cout << "Read " << result.size() << " elements from GPU\n";
 
       // Проверить первые и последние элементы
-      std::cout << "First element: " << result[0] << "\n";
+      std::cout << "First element [0]: " << result[0] << "\n";
+      std::cout << "-  element [1]: " << result[1] << "\n";
+      std::cout << "-  element [2]: " << result[2] << "\n";
+      std::cout << "-  element [3]: " << result[3] << "\n";
+      std::cout << "-  element [4]: " << result[4] << "\n";
       std::cout << "Last element: " << result[N - 1] << "\n";
 
       // ═══════════════════════════════════════════════════════════════
