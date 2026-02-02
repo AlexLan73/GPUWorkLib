@@ -23,8 +23,8 @@
 #include "../../memory/memory_manager.hpp"
 #include "../../memory/svm_capabilities.hpp"
 
+#include <CL/cl.h>
 #include <memory>
-#include <string>
 #include <mutex>
 
 namespace drv_gpu_lib {
@@ -68,10 +68,8 @@ public:
     // ═══════════════════════════════════════════════════════════════
     // Запрет копирования, разрешение перемещения
     // ═══════════════════════════════════════════════════════════════
-    
     OpenCLBackend(const OpenCLBackend&) = delete;
     OpenCLBackend& operator=(const OpenCLBackend&) = delete;
-    
     OpenCLBackend(OpenCLBackend&& other) noexcept;
     OpenCLBackend& operator=(OpenCLBackend&& other) noexcept;
     
@@ -84,11 +82,35 @@ public:
     void Cleanup() override;
     
     // ═══════════════════════════════════════════════════════════════
+    // ✅ НОВОЕ: Реализация IBackend: Управление владением ресурсами
+    // ═══════════════════════════════════════════════════════════════
+    
+    /**
+     * @brief Установить режим владения OpenCL ресурсами
+     * 
+     * @param owns true = backend создал context/queue сам → освободит их
+     *             false = context/queue пришли извне → НЕ освободит
+     * 
+     * Устанавливается автоматически:
+     * - Initialize(device_index) → owns_resources_ = true
+     * - InitializeFromExternalContext() → owns_resources_ = false
+     * 
+     * Можно изменить вручную для специальных сценариев.
+     */
+    void SetOwnsResources(bool owns) override { owns_resources_ = owns; }
+    
+    /**
+     * @brief Проверить, владеет ли backend OpenCL ресурсами
+     * @return true если backend освободит context/queue при Cleanup()
+     */
+    bool OwnsResources() const override { return owns_resources_; }
+    
+    // ═══════════════════════════════════════════════════════════════
     // Реализация IBackend: Информация об устройстве
     // ═══════════════════════════════════════════════════════════════
     
-    BackendType GetType() const override { 
-        return BackendType::OPENCL; 
+    BackendType GetType() const override {
+        return BackendType::OPENCL;
     }
     
     GPUDeviceInfo GetDeviceInfo() const override;
@@ -110,12 +132,12 @@ public:
     void* Allocate(size_t size_bytes, unsigned int flags = 0) override;
     void Free(void* ptr) override;
     
-    void MemcpyHostToDevice(void* dst, const void* src, 
+    void MemcpyHostToDevice(void* dst, const void* src,
                            size_t size_bytes) override;
-    void MemcpyDeviceToHost(void* dst, const void* src, 
+    void MemcpyDeviceToHost(void* dst, const void* src,
                            size_t size_bytes) override;
-    void MemcpyDeviceToDevice(void* dst, const void* src, 
-                              size_t size_bytes) override;
+    void MemcpyDeviceToDevice(void* dst, const void* src,
+                             size_t size_bytes) override;
     
     // ═══════════════════════════════════════════════════════════════
     // Реализация IBackend: Синхронизация
@@ -161,13 +183,28 @@ public:
      */
     void InitializeCommandQueuePool(size_t num_queues = 0);
 
-private:
+protected:
     // ═══════════════════════════════════════════════════════════════
-    // Члены класса
+    // ✅ Protected члены для доступа из OpenCLBackendExternal
     // ═══════════════════════════════════════════════════════════════
     
     int device_index_;
     bool initialized_;
+    
+    /**
+     * ✅ НОВОЕ: Флаг владения OpenCL ресурсами
+     * 
+     * true (по умолчанию): Backend создал context/queue сам
+     *                      → освободит их в Cleanup()
+     * 
+     * false: Context/queue пришли извне (external context)
+     *        → НЕ освободит их в Cleanup()
+     * 
+     * Автоматически устанавливается:
+     * - Initialize() → true
+     * - InitializeFromExternalContext() → false (в наследнике)
+     */
+    bool owns_resources_;
     
     // Интеграция с вашим OpenCL кодом
     std::unique_ptr<drv_gpu_lib::MemoryManager> memory_manager_;
@@ -180,7 +217,8 @@ private:
     
     // Thread-safety
     mutable std::mutex mutex_;
-    
+
+private:
     // ═══════════════════════════════════════════════════════════════
     // Приватные методы
     // ═══════════════════════════════════════════════════════════════
@@ -188,8 +226,9 @@ private:
     void InitializeOpenCLCore();
     void InitializeMemoryManager();
     void InitializeSVMCapabilities();
+    
     GPUDeviceInfo QueryDeviceInfo() const;
-
+    
     // Дружественный класс для работы с внешним контекстом
     friend class OpenCLBackendExternal;
 };

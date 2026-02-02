@@ -1,7 +1,5 @@
 #include "opencl_backend_external.hpp"
 #include "../../common/logger.hpp"
-#include <iostream>
-#include <cstring>
 
 namespace drv_gpu_lib {
 
@@ -9,285 +7,148 @@ namespace drv_gpu_lib {
 // Конструктор и деструктор
 // ════════════════════════════════════════════════════════════════════════════
 
-OpenCLBackendExternal::OpenCLBackendExternal(
+/**
+ * @brief Создать external backend
+ * 
+ * ✅ КРИТИЧЕСКИ ВАЖНО: Устанавливает owns_resources_ = false ДО инициализации
+ * 
+ * По умолчанию:
+ * - owns_resources_ = false (НЕ освобождает ресурсы)
+ * - initialized_ = false (требуется InitializeFromExternalContext)
+ */
+OpenCLBackendExternal::OpenCLBackendExternal()
+    : OpenCLBackend() {
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // ✅ КРИТИЧЕСКИ ВАЖНО: Устанавливаем non-owning режим
+    // ═══════════════════════════════════════════════════════════════════════
+    // Родительский конструктор установил owns_resources_ = true
+    // Переопределяем на false для external контекста
+    owns_resources_ = false;
+    
+    DRVGPU_LOG_INFO("OpenCLBackendExternal", 
+        "Created in non-owning mode (owns_resources = false)");
+}
+
+/**
+ * @brief Деструктор
+ * 
+ * Родительский деструктор вызовет ~OpenCLBackend() → Cleanup()
+ * Cleanup() проверит owns_resources_ = false и НЕ освободит ресурсы
+ */
+OpenCLBackendExternal::~OpenCLBackendExternal() {
+    // Родительский деструктор вызовет Cleanup()
+    // Cleanup() увидит owns_resources_ = false и не освободит контекст/queue
+    DRVGPU_LOG_INFO("OpenCLBackendExternal", 
+        "Destructor called - parent will handle cleanup (non-owning)");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Инициализация из внешнего контекста
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * @brief Инициализировать из существующего OpenCL контекста
+ * 
+ * Процесс:
+ * 1. Валидация входных параметров
+ * 2. ✅ Подтверждаем owns_resources_ = false
+ * 3. Сохраняем внешние дескрипторы БЕЗ clRetain*
+ * 4. Инициализируем SVM capabilities
+ * 5. Создаём MemoryManager
+ * 6. Устанавливаем флаг initialized_
+ * 
+ * @param external_context Ваш cl_context
+ * @param external_device Ваш cl_device_id  
+ * @param external_queue Ваш cl_command_queue
+ */
+void OpenCLBackendExternal::InitializeFromExternalContext(
     cl_context external_context,
     cl_device_id external_device,
-    cl_command_queue external_queue,
-    bool owns_resources)
-    : OpenCLBackend()  // Вызываем базовый конструктор
-    , is_external_context_(true)
-    , owns_resources_(owns_resources)
-    , external_context_(external_context)
-    , external_device_(external_device)
-    , external_queue_(external_queue)
-{
+    cl_command_queue external_queue) {
+    
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // ═══════════════════════════════════════════════════════════════════════
     // Валидация входных параметров
-    if (!external_context_ || !external_device_ || !external_queue_) {
+    // ═══════════════════════════════════════════════════════════════════════
+    if (!external_context || !external_device || !external_queue) {
         throw std::invalid_argument(
-            "OpenCLBackendExternal: external context, device, and queue must not be null"
+            "OpenCLBackendExternal::InitializeFromExternalContext - "
+            "All parameters (context, device, queue) must be non-null"
         );
     }
-
-    DRVGPU_LOG_INFO("OpenCLBackendExternal", "Created with external OpenCL context, owns resources: " + 
-        std::string(owns_resources_ ? "YES" : "NO"));
-}
-
-OpenCLBackendExternal::~OpenCLBackendExternal() {
-    // Cleanup вызовется автоматически
-    // Внешние ресурсы НЕ будут уничтожены (если owns_resources_ = false)
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Инициализация с внешним контекстом
-// ════════════════════════════════════════════════════════════════════════════
-
-void OpenCLBackendExternal::InitializeWithExternalContext() {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex_));
-
-    if (IsInitialized()) {
-        DRVGPU_LOG_WARNING("OpenCLBackendExternal", "Already initialized, cleaning up first");
-        Cleanup();
-    }
-
-    DRVGPU_LOG_INFO("OpenCLBackendExternal", "Initializing with external context...");
-
-    // 1. Валидация внешних объектов
-    ValidateExternalObjects();
-
-    // 2. Установить внутренние указатели на внешние объекты
-    // (переопределяем члены базового класса OpenCLBackend)
-    context_ = external_context_;
-    device_ = external_device_;
-    queue_ = external_queue_;
-    device_index_ = 0;  // Внешний контекст - считаем device 0
-
-    // 3. Инициализировать SVM capabilities для устройства
+    
+    DRVGPU_LOG_INFO("OpenCLBackendExternal", 
+        "Initializing from external OpenCL context");
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // ✅ КРИТИЧЕСКИ ВАЖНО: Подтверждаем non-owning режим
+    // ═══════════════════════════════════════════════════════════════════════
+    // Должно быть false из конструктора, но явно устанавливаем для надёжности
+    owns_resources_ = false;
+    
+    DRVGPU_LOG_INFO("OpenCLBackendExternal", 
+        "owns_resources_ = false (external resources will NOT be released)");
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // Сохраняем внешние дескрипторы БЕЗ clRetain*
+    // ═══════════════════════════════════════════════════════════════════════
+    // ✅ НЕ вызываем clRetainContext/clRetainDevice/clRetainCommandQueue!
+    // Внешний код управляет lifetime этих объектов
+    
+    context_ = external_context;
+    device_ = external_device;
+    queue_ = external_queue;
+    
+    DRVGPU_LOG_INFO("OpenCLBackendExternal", 
+        "External OpenCL handles saved (context, device, queue) - NON-OWNING");
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // Инициализируем SVM capabilities
+    // ═══════════════════════════════════════════════════════════════════════
     svm_capabilities_ = std::make_unique<SVMCapabilities>(
-        SVMCapabilities::Query(external_device_)
+        SVMCapabilities::Query(device_)
     );
-
-    // 4. Инициализировать MemoryManager (будет работать с внешним контекстом)
+    
+    DRVGPU_LOG_INFO("OpenCLBackendExternal", "SVM capabilities initialized");
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // Инициализируем MemoryManager
+    // ═══════════════════════════════════════════════════════════════════════
     memory_manager_ = std::make_unique<MemoryManager>(this);
-
-    // 5. Установить флаг инициализации
+    
+    DRVGPU_LOG_INFO("OpenCLBackendExternal", "MemoryManager initialized");
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // Завершение
+    // ═══════════════════════════════════════════════════════════════════════
     initialized_ = true;
-
-    DRVGPU_LOG_INFO("OpenCLBackendExternal", "Initialized successfully, device: " + GetDeviceName());
-
-    // Вывести SVM capabilities
-    if (svm_capabilities_->HasAnySVM()) {
-        DRVGPU_LOG_INFO("OpenCLBackendExternal", "SVM supported: YES");
-        DRVGPU_LOG_DEBUG("OpenCLBackendExternal", svm_capabilities_->ToString());
-    } else {
-        DRVGPU_LOG_INFO("OpenCLBackendExternal", "SVM not supported (using regular buffers)");
-    }
+    device_index_ = 0;  // External контекст = виртуальный device 0
+    
+    DRVGPU_LOG_INFO("OpenCLBackendExternal", 
+        "✅ Successfully initialized from external OpenCL context (owns_resources = false)");
+    DRVGPU_LOG_INFO("OpenCLBackendExternal", 
+        "⚠️  External code MUST release context/device/queue after use!");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Override Cleanup для безопасной работы с внешними ресурсами
+// Блокировка обычной инициализации
 // ════════════════════════════════════════════════════════════════════════════
 
-void OpenCLBackendExternal::Cleanup() {
-    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(mutex_));
-
-    if (!IsInitialized()) {
-        return;
-    }
-
-    DRVGPU_LOG_INFO("OpenCLBackendExternal", "Cleanup...");
-
-    // Очистить внутренние менеджеры
-    svm_capabilities_.reset();
-    memory_manager_.reset();
-
-    // КРИТИЧЕСКИ ВАЖНО: НЕ уничтожаем внешние объекты!
-    if (!owns_resources_) {
-        DRVGPU_LOG_INFO("OpenCLBackendExternal", "External resources preserved (not owned)");
-        // Просто обнуляем указатели (не вызываем clRelease*)
-        context_ = nullptr;
-        device_ = nullptr;
-        queue_ = nullptr;
-    } else {
-        DRVGPU_LOG_INFO("OpenCLBackendExternal", "Releasing owned resources...");
-        // Вызываем базовый Cleanup только если мы владеем ресурсами
-        OpenCLBackend::Cleanup();
-    }
-
-    initialized_ = false;
-    DRVGPU_LOG_INFO("OpenCLBackendExternal", "Cleanup complete");
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Утилиты для работы с внешними буферами
-// ════════════════════════════════════════════════════════════════════════════
-
-void OpenCLBackendExternal::WriteToExternalBuffer(
-    cl_mem external_cl_mem,
-    const void* host_data,
-    size_t size_bytes,
-    bool blocking)
-{
-    if (!external_cl_mem || !host_data) {
-        throw std::invalid_argument("WriteToExternalBuffer: null parameters");
-    }
-
-    if (!IsInitialized()) {
-        throw std::runtime_error("WriteToExternalBuffer: backend not initialized");
-    }
-
-    // Используем OpenCL API напрямую
-    cl_int err = clEnqueueWriteBuffer(
-        external_queue_,
-        external_cl_mem,
-        blocking ? CL_TRUE : CL_FALSE,
-        0,                  // offset
-        size_bytes,
-        host_data,
-        0,                  // num_events_in_wait_list
-        nullptr,            // event_wait_list
-        nullptr             // event
+/**
+ * @brief ЗАБЛОКИРОВАНО для external backend
+ * 
+ * External backend должен использовать InitializeFromExternalContext(),
+ * а не обычную Initialize(device_index).
+ */
+void OpenCLBackendExternal::Initialize(int device_index) {
+    (void)device_index;
+    
+    throw std::runtime_error(
+        "OpenCLBackendExternal::Initialize(device_index) is not supported.\n"
+        "Use InitializeFromExternalContext(context, device, queue) instead."
     );
-
-    if (err != CL_SUCCESS) {
-        throw std::runtime_error(
-            "WriteToExternalBuffer: clEnqueueWriteBuffer failed with error " + 
-            std::to_string(err)
-        );
-    }
-}
-
-void OpenCLBackendExternal::ReadFromExternalBuffer(
-    cl_mem external_cl_mem,
-    void* host_dest,
-    size_t size_bytes,
-    bool blocking)
-{
-    if (!external_cl_mem || !host_dest) {
-        throw std::invalid_argument("ReadFromExternalBuffer: null parameters");
-    }
-
-    if (!IsInitialized()) {
-        throw std::runtime_error("ReadFromExternalBuffer: backend not initialized");
-    }
-
-    cl_int err = clEnqueueReadBuffer(
-        external_queue_,
-        external_cl_mem,
-        blocking ? CL_TRUE : CL_FALSE,
-        0,                  // offset
-        size_bytes,
-        host_dest,
-        0,                  // num_events_in_wait_list
-        nullptr,            // event_wait_list
-        nullptr             // event
-    );
-
-    if (err != CL_SUCCESS) {
-        throw std::runtime_error(
-            "ReadFromExternalBuffer: clEnqueueReadBuffer failed with error " + 
-            std::to_string(err)
-        );
-    }
-}
-
-void OpenCLBackendExternal::CopyExternalBuffers(
-    cl_mem src_cl_mem,
-    cl_mem dst_cl_mem,
-    size_t size_bytes)
-{
-    if (!src_cl_mem || !dst_cl_mem) {
-        throw std::invalid_argument("CopyExternalBuffers: null buffers");
-    }
-
-    if (!IsInitialized()) {
-        throw std::runtime_error("CopyExternalBuffers: backend not initialized");
-    }
-
-    cl_int err = clEnqueueCopyBuffer(
-        external_queue_,
-        src_cl_mem,
-        dst_cl_mem,
-        0,                  // src_offset
-        0,                  // dst_offset
-        size_bytes,
-        0,                  // num_events_in_wait_list
-        nullptr,            // event_wait_list
-        nullptr             // event
-    );
-
-    if (err != CL_SUCCESS) {
-        throw std::runtime_error(
-            "CopyExternalBuffers: clEnqueueCopyBuffer failed with error " + 
-            std::to_string(err)
-        );
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Приватные методы
-// ════════════════════════════════════════════════════════════════════════════
-
-void OpenCLBackendExternal::ValidateExternalObjects() {
-    // Проверка context
-    if (!external_context_) {
-        throw std::runtime_error("External cl_context is null");
-    }
-
-    // Проверка device
-    if (!external_device_) {
-        throw std::runtime_error("External cl_device_id is null");
-    }
-
-    // Проверка queue
-    if (!external_queue_) {
-        throw std::runtime_error("External cl_command_queue is null");
-    }
-
-    // Дополнительная валидация: проверить что device принадлежит context
-    cl_context queue_context = nullptr;
-    cl_int err = clGetCommandQueueInfo(
-        external_queue_,
-        CL_QUEUE_CONTEXT,
-        sizeof(cl_context),
-        &queue_context,
-        nullptr
-    );
-
-    if (err != CL_SUCCESS) {
-        throw std::runtime_error(
-            "Failed to query command queue context: error " + std::to_string(err)
-        );
-    }
-
-    if (queue_context != external_context_) {
-        throw std::runtime_error(
-            "Command queue context does not match provided context"
-        );
-    }
-
-    DRVGPU_LOG_INFO("OpenCLBackendExternal", "External objects validated successfully");
-}
-
-size_t OpenCLBackendExternal::GetBufferSize(cl_mem buffer) const {
-    if (!buffer) {
-        return 0;
-    }
-
-    size_t size = 0;
-    cl_int err = clGetMemObjectInfo(
-        buffer,
-        CL_MEM_SIZE,
-        sizeof(size_t),
-        &size,
-        nullptr
-    );
-
-    if (err != CL_SUCCESS) {
-        DRVGPU_LOG_ERROR("OpenCLBackendExternal", "GetBufferSize failed: " + std::to_string(err));
-        return 0;
-    }
-
-    return size;
 }
 
 } // namespace drv_gpu_lib

@@ -20,14 +20,15 @@
 #include "backend_type.hpp"
 #include "load_balancing.hpp"
 #include "common/logger.hpp"
+
 #include <vector>
 #include <memory>
-#include <string>
 #include <mutex>
 #include <atomic>
 #include <stdexcept>
-#include <sstream>
 #include <iostream>
+#include <sstream>
+#include <algorithm>
 
 namespace drv_gpu_lib {
 
@@ -87,10 +88,8 @@ public:
     // ═══════════════════════════════════════════════════════════════
     // Запрет копирования, разрешение перемещения
     // ═══════════════════════════════════════════════════════════════
-    
     GPUManager(const GPUManager&) = delete;
     GPUManager& operator=(const GPUManager&) = delete;
-    
     GPUManager(GPUManager&& other) noexcept;
     GPUManager& operator=(GPUManager&& other) noexcept;
     
@@ -269,6 +268,12 @@ private:
      * @brief Получить индекс наименее загруженной GPU
      */
     size_t GetLeastLoadedGPUIndex() const;
+    
+    /**
+     * @brief Внутренний метод очистки БЕЗ блокировки mutex
+     * ✅ DEADLOCK FIX: используется изнутри методов, которые уже держат lock
+     */
+    void CleanupInternal();
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -282,6 +287,7 @@ inline GPUManager::GPUManager()
 }
 
 inline GPUManager::~GPUManager() {
+    // ✅ Деструктор вызывает публичный Cleanup (с блокировкой)
     Cleanup();
 }
 
@@ -295,21 +301,26 @@ inline GPUManager::GPUManager(GPUManager&& other) noexcept
 
 inline GPUManager& GPUManager::operator=(GPUManager&& other) noexcept {
     if (this != &other) {
+        // ✅ FIX: Вызываем публичный Cleanup (с блокировкой)
         Cleanup();
+        
         backend_type_ = other.backend_type_;
         lb_strategy_ = other.lb_strategy_;
         gpus_ = std::move(other.gpus_);
         round_robin_index_ = other.round_robin_index_.load();
         gpu_task_count_ = std::move(other.gpu_task_count_);
     }
+    
     return *this;
 }
 
 inline void GPUManager::InitializeAll(BackendType backend_type) {
     std::lock_guard<std::mutex> lock(mutex_);
+    
     backend_type_ = backend_type;
     
-    Cleanup();
+    // ✅ FIX: Вызываем ВНУТРЕННИЙ метод (БЕЗ блокировки)
+    CleanupInternal();
     
     int gpu_count = DiscoverGPUs(backend_type);
     if (gpu_count == 0) {
@@ -323,12 +334,14 @@ inline void GPUManager::InitializeAll(BackendType backend_type) {
     DRVGPU_LOG_INFO("GPUManager", "Initialized " + std::to_string(gpus_.size()) + " GPU(s)");
 }
 
-inline void GPUManager::InitializeSpecific(BackendType backend_type, 
-                                           const std::vector<int>& device_indices) {
+inline void GPUManager::InitializeSpecific(BackendType backend_type,
+                                          const std::vector<int>& device_indices) {
     std::lock_guard<std::mutex> lock(mutex_);
+    
     backend_type_ = backend_type;
     
-    Cleanup();
+    // ✅ FIX: Вызываем ВНУТРЕННИЙ метод (БЕЗ блокировки)
+    CleanupInternal();
     
     for (int index : device_indices) {
         InitializeGPU(index);
@@ -337,32 +350,70 @@ inline void GPUManager::InitializeSpecific(BackendType backend_type,
     DRVGPU_LOG_INFO("GPUManager", "Initialized " + std::to_string(gpus_.size()) + " specific GPU(s)");
 }
 
-inline void GPUManager::Cleanup() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    gpus_.clear();
+// ════════════════════════════════════════════════════════════════════════════
+// ✅ DEADLOCK FIX: Два варианта метода Cleanup
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * @brief Внутренний метод очистки БЕЗ блокировки
+ * Используется изнутри других методов, которые уже держат lock
+ */
+inline void GPUManager::CleanupInternal() {
+    // ✅ БЕЗ std::lock_guard - предполагается что mutex уже заблокирован!
+    
+    std::vector<std::unique_ptr<DrvGPU>> temp_gpus;
+    
+    // Перемещаем gpus_ во временный вектор
+    temp_gpus = std::move(gpus_);
+    
+    // Очищаем метаданные
     gpu_task_count_.clear();
     round_robin_index_ = 0;
-    DRVGPU_LOG_INFO("GPUManager", "Cleanup complete");
+    
+    DRVGPU_LOG_INFO("GPUManager", "CleanupInternal: GPU instances moved, will be destroyed on scope exit");
+    
+    // temp_gpus автоматически очистится при выходе из scope
+    // Деструкторы ~DrvGPU() вызовутся здесь
 }
+
+/**
+ * @brief Публичный метод очистки С блокировкой
+ * Используется извне (из деструктора, пользовательского кода)
+ */
+inline void GPUManager::Cleanup() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // Вызываем внутренний метод
+    CleanupInternal();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Остальные методы (без изменений)
+// ════════════════════════════════════════════════════════════════════════════
 
 inline DrvGPU& GPUManager::GetGPU(size_t index) {
     std::lock_guard<std::mutex> lock(mutex_);
+    
     if (index >= gpus_.size()) {
         throw std::out_of_range("GPU index out of range");
     }
+    
     return *gpus_[index];
 }
 
 inline const DrvGPU& GPUManager::GetGPU(size_t index) const {
     std::lock_guard<std::mutex> lock(mutex_);
+    
     if (index >= gpus_.size()) {
         throw std::out_of_range("GPU index out of range");
     }
+    
     return *gpus_[index];
 }
 
 inline DrvGPU& GPUManager::GetNextGPU() {
     std::lock_guard<std::mutex> lock(mutex_);
+    
     if (gpus_.empty()) {
         throw std::runtime_error("No GPUs initialized");
     }
@@ -373,27 +424,32 @@ inline DrvGPU& GPUManager::GetNextGPU() {
 
 inline DrvGPU& GPUManager::GetLeastLoadedGPU() {
     std::lock_guard<std::mutex> lock(mutex_);
+    
     size_t least_loaded_idx = GetLeastLoadedGPUIndex();
     return *gpus_[least_loaded_idx];
 }
 
 inline std::vector<DrvGPU*> GPUManager::GetAllGPUs() {
     std::lock_guard<std::mutex> lock(mutex_);
+    
     std::vector<DrvGPU*> result;
     result.reserve(gpus_.size());
     for (auto& gpu : gpus_) {
         result.push_back(gpu.get());
     }
+    
     return result;
 }
 
 inline std::vector<const DrvGPU*> GPUManager::GetAllGPUs() const {
     std::lock_guard<std::mutex> lock(mutex_);
+    
     std::vector<const DrvGPU*> result;
     result.reserve(gpus_.size());
     for (auto& gpu : gpus_) {
         result.push_back(gpu.get());
     }
+    
     return result;
 }
 
@@ -414,6 +470,7 @@ inline void GPUManager::SetLoadBalancingStrategy(LoadBalancingStrategy strategy)
 
 inline void GPUManager::SynchronizeAll() {
     std::lock_guard<std::mutex> lock(mutex_);
+    
     for (auto& gpu : gpus_) {
         gpu->Synchronize();
     }
@@ -421,6 +478,7 @@ inline void GPUManager::SynchronizeAll() {
 
 inline void GPUManager::FlushAll() {
     std::lock_guard<std::mutex> lock(mutex_);
+    
     for (auto& gpu : gpus_) {
         gpu->Flush();
     }
@@ -429,7 +487,6 @@ inline void GPUManager::FlushAll() {
 inline void GPUManager::PrintStatistics() const {
     std::cout << "\n=== GPU Manager Statistics ===\n";
     std::cout << "Total GPUs: " << gpus_.size() << "\n";
-    
     size_t idx = 0;
     for (const auto& gpu : gpus_) {
         std::cout << "GPU " << idx << ": " << gpu->GetDeviceName() << "\n";
@@ -449,6 +506,7 @@ inline std::string GPUManager::GetStatistics() const {
 
 inline void GPUManager::ResetStatistics() {
     std::lock_guard<std::mutex> lock(mutex_);
+    
     for (auto& gpu : gpus_) {
         gpu->ResetStatistics();
     }
@@ -478,7 +536,6 @@ inline void GPUManager::InitializeGPU(int device_index) {
 inline size_t GPUManager::GetLeastLoadedGPUIndex() const {
     size_t min_tasks = SIZE_MAX;
     size_t min_idx = 0;
-    
     for (size_t i = 0; i < gpu_task_count_.size(); ++i) {
         size_t tasks = gpu_task_count_[i];
         if (tasks < min_tasks) {
@@ -486,8 +543,13 @@ inline size_t GPUManager::GetLeastLoadedGPUIndex() const {
             min_idx = i;
         }
     }
-    
     return min_idx;
+}
+
+inline int GPUManager::GetAvailableGPUCount(BackendType backend_type) {
+    (void)backend_type;
+    // TODO: реализовать реальное обнаружение
+    return 1;
 }
 
 } // namespace drv_gpu_lib

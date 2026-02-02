@@ -2,7 +2,7 @@
 
 /**
  * @file i_backend.hpp
- * @brief Абстрактный интерфейс для бэкендов (OpenCL, CUDA, Vulkan)
+ * @brief Абстрактный интерфейс для бэкендов (OpenCL, CUDA, ROCm)
  * 
  * IBackend - ключевая абстракция в DrvGPU, реализующая Bridge Pattern.
  * Позволяет переключаться между бэкендами без изменения клиентского кода.
@@ -13,6 +13,7 @@
 
 #include "backend_type.hpp"
 #include "gpu_device_info.hpp"
+
 #include <string>
 #include <cstddef>
 
@@ -26,7 +27,7 @@ namespace drv_gpu_lib {
  * @interface IBackend
  * @brief Абстрактный интерфейс для всех GPU бэкендов
  * 
- * Каждый бэкенд (OpenCL, CUDA, Vulkan) реализует этот интерфейс,
+ * Каждый бэкенд (OpenCL, CUDA, ROCm) реализует этот интерфейс,
  * предоставляя единообразный API для DrvGPU.
  * 
  * Паттерн: Bridge (отделяет абстракцию от реализации)
@@ -64,8 +65,60 @@ public:
     
     /**
      * @brief Очистить ресурсы бэкенда
+     * 
+     * ✅ ВАЖНО: Учитывает владение ресурсами (owns_resources_).
+     * Если backend создал ресурсы сам - освобождает их.
+     * Если ресурсы пришли извне - только обнуляет указатели.
      */
     virtual void Cleanup() = 0;
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // ✅ НОВОЕ: Управление владением ресурсами (для внешней интеграции)
+    // ═══════════════════════════════════════════════════════════════════════
+    
+    /**
+     * @brief Установить режим владения ресурсами
+     * 
+     * @param owns true = backend создал ресурсы сам и должен их освободить
+     *             false = ресурсы пришли извне, backend только использует их
+     * 
+     * Примеры использования:
+     * 
+     * @code
+     * // Сценарий 1: Backend создаёт контекст сам
+     * auto backend = std::make_unique<OpenCLBackend>();
+     * backend->Initialize(0);  // owns_resources_ = true (по умолчанию)
+     * // Backend освободит контекст при Cleanup()
+     * 
+     * // Сценарий 2: Используем внешний контекст
+     * auto backend = std::make_unique<OpenCLBackendExternal>();
+     * backend->InitializeFromExternalContext(ctx, dev, queue);
+     * // owns_resources_ = false автоматически
+     * // Backend НЕ освободит контекст при Cleanup()
+     * 
+     * // Сценарий 3: Явное управление
+     * backend->SetOwnsResources(false);  // Принудительно non-owning
+     * @endcode
+     */
+    virtual void SetOwnsResources(bool owns) = 0;
+    
+    /**
+     * @brief Проверить, владеет ли backend ресурсами
+     * 
+     * @return true если backend создал ресурсы и освободит их при Cleanup()
+     *         false если ресурсы внешние и backend их не освобождает
+     * 
+     * Используется для отладки и проверки корректности интеграции:
+     * 
+     * @code
+     * if (backend->OwnsResources()) {
+     *     std::cout << "Backend will release resources\n";
+     * } else {
+     *     std::cout << "External code must release resources\n";
+     * }
+     * @endcode
+     */
+    virtual bool OwnsResources() const = 0;
     
     // ═══════════════════════════════════════════════════════════════════════
     // Информация об устройстве
@@ -100,6 +153,7 @@ public:
      * OpenCL: возвращает cl_context
      * CUDA: возвращает CUcontext
      * Vulkan: возвращает VkDevice
+     * ROCm: возвращает hipCtx_t
      */
     virtual void* GetNativeContext() const = 0;
     
@@ -108,6 +162,7 @@ public:
      * OpenCL: возвращает cl_device_id
      * CUDA: возвращает CUdevice
      * Vulkan: возвращает VkPhysicalDevice
+     * ROCm: возвращает hipDevice_t
      */
     virtual void* GetNativeDevice() const = 0;
     
@@ -116,6 +171,7 @@ public:
      * OpenCL: возвращает cl_command_queue
      * CUDA: возвращает CUstream
      * Vulkan: возвращает VkQueue
+     * ROCm: возвращает hipStream_t
      */
     virtual void* GetNativeQueue() const = 0;
     
@@ -140,20 +196,20 @@ public:
     /**
      * @brief Копировать данные Host -> Device
      */
-    virtual void MemcpyHostToDevice(void* dst, const void* src, 
-                                    size_t size_bytes) = 0;
+    virtual void MemcpyHostToDevice(void* dst, const void* src,
+                                   size_t size_bytes) = 0;
     
     /**
      * @brief Копировать данные Device -> Host
      */
-    virtual void MemcpyDeviceToHost(void* dst, const void* src, 
-                                    size_t size_bytes) = 0;
+    virtual void MemcpyDeviceToHost(void* dst, const void* src,
+                                   size_t size_bytes) = 0;
     
     /**
      * @brief Копировать данные Device -> Device
      */
-    virtual void MemcpyDeviceToDevice(void* dst, const void* src, 
-                                      size_t size_bytes) = 0;
+    virtual void MemcpyDeviceToDevice(void* dst, const void* src,
+                                     size_t size_bytes) = 0;
     
     // ═══════════════════════════════════════════════════════════════════════
     // Синхронизация
@@ -199,4 +255,4 @@ public:
     virtual size_t GetLocalMemorySize() const = 0;
 };
 
-} // namespace DrvGPU
+} // namespace drv_gpu_lib

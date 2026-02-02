@@ -71,7 +71,9 @@ CMakeUserPresets.json
 *.tmp
 *.temp
 *.log
+Logs/
 
 # OS
 .DS_Store
 Thumbs.db
+
