@@ -1,0 +1,54 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# tests/antenna/CMakeLists.txt
+# Тесты для Antenna FFT Module
+# ═══════════════════════════════════════════════════════════════════════════
+
+cmake_minimum_required(VERSION 3.15)
+
+message(STATUS "[AntennaTests] Configuring Antenna Module Tests")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Исполняемый файл теста
+# ═══════════════════════════════════════════════════════════════════════════
+
+add_executable(test_antenna_module
+    test_antenna_module.cpp
+)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Линковка с библиотеками
+# ═══════════════════════════════════════════════════════════════════════════
+
+target_link_libraries(test_antenna_module
+    PRIVATE
+        drv_gpu_lib          # Основная библиотека DrvGPU
+        antenna_module       # Antenna модуль
+        OpenCL::OpenCL       # OpenCL
+        clFFT                # clFFT
+)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Include директории
+# ═══════════════════════════════════════════════════════════════════════════
+
+target_include_directories(test_antenna_module
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/modules/antenna/include
+)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# C++ стандарт
+# ═══════════════════════════════════════════════════════════════════════════
+
+target_compile_features(test_antenna_module PRIVATE cxx_std_17)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Установка в build/bin
+# ═══════════════════════════════════════════════════════════════════════════
+
+set_target_properties(test_antenna_module PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+message(STATUS "[AntennaTests] Antenna Module Tests configured ✅")

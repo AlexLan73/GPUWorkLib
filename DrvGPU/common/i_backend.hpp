@@ -18,6 +18,7 @@
 #include <cstddef>
 
 namespace drv_gpu_lib {
+class MemoryManager;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Interface: IBackend - абстракция GPU бэкенда
@@ -174,6 +175,13 @@ public:
      * ROCm: возвращает hipStream_t
      */
     virtual void* GetNativeQueue() const = 0;
+    
+    /**
+     * @brief Получить менеджер памяти (для создания буферов)
+     * @return Указатель на MemoryManager или nullptr если не поддерживается
+     */
+    virtual MemoryManager* GetMemoryManager() { return nullptr; }
+    virtual const MemoryManager* GetMemoryManager() const { return nullptr; }
     
     // ═══════════════════════════════════════════════════════════════════════
     // Управление памятью (базовые операции)

@@ -54,6 +54,12 @@ if(TARGET DrvGPU::VectorOps)
     message(STATUS "✅ Linked: DrvGPU::VectorOps")
 endif()
 
+# Search3 module (для test_search_3)
+if(TARGET DrvGPU::Search)
+    target_link_libraries(GPUWorkLib PRIVATE DrvGPU::Search)
+    message(STATUS "✅ Linked: DrvGPU::Search")
+endif()
+
 # ============================================================================
 # OpenCL - ПРАВИЛЬНЫЙ СПОСОБ через imported target
 # ============================================================================
@@ -107,6 +113,7 @@ target_include_directories(GPUWorkLib PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/DrvGPU
     ${CMAKE_SOURCE_DIR}/modules/example/include
+    ${CMAKE_SOURCE_DIR}/modules/search_maxim/include
 )
 #    ${CMAKE_SOURCE_DIR}/include/ManagerOpenCL
 #    ${CMAKE_SOURCE_DIR}/include/GPU

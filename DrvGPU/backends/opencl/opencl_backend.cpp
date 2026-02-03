@@ -460,11 +460,19 @@ const OpenCLCore& OpenCLBackend::GetCore() const {
     return OpenCLCore::GetInstance();
 }
 
-MemoryManager& OpenCLBackend::GetMemoryManager() {
+MemoryManager* OpenCLBackend::GetMemoryManager() {
+    return memory_manager_.get();
+}
+
+const MemoryManager* OpenCLBackend::GetMemoryManager() const {
+    return memory_manager_.get();
+}
+
+MemoryManager& OpenCLBackend::GetMemoryManagerRef() {
     return *memory_manager_;
 }
 
-const MemoryManager& OpenCLBackend::GetMemoryManager() const {
+const MemoryManager& OpenCLBackend::GetMemoryManagerRef() const {
     return *memory_manager_;
 }
 

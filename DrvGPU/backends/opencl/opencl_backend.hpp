@@ -169,8 +169,11 @@ public:
     /**
      * @brief Получить MemoryManager (ваш класс)
      */
-    drv_gpu_lib::MemoryManager& GetMemoryManager();
-    const drv_gpu_lib::MemoryManager& GetMemoryManager() const;
+    drv_gpu_lib::MemoryManager* GetMemoryManager() override;
+    const drv_gpu_lib::MemoryManager* GetMemoryManager() const override;
+    
+    drv_gpu_lib::MemoryManager& GetMemoryManagerRef();
+    const drv_gpu_lib::MemoryManager& GetMemoryManagerRef() const;
     
     /**
      * @brief Получить SVMCapabilities
