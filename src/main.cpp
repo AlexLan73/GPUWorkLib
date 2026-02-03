@@ -3,6 +3,7 @@
 #include "../tests/single_gpu.hpp"
 #include "../tests/multi_gpu.hpp"
 #include "../tests/example_external_context_usage.hpp"
+#include "../tests/test_vector_ops.hpp"
 
 //int main(int argc, char* argv[]) {
 int main() {
@@ -15,9 +16,9 @@ int main() {
 
   
 //  example_drv_gpu_multi::run();
-  external_context_example::run();
+//  external_context_example::run();
 
-  
+  test_example_mat::run();  
   return 0;
 }
 
