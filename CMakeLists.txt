@@ -18,8 +18,8 @@ message(STATUS "║  Platform: ${PLATFORM_NAME}  |  OpenCL: ${OPENCL_ENABLED}   
 message(STATUS "╚══════════════════════════════════════════════════════════╝")
 message(STATUS "")
 
-# DrvGPU library (include/DrvGPU)
-add_subdirectory(include/DrvGPU)
+# DrvGPU library (корневая)
+add_subdirectory(DrvGPU)
 
 # Main executable (src/)
 add_subdirectory(src)

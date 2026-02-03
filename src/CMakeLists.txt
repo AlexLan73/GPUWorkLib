@@ -101,10 +101,12 @@ endif()
 # ============================================================================
 
 target_include_directories(GPUWorkLib PRIVATE
+    ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/include/interface
     ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/tests
+    ${CMAKE_SOURCE_DIR}/DrvGPU
+    ${CMAKE_SOURCE_DIR}/modules/example/include
 )
 #    ${CMAKE_SOURCE_DIR}/include/ManagerOpenCL
 #    ${CMAKE_SOURCE_DIR}/include/GPU

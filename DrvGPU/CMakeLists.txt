@@ -228,44 +228,44 @@ target_compile_definitions(drvgpu PUBLIC SPDLOG_HEADER_ONLY)
 add_library(DrvGPU::drvgpu ALIAS drvgpu)
 
 # ════════════════════════════════════════════════════════════════════
-# Модули (VectorOps и др.)
+# Модули (VectorOps и др.) - в корне проекта
 # ════════════════════════════════════════════════════════════════════
-add_subdirectory(modules)
+add_subdirectory(${CMAKE_SOURCE_DIR}/modules ${CMAKE_BINARY_DIR}/modules)
 
 # ════════════════════════════════════════════════════════════════════
 # Примеры
 # ════════════════════════════════════════════════════════════════════
 
 if(BUILD_EXAMPLES)
-    # Single GPU пример (из tests/)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/single_gpu.hpp")
+    # Single GPU пример (из DrvGPU/tests/)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/single_gpu.hpp")
         add_executable(example_single_gpu 
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/single_gpu.hpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/single_gpu.hpp"
         )
         target_link_libraries(example_single_gpu PRIVATE DrvGPU::drvgpu)
         target_include_directories(example_single_gpu PRIVATE 
             ${CMAKE_CURRENT_SOURCE_DIR}
-            ${CMAKE_CURRENT_SOURCE_DIR}/../..
+            ${CMAKE_SOURCE_DIR}
         )
     endif()
     
-    # Multi-GPU пример (из tests/)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/multi_gpu.hpp")
+    # Multi-GPU пример (из DrvGPU/tests/)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/multi_gpu.hpp")
         add_executable(example_multi_gpu 
-            "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/multi_gpu.hpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/multi_gpu.hpp"
         )
         target_link_libraries(example_multi_gpu PRIVATE DrvGPU::drvgpu)
-        target_include_directories(example_multi_gpu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        target_include_directories(example_multi_gpu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR})
     endif()
     
-    # External Context пример (из tests/)
+    # External Context пример (из DrvGPU/tests/)
     if(BUILD_EXTERNAL_CONTEXT_SUPPORT)
-        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/example_external_context_usage.hpp")
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/example_external_context_usage.hpp")
             add_executable(example_external_context 
-                "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/example_external_context_usage.hpp"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/example_external_context_usage.hpp"
             )
             target_link_libraries(example_external_context PRIVATE DrvGPU::drvgpu)
-            target_include_directories(example_external_context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+            target_include_directories(example_external_context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR})
         endif()
     endif()
 endif()

@@ -1,9 +1,9 @@
 #include <iostream>
 
-#include "../tests/single_gpu.hpp"
-#include "../tests/multi_gpu.hpp"
-#include "../tests/example_external_context_usage.hpp"
-#include "../tests/test_vector_ops.hpp"
+#include "DrvGPU/tests/single_gpu.hpp"
+#include "DrvGPU/tests/multi_gpu.hpp"
+#include "DrvGPU/tests/example_external_context_usage.hpp"
+#include "modules/example/tests/test_vector_ops.hpp"
 
 //int main(int argc, char* argv[]) {
 int main() {
@@ -12,11 +12,11 @@ int main() {
             << "═══════════════════════════════════════════════════════════\n\n";
   std::cout << "✅ Программа успешно запущена!" << std::endl;
 
-//  example_drv_gpu_singl::run();
+  example_drv_gpu_singl::run();
 
   
-//  example_drv_gpu_multi::run();
-//  external_context_example::run();
+  example_drv_gpu_multi::run();
+  external_context_example::run();
 
   test_example_mat::run();  
   return 0;
