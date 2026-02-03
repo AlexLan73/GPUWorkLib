@@ -1,5 +1,15 @@
 // ЧАСТЬ 3: CreateKernelObjects, ReleaseKernels, LoadKernelSource
 
+#include "vector_ops_module.hpp"
+#include "common/logger.hpp"
+#include <stdexcept>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <string>
+
+namespace drv_gpu_lib {
+
 void VectorOpsModule::CreateKernelObjects() {
     DRVGPU_LOG_INFO("VectorOpsModule", "Creating kernel objects...");
     
@@ -96,3 +106,5 @@ std::string VectorOpsModule::LoadKernelSource(const std::string& filename) {
     
     throw std::runtime_error("VectorOpsModule: Failed to load kernel source: " + filename);
 }
+
+} // namespace drv_gpu_lib

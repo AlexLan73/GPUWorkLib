@@ -1,5 +1,15 @@
 // ЧАСТЬ 2: Остальные операции (SubOne, AddVectors) и компиляция kernels
 
+#include "vector_ops_module.hpp"
+#include "common/logger.hpp"
+#include <memory>
+#include <cstddef>
+#include <string>
+#include <stdexcept>
+#include <vector>
+
+namespace drv_gpu_lib {
+
 // Операции: Вычитание скаляра
 void VectorOpsModule::SubOneOut(
     std::shared_ptr<GPUBuffer<float>> input,
@@ -175,5 +185,7 @@ void VectorOpsModule::CompileKernels() {
     
     DRVGPU_LOG_INFO("VectorOpsModule", "Kernels compiled successfully ✅");
 }
+
+} // namespace drv_gpu_lib
 
 // См. часть 3 для CreateKernelObjects, ReleaseKernels, LoadKernelSource

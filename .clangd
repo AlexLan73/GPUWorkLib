@@ -1,3 +1,3 @@
 CompileFlags:
-  CompilationDatabase: build
+  CompilationDatabase: build/linux-nvidia-debug
   Add: [-I/usr/include]

@@ -48,6 +48,12 @@ if(TARGET DrvGPU::drvgpu)
     message(STATUS "✅ Linked: DrvGPU::drvgpu")
 endif()
 
+# VectorOps module (для test_vector_ops.hpp)
+if(TARGET DrvGPU::VectorOps)
+    target_link_libraries(GPUWorkLib PRIVATE DrvGPU::VectorOps)
+    message(STATUS "✅ Linked: DrvGPU::VectorOps")
+endif()
+
 # ============================================================================
 # OpenCL - ПРАВИЛЬНЫЙ СПОСОБ через imported target
 # ============================================================================

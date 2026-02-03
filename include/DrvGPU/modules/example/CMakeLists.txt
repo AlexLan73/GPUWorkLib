@@ -16,7 +16,9 @@ set(VECTOR_OPS_HEADERS
 )
 
 set(VECTOR_OPS_SOURCES
-    src/vector_ops_module.cpp
+    src/vector_ops_module-part1.cpp
+    src/vector_ops_module-part2.cpp
+    src/vector_ops_module-part3.cpp
 )
 
 set(VECTOR_OPS_KERNELS
@@ -56,7 +58,7 @@ target_include_directories(vector_ops_module
 
 target_link_libraries(vector_ops_module
     PUBLIC
-        drv_gpu_lib
+        drvgpu
 )
 
 # ════════════════════════════════════════════════════════════════════════════

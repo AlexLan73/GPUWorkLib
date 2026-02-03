@@ -115,11 +115,11 @@ int run() {
         
         std::cout << "════════════════════════════════════════════════════════════════\n";
         std::cout << "  ТЕСТ 6: Сложение двух векторов (in-place)\n";
-        std::cout << "  Операция: C1[] = C1[] + C2[]\n";
+        std::cout << "  Операция: C3[] = C3[] + C2[]\n";
         std::cout << "════════════════════════════════════════════════════════════════\n";
-        module->AddVectorsInPlace(gpu_C1, gpu_C2, N);
-        auto result_C1_final = gpu_C1->Read();
-        PrintVector("C1 (после += C2)", result_C1_final, 5);
+        module->AddVectorsInPlace(gpu_C3, gpu_A, N);
+        auto result_C1_final = gpu_C3->Read();
+        PrintVector("C3 (после += C2)", result_C1_final, 5);
         std::cout << "✅ Тест 6 завершён\n\n";
         
         std::cout << "════════════════════════════════════════════════════════════════\n";
