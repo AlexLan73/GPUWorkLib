@@ -11,7 +11,6 @@
 
 #include "modules/fft_maxima/include/antenna_fft_release.h"
 #include "modules/fft_maxima/include/antenna_fft_release.h"
-#include "modules/fft_maxima/include/antenna_fft_debug.h"
 #include "modules/fft_maxima/include/fft_result_writer.hpp"
 #include "modules/fft_maxima/include/fft_logger.h"
 
@@ -124,165 +123,6 @@ bool TestRelease(drv_gpu_lib::IBackend* backend, const AntennaFFTParams& params,
     }
 }
 
-/**
- * @brief Test Debug implementation (step-by-step)
- */
-bool TestDebug(drv_gpu_lib::IBackend* backend, const AntennaFFTParams& params,
-               const std::vector<std::complex<float>>& test_data)
-{
-    std::cout << "\n═══════════════════════════════════════════════════════════\n";
-    std::cout << "  TEST: AntennaFFTDebug (Debug - Step-by-Step)\n";
-    std::cout << "═══════════════════════════════════════════════════════════\n";
-
-    try {
-        AntennaFFTDebug fft_debug(params, backend);
-
-        // Set input data
-        fft_debug.SetInputData(test_data);
-
-        // Step 1: Padding
-        std::cout << "\n  Step 1: Executing Padding Kernel...\n";
-        cl_event padding_event;
-        fft_debug.ExecutePaddingKernel(nullptr, &padding_event);
-        clWaitForEvents(1, &padding_event);
-        std::cout << "    Done!\n";
-
-        // Read and check padded data
-        auto fft_input = fft_debug.ReadFFTInputBuffer();
-        std::cout << "    FFT input buffer size: " << fft_input.size() << "\n";
-        std::cout << "    First 5 values: ";
-        for (size_t i = 0; i < std::min(size_t(5), fft_input.size()); ++i) {
-            std::cout << "(" << fft_input[i].real() << "," << fft_input[i].imag() << ") ";
-        }
-        std::cout << "\n";
-
-        // Step 2: FFT
-        std::cout << "\n  Step 2: Executing FFT...\n";
-        cl_event fft_event;
-        fft_debug.ExecuteFFTOnly(padding_event, &fft_event);
-        clWaitForEvents(1, &fft_event);
-        std::cout << "    Done!\n";
-
-        // Read and check FFT output
-        auto fft_output = fft_debug.ReadFFTOutputBuffer();
-        std::cout << "    FFT output buffer size: " << fft_output.size() << "\n";
-
-        // Find max in FFT output manually
-        float max_mag = 0;
-        size_t max_idx = 0;
-        for (size_t i = 0; i < fft_output.size() / params.beam_count; ++i) {
-            float mag = std::abs(fft_output[i]);
-            if (mag > max_mag) {
-                max_mag = mag;
-                max_idx = i;
-            }
-        }
-        std::cout << "    Beam 0 max magnitude: " << max_mag << " at index " << max_idx << "\n";
-
-        // Step 3: Post-processing
-        std::cout << "\n  Step 3: Executing Post Kernel...\n";
-        cl_event post_event;
-        fft_debug.ExecutePostKernel(fft_event, &post_event);
-        clWaitForEvents(1, &post_event);
-        std::cout << "    Done!\n";
-
-        // Read selected data
-        auto selected_mag = fft_debug.ReadSelectedMagnitudeBuffer();
-        std::cout << "    Selected magnitude buffer size: " << selected_mag.size() << "\n";
-
-        // Step 4: Find maxima
-        std::cout << "\n  Step 4: Finding Maxima...\n";
-        auto maxima = fft_debug.FindMaximaOnGPU();
-        std::cout << "    Done!\n";
-
-        // Print results
-        if (!maxima.empty() && !maxima[0].empty()) {
-            std::cout << "\n    Beam 0 maxima:\n";
-            for (size_t i = 0; i < maxima[0].size(); ++i) {
-                const auto& mv = maxima[0][i];
-                std::cout << "      [" << i << "] Index: " << mv.index_point
-                          << ", Amplitude: " << mv.amplitude
-                          << ", Phase: " << mv.phase << " deg\n";
-            }
-        }
-
-        // Cleanup events
-        clReleaseEvent(padding_event);
-        clReleaseEvent(fft_event);
-        clReleaseEvent(post_event);
-
-        std::cout << "\n  [PASS] Debug test completed!\n";
-        return true;
-
-    } catch (const std::exception& e) {
-        std::cerr << "\n  [FAIL] Exception: " << e.what() << "\n";
-        return false;
-    }
-}
-
-/**
- * @brief Compare Release and Debug results
- */
-bool TestCompare(drv_gpu_lib::IBackend* backend, const AntennaFFTParams& params,
-                 const std::vector<std::complex<float>>& test_data)
-{
-    std::cout << "\n═══════════════════════════════════════════════════════════\n";
-    std::cout << "  TEST: Compare Release vs Debug Results\n";
-    std::cout << "═══════════════════════════════════════════════════════════\n";
-
-    try {
-        // Process with Release
-        AntennaFFTProcMax fft_release(params, backend);
-        auto result_release = fft_release.ProcessNew(test_data);
-
-        // Process with Debug
-        AntennaFFTDebug fft_debug(params, backend);
-        auto result_debug = fft_debug.ProcessNew(test_data);
-
-        // Compare
-        bool match = true;
-        const float tolerance = 0.01f;  // 1% tolerance
-
-        for (size_t beam = 0; beam < params.beam_count && beam < 3; ++beam) {
-            const auto& rel = result_release.results[beam];
-            const auto& dbg = result_debug.results[beam];
-
-            std::cout << "\n  Beam " << beam << ":\n";
-
-            for (size_t i = 0; i < params.max_peaks_count; ++i) {
-                const auto& mv_rel = rel.max_values[i];
-                const auto& mv_dbg = dbg.max_values[i];
-
-                bool idx_match = (mv_rel.index_point == mv_dbg.index_point);
-                float amp_diff = std::abs(mv_rel.amplitude - mv_dbg.amplitude) /
-                                 std::max(mv_rel.amplitude, 0.001f);
-
-                std::cout << "    Peak " << i << ": ";
-                std::cout << "Release idx=" << mv_rel.index_point << " amp=" << mv_rel.amplitude;
-                std::cout << " | Debug idx=" << mv_dbg.index_point << " amp=" << mv_dbg.amplitude;
-
-                if (idx_match && amp_diff < tolerance) {
-                    std::cout << " [OK]\n";
-                } else {
-                    std::cout << " [MISMATCH]\n";
-                    match = false;
-                }
-            }
-        }
-
-        if (match) {
-            std::cout << "\n  [PASS] Release and Debug results match!\n";
-        } else {
-            std::cout << "\n  [WARN] Some results differ (may be due to floating point precision)\n";
-        }
-
-        return true;
-
-    } catch (const std::exception& e) {
-        std::cerr << "\n  [FAIL] Exception: " << e.what() << "\n";
-        return false;
-    }
-}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Main
@@ -349,8 +189,6 @@ int run()
     int failed = 0;
 
     if (TestRelease(&backend, params, test_data)) passed++; else failed++;
-    if (TestDebug(&backend, params, test_data)) passed++; else failed++;
-    if (TestCompare(&backend, params, test_data)) passed++; else failed++;
 
     // Summary
     std::cout << "\n═══════════════════════════════════════════════════════════════\n";

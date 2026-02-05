@@ -6,6 +6,11 @@
 cmake_minimum_required(VERSION 3.20)
 project(GPUWorkLib VERSION 1.1.0 LANGUAGES CXX)
 
+# Политика: find_package использует <PACKAGENAME>_ROOT (SPDLOG_ROOT и т.д.)
+if(POLICY CMP0144)
+    cmake_policy(SET CMP0144 NEW)
+endif()
+
 # Modules
 include(cmake/platform-detection.cmake)
 include(cmake/gpu-config.cmake)

@@ -67,6 +67,9 @@ target_link_libraries(vector_ops_module
 
 target_compile_features(vector_ops_module PUBLIC cxx_std_17)
 
+# Header-only spdlog + fmt to avoid LNK2019 (inherited from drvgpu)
+target_compile_definitions(vector_ops_module PUBLIC SPDLOG_HEADER_ONLY FMT_HEADER_ONLY)
+
 # ════════════════════════════════════════════════════════════════════════════
 # Копирование OpenCL kernels в build директорию
 # ════════════════════════════════════════════════════════════════════════════

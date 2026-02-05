@@ -4,6 +4,12 @@
 
 # DrvGPU as subdirectory - no project() to avoid subproject
 
+# Политика: find_package использует <PACKAGENAME>_ROOT (spdlog_ROOT и т.д.)
+# CMP0144: Используем нижний регистр для имени пакета в переменной _ROOT
+if(POLICY CMP0144)
+    cmake_policy(SET CMP0144 NEW)
+endif()
+
 # ════════════════════════════════════════════════════════════════════
 # Настройки
 # ════════════════════════════════════════════════════════════════════
@@ -37,10 +43,11 @@ else()
 endif()
 
 # Найти spdlog (из vcpkg или системы)
-# SPDLOG_ROOT может быть установлен извне (например, из vcpkg)
+# spdlog_ROOT может быть установлен извне (например, из vcpkg)
+# Используем spdlog_ROOT вместо SPDLOG_ROOT согласно политике CMP0144
 if(DEFINED ENV{SPDLOG_ROOT})
-    set(SPDLOG_ROOT "$ENV{SPDLOG_ROOT}")
-    message(STATUS "Using spdlog from SPDLOG_ROOT: ${SPDLOG_ROOT}")
+    set(spdlog_ROOT "$ENV{SPDLOG_ROOT}")
+    message(STATUS "Using spdlog from spdlog_ROOT: ${spdlog_ROOT}")
 endif()
 
 # spdlog: используем из parent или ищем
@@ -167,35 +174,26 @@ target_include_directories(drvgpu
         ${OpenCL_INCLUDE_DIRS}
 )
 
-# Линковка spdlog (header-only mode или library)
-if(TARGET spdlog::spdlog)
-    target_link_libraries(drvgpu PUBLIC spdlog::spdlog)
-    message(STATUS "Using spdlog: TARGET")
+# Линковка spdlog — только header-only, чтобы избежать LNK2019 (несовместимость ABI с vcpkg spdlogd.lib)
+if(TARGET spdlog::spdlog_header_only)
+    target_link_libraries(drvgpu PUBLIC spdlog::spdlog_header_only)
+    message(STATUS "Using spdlog: HEADER-ONLY (target)")
+elseif(spdlog_FOUND AND TARGET spdlog::spdlog)
+    # Заголовки от find_package, но НЕ линкуем spdlog::spdlog — только include + SPDLOG_HEADER_ONLY
+    get_target_property(SPDLOG_INC spdlog::spdlog INTERFACE_INCLUDE_DIRECTORIES)
+    target_include_directories(drvgpu PUBLIC ${SPDLOG_INC})
+    message(STATUS "Using spdlog: HEADER-ONLY (no link, avoid ABI mismatch)")
 elseif(spdlog_FOUND)
-    # Пробуем использовать header-only версию
-    if(TARGET spdlog::spdlog_header_only)
-        target_link_libraries(drvgpu PUBLIC spdlog::spdlog_header_only)
-        message(STATUS "Using spdlog: HEADER-ONLY")
-    else()
-        # Fallback: статическая версия spdlog
-        target_link_libraries(drvgpu PUBLIC spdlog::spdlog)
-        message(STATUS "Using spdlog: LIBRARY")
-    endif()
-    
-    # Также пробуем подключить fmt header-only для избежания конфликтов
-    if(TARGET fmt::fmt-header-only)
-        target_link_libraries(drvgpu PUBLIC fmt::fmt-header-only)
-        message(STATUS "Using fmt: HEADER-ONLY")
-    endif()
-elseif(DEFINED SPDLOG_ROOT)
-    target_include_directories(drvgpu PUBLIC "${SPDLOG_ROOT}/include")
-    message(STATUS "Using spdlog: HEADER-ONLY (${SPDLOG_ROOT})")
+    target_include_directories(drvgpu PUBLIC "${spdlog_INCLUDE_DIR}")
+    message(STATUS "Using spdlog: HEADER-ONLY (no link)")
+elseif(DEFINED spdlog_ROOT)
+    target_include_directories(drvgpu PUBLIC "${spdlog_ROOT}/include")
+    message(STATUS "Using spdlog: HEADER-ONLY (${spdlog_ROOT})")
 else()
-    # spdlog: ищем системные заголовки
     find_path(SPDLOG_INCLUDE_DIR spdlog/spdlog.h PATHS /usr/include /usr/local/include)
     if(SPDLOG_INCLUDE_DIR)
         target_include_directories(drvgpu PUBLIC "${SPDLOG_INCLUDE_DIR}")
-        message(STATUS "Using spdlog: system headers")
+        message(STATUS "Using spdlog: system headers (header-only)")
     else()
         message(WARNING "spdlog not found! Install: sudo apt install libspdlog-dev")
     endif()
@@ -221,8 +219,8 @@ if(BUILD_EXTERNAL_CONTEXT_SUPPORT)
     target_compile_definitions(drvgpu PUBLIC DRVGPU_EXTERNAL_CONTEXT_SUPPORT)
 endif()
 
-# Use header-only spdlog to avoid STL symbol issues
-target_compile_definitions(drvgpu PUBLIC SPDLOG_HEADER_ONLY)
+# Header-only spdlog + fmt to avoid LNK2019 (vcpkg libs use dllimport/другая ABI)
+target_compile_definitions(drvgpu PUBLIC SPDLOG_HEADER_ONLY FMT_HEADER_ONLY)
 
 # Алиас
 add_library(DrvGPU::drvgpu ALIAS drvgpu)
@@ -289,7 +287,7 @@ message(STATUS "  OpenCL library:      ${OpenCL_LIBRARIES}")
 if(spdlog_FOUND)
     message(STATUS "  spdlog:              FOUND")
 else()
-    message(STATUS "  spdlog:              HEADER-ONLY (${SPDLOG_ROOT})")
+    message(STATUS "  spdlog:              HEADER-ONLY (${spdlog_ROOT})")
 endif()
 message(STATUS "═══════════════════════════════════════")
 message(STATUS "")

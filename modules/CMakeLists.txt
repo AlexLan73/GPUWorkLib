@@ -10,7 +10,7 @@ cmake_minimum_required(VERSION 3.27)
 # ════════════════════════════════════════════════════════════════════════════
 
 option(DRVGPU_BUILD_MODULE_EXAMPLE "Build Vector Operations Module" ON)
-option(DRVGPU_BUILD_MODULE_SEARCH "Search for maximum in spectrum" ON)
+option(DRVGPU_BUILD_MODULE_SEARCH "Search for maximum in spectrum" OFF)
 option(DRVGPU_BUILD_MODULE_MATRIX     "Build Matrix Module"            OFF)
 option(DRVGPU_BUILD_MODULE_FFT        "Build FFT Module"               OFF)
 option(DRVGPU_BUILD_MODULE_CONVOLUTION "Build Convolution Module"      OFF)

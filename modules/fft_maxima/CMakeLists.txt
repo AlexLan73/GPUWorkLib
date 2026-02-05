@@ -8,7 +8,6 @@
 # Components:
 #   - fft_maxima_core:    Core functionality (shared)
 #   - fft_maxima_release: Release implementation (callbacks)
-#   - fft_maxima_debug:   Debug implementation (step-by-step kernels)
 #   - fft_maxima:         Full library (both implementations)
 #
 # ════════════════════════════════════════════════════════════════════════════
@@ -27,12 +26,11 @@ message(STATUS "Configuring module: ${MODULE_NAME}")
 # OpenCL
 find_package(OpenCL REQUIRED)
 
-# clFFT (via find_package)
-find_package(clFFT CONFIG REQUIRED)
-if(NOT clFFT_FOUND)
-    message(FATAL_ERROR "clFFT not found! Please install clFFT library.")
+# clFFT (используем переменные из cmake/dependencies.cmake)
+if(NOT CLFFT_FOUND)
+    message(FATAL_ERROR "clFFT not found! Please check cmake/dependencies.cmake")
 endif()
-message(STATUS "clFFT found: ${clFFT_INCLUDE_DIRS}")
+message(STATUS "clFFT found: ${CLFFT_INCLUDE_DIR}")
 
 # ════════════════════════════════════════════════════════════════════════════
 # Source files
@@ -46,21 +44,16 @@ set(RELEASE_SOURCES
     src/antenna_fft_release.cpp
 )
 
-set(DEBUG_SOURCES
-    src/antenna_fft_debug.cpp
-)
-
+# Note: antenna_fft_debug.cpp removed - file does not exist
 set(ALL_SOURCES
     ${CORE_SOURCES}
     ${RELEASE_SOURCES}
-    ${DEBUG_SOURCES}
 )
 
 # Headers (for IDE integration)
 set(HEADERS
     include/antenna_fft_core.h
     include/antenna_fft_release.h
-    include/antenna_fft_debug.h
     include/fft_logger.h
     include/fft_result_writer.hpp
     include/interface/antenna_fft_params.h
@@ -80,17 +73,20 @@ target_include_directories(${MODULE_NAME}_core
         ${CMAKE_SOURCE_DIR}/DrvGPU
     PRIVATE
         ${OpenCL_INCLUDE_DIRS}
-        ${clFFT_INCLUDE_DIRS}
+        ${CLFFT_INCLUDE_DIR}
 )
 
 target_link_libraries(${MODULE_NAME}_core
     PUBLIC
         drvgpu
         OpenCL::OpenCL
-        clFFT
+        ${CLFFT_LIB}
 )
 
 target_compile_features(${MODULE_NAME}_core PUBLIC cxx_std_17)
+
+# Header-only spdlog + fmt to avoid LNK2019 (inherited from drvgpu)
+target_compile_definitions(${MODULE_NAME}_core PUBLIC SPDLOG_HEADER_ONLY FMT_HEADER_ONLY)
 
 # ════════════════════════════════════════════════════════════════════════════
 # Release library (callbacks - production)
@@ -103,7 +99,7 @@ target_include_directories(${MODULE_NAME}_release
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
         ${OpenCL_INCLUDE_DIRS}
-        ${clFFT_INCLUDE_DIRS}
+        ${CLFFT_INCLUDE_DIR}
 )
 
 target_link_libraries(${MODULE_NAME}_release
@@ -111,34 +107,13 @@ target_link_libraries(${MODULE_NAME}_release
         ${MODULE_NAME}_core
     PRIVATE
         OpenCL::OpenCL
-        clFFT
+        ${CLFFT_LIB}
 )
 
 target_compile_features(${MODULE_NAME}_release PUBLIC cxx_std_17)
 
-# ════════════════════════════════════════════════════════════════════════════
-# Debug library (step-by-step - testing)
-# ════════════════════════════════════════════════════════════════════════════
-
-add_library(${MODULE_NAME}_debug STATIC ${DEBUG_SOURCES})
-
-target_include_directories(${MODULE_NAME}_debug
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE
-        ${OpenCL_INCLUDE_DIRS}
-        ${clFFT_INCLUDE_DIRS}
-)
-
-target_link_libraries(${MODULE_NAME}_debug
-    PUBLIC
-        ${MODULE_NAME}_core
-    PRIVATE
-        OpenCL::OpenCL
-        clFFT
-)
-
-target_compile_features(${MODULE_NAME}_debug PUBLIC cxx_std_17)
+# Header-only spdlog + fmt to avoid LNK2019
+target_compile_definitions(${MODULE_NAME}_release PUBLIC SPDLOG_HEADER_ONLY FMT_HEADER_ONLY)
 
 # ════════════════════════════════════════════════════════════════════════════
 # Full library (both implementations)
@@ -153,17 +128,20 @@ target_include_directories(${MODULE_NAME}
         ${CMAKE_SOURCE_DIR}/DrvGPU
     PRIVATE
         ${OpenCL_INCLUDE_DIRS}
-        ${clFFT_INCLUDE_DIRS}
+        ${CLFFT_INCLUDE_DIR}
 )
 
 target_link_libraries(${MODULE_NAME}
     PUBLIC
         drvgpu
         OpenCL::OpenCL
-        clFFT
+        ${CLFFT_LIB}
 )
 
 target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
+
+# Header-only spdlog + fmt to avoid LNK2019
+target_compile_definitions(${MODULE_NAME} PUBLIC SPDLOG_HEADER_ONLY FMT_HEADER_ONLY)
 
 # ════════════════════════════════════════════════════════════════════════════
 # Aliases for cleaner usage
@@ -172,13 +150,12 @@ target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
 add_library(GPUWorkLib::${MODULE_NAME} ALIAS ${MODULE_NAME})
 add_library(GPUWorkLib::${MODULE_NAME}_core ALIAS ${MODULE_NAME}_core)
 add_library(GPUWorkLib::${MODULE_NAME}_release ALIAS ${MODULE_NAME}_release)
-add_library(GPUWorkLib::${MODULE_NAME}_debug ALIAS ${MODULE_NAME}_debug)
 
 # ════════════════════════════════════════════════════════════════════════════
 # Install rules
 # ════════════════════════════════════════════════════════════════════════════
 
-install(TARGETS ${MODULE_NAME} ${MODULE_NAME}_core ${MODULE_NAME}_release ${MODULE_NAME}_debug
+install(TARGETS ${MODULE_NAME} ${MODULE_NAME}_core ${MODULE_NAME}_release
     EXPORT GPUWorkLibTargets
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
@@ -202,7 +179,7 @@ if(BUILD_TESTS)
             ${MODULE_NAME}
             drv_gpu_opencl
             OpenCL::OpenCL
-            clFFT
+            ${CLFFT_LIB}
     )
 
     target_include_directories(test_${MODULE_NAME}
@@ -224,5 +201,4 @@ endif()
 message(STATUS "  ${MODULE_NAME}: configured")
 message(STATUS "    - Core:    ${MODULE_NAME}_core (shared base)")
 message(STATUS "    - Release: ${MODULE_NAME}_release (callbacks)")
-message(STATUS "    - Debug:   ${MODULE_NAME}_debug (step-by-step)")
 message(STATUS "    - Full:    ${MODULE_NAME} (all)")
