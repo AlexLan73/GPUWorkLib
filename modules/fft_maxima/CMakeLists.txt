@@ -77,6 +77,7 @@ target_include_directories(${MODULE_NAME}_core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/DrvGPU
     PRIVATE
         ${OpenCL_INCLUDE_DIRS}
         ${clFFT_INCLUDE_DIRS}
@@ -84,8 +85,7 @@ target_include_directories(${MODULE_NAME}_core
 
 target_link_libraries(${MODULE_NAME}_core
     PUBLIC
-        drv_gpu_common
-    PRIVATE
+        drvgpu
         OpenCL::OpenCL
         clFFT
 )
@@ -150,6 +150,7 @@ target_include_directories(${MODULE_NAME}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/DrvGPU
     PRIVATE
         ${OpenCL_INCLUDE_DIRS}
         ${clFFT_INCLUDE_DIRS}
@@ -157,8 +158,7 @@ target_include_directories(${MODULE_NAME}
 
 target_link_libraries(${MODULE_NAME}
     PUBLIC
-        drv_gpu_common
-    PRIVATE
+        drvgpu
         OpenCL::OpenCL
         clFFT
 )
@@ -195,7 +195,7 @@ install(DIRECTORY include/
 # ════════════════════════════════════════════════════════════════════════════
 
 if(BUILD_TESTS)
-    add_executable(test_${MODULE_NAME} tests/test_fft_maxima.cpp)
+    add_executable(test_${MODULE_NAME} tests/test_fft_maxima.hpp)
 
     target_link_libraries(test_${MODULE_NAME}
         PRIVATE

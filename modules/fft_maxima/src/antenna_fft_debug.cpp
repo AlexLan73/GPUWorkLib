@@ -1,5 +1,6 @@
 #include "antenna_fft_debug.h"
 #include "fft_logger.h"
+#include "kernels/fft_kernel_sources.hpp"
 #include <cstring>
 
 namespace antenna_fft {
@@ -548,7 +549,8 @@ void AntennaFFTDebug::CreatePaddingKernel() {
 }
 
 void AntennaFFTDebug::CreatePostKernel() {
-    const char* source = kernels::GetPostKernelSource();
+    // Используем специальное ядро для Debug версии (fftshift + magnitude без поиска максимумов)
+    const char* source = kernels::GetDebugPostKernelSource();
 
     cl_int err;
     post_program_ = clCreateProgramWithSource(context_, 1, &source, nullptr, &err);
@@ -566,7 +568,7 @@ void AntennaFFTDebug::CreatePostKernel() {
         throw std::runtime_error("Failed to build post program");
     }
 
-    post_kernel_ = clCreateKernel(post_program_, "post_kernel", &err);
+    post_kernel_ = clCreateKernel(post_program_, "debug_post_kernel", &err);
     if (err != CL_SUCCESS) {
         throw std::runtime_error("Failed to create post kernel");
     }

@@ -187,7 +187,7 @@ void test_search_3_module_svm() {
                   << " комплексных точек\n\n";
         
         // ═══ 4. Создать GPU буфер с данными ═══
-        std::cout << "═══ Шаг 4: Создание GPU буфера с данными ═══\n";
+`        std::cout << "═══ Шаг 4: Создание GPU буфера с данными ═══\n";
         auto& mem_mgr = gpu.GetMemoryManager();
         auto gpu_buffer = mem_mgr.CreateBuffer<std::complex<float>>(
             cpu_signal.data(), cpu_signal.size());

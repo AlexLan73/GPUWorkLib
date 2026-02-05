@@ -57,5 +57,3 @@ for (const auto& beam : result.results) {
 - clFFT library
 - OpenCL 1.2+
 
-## Author
-Transferred from LCH-Farrow01 project

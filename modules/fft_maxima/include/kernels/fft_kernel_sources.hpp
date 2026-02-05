@@ -192,6 +192,51 @@ __kernel void post_kernel(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Debug Post Kernel - fftshift + magnitude (без поиска максимумов)
+// Используется в AntennaFFTDebug для пошаговой отладки
+// ════════════════════════════════════════════════════════════════════════════
+inline const char* GetDebugPostKernelSource() {
+    return R"CL(
+__kernel void debug_post_kernel(
+    __global const float2* fft_output,       // FFT результат: beam_count * nFFT
+    __global float2* selected_complex,       // Выход: beam_count * out_count_points_fft
+    __global float* selected_magnitude,      // Выход: beam_count * out_count_points_fft
+    uint beam_count,
+    uint nFFT,
+    uint out_count_points_fft
+) {
+    uint gid = get_global_id(0);
+    uint beam_idx = gid / out_count_points_fft;
+    uint out_idx = gid % out_count_points_fft;
+
+    if (beam_idx >= beam_count) return;
+
+    // fftshift: переупорядочиваем спектр
+    // Выходной диапазон [0, out_count_points_fft) должен содержать:
+    // - Первая половина: отрицательные частоты [nFFT - half, nFFT)
+    // - Вторая половина: положительные частоты [0, half)
+    uint half_size = out_count_points_fft / 2;
+
+    uint fft_idx;
+    if (out_idx < half_size) {
+        // Отрицательные частоты: из конца FFT буфера
+        fft_idx = nFFT - half_size + out_idx;
+    } else {
+        // Положительные частоты: из начала FFT буфера
+        fft_idx = out_idx - half_size;
+    }
+
+    uint src_idx = beam_idx * nFFT + fft_idx;
+    uint dst_idx = beam_idx * out_count_points_fft + out_idx;
+
+    float2 val = fft_output[src_idx];
+    selected_complex[dst_idx] = val;
+    selected_magnitude[dst_idx] = sqrt(val.x * val.x + val.y * val.y);
+}
+)CL";
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Pre-Callback Source для clFFT (16-байт структура)
 // ════════════════════════════════════════════════════════════════════════════
 inline const char* GetPreCallbackSource() {

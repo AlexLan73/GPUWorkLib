@@ -21,6 +21,9 @@ message(STATUS "")
 # DrvGPU library (корневая)
 add_subdirectory(DrvGPU)
 
+# FFT Maxima module
+add_subdirectory(modules/fft_maxima)
+
 # Main executable (src/)
 add_subdirectory(src)
 

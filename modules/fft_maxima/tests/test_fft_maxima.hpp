@@ -1,5 +1,5 @@
 /**
- * @file test_fft_maxima.cpp
+ * @file test_fft_maxima.hpp
  * @brief Test for FFT Maxima module
  *
  * Tests both Release (callbacks) and Debug (step-by-step) implementations
@@ -9,10 +9,11 @@
  * @date 2026-02-04
  */
 
-#include "antenna_fft_release.h"
-#include "antenna_fft_debug.h"
-#include "fft_result_writer.hpp"
-#include "fft_logger.h"
+#include "modules/fft_maxima/include/antenna_fft_release.h"
+#include "modules/fft_maxima/include/antenna_fft_release.h"
+#include "modules/fft_maxima/include/antenna_fft_debug.h"
+#include "modules/fft_maxima/include/fft_result_writer.hpp"
+#include "modules/fft_maxima/include/fft_logger.h"
 
 #include "backends/opencl/opencl_backend.hpp"
 
@@ -23,6 +24,7 @@
 #include <random>
 #include <chrono>
 
+namespace test_fft_max{
 using namespace antenna_fft;
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -286,19 +288,20 @@ bool TestCompare(drv_gpu_lib::IBackend* backend, const AntennaFFTParams& params,
 // Main
 // ════════════════════════════════════════════════════════════════════════════
 
-int main(int argc, char* argv[])
+int run()
 {
     std::cout << "═══════════════════════════════════════════════════════════════\n";
     std::cout << "           FFT Maxima Module Test\n";
     std::cout << "═══════════════════════════════════════════════════════════════\n";
 
     // Parse arguments
-    bool verbose = false;
-    for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "-v" || std::string(argv[i]) == "--verbose") {
-            verbose = true;
-        }
-    }
+    bool verbose = true; // управлял  через аргументы 
+
+//    for (int i = 1; i < argc; ++i) {
+//        if (std::string(argv[i]) == "-v" || std::string(argv[i]) == "--verbose") {
+//            verbose = true;
+//        }
+//    }
 
     // Set logging level
     if (!verbose) {
@@ -358,4 +361,5 @@ int main(int argc, char* argv[])
     std::cout << "═══════════════════════════════════════════════════════════════\n";
 
     return (failed > 0) ? 1 : 0;
+}
 }

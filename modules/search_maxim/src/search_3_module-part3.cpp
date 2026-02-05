@@ -8,6 +8,7 @@
 #include "common/logger.hpp"
 #include <iostream>
 #include <stdexcept>
+#include <string>
 
 namespace drv_gpu_lib {
 namespace search_3_ {
@@ -38,6 +39,22 @@ Search3FFTResult Search3Module::ProcessNew(cl_mem input_signal) {
     
     if (!input_signal) {
         throw std::invalid_argument("Search3Module::ProcessNew: null input signal");
+    }
+    
+    // Проверка: буфер должен принадлежать нашему OpenCL контексту
+    cl_context buf_context = nullptr;
+    cl_int err = clGetMemObjectInfo(input_signal, CL_MEM_CONTEXT, sizeof(cl_context), &buf_context, nullptr);
+    if (err != CL_SUCCESS || buf_context != context_) {
+        throw std::invalid_argument("Search3Module::ProcessNew: input buffer from different OpenCL context");
+    }
+    
+    // Проверка размера: нужно beam_count * count_points * sizeof(complex<float>)
+    size_t required_size = params_.beam_count * params_.count_points * sizeof(std::complex<float>);
+    size_t buf_size = 0;
+    err = clGetMemObjectInfo(input_signal, CL_MEM_SIZE, sizeof(size_t), &buf_size, nullptr);
+    if (err != CL_SUCCESS || buf_size < required_size) {
+        throw std::invalid_argument("Search3Module::ProcessNew: input buffer too small (need " +
+            std::to_string(required_size) + " bytes, got " + std::to_string(buf_size) + ")");
     }
     
     std::cout << "\n═══════════════════════════════════════════════════════════════\n";

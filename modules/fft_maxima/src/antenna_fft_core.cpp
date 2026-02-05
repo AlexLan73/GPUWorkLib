@@ -48,7 +48,11 @@ AntennaFFTCore::AntennaFFTCore(const AntennaFFTParams& params, drv_gpu_lib::IBac
 
     // Initialize clFFT library
     clfftSetupData fftSetup;
-    clfftInitSetupData(&fftSetup);
+    // Manually initialize setup data (equivalent to clfftInitSetupData)
+    fftSetup.major = clfftVersionMajor;
+    fftSetup.minor = clfftVersionMinor;
+    fftSetup.patch = clfftVersionPatch;
+    fftSetup.debugFlags = 0;
     clfftStatus status = clfftSetup(&fftSetup);
     if (status != CLFFT_SUCCESS) {
         throw std::runtime_error("clfftSetup failed with status: " + std::to_string(status));

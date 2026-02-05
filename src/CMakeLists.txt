@@ -60,6 +60,12 @@ if(TARGET DrvGPU::Search)
     message(STATUS "✅ Linked: DrvGPU::Search")
 endif()
 
+# FFT Maxima module (для test_fft_maxima)
+if(TARGET GPUWorkLib::fft_maxima)
+    target_link_libraries(GPUWorkLib PRIVATE GPUWorkLib::fft_maxima)
+    message(STATUS "✅ Linked: GPUWorkLib::fft_maxima")
+endif()
+
 # ============================================================================
 # OpenCL - ПРАВИЛЬНЫЙ СПОСОБ через imported target
 # ============================================================================
