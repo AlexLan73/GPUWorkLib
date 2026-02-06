@@ -66,6 +66,22 @@ if(TARGET GPUWorkLib::fft_maxima)
     message(STATUS "✅ Linked: GPUWorkLib::fft_maxima")
 endif()
 
+# Spectrum Maxima module (для test_spectrum_maxima)
+# Используем -Wl,--start-group / --end-group для разрешения циклических зависимостей
+if(TARGET GPUWorkLib::spectrum_maxima)
+    if(CLFFT_FOUND AND CLFFT_LIB)
+        target_link_libraries(GPUWorkLib PRIVATE
+            -Wl,--start-group
+            GPUWorkLib::spectrum_maxima
+            ${CLFFT_LIB}
+            -Wl,--end-group
+        )
+    else()
+        target_link_libraries(GPUWorkLib PRIVATE GPUWorkLib::spectrum_maxima)
+    endif()
+    message(STATUS "✅ Linked: GPUWorkLib::spectrum_maxima")
+endif()
+
 # ============================================================================
 # OpenCL - ПРАВИЛЬНЫЙ СПОСОБ через imported target
 # ============================================================================
@@ -120,6 +136,7 @@ target_include_directories(GPUWorkLib PRIVATE
     ${CMAKE_SOURCE_DIR}/DrvGPU
     ${CMAKE_SOURCE_DIR}/modules/example/include
     ${CMAKE_SOURCE_DIR}/modules/search_maxim/include
+    ${CMAKE_SOURCE_DIR}/modules/fft_maxima/include
 )
 #    ${CMAKE_SOURCE_DIR}/include/ManagerOpenCL
 #    ${CMAKE_SOURCE_DIR}/include/GPU

@@ -231,7 +231,9 @@ void AntennaFFTProcMax::CreateFFTPlanWithCallbacks(size_t num_beams) {
     }
 
     // Register post-callback
-    const char* post_callback_source = kernels::GetPostCallbackSource();
+//    const char* post_callback_source = kernels::GetPostCallbackSource();
+    const char* post_callback_source = kernels::GetPaddingKernelSource();
+    
     status = clfftSetPlanCallback(plan_handle_, "processFFTPost", post_callback_source, 0,
                                   POSTCALLBACK, &post_callback_userdata_, 1);
     if (status != CLFFT_SUCCESS) {

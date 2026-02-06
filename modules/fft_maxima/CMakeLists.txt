@@ -44,6 +44,10 @@ set(RELEASE_SOURCES
     src/antenna_fft_release.cpp
 )
 
+set(SPECTRUM_MAXIMA_SOURCES
+    src/spectrum_maxima_finder.cpp
+)
+
 # Note: antenna_fft_debug.cpp removed - file does not exist
 set(ALL_SOURCES
     ${CORE_SOURCES}
@@ -54,6 +58,7 @@ set(ALL_SOURCES
 set(HEADERS
     include/antenna_fft_core.h
     include/antenna_fft_release.h
+    include/spectrum_maxima_finder.h
     include/fft_logger.h
     include/fft_result_writer.hpp
     include/interface/antenna_fft_params.h
@@ -168,6 +173,41 @@ install(DIRECTORY include/
 )
 
 # ════════════════════════════════════════════════════════════════════════════
+# SpectrumMaximaFinder library
+# ════════════════════════════════════════════════════════════════════════════
+
+add_library(spectrum_maxima STATIC ${SPECTRUM_MAXIMA_SOURCES})
+
+target_include_directories(spectrum_maxima
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/DrvGPU
+    PRIVATE
+        ${OpenCL_INCLUDE_DIRS}
+        ${CLFFT_INCLUDE_DIR}
+)
+
+# Линковка в порядке: drvgpu, OpenCL, затем clFFT
+# ВАЖНО: clFFT должен идти после spectrum_maxima при финальной линковке
+target_link_libraries(spectrum_maxima
+    PRIVATE
+        drvgpu
+        OpenCL::OpenCL
+        ${CLFFT_LIB}
+)
+
+# Повторная линковка clFFT для разрешения циклических зависимостей
+set_target_properties(spectrum_maxima PROPERTIES
+    LINK_INTERFACE_MULTIPLICITY 2
+)
+
+target_compile_features(spectrum_maxima PUBLIC cxx_std_17)
+target_compile_definitions(spectrum_maxima PUBLIC SPDLOG_HEADER_ONLY FMT_HEADER_ONLY)
+
+add_library(GPUWorkLib::spectrum_maxima ALIAS spectrum_maxima)
+
+# ════════════════════════════════════════════════════════════════════════════
 # Tests
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -193,6 +233,13 @@ if(BUILD_TESTS)
 
     message(STATUS "    - Test:    test_${MODULE_NAME}")
 endif()
+
+# ════════════════════════════════════════════════════════════════════════════
+# Test: SpectrumMaximaFinder (header-only, вызывается из main проекта)
+# ════════════════════════════════════════════════════════════════════════════
+# Тест test_spectrum_maxima.hpp - это header-only файл с функцией run()
+# в namespace test_spectrum_maxima. Вызывается из глобального main().
+# Не создаём отдельный executable.
 
 # ════════════════════════════════════════════════════════════════════════════
 # Summary
