@@ -149,7 +149,7 @@ __kernel void padding_kernel(
 //   Найден максимум в индексе 205 → выводим точки 204, 205, 206 + параболу
 //
 // ════════════════════════════════════════════════════════════════════════════
-inline const char* GetPostKernelSource() {
+inline const char*  GetPostKernelSource(){
     return R"CL(
 // Структура результата (должна совпадать с C++ MaxValue)
 typedef struct {
@@ -445,57 +445,6 @@ inline const char* GetPreCallbackSource32() {
         "    } "
         "}";
 }
-
-// ════════════════════════════════════════════════════════════════════════════
-// GetPostCallbackSource() - clFFT Post-Callback (PRODUCTION)
-// ════════════════════════════════════════════════════════════════════════════
-//
-// НАЗНАЧЕНИЕ:
-//   Post-callback для clFFT: автоматическая обработка ПОСЛЕ каждого FFT элемента
-//   Выполняет fftshift + вычисление magnitude + запись комплексного спектра
-//
-// АРХИТЕКТУРА:
-//   - Тип: clFFT callback функция (вызывается АВТОМАТИЧЕСКИ clFFT)
-//   - Вызов: clFFT вызывает processFFTPost() для каждого элемента ПОСЛЕ FFT
-//   - Параметр fftoutput: результат FFT для текущего элемента
-//   - Возврат: void (пишет напрямую в userdata буферы)
-//
-// MEMORY LAYOUT:
-//   userdata = [16 байт PostCallbackUserData][complex_buffer][magnitude_buffer]
-//              ↑                               ↑               ↑
-//              Параметры                       Выход Re/Im     Выход |magnitude|
-//
-// СТРУКТУРА (16 байт):
-//   - beam_count, nFFT, out_count_points_fft, max_peaks_count
-//
-// ЛОГИКА FFTshift:
-//   1. outoffset → определяем beam_idx и pos_in_fft
-//   2. Проверяем входит ли в диапазон fftshift:
-//      - Диапазон 1 (отрицательные частоты): [nFFT - half, nFFT)
-//      - Диапазон 2 (положительные частоты): [0, half)
-//   3. Вычисляем output_idx после fftshift
-//   4. Записываем fftoutput в complex_buffer[output_idx]
-//   5. Записываем length(fftoutput) в magnitude_buffer[output_idx]
-//
-// ОПТИМИЗАЦИЯ:
-//   99.9% потоков выходят раньше! (строка 266)
-//   Только элементы из диапазона fftshift обрабатываются дальше
-//
-// ПРИМЕР fftshift:
-//   nFFT=2048, out_count_points_fft=512, half=256
-//   Входной FFT: [0..2047]
-//   Выходной shifted: [1792..2047, 0..255] → [0..511]
-//                     ↑ отриц.частоты  ↑полож.
-//
-// ИСПОЛЬЗОВАНИЕ:
-//   - Production (Release) режим
-//   - Zero-copy: данные пишутся ПРЯМО в выходные буферы
-//   - Нет промежуточных kernel вызовов
-//
-// ВЫЗЫВАЕТСЯ ИЗ:
-//   antenna_fft_release.cpp:234 → CreateFFTPlanWithCallbacks()
-//
-// ════════════════════════════════════════════════════════════════════════════
 
 } // namespace kernels
 } // namespace antenna_fft
