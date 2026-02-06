@@ -8,7 +8,45 @@ namespace antenna_fft {
 namespace kernels {
 
 // ════════════════════════════════════════════════════════════════════════════
-// Padding Kernel - подготовка данных: count_points → nFFT с padding нулями
+// GetPaddingKernelSource() - Standalone Kernel для Batch Processing
+// ════════════════════════════════════════════════════════════════════════════
+//
+// НАЗНАЧЕНИЕ:
+//   Подготовка данных для FFT: копирование count_points → nFFT с padding нулями
+//   Используется когда нужно обработать БОЛЬШИЕ данные по частям (batch processing)
+//
+// АРХИТЕКТУРА:
+//   - Тип: Standalone OpenCL kernel (вызывается через clEnqueueNDRangeKernel)
+//   - Буферы: input и output - ОТДЕЛЬНЫЕ cl_mem объекты
+//   - Аргументы: 6 параметров через clSetKernelArg()
+//
+// MEMORY LAYOUT:
+//   input  (cl_mem): [луч0][луч1][луч2]...[лучN] - весь массив
+//   output (cl_mem): [луч_batch0][луч_batch1]... - результат батча
+//
+// КЛЮЧЕВАЯ ФИЧА - beam_offset:
+//   Позволяет обрабатывать данные по частям:
+//   - Batch 0: offset=0,  обрабатывает лучи 0-9
+//   - Batch 1: offset=10, обрабатывает лучи 10-19
+//   - Batch 2: offset=20, обрабатывает лучи 20-29
+//
+// ЛОГИКА:
+//   1. gid → определяем local_beam_idx и pos_in_fft
+//   2. Вычисляем global_beam_idx = local_beam_idx + beam_offset  ← OFFSET!
+//   3. Читаем из input[global_beam_idx * count_points + pos_in_fft]
+//   4. Пишем в output[gid]
+//   5. Если pos >= count_points → пишем нули (padding)
+//
+// ПРИМЕР:
+//   batch_beam_count=2, beam_offset=3, nFFT=2048, count_points=1024
+//   → Обработает лучи 3 и 4 из полного буфера
+//   → output[0..2047] = луч3 с padding, output[2048..4095] = луч4 с padding
+//
+// ИСПОЛЬЗОВАНИЕ:
+//   - Когда GPU memory < размер всех данных
+//   - Нужна гибкость для обработки по частям
+//   - Требуется отладка промежуточных результатов
+//
 // ════════════════════════════════════════════════════════════════════════════
 inline const char* GetPaddingKernelSource() {
     return R"CL(
@@ -39,7 +77,77 @@ __kernel void padding_kernel(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Post Kernel (UNIFIED) - magnitude + поиск max + фаза + параболическая интерполяция
+// GetPostKernelSource() - Post Kernel с поиском максимума в краевых диапазонах
+// ════════════════════════════════════════════════════════════════════════════
+//
+// НАЗНАЧЕНИЕ:
+//   Post-processing kernel: поиск ОДНОГО главного максимума в краевых диапазонах
+//   спектра + параболическая интерполяция + вывод 3х соседних точек
+//
+// АЛГОРИТМ:
+//   1. Делим search_range пополам → half_range
+//   2. Ищем максимум в ДВУХ диапазонах:
+//      - Диапазон 1 (положительные частоты): [0, half_range]
+//      - Диапазон 2 (отрицательные частоты): [nFFT - half_range, nFFT - 1]
+//   3. Выбираем ОДИН главный максимум (с наибольшей magnitude)
+//   4. Берём 3 точки: [max_idx-1, max_idx, max_idx+1]
+//   5. Считаем параболическую интерполяцию для уточнения частоты
+//   6. Выводим 4 структуры MaxValue на каждый луч:
+//      [0] - результат параболической интерполяции (с freq_offset, refined_frequency)
+//      [1] - левая точка (index-1)
+//      [2] - центральная точка (главный максимум)
+//      [3] - правая точка (index+1)
+//
+// ВХОДНЫЕ ПАРАМЕТРЫ:
+//   fft_output    - результат FFT (beam_count * nFFT комплексных чисел)
+//   maxima_output - выходной массив (beam_count * 4 структуры MaxValue)
+//   beam_count    - количество лучей
+//   nFFT          - размер FFT
+//   search_range  - ширина анализируемого диапазона (half_range = search_range/2)
+//   sample_rate   - частота дискретизации для вычисления частоты в Гц
+//
+// ВЫХОДНОЙ ФОРМАТ (4 структуры MaxValue на луч):
+//   MaxValue[0]: Параболическая интерполяция центральной точки
+//     - index: center_idx
+//     - real/imag: комплексное значение центра
+//     - magnitude: |magnitude| центра
+//     - phase: фаза в градусах
+//     - freq_offset: параболическая поправка [-0.5, 0.5]
+//     - refined_frequency: уточнённая частота (center + offset) * bin_width
+//
+//   MaxValue[1]: Левая точка (index-1)
+//     - index: center_idx - 1
+//     - real/imag: комплексное значение (или 0.0 если за границей)
+//     - magnitude: |magnitude| (или 0.0)
+//     - phase: фаза (или 0.0)
+//     - freq_offset: 0.0
+//     - refined_frequency: (center-1) * bin_width
+//
+//   MaxValue[2]: Центральная точка (главный максимум)
+//     - index: center_idx
+//     - real/imag: комплексное значение
+//     - magnitude: |magnitude|
+//     - phase: фаза
+//     - freq_offset: 0.0
+//     - refined_frequency: center * bin_width
+//
+//   MaxValue[3]: Правая точка (index+1)
+//     - index: center_idx + 1
+//     - real/imag: комплексное значение (или 0.0 если за границей)
+//     - magnitude: |magnitude| (или 0.0)
+//     - phase: фаза (или 0.0)
+//     - freq_offset: 0.0
+//     - refined_frequency: (center+1) * bin_width
+//
+// ГРАНИЧНЫЕ СЛУЧАИ:
+//   - Если max_idx == 0 или за границей диапазона → пишем 0.0 для отсутствующих точек
+//
+// ПРИМЕР:
+//   nFFT = 2048, search_range = 512, half_range = 256
+//   Ищем в: [0..255] и [1792..2047]
+//   Игнорируем: [256..1791]
+//   Найден максимум в индексе 205 → выводим точки 204, 205, 206 + параболу
+//
 // ════════════════════════════════════════════════════════════════════════════
 inline const char* GetPostKernelSource() {
     return R"CL(
@@ -57,12 +165,11 @@ typedef struct {
 
 __kernel void post_kernel(
     __global const float2* fft_output,     // FFT результат: beam_count * nFFT
-    __global MaxValue* maxima_output,      // Результат: beam_count * max_peaks_count
+    __global MaxValue* maxima_output,      // Результат: beam_count * 4 структуры
     uint beam_count,
     uint nFFT,
-    uint search_range,                     // Сколько точек анализировать
-    uint max_peaks_count,                  // Сколько максимумов искать
-    float sample_rate                      // Частота дискретизации (12 МГц)
+    uint search_range,                     // Ширина диапазона (делим пополам)
+    float sample_rate                      // Частота дискретизации (Гц)
 ) {
     uint beam_idx = get_group_id(0);
     uint lid = get_local_id(0);
@@ -70,20 +177,26 @@ __kernel void post_kernel(
 
     if (beam_idx >= beam_count) return;
 
-    // Local memory для редукции
+    // ═══════════════════════════════════════════════════════════════════════
+    // ШАГ 1: Вычисляем half_range (половина search_range)
+    // ═══════════════════════════════════════════════════════════════════════
+    uint half_range = search_range / 2;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ШАГ 2: Ищем максимум в ДВУХ диапазонах
+    // Диапазон 1: [0, half_range] - положительные частоты
+    // Диапазон 2: [nFFT - half_range, nFFT - 1] - отрицательные частоты
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Local memory для параллельной редукции
     __local float local_mag[256];
     __local uint local_idx[256];
-    __local float2 local_complex[256];
-    __local float found_mags[16];
-    __local uint found_indices[16];
-    __local float2 found_complex[16];
 
-    // ЭТАП 1: Каждый поток находит свой локальный максимум
     float my_max_mag = -1.0f;
     uint my_max_idx = 0;
-    float2 my_max_complex = (float2)(0.0f, 0.0f);
 
-    for (uint i = lid; i < search_range; i += local_size) {
+    // Поиск в диапазоне 1: [0, half_range]
+    for (uint i = lid; i < half_range; i += local_size) {
         uint fft_idx = beam_idx * nFFT + i;
         float2 val = fft_output[fft_idx];
         float mag = sqrt(val.x * val.x + val.y * val.y);
@@ -91,193 +204,215 @@ __kernel void post_kernel(
         if (mag > my_max_mag) {
             my_max_mag = mag;
             my_max_idx = i;
-            my_max_complex = val;
         }
     }
 
+    // Поиск в диапазоне 2: [nFFT - half_range, nFFT - 1]
+    uint range2_start = nFFT - half_range;
+    for (uint i = range2_start + lid; i < nFFT; i += local_size) {
+        uint fft_idx = beam_idx * nFFT + i;
+        float2 val = fft_output[fft_idx];
+        float mag = sqrt(val.x * val.x + val.y * val.y);
+
+        if (mag > my_max_mag) {
+            my_max_mag = mag;
+            my_max_idx = i;
+        }
+    }
+
+    // Сохраняем локальные максимумы в shared memory
     local_mag[lid] = my_max_mag;
     local_idx[lid] = my_max_idx;
-    local_complex[lid] = my_max_complex;
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    // ЭТАП 2: Поток 0 ищет top-N максимумов
+    // ═══════════════════════════════════════════════════════════════════════
+    // ШАГ 3: Поток 0 находит ОДИН главный максимум из всех локальных
+    // ═══════════════════════════════════════════════════════════════════════
     if (lid == 0) {
-        for (uint peak = 0; peak < max_peaks_count && peak < 16; ++peak) {
-            float best_mag = -1.0f;
-            uint best_idx = 0;
-            float2 best_complex = (float2)(0.0f, 0.0f);
-            uint best_local_idx = 0;
+        float global_max_mag = -1.0f;
+        uint global_max_idx = 0;
 
-            for (uint j = 0; j < local_size; ++j) {
-                if (local_mag[j] > best_mag) {
-                    best_mag = local_mag[j];
-                    best_idx = local_idx[j];
-                    best_complex = local_complex[j];
-                    best_local_idx = j;
-                }
-            }
-
-            if (best_mag > 0.0f) {
-                found_mags[peak] = best_mag;
-                found_indices[peak] = best_idx;
-                found_complex[peak] = best_complex;
-                local_mag[best_local_idx] = -1.0f;
-            } else {
-                found_mags[peak] = 0.0f;
-                found_indices[peak] = 0;
-                found_complex[peak] = (float2)(0.0f, 0.0f);
+        for (uint j = 0; j < local_size; ++j) {
+            if (local_mag[j] > global_max_mag) {
+                global_max_mag = local_mag[j];
+                global_max_idx = local_idx[j];
             }
         }
 
-        // ═══════════════════════════════════════════════════════════════
-        // ЭТАП 3: Записать результаты с Re/Im и параболической интерполяцией
-        // ═══════════════════════════════════════════════════════════════
+        uint center_idx = global_max_idx;
+        uint base_fft_idx = beam_idx * nFFT;
 
+        // ═══════════════════════════════════════════════════════════════════
+        // ШАГ 4: Читаем 3 точки: [center-1, center, center+1]
+        // ═══════════════════════════════════════════════════════════════════
+        float2 left_val = (float2)(0.0f, 0.0f);
+        float2 center_val = fft_output[base_fft_idx + center_idx];
+        float2 right_val = (float2)(0.0f, 0.0f);
+
+        float y_left = 0.0f;
+        float y_center = sqrt(center_val.x * center_val.x + center_val.y * center_val.y);
+        float y_right = 0.0f;
+
+        // Проверяем границы для левой точки
+        bool has_left = false;
+        if (center_idx > 0) {
+            // Проверяем что left_idx в одном из диапазонов
+            uint left_idx = center_idx - 1;
+            if ((left_idx < half_range) || (left_idx >= range2_start)) {
+                left_val = fft_output[base_fft_idx + left_idx];
+                y_left = sqrt(left_val.x * left_val.x + left_val.y * left_val.y);
+                has_left = true;
+            }
+        }
+
+        // Проверяем границы для правой точки
+        bool has_right = false;
+        if (center_idx < nFFT - 1) {
+            // Проверяем что right_idx в одном из диапазонов
+            uint right_idx = center_idx + 1;
+            if ((right_idx < half_range) || (right_idx >= range2_start)) {
+                right_val = fft_output[base_fft_idx + right_idx];
+                y_right = sqrt(right_val.x * right_val.x + right_val.y * right_val.y);
+                has_right = true;
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // ШАГ 5: Параболическая интерполяция
+        // ═══════════════════════════════════════════════════════════════════
         float bin_width = sample_rate / (float)nFFT;
+        float freq_offset = 0.0f;
+        float refined_frequency = (float)center_idx * bin_width;
 
-        for (uint peak = 0; peak < max_peaks_count && peak < 16; ++peak) {
-            uint out_idx = beam_idx * max_peaks_count + peak;
-
-            MaxValue mv;
-            mv.index = found_indices[peak];
-
-            float2 c = found_complex[peak];
-            mv.real = c.x;
-            mv.imag = c.y;
-            mv.magnitude = found_mags[peak];
-
-            if (found_mags[peak] > 0.0f) {
-                float phase_rad = atan2(c.y, c.x);
-                mv.phase = phase_rad * 57.29577951f;
-            } else {
-                mv.phase = 0.0f;
+        if (has_left && has_right) {
+            float denom = y_left - 2.0f * y_center + y_right;
+            if (fabs(denom) > 1e-10f) {
+                float offset = 0.5f * (y_left - y_right) / denom;
+                offset = clamp(offset, -0.5f, 0.5f);
+                freq_offset = offset;
+                refined_frequency = ((float)center_idx + offset) * bin_width;
             }
-
-            mv.freq_offset = 0.0f;
-            mv.refined_frequency = (float)mv.index * bin_width;
-
-            // Параболическая интерполяция ТОЛЬКО для peak == 0
-            if (peak == 0 && found_mags[0] > 0.0f) {
-                uint center_idx = found_indices[0];
-
-                if (center_idx > 0 && center_idx < search_range - 1) {
-                    uint base_idx = beam_idx * nFFT;
-
-                    float2 left_val = fft_output[base_idx + center_idx - 1];
-                    float2 right_val = fft_output[base_idx + center_idx + 1];
-
-                    float y_left = sqrt(left_val.x * left_val.x + left_val.y * left_val.y);
-                    float y_center = found_mags[0];
-                    float y_right = sqrt(right_val.x * right_val.x + right_val.y * right_val.y);
-
-                    float denom = y_left - 2.0f * y_center + y_right;
-
-                    if (fabs(denom) > 1e-10f) {
-                        float offset = 0.5f * (y_left - y_right) / denom;
-                        offset = clamp(offset, -0.5f, 0.5f);
-
-                        mv.freq_offset = offset;
-                        float refined_index = (float)center_idx + offset;
-                        mv.refined_frequency = refined_index * bin_width;
-                    }
-                }
-            }
-
-            mv.pad = 0;
-            maxima_output[out_idx] = mv;
         }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // ШАГ 6: Заполняем 4 структуры MaxValue
+        // ═══════════════════════════════════════════════════════════════════
+        uint out_base = beam_idx * 4;
+
+        // [0] - Результат параболической интерполяции
+        maxima_output[out_base + 0].index = center_idx;
+        maxima_output[out_base + 0].real = center_val.x;
+        maxima_output[out_base + 0].imag = center_val.y;
+        maxima_output[out_base + 0].magnitude = y_center;
+        maxima_output[out_base + 0].phase = atan2(center_val.y, center_val.x) * 57.29577951f;
+        maxima_output[out_base + 0].freq_offset = freq_offset;
+        maxima_output[out_base + 0].refined_frequency = refined_frequency;
+        maxima_output[out_base + 0].pad = 0;
+
+        // [1] - Левая точка (index-1)
+        if (has_left) {
+            maxima_output[out_base + 1].index = center_idx - 1;
+            maxima_output[out_base + 1].real = left_val.x;
+            maxima_output[out_base + 1].imag = left_val.y;
+            maxima_output[out_base + 1].magnitude = y_left;
+            maxima_output[out_base + 1].phase = atan2(left_val.y, left_val.x) * 57.29577951f;
+            maxima_output[out_base + 1].freq_offset = 0.0f;
+            maxima_output[out_base + 1].refined_frequency = (float)(center_idx - 1) * bin_width;
+        } else {
+            // Нет левой точки → нули
+            maxima_output[out_base + 1].index = 0;
+            maxima_output[out_base + 1].real = 0.0f;
+            maxima_output[out_base + 1].imag = 0.0f;
+            maxima_output[out_base + 1].magnitude = 0.0f;
+            maxima_output[out_base + 1].phase = 0.0f;
+            maxima_output[out_base + 1].freq_offset = 0.0f;
+            maxima_output[out_base + 1].refined_frequency = 0.0f;
+        }
+        maxima_output[out_base + 1].pad = 0;
+
+        // [2] - Центральная точка (главный максимум)
+        maxima_output[out_base + 2].index = center_idx;
+        maxima_output[out_base + 2].real = center_val.x;
+        maxima_output[out_base + 2].imag = center_val.y;
+        maxima_output[out_base + 2].magnitude = y_center;
+        maxima_output[out_base + 2].phase = atan2(center_val.y, center_val.x) * 57.29577951f;
+        maxima_output[out_base + 2].freq_offset = 0.0f;
+        maxima_output[out_base + 2].refined_frequency = (float)center_idx * bin_width;
+        maxima_output[out_base + 2].pad = 0;
+
+        // [3] - Правая точка (index+1)
+        if (has_right) {
+            maxima_output[out_base + 3].index = center_idx + 1;
+            maxima_output[out_base + 3].real = right_val.x;
+            maxima_output[out_base + 3].imag = right_val.y;
+            maxima_output[out_base + 3].magnitude = y_right;
+            maxima_output[out_base + 3].phase = atan2(right_val.y, right_val.x) * 57.29577951f;
+            maxima_output[out_base + 3].freq_offset = 0.0f;
+            maxima_output[out_base + 3].refined_frequency = (float)(center_idx + 1) * bin_width;
+        } else {
+            // Нет правой точки → нули
+            maxima_output[out_base + 3].index = 0;
+            maxima_output[out_base + 3].real = 0.0f;
+            maxima_output[out_base + 3].imag = 0.0f;
+            maxima_output[out_base + 3].magnitude = 0.0f;
+            maxima_output[out_base + 3].phase = 0.0f;
+            maxima_output[out_base + 3].freq_offset = 0.0f;
+            maxima_output[out_base + 3].refined_frequency = 0.0f;
+        }
+        maxima_output[out_base + 3].pad = 0;
     }
 }
 )CL";
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Debug Post Kernel - fftshift + magnitude (без поиска максимумов)
-// Используется в AntennaFFTDebug для пошаговой отладки
+// GetPreCallbackSource32() - clFFT Pre-Callback (PRODUCTION)
 // ════════════════════════════════════════════════════════════════════════════
-inline const char* GetDebugPostKernelSource() {
-    return R"CL(
-__kernel void debug_post_kernel(
-    __global const float2* fft_output,       // FFT результат: beam_count * nFFT
-    __global float2* selected_complex,       // Выход: beam_count * out_count_points_fft
-    __global float* selected_magnitude,      // Выход: beam_count * out_count_points_fft
-    uint beam_count,
-    uint nFFT,
-    uint out_count_points_fft
-) {
-    uint gid = get_global_id(0);
-    uint beam_idx = gid / out_count_points_fft;
-    uint out_idx = gid % out_count_points_fft;
-
-    if (beam_idx >= beam_count) return;
-
-    // fftshift: переупорядочиваем спектр
-    // Выходной диапазон [0, out_count_points_fft) должен содержать:
-    // - Первая половина: отрицательные частоты [nFFT - half, nFFT)
-    // - Вторая половина: положительные частоты [0, half)
-    uint half_size = out_count_points_fft / 2;
-
-    uint fft_idx;
-    if (out_idx < half_size) {
-        // Отрицательные частоты: из конца FFT буфера
-        fft_idx = nFFT - half_size + out_idx;
-    } else {
-        // Положительные частоты: из начала FFT буфера
-        fft_idx = out_idx - half_size;
-    }
-
-    uint src_idx = beam_idx * nFFT + fft_idx;
-    uint dst_idx = beam_idx * out_count_points_fft + out_idx;
-
-    float2 val = fft_output[src_idx];
-    selected_complex[dst_idx] = val;
-    selected_magnitude[dst_idx] = sqrt(val.x * val.x + val.y * val.y);
-}
-)CL";
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Pre-Callback Source для clFFT (16-байт структура)
-// ════════════════════════════════════════════════════════════════════════════
-inline const char* GetPreCallbackSource() {
-    return R"(
-typedef struct {
-    uint beam_count;
-    uint count_points;
-    uint nFFT;
-    uint padding;
-} PreCallbackUserData;
-
-float2 prepareDataPre(__global void* input, uint inoffset, __global void* userdata) {
-    __global PreCallbackUserData* params = (__global PreCallbackUserData*)userdata;
-    __global float2* input_signal = (__global float2*)((__global char*)userdata + sizeof(PreCallbackUserData));
-
-    uint beam_count = params->beam_count;
-    uint count_points = params->count_points;
-    uint nFFT = params->nFFT;
-
-    // Вычислить индекс луча и позицию в блоке nFFT
-    uint beam_idx = inoffset / nFFT;
-    uint pos_in_fft = inoffset % nFFT;
-
-    if (beam_idx >= beam_count) {
-        return (float2)(0.0f, 0.0f);
-    }
-
-    // Если позиция в пределах count_points - копируем данные
-    if (pos_in_fft < count_points) {
-        uint input_idx = beam_idx * count_points + pos_in_fft;
-        return input_signal[input_idx];
-    } else {
-        // Остальное - padding (нули)
-        return (float2)(0.0f, 0.0f);
-    }
-}
-)";
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Pre-Callback Source для clFFT (32-байт структура, для CreateFFTPlanWithPreCallbackOnly)
+//
+// НАЗНАЧЕНИЕ:
+//   Pre-callback для clFFT: автоматическая подготовка данных ДО каждого FFT элемента
+//   Выполняет padding: count_points → nFFT с заполнением нулями
+//
+// АРХИТЕКТУРА:
+//   - Тип: clFFT callback функция (вызывается АВТОМАТИЧЕСКИ clFFT)
+//   - Вызов: clFFT вызывает prepareDataPre() для каждого элемента ПЕРЕД FFT
+//   - Возврат: float2 → clFFT использует это значение как вход для FFT
+//
+// MEMORY LAYOUT:
+//   userdata = [32 байта структуры PreCallbackUserData][данные лучей]
+//              ↑                                      ↑
+//              Параметры (beam_count, nFFT...)       input_signal
+//
+// СТРУКТУРА (32 байта):
+//   - beam_count, count_points, nFFT (используются)
+//   - padding1..padding5 (для выравнивания 32 байта = 256 бит)
+//   Зачем 32 байта? Выравнивание GPU memory для оптимальной производительности
+//
+// ЛОГИКА:
+//   1. inoffset → определяем beam_idx и pos_in_fft
+//   2. Читаем из input_signal[beam_idx * count_points + pos_in_fft]
+//   3. ВОЗВРАЩАЕМ значение (clFFT использует для FFT)
+//   4. Если pos >= count_points → возвращаем (0, 0) - padding
+//
+// ОГРАНИЧЕНИЕ - НЕТ beam_offset:
+//   ⚠️ Callback ВСЕГДА читает с луча 0!
+//   Невозможно "пропустить" первые N лучей, как в GetPaddingKernelSource
+//   Данные должны быть упакованы в userdata ПОДРЯД с начала
+//
+// ПРИМЕР:
+//   beam_count=5, nFFT=2048, count_points=1024
+//   inoffset=0..2047   → beam_idx=0, читает луч 0
+//   inoffset=2048..4095 → beam_idx=1, читает луч 1
+//   ...всегда с начала userdata
+//
+// ИСПОЛЬЗОВАНИЕ:
+//   - Production (Release) режим - максимальная скорость
+//   - Все данные влезают в один вызов clFFT
+//   - Zero-copy: нет промежуточных буферов между padding и FFT
+//
+// ВЫЗЫВАЕТСЯ ИЗ:
+//   antenna_fft_release.cpp:225 → CreateFFTPlanWithCallbacks()
+//
 // ════════════════════════════════════════════════════════════════════════════
 inline const char* GetPreCallbackSource32() {
     return
@@ -312,70 +447,55 @@ inline const char* GetPreCallbackSource32() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Post-Callback Source для clFFT (fftshift + magnitude + complex write)
+// GetPostCallbackSource() - clFFT Post-Callback (PRODUCTION)
 // ════════════════════════════════════════════════════════════════════════════
-inline const char* GetPostCallbackSource() {
-    return R"(
-typedef struct {
-    uint beam_count;
-    uint nFFT;
-    uint out_count_points_fft;
-    uint max_peaks_count;
-} PostCallbackUserData;
-
-void processFFTPost(__global void* output, uint outoffset, __global void* userdata, float2 fftoutput) {
-    __global PostCallbackUserData* params = (__global PostCallbackUserData*)userdata;
-
-    uint beam_count = params->beam_count;
-    uint nFFT = params->nFFT;
-    uint out_count_points_fft = params->out_count_points_fft;
-
-    // Вычислить индекс луча и позицию в FFT
-    uint beam_idx = outoffset / nFFT;
-    uint pos_in_fft = outoffset % nFFT;
-
-    if (beam_idx >= beam_count) {
-        return;
-    }
-
-    // Диапазоны для fftshift:
-    // Диапазон 1 (отрицательные частоты): [nFFT - out_count_points_fft/2, nFFT - 1]
-    // Диапазон 2 (положительные частоты): [0, out_count_points_fft/2 - 1]
-    uint half_size = out_count_points_fft / 2;
-    uint range1_start = nFFT - half_size;
-
-    // Быстрая проверка - 99.9% потоков выходят здесь!
-    bool in_range1 = (pos_in_fft >= range1_start);
-    bool in_range2 = (pos_in_fft < half_size);
-
-    if (!in_range1 && !in_range2) {
-        return;  // Не в диапазоне fftshift - выходим быстро
-    }
-
-    // Вычислить индекс в выходном буфере (после fftshift)
-    uint output_idx;
-    if (in_range1) {
-        // Отрицательные частоты → начало выходного буфера
-        output_idx = pos_in_fft - range1_start;
-    } else {
-        // Положительные частоты → после отрицательных
-        output_idx = half_size + pos_in_fft;
-    }
-
-    // Layout userdata: params | complex_buffer | magnitude_buffer
-    __global float2* complex_buffer = (__global float2*)((__global char*)userdata + sizeof(PostCallbackUserData));
-    __global float* magnitude_buffer = (__global float*)(complex_buffer + (beam_count * out_count_points_fft));
-
-    uint base_idx = beam_idx * out_count_points_fft + output_idx;
-
-    // Записать комплексный спектр (только для fftshift диапазона)
-    complex_buffer[base_idx] = fftoutput;
-
-    // Записать magnitude (без atomic - просто прямая запись)
-    magnitude_buffer[base_idx] = length(fftoutput);
-}
-)";
-}
+//
+// НАЗНАЧЕНИЕ:
+//   Post-callback для clFFT: автоматическая обработка ПОСЛЕ каждого FFT элемента
+//   Выполняет fftshift + вычисление magnitude + запись комплексного спектра
+//
+// АРХИТЕКТУРА:
+//   - Тип: clFFT callback функция (вызывается АВТОМАТИЧЕСКИ clFFT)
+//   - Вызов: clFFT вызывает processFFTPost() для каждого элемента ПОСЛЕ FFT
+//   - Параметр fftoutput: результат FFT для текущего элемента
+//   - Возврат: void (пишет напрямую в userdata буферы)
+//
+// MEMORY LAYOUT:
+//   userdata = [16 байт PostCallbackUserData][complex_buffer][magnitude_buffer]
+//              ↑                               ↑               ↑
+//              Параметры                       Выход Re/Im     Выход |magnitude|
+//
+// СТРУКТУРА (16 байт):
+//   - beam_count, nFFT, out_count_points_fft, max_peaks_count
+//
+// ЛОГИКА FFTshift:
+//   1. outoffset → определяем beam_idx и pos_in_fft
+//   2. Проверяем входит ли в диапазон fftshift:
+//      - Диапазон 1 (отрицательные частоты): [nFFT - half, nFFT)
+//      - Диапазон 2 (положительные частоты): [0, half)
+//   3. Вычисляем output_idx после fftshift
+//   4. Записываем fftoutput в complex_buffer[output_idx]
+//   5. Записываем length(fftoutput) в magnitude_buffer[output_idx]
+//
+// ОПТИМИЗАЦИЯ:
+//   99.9% потоков выходят раньше! (строка 266)
+//   Только элементы из диапазона fftshift обрабатываются дальше
+//
+// ПРИМЕР fftshift:
+//   nFFT=2048, out_count_points_fft=512, half=256
+//   Входной FFT: [0..2047]
+//   Выходной shifted: [1792..2047, 0..255] → [0..511]
+//                     ↑ отриц.частоты  ↑полож.
+//
+// ИСПОЛЬЗОВАНИЕ:
+//   - Production (Release) режим
+//   - Zero-copy: данные пишутся ПРЯМО в выходные буферы
+//   - Нет промежуточных kernel вызовов
+//
+// ВЫЗЫВАЕТСЯ ИЗ:
+//   antenna_fft_release.cpp:234 → CreateFFTPlanWithCallbacks()
+//
+// ════════════════════════════════════════════════════════════════════════════
 
 } // namespace kernels
 } // namespace antenna_fft
