@@ -65,7 +65,7 @@ struct ConsoleMessage {
         DEBUG = 0,
         INFO = 1,
         WARNING = 2,
-        ERROR = 3
+        ERRLEVEL = 3  // Named ERRLEVEL to avoid Windows ERROR macro conflict
     };
     Level level = Level::INFO;
 
@@ -145,7 +145,7 @@ public:
         ConsoleMessage msg;
         msg.gpu_id = gpu_id;
         msg.module_name = module;
-        msg.level = ConsoleMessage::Level::ERROR;
+        msg.level = ConsoleMessage::Level::ERRLEVEL;
         msg.message = message;
         Enqueue(std::move(msg));
     }
@@ -266,7 +266,7 @@ protected:
             case ConsoleMessage::Level::WARNING:
                 oss << "[WRN] ";
                 break;
-            case ConsoleMessage::Level::ERROR:
+            case ConsoleMessage::Level::ERRLEVEL:
                 oss << "[ERR] ";
                 break;
         }
@@ -287,7 +287,7 @@ protected:
         oss << msg.message;
 
         // Output to stdout (or stderr for errors)
-        if (msg.level == ConsoleMessage::Level::ERROR) {
+        if (msg.level == ConsoleMessage::Level::ERRLEVEL) {
             std::cerr << oss.str() << "\n";
         } else {
             std::cout << oss.str() << "\n";

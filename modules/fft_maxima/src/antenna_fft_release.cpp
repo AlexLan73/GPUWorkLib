@@ -1,5 +1,6 @@
 #include "antenna_fft_release.h"
 #include "fft_logger.h"
+#include "services/gpu_profiler.hpp"
 #include <cstring>
 
 namespace antenna_fft {
@@ -32,6 +33,9 @@ void AntennaFFTProcMax::Initialize() {
     FFTLogger::Info("  count_points: ", params_.count_points);
     FFTLogger::Info("  nFFT: ", nFFT_);
     FFTLogger::Info("  out_count_points_fft: ", params_.out_count_points_fft);
+
+    // Create FFT plan cache for this context
+    plan_cache_ = std::make_unique<FFTPlanCache>(context_, queue_);
 
     // Allocate buffers for initial batch size
     size_t initial_beams = batch_config_.beams_per_batch;
@@ -77,7 +81,17 @@ AntennaFFTResult AntennaFFTProcMax::ProcessSingleBatch(cl_mem input_signal) {
     clWaitForEvents(1, &fft_event);
 
     // Profile
-    last_profiling_results_.fft_time_ms = ProfileEvent(fft_event, "FFT");
+    double fft_time_ms = ProfileEvent(fft_event, "FFT");
+    last_profiling_results_.fft_time_ms = fft_time_ms;
+
+    // Record to GPUProfiler (async, non-blocking)
+    drv_gpu_lib::GPUProfiler::GetInstance().Record(
+        backend_->GetDeviceIndex(),
+        "AntennaFFT",
+        "SingleBatchFFT",
+        fft_time_ms
+    );
+
     clReleaseEvent(fft_event);
 
     // Read results
@@ -132,11 +146,20 @@ std::vector<FFTResult> AntennaFFTProcMax::ProcessBatch(
     auto fft_end = std::chrono::high_resolution_clock::now();
 
     // Profile
+    double fft_time_ms = ProfileEvent(fft_event, "BatchFFT");
     if (out_profiling) {
-        out_profiling->fft_time_ms = ProfileEvent(fft_event, "BatchFFT");
+        out_profiling->fft_time_ms = fft_time_ms;
         out_profiling->padding_time_ms = 0; // Included in pre-callback
         out_profiling->post_time_ms = 0;    // Included in post-callback
     }
+
+    // Record to GPUProfiler (async, non-blocking)
+    drv_gpu_lib::GPUProfiler::GetInstance().Record(
+        backend_->GetDeviceIndex(),
+        "AntennaFFT",
+        "BatchFFT",
+        fft_time_ms
+    );
 
     clReleaseEvent(fft_event);
 
@@ -198,60 +221,83 @@ void AntennaFFTProcMax::ReleaseBuffers() {
 void AntennaFFTProcMax::CreateFFTPlanWithCallbacks(size_t num_beams) {
     if (plan_created_ && plan_num_beams_ == num_beams) return;
 
-    ReleaseFFTPlan();
+    // Check if plan is already in cache and baked
+    if (plan_cache_ && plan_cache_->IsBaked(nFFT_, num_beams)) {
+        // Cache HIT - reuse existing plan
+        plan_handle_ = plan_cache_->GetOrCreate(nFFT_, num_beams);
+        plan_created_ = true;
+        plan_num_beams_ = num_beams;
+        FFTLogger::Info("  [Release] FFT plan retrieved from cache (nFFT=", nFFT_, ", beams=", num_beams, ")");
+        return;
+    }
+
+    // Need to release old plan (if not cached) and create new
+    // Note: If we have cache, plans are managed by cache, not ReleaseFFTPlan
+    if (!plan_cache_) {
+        ReleaseFFTPlan();
+    }
 
     FFTLogger::Info("  [Release] Creating FFT plan with callbacks for ", num_beams, " beams...");
 
-    // Create plan
-    size_t dim = nFFT_;
-    clfftStatus status = clfftCreateDefaultPlan(&plan_handle_, context_, CLFFT_1D, &dim);
-    if (status != CLFFT_SUCCESS) {
-        throw std::runtime_error("clfftCreateDefaultPlan failed: " + std::to_string(status));
+    // Get or create plan from cache (returns unbaked plan)
+    if (plan_cache_) {
+        plan_handle_ = plan_cache_->GetOrCreate(nFFT_, num_beams);
+    } else {
+        // Fallback: create plan without cache
+        size_t dim = nFFT_;
+        clfftStatus status = clfftCreateDefaultPlan(&plan_handle_, context_, CLFFT_1D, &dim);
+        if (status != CLFFT_SUCCESS) {
+            throw std::runtime_error("clfftCreateDefaultPlan failed: " + std::to_string(status));
+        }
+
+        // Configure plan
+        clfftSetPlanPrecision(plan_handle_, CLFFT_SINGLE);
+        clfftSetLayout(plan_handle_, CLFFT_COMPLEX_INTERLEAVED, CLFFT_COMPLEX_INTERLEAVED);
+        clfftSetResultLocation(plan_handle_, CLFFT_OUTOFPLACE);
+        clfftSetPlanBatchSize(plan_handle_, num_beams);
+
+        size_t strides[1] = {1};
+        size_t dist = nFFT_;
+        clfftSetPlanInStride(plan_handle_, CLFFT_1D, strides);
+        clfftSetPlanOutStride(plan_handle_, CLFFT_1D, strides);
+        clfftSetPlanDistance(plan_handle_, dist, dist);
     }
-
-    // Configure plan
-    clfftSetPlanPrecision(plan_handle_, CLFFT_SINGLE);
-    clfftSetLayout(plan_handle_, CLFFT_COMPLEX_INTERLEAVED, CLFFT_COMPLEX_INTERLEAVED);
-    clfftSetResultLocation(plan_handle_, CLFFT_OUTOFPLACE);
-    clfftSetPlanBatchSize(plan_handle_, num_beams);
-
-    size_t strides[1] = {1};
-    size_t dist = nFFT_;
-    clfftSetPlanInStride(plan_handle_, CLFFT_1D, strides);
-    clfftSetPlanOutStride(plan_handle_, CLFFT_1D, strides);
-    clfftSetPlanDistance(plan_handle_, dist, dist);
 
     // Register pre-callback (32-byte struct version)
     const char* pre_callback_source = kernels::GetPreCallbackSource32();
-    status = clfftSetPlanCallback(plan_handle_, "prepareDataPre", pre_callback_source, 0,
+    clfftStatus status = clfftSetPlanCallback(plan_handle_, "prepareDataPre", pre_callback_source, 0,
                                   PRECALLBACK, &pre_callback_userdata_, 1);
     if (status != CLFFT_SUCCESS) {
-        clfftDestroyPlan(&plan_handle_);
+        if (!plan_cache_) clfftDestroyPlan(&plan_handle_);
         throw std::runtime_error("clfftSetPlanCallback (pre) failed: " + std::to_string(status));
     }
 
     // Register post-callback
-//    const char* post_callback_source = kernels::GetPostCallbackSource();
     const char* post_callback_source = kernels::GetPaddingKernelSource();
-    
+
     status = clfftSetPlanCallback(plan_handle_, "processFFTPost", post_callback_source, 0,
                                   POSTCALLBACK, &post_callback_userdata_, 1);
     if (status != CLFFT_SUCCESS) {
-        clfftDestroyPlan(&plan_handle_);
+        if (!plan_cache_) clfftDestroyPlan(&plan_handle_);
         throw std::runtime_error("clfftSetPlanCallback (post) failed: " + std::to_string(status));
     }
 
     // Bake plan
     status = clfftBakePlan(plan_handle_, 1, &queue_, nullptr, nullptr);
     if (status != CLFFT_SUCCESS) {
-        clfftDestroyPlan(&plan_handle_);
+        if (!plan_cache_) clfftDestroyPlan(&plan_handle_);
         throw std::runtime_error("clfftBakePlan failed: " + std::to_string(status));
+    }
+
+    // Mark as baked in cache
+    if (plan_cache_) {
+        plan_cache_->MarkBaked(nFFT_, num_beams);
     }
 
     plan_created_ = true;
     plan_num_beams_ = num_beams;
 
-    FFTLogger::Info("  [Release] FFT plan created!");
+    FFTLogger::Info("  [Release] FFT plan created and cached!");
 }
 
 bool AntennaFFTProcMax::ExecuteFFTWithCallbacks(

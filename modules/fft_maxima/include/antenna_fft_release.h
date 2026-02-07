@@ -15,6 +15,9 @@
 
 #include "antenna_fft_core.h"
 #include "kernels/fft_kernel_sources.hpp"
+#include "fft_plan_cache.hpp"
+
+#include <memory>
 
 namespace antenna_fft {
 
@@ -133,6 +136,9 @@ private:
 
     // Cached plan parameters
     size_t plan_num_beams_;                // Number of beams plan was created for
+
+    // FFT Plan Cache (avoids expensive plan recreation)
+    std::unique_ptr<FFTPlanCache> plan_cache_;
 };
 
 } // namespace antenna_fft
