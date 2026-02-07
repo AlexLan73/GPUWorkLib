@@ -7,6 +7,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <array>
+#include <vector>
 
 // Forward declaration для SVMCapabilities
 namespace drv_gpu_lib { struct SVMCapabilities; }
@@ -23,52 +24,85 @@ enum class DeviceType {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// OpenCLCore - Singleton контекст OpenCL
+// OpenCLCore - Per-Device контекст OpenCL (Multi-GPU поддержка)
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
  * @class OpenCLCore
- * @brief Управляет единым OpenCL контекстом на приложение
+ * @brief Управляет OpenCL контекстом для КОНКРЕТНОГО устройства
+ *
+ * ✅ MULTI-GPU ARCHITECTURE:
+ * Каждый экземпляр OpenCLCore владеет СВОИМ устройством по device_index.
+ * Это позволяет создавать несколько backend'ов для разных GPU.
  *
  * Ответственность:
- * - Инициализация платформы и девайса
+ * - Инициализация платформы и девайса по индексу
  * - Создание и владение контекстом OpenCL
  * - Информация о девайсе
  * - Thread-safe доступ к контексту
  *
  * НЕ управляет:
- * - Command queues (это делает CommandQueuePool)
+ * - Command queues (это делает CommandQueuePool или OpenCLBackend)
  * - Программы (это делает KernelProgram)
  * - Буферы (это делает GPUMemoryBuffer)
+ *
+ * @code
+ * // Multi-GPU использование:
+ * auto core0 = std::make_unique<OpenCLCore>(0, DeviceType::GPU);  // GPU 0
+ * auto core1 = std::make_unique<OpenCLCore>(1, DeviceType::GPU);  // GPU 1
+ *
+ * core0->Initialize();
+ * core1->Initialize();
+ *
+ * cl_context ctx0 = core0->GetContext();  // Контекст GPU 0
+ * cl_context ctx1 = core1->GetContext();  // Контекст GPU 1 (РАЗНЫЕ!)
+ * @endcode
  */
 class OpenCLCore {
 public:
     // ═══════════════════════════════════════════════════════════════
-    // Singleton интерфейс
+    // Конструктор и деструктор
     // ═══════════════════════════════════════════════════════════════
 
     /**
-     * @brief Инициализировать OpenCL контекст (один раз)
-     * @param device_type GPU или CPU
-     * @throws std::runtime_error если инициализация не удалась
+     * @brief Создать OpenCLCore для конкретного устройства
+     * @param device_index Индекс устройства (0, 1, 2, ...)
+     * @param device_type Тип устройства: GPU или CPU
      */
-    static void Initialize(DeviceType device_type = DeviceType::GPU);
+    explicit OpenCLCore(int device_index = 0, DeviceType device_type = DeviceType::GPU);
 
     /**
-     * @brief Получить Singleton (thread-safe)
-     * @throws std::runtime_error если не инициализирован
+     * @brief Деструктор - освобождает ресурсы OpenCL
      */
-    static OpenCLCore& GetInstance();
+    ~OpenCLCore();
+
+    // ═══════════════════════════════════════════════════════════════
+    // Запрет копирования, разрешение перемещения
+    // ═══════════════════════════════════════════════════════════════
+    OpenCLCore(const OpenCLCore&) = delete;
+    OpenCLCore& operator=(const OpenCLCore&) = delete;
+    OpenCLCore(OpenCLCore&& other) noexcept;
+    OpenCLCore& operator=(OpenCLCore&& other) noexcept;
+
+    // ═══════════════════════════════════════════════════════════════
+    // Инициализация
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * @brief Инициализировать OpenCL контекст для этого устройства
+     * @throws std::runtime_error если инициализация не удалась
+     */
+    void Initialize();
+
+    /**
+     * @brief Очистить ресурсы
+     */
+    void Cleanup();
 
     /**
      * @brief Проверить инициализацию
      */
-    static bool IsInitialized();
-
-    /**
-     * @brief Очистка ресурсов (опционально, вызывается в деструкторе)
-     */
-    static void Cleanup();
+    bool IsInitialized() const { return initialized_; }
 
     // ═══════════════════════════════════════════════════════════════
     // Getters для OpenCL объектов
@@ -77,122 +111,79 @@ public:
     cl_context GetContext() const { return context_; }
     cl_device_id GetDevice() const { return device_; }
     cl_platform_id GetPlatform() const { return platform_; }
+    int GetDeviceIndex() const { return device_index_; }
+    DeviceType GetDeviceType() const { return device_type_; }
 
     // ═══════════════════════════════════════════════════════════════
     // Информация о девайсе
     // ═══════════════════════════════════════════════════════════════
 
-    /**
-     * @brief Получить информацию о девайсе (красивый вывод)
-     */
     std::string GetDeviceInfo() const;
-
-    /**
-     * @brief Получить имя девайса
-     */
     std::string GetDeviceName() const;
-
-    /**
-     * @brief Получить вендора (NVIDIA, AMD, Intel)
-     */
     std::string GetVendor() const;
-
-    /**
-     * @brief Получить версию драйвера
-     */
     std::string GetDriverVersion() const;
-
-    /**
-     * @brief Получить размер глобальной памяти в байтах
-     */
     size_t GetGlobalMemorySize() const;
-
-    /**
-     * @brief Получить размер локальной памяти в байтах
-     */
     size_t GetLocalMemorySize() const;
-
-    /**
-     * @brief Получить количество compute units
-     */
     cl_uint GetComputeUnits() const;
-
-    /**
-     * @brief Получить максимальный размер work group
-     */
     size_t GetMaxWorkGroupSize() const;
-
-    /**
-     * @brief Получить максимальный размер работы для одного измерения
-     */
     std::array<size_t, 3> GetMaxWorkItemSizes() const;
 
     // ═══════════════════════════════════════════════════════════════
     // SVM (Shared Virtual Memory) информация - OpenCL 2.0+
     // ═══════════════════════════════════════════════════════════════
 
-    /**
-     * @brief Получить версию OpenCL (major)
-     */
     cl_uint GetOpenCLVersionMajor() const;
-
-    /**
-     * @brief Получить версию OpenCL (minor)
-     */
     cl_uint GetOpenCLVersionMinor() const;
-
-    /**
-     * @brief Проверить поддержку SVM
-     * @return true если OpenCL >= 2.0 и хотя бы один тип SVM поддерживается
-     */
     bool IsSVMSupported() const;
-
-    /**
-     * @brief Получить SVM capabilities устройства
-     * Включает header "svm_capabilities.hpp" для полного определения
-     */
     SVMCapabilities GetSVMCapabilities() const;
-
-    /**
-     * @brief Получить информацию о SVM (красивый вывод)
-     */
     std::string GetSVMInfo() const;
 
     // ═══════════════════════════════════════════════════════════════
-    // Деструктор
+    // СТАТИЧЕСКИЕ МЕТОДЫ для обнаружения GPU (Multi-GPU support)
     // ═══════════════════════════════════════════════════════════════
 
-    ~OpenCLCore();
+    /**
+     * @brief Получить количество доступных устройств
+     * @param device_type Тип устройства (GPU или CPU)
+     * @return Количество устройств данного типа
+     */
+    static int GetAvailableDeviceCount(DeviceType device_type = DeviceType::GPU);
 
-    // Запрет копирования
-    OpenCLCore(const OpenCLCore&) = delete;
-    OpenCLCore& operator=(const OpenCLCore&) = delete;
+    /**
+     * @brief Получить все доступные устройства
+     * @param device_type Тип устройства (GPU или CPU)
+     * @return Вектор пар (platform_id, device_id)
+     */
+    static std::vector<std::pair<cl_platform_id, cl_device_id>>
+        GetAllDevices(DeviceType device_type = DeviceType::GPU);
+
+    /**
+     * @brief Получить информацию о всех устройствах (для вывода)
+     * @param device_type Тип устройства
+     * @return Строка с информацией о всех устройствах
+     */
+    static std::string GetAllDevicesInfo(DeviceType device_type = DeviceType::GPU);
 
 private:
-    // ═══════════════════════════════════════════════════════════════
-    // Singleton реализация
-    // ═══════════════════════════════════════════════════════════════
-
-    OpenCLCore();
-
-    static std::unique_ptr<OpenCLCore> instance_;
-    static bool initialized_;
-    static std::mutex initialization_mutex_;
-
     // ═══════════════════════════════════════════════════════════════
     // Члены класса
     // ═══════════════════════════════════════════════════════════════
 
+    int device_index_;
+    DeviceType device_type_;
+    bool initialized_;
+
     cl_platform_id platform_;
     cl_device_id device_;
     cl_context context_;
-    DeviceType device_type_;
+
+    mutable std::mutex mutex_;
 
     // ═══════════════════════════════════════════════════════════════
     // Приватные методы инициализации
     // ═══════════════════════════════════════════════════════════════
 
-    void InitializeOpenCL(DeviceType device_type);
+    void InitializeOpenCL();
     void ReleaseResources();
 
     // Утилиты для информации о девайсе

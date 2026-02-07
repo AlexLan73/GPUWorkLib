@@ -3,12 +3,21 @@
 /**
  * @file opencl_backend.hpp
  * @brief Реализация IBackend для OpenCL
- * 
- * OpenCLBackend - полная реализация бэкенда на базе вашего кода OpenCL.
- * Интегрирует ваши классы: OpenCLCore, CommandQueuePool, GPUMemoryManager.
- * 
+ *
+ * OpenCLBackend - полная реализация бэкенда на базе OpenCL.
+ *
+ * ✅ MULTI-GPU (v2.0):
+ * Каждый экземпляр OpenCLBackend теперь владеет СВОИМ OpenCLCore,
+ * что позволяет работать с разными GPU параллельно.
+ *
+ * Интегрирует классы:
+ * - drv_gpu_lib::OpenCLCore - per-device OpenCL контекст
+ * - drv_gpu_lib::CommandQueuePool - пул command queues
+ * - drv_gpu_lib::MemoryManager - управление памятью
+ * - drv_gpu_lib::SVMCapabilities - проверка SVM
+ *
  * @author DrvGPU Team
- * @date 2026-01-31
+ * @date 2026-02-06
  */
 
 #include "../../common/i_backend.hpp"
@@ -36,18 +45,28 @@ namespace drv_gpu_lib {
 /**
  * @class OpenCLBackend
  * @brief Реализация IBackend интерфейса для OpenCL API
- * 
- * Интегрирует вашу существующую OpenCL библиотеку:
- * - drv_gpu_lib::OpenCLCore - управление OpenCL контекстом
- * - drv_gpu_lib::CommandQueuePool - пул command queues
- * - drv_gpu_lib::MemoryManager - управление памятью
- * - drv_gpu_lib::SVMCapabilities - проверка SVM
- * 
- * Особенности:
- * - НЕ Singleton (каждый экземпляр для своей GPU)
+ *
+ * ✅ MULTI-GPU Architecture (v2.0):
+ * - Каждый экземпляр владеет СВОИМ OpenCLCore (per-device)
+ * - НЕ Singleton - можно создать несколько для разных GPU
  * - Thread-safe
- * - Полная интеграция с вашим кодом
  * - RAII управление ресурсами
+ *
+ * @code
+ * // Multi-GPU использование:
+ * OpenCLBackend gpu0, gpu1;
+ * gpu0.Initialize(0);  // GPU 0 со своим контекстом
+ * gpu1.Initialize(1);  // GPU 1 со своим контекстом (РАЗНЫЕ!)
+ *
+ * // Параллельная работа
+ * #pragma omp parallel sections
+ * {
+ *     #pragma omp section
+ *     { processOnGPU(gpu0, data0); }
+ *     #pragma omp section
+ *     { processOnGPU(gpu1, data1); }
+ * }
+ * @endcode
  */
 class OpenCLBackend : public IBackend {
 public:
@@ -209,10 +228,15 @@ protected:
      */
     bool owns_resources_;
     
+    // ═══════════════════════════════════════════════════════════════
+    // ✅ MULTI-GPU: Per-device OpenCLCore instance
+    // ═══════════════════════════════════════════════════════════════
+    std::unique_ptr<drv_gpu_lib::OpenCLCore> core_;
+
     // Интеграция с вашим OpenCL кодом
     std::unique_ptr<drv_gpu_lib::MemoryManager> memory_manager_;
     std::unique_ptr<drv_gpu_lib::SVMCapabilities> svm_capabilities_;
-    
+
     // OpenCL objects (кэшируем для быстрого доступа)
     cl_context context_;
     cl_device_id device_;

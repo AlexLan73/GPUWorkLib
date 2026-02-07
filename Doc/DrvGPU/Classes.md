@@ -61,6 +61,8 @@
 
 **Назначение**: Фасад для управления несколькими GPU с поддержкой load balancing.
 
+> ✅ **Multi-GPU (v2.0)**: Теперь `DiscoverGPUs()` использует `OpenCLCore::GetAvailableDeviceCount()` для реального обнаружения устройств!
+
 **Иерархия наследования**: Нет (Header-only)
 
 **Ключевые методы**:
@@ -68,7 +70,7 @@
 | Метод | Описание |
 |-------|----------|
 | `GPUManager()` | Конструктор |
-| `InitializeAll(BackendType)` | Инициализировать все GPU |
+| `InitializeAll(BackendType)` | ✅ Инициализировать ВСЕ найденные GPU |
 | `InitializeSpecific(BackendType, vector<int>)` | Инициализировать конкретные GPU |
 | `GetGPU(size_t index)` | Получить GPU по индексу |
 | `GetNextGPU()` | Получить следующую GPU (Round-Robin) |
@@ -76,7 +78,8 @@
 | `SetLoadBalancingStrategy(LoadBalancingStrategy)` | Установить стратегию |
 | `SynchronizeAll()` | Синхронизировать все |
 | `FlushAll()` | Flush всех |
-| `GetGPUCount()` | Количество GPU |
+| `GetGPUCount()` | ✅ Реальное количество GPU |
+| `GetAvailableGPUCount(BackendType)` | ✅ **Static**: Количество GPU в системе |
 
 **Стратегии Load Balancing**:
 
@@ -209,7 +212,21 @@
 
 **Файл**: [`opencl/opencl_core.hpp`](../../include/DrvGPU/backends/opencl/opencl_core.hpp), [`opencl_core.cpp`](../../include/DrvGPU/backends/opencl/opencl_core.cpp)
 
-**Назначение**: Статические методы для низкоуровневых OpenCL операций.
+**Назначение**: Управление OpenCL устройством. **Per-device architecture для Multi-GPU (v2.0)!**
+
+> ⚠️ **ВАЖНО**: Singleton паттерн УДАЛЁН! Каждый экземпляр работает со СВОИМ устройством.
+
+**Ключевые методы**:
+
+| Метод | Описание |
+|-------|----------|
+| `OpenCLCore(device_index, device_type)` | Конструктор для конкретного устройства |
+| `Initialize()` | Инициализировать контекст для ЭТОГО устройства |
+| `GetAvailableDeviceCount()` | **Static**: Количество доступных GPU |
+| `GetAllDevices()` | **Static**: Все (platform, device) пары |
+| `GetAllDevicesInfo()` | **Static**: Информация для вывода |
+| `GetContext()` | OpenCL контекст ЭТОГО устройства |
+| `GetDevice()` | OpenCL device ЭТОГО устройства |
 
 **Методы**: см. [OpenCL.md](OpenCL.md)
 
@@ -616,6 +633,9 @@ enum class LoadBalancingStrategy {
 | Registry | `ModuleRegistry` |
 | Object Pool | `CommandQueuePool` |
 | Template Method | `IComputeModule` |
+| **Per-Device (v2.0)** | `OpenCLCore` - каждый экземпляр для своего GPU |
+
+> ⚠️ **Примечание**: `OpenCLCore` больше НЕ Singleton! Теперь per-device для Multi-GPU.
 
 ---
 

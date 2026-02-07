@@ -174,10 +174,13 @@ GPUWorkLib/
 | **Bridge** | Разделение абстракции и реализации бэкендов |
 | **Facade** | DrvGPU как упрощённый интерфейс |
 | **Singleton** | Logger, ConfigLogger, DefaultLogger |
-| **Factory** | Создание бэкендов |
+| **Factory** | Создание бэкендов, GPUManager |
 | **Strategy** | LoadBalancingStrategy |
 | **Registry** | ModuleRegistry |
 | **Object Pool** | CommandQueuePool |
+| **Per-Device** | OpenCLCore (v2.0) - каждый экземпляр для своего GPU |
+
+> ⚠️ **Примечание (v2.0)**: OpenCLCore больше НЕ использует Singleton! Теперь это per-device класс для поддержки Multi-GPU.
 
 **См. также**: [Classes.md](Classes.md) - подробности о паттернах
 

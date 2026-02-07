@@ -3,23 +3,26 @@
 /**
  * @file gpu_manager.hpp
  * @brief GPUManager - центральный координатор для Multi-GPU
- * 
- * КЛЮЧЕВОЙ КОМПОНЕНТ для Multi-GPU сценариев!
- * 
+ *
+ * ✅ MULTI-GPU (v2.0):
+ * Теперь использует OpenCLCore::GetAvailableDeviceCount() для
+ * реального обнаружения GPU в системе!
+ *
  * GPUManager управляет множественными экземплярами DrvGPU и предоставляет:
- * - Автоматическое обнаружение всех GPU
+ * - ✅ Автоматическое обнаружение ВСЕХ GPU (реальное!)
  * - Load balancing (Round-Robin, Least Loaded, Manual)
  * - Централизованное управление ресурсами
  * - Thread-safe доступ к GPU
- * 
+ *
  * @author DrvGPU Team
- * @date 2026-01-31
+ * @date 2026-02-06
  */
 
 #include "drv_gpu.hpp"
 #include "backend_type.hpp"
 #include "load_balancing.hpp"
 #include "common/logger.hpp"
+#include "backends/opencl/opencl_core.hpp"  // ✅ MULTI-GPU: Для реального обнаружения устройств
 
 #include <vector>
 #include <memory>
@@ -513,12 +516,47 @@ inline void GPUManager::ResetStatistics() {
 }
 
 inline int GPUManager::DiscoverGPUs(BackendType backend_type) {
-    (void)backend_type;
     DRVGPU_LOG_DEBUG("GPUManager", "Discovering GPUs...");
-    
-    // Для демонстрации возвращаем 1 GPU
-    // TODO: реализовать полное обнаружение GPU
-    return 1;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ✅ MULTI-GPU: Реальное обнаружение устройств!
+    // ═══════════════════════════════════════════════════════════════════════
+
+    int device_count = 0;
+
+    switch (backend_type) {
+        case BackendType::OPENCL:
+        case BackendType::OPENCLandROCm:
+        case BackendType::AUTO: {
+            // Используем OpenCLCore для обнаружения GPU
+            device_count = OpenCLCore::GetAvailableDeviceCount(DeviceType::GPU);
+
+            DRVGPU_LOG_INFO("GPUManager",
+                "Found " + std::to_string(device_count) + " OpenCL GPU(s)");
+
+            // Выводим информацию о найденных устройствах
+            if (device_count > 0) {
+                std::string devices_info = OpenCLCore::GetAllDevicesInfo(DeviceType::GPU);
+                DRVGPU_LOG_DEBUG("GPUManager", devices_info);
+            }
+            break;
+        }
+
+        case BackendType::ROCm: {
+            // TODO: Реализовать для ROCm
+            DRVGPU_LOG_WARNING("GPUManager", "ROCm discovery not implemented yet");
+            // Пока используем OpenCL discovery (ROCm поддерживает OpenCL)
+            device_count = OpenCLCore::GetAvailableDeviceCount(DeviceType::GPU);
+            break;
+        }
+
+        default:
+            DRVGPU_LOG_ERROR("GPUManager", "Unknown backend type");
+            device_count = 0;
+            break;
+    }
+
+    return device_count;
 }
 
 inline void GPUManager::InitializeGPU(int device_index) {
@@ -547,9 +585,20 @@ inline size_t GPUManager::GetLeastLoadedGPUIndex() const {
 }
 
 inline int GPUManager::GetAvailableGPUCount(BackendType backend_type) {
-    (void)backend_type;
-    // TODO: реализовать реальное обнаружение
-    return 1;
+    // ✅ MULTI-GPU: Реальное обнаружение!
+    switch (backend_type) {
+        case BackendType::OPENCL:
+        case BackendType::OPENCLandROCm:
+        case BackendType::AUTO:
+            return OpenCLCore::GetAvailableDeviceCount(DeviceType::GPU);
+
+        case BackendType::ROCm:
+            // Пока используем OpenCL discovery
+            return OpenCLCore::GetAvailableDeviceCount(DeviceType::GPU);
+
+        default:
+            return 0;
+    }
 }
 
 } // namespace drv_gpu_lib

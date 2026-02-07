@@ -21,8 +21,13 @@
 #include <iomanip>
 #include <vector>
 #include <complex>
+#define _USE_MATH_DEFINES  // ✅ Windows: для M_PI
 #include <cmath>
 #include <string>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 namespace test_spectrum_maxima {
 
@@ -50,7 +55,7 @@ inline std::vector<std::complex<float>> GenerateTestData(const SpectrumParams& p
     std::cout << "────────────────────────────────────────\n";
 
     for (uint32_t antenna = 0; antenna < params.antenna_count; ++antenna) {
-        float freq = 2.5f * (antenna + 1);
+        float freq = 2.5f *(1.0f + (antenna + 1)/10.0f);
         std::cout << "  Антена " << antenna << ": freq = " << freq << " Hz\n";
 
         for (uint32_t t = 0; t < params.n_point; ++t) {

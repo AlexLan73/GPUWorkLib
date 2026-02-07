@@ -228,10 +228,12 @@ private:
 
 | Член | Тип | Описание |
 |------|-----|----------|
-| `context_` | `cl_context` | OpenCL контекст |
-| `device_` | `cl_device_id` | Идентификатор устройства |
-| `queue_` | `cl_command_queue` | Очередь команд по умолчанию |
+| `core_` | `unique_ptr<OpenCLCore>` | ✅ Per-device OpenCLCore |
+| `context_` | `cl_context` | OpenCL контекст (из core_) |
+| `device_` | `cl_device_id` | Идентификатор устройства (из core_) |
+| `queue_` | `cl_command_queue` | Очередь команд |
 | `initialized_` | `bool` | Флаг инициализации |
+| `owns_resources_` | `bool` | Владеет ресурсами? |
 
 ---
 
@@ -239,7 +241,9 @@ private:
 
 ### Назначение
 
-`OpenCLCore` — статический класс с утилитами для низкоуровневых OpenCL операций.
+`OpenCLCore` — класс для управления OpenCL устройством. **Per-device architecture для Multi-GPU!**
+
+> ⚠️ **ВАЖНО (v2.0)**: Singleton паттерн УДАЛЁН! Теперь каждый экземпляр работает со СВОИМ устройством.
 
 ### Файл
 
@@ -251,28 +255,62 @@ private:
 class OpenCLCore {
 public:
     // ═══════════════════════════════════════════════
-    // Platform and Device
+    // ✅ MULTI-GPU: Per-device конструктор
     // ═══════════════════════════════════════════════
-    
+
     /**
-     * @brief Получить платформу по устройству
+     * @brief Создать OpenCLCore для конкретного устройства
+     * @param device_index Индекс устройства (0, 1, 2, ...)
+     * @param device_type Тип устройства: GPU или CPU
      */
-    static cl_platform_id GetPlatform(cl_device_id device);
-    
+    explicit OpenCLCore(int device_index = 0, DeviceType device_type = DeviceType::GPU);
+
+    ~OpenCLCore();
+
+    // Move semantics (копирование запрещено)
+    OpenCLCore(OpenCLCore&& other) noexcept;
+    OpenCLCore& operator=(OpenCLCore&& other) noexcept;
+    OpenCLCore(const OpenCLCore&) = delete;
+    OpenCLCore& operator=(const OpenCLCore&) = delete;
+
+    // ═══════════════════════════════════════════════
+    // Инициализация
+    // ═══════════════════════════════════════════════
+
     /**
-     * @brief Получить устройство по индексу
+     * @brief Инициализировать контекст для ЭТОГО устройства
      */
-    static cl_device_id GetDeviceByIndex(cl_uint index);
-    
+    void Initialize();
+
     /**
-     * @brief Получить все доступные устройства
+     * @brief Проверить инициализацию
      */
-    static std::vector<cl_device_id> GetAllDevices();
-    
+    bool IsInitialized() const;
+
     /**
-     * @brief Получить количество устройств
+     * @brief Освободить ресурсы
      */
-    static cl_uint GetDeviceCount();
+    void Cleanup();
+
+    // ═══════════════════════════════════════════════
+    // ✅ MULTI-GPU: Статические методы обнаружения
+    // ═══════════════════════════════════════════════
+
+    /**
+     * @brief Получить количество доступных устройств
+     */
+    static int GetAvailableDeviceCount(DeviceType device_type = DeviceType::GPU);
+
+    /**
+     * @brief Получить все устройства (platform, device) пары
+     */
+    static std::vector<std::pair<cl_platform_id, cl_device_id>>
+        GetAllDevices(DeviceType device_type = DeviceType::GPU);
+
+    /**
+     * @brief Получить информацию обо всех устройствах (для вывода)
+     */
+    static std::string GetAllDevicesInfo(DeviceType device_type = DeviceType::GPU);
     
     // ═══════════════════════════════════════════════
     // Context
@@ -630,18 +668,105 @@ void compileAndRunKernel() {
 
 ---
 
+## Multi-GPU поддержка (v2.0)
+
+### Архитектура Multi-GPU
+
+```
+✅ НОВАЯ АРХИТЕКТУРА (Per-Device):
+┌──────────────────────────────────────────────────────────┐
+│                      GPUManager                           │
+│  ┌────────────┐ ┌────────────┐ ┌────────────┐           │
+│  │ DrvGPU[0]  │ │ DrvGPU[1]  │ │ DrvGPU[2]  │ ...       │
+│  └─────┬──────┘ └─────┬──────┘ └─────┬──────┘           │
+│        │              │              │                   │
+│  ┌─────▼──────┐ ┌─────▼──────┐ ┌─────▼──────┐           │
+│  │OpenCLBack- │ │OpenCLBack- │ │OpenCLBack- │           │
+│  │end[0]      │ │end[1]      │ │end[2]      │           │
+│  └─────┬──────┘ └─────┬──────┘ └─────┬──────┘           │
+│        │              │              │                   │
+│  ┌─────▼──────┐ ┌─────▼──────┐ ┌─────▼──────┐           │
+│  │OpenCLCore  │ │OpenCLCore  │ │OpenCLCore  │           │
+│  │(GPU 0)     │ │(GPU 1)     │ │(GPU 2)     │           │
+│  │context[0]  │ │context[1]  │ │context[2]  │           │
+│  └────────────┘ └────────────┘ └────────────┘           │
+│                                                          │
+│  ✅ Каждый экземпляр имеет СВОЙ контекст!               │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Пример: Использование нескольких GPU
+
+```cpp
+#include "gpu_manager.hpp"
+
+int main() {
+    drv_gpu_lib::GPUManager manager;
+
+    // Инициализировать ВСЕ доступные GPU
+    manager.InitializeAll(drv_gpu_lib::BackendType::OPENCL);
+
+    std::cout << "Found " << manager.GetGPUCount() << " GPUs\n";
+
+    // Работа с разными GPU параллельно
+    #pragma omp parallel for
+    for (size_t i = 0; i < manager.GetGPUCount(); ++i) {
+        auto& gpu = manager.GetGPU(i);
+        // Каждый поток работает со СВОИМ GPU!
+        processOnGPU(gpu, data[i]);
+    }
+
+    return 0;
+}
+```
+
+### Пример: Прямое использование OpenCLCore
+
+```cpp
+#include "backends/opencl/opencl_core.hpp"
+
+void multiGPUExample() {
+    // Узнать сколько GPU доступно
+    int gpu_count = drv_gpu_lib::OpenCLCore::GetAvailableDeviceCount(
+        drv_gpu_lib::DeviceType::GPU
+    );
+
+    std::cout << "Available GPUs: " << gpu_count << "\n";
+
+    // Вывести информацию
+    std::cout << drv_gpu_lib::OpenCLCore::GetAllDevicesInfo(
+        drv_gpu_lib::DeviceType::GPU
+    );
+
+    // Создать экземпляры для разных GPU
+    std::vector<std::unique_ptr<drv_gpu_lib::OpenCLCore>> cores;
+    for (int i = 0; i < gpu_count; ++i) {
+        auto core = std::make_unique<drv_gpu_lib::OpenCLCore>(
+            i, drv_gpu_lib::DeviceType::GPU
+        );
+        core->Initialize();
+        cores.push_back(std::move(core));
+    }
+
+    // Теперь каждый core работает со своим GPU!
+}
+```
+
+---
+
 ## Roadmap
 
 | Версия | Компонент | Статус |
 |--------|-----------|--------|
 | v1.0 | OpenCLBackend | ✅ Готов |
-| v1.0 | OpenCLCore | ✅ Готов |
+| v1.0 | OpenCLCore (Singleton) | ❌ Устарел |
+| v2.0 | OpenCLCore (Per-Device) | ✅ Готов |
+| v2.0 | Multi-GPU Discovery | ✅ Готов |
 | v1.0 | External Context | ✅ Готов |
 | v1.0 | Command Queue Pool | ✅ Готов |
 | v1.1 | Улучшенная обработка ошибок | 📋 План |
 | v1.2 | Асинхронные операции | 📋 План |
 | v2.0 | ROCm бэкенд | 📋 План |
-| v2.5 | CUDA бэкенд | 📋 План |
 
 ---
 
