@@ -96,7 +96,7 @@ struct DataRecord {
  *
  * Implementations:
  * - ConsoleSink (ConsoleOutput) - formatted output to stdout
- * - FileSink (DefaultLogger) - spdlog file output
+ * - FileSink (DefaultLogger) - plog file output
  * - ProfilingSink (GPUProfiler) - aggregation of profiling data
  * - DBSink (future) - database output
  *

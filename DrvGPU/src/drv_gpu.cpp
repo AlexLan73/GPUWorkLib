@@ -11,7 +11,7 @@
 #include "memory/memory_manager.hpp"
 #include "backends/opencl/opencl_backend.hpp"
 #include "backends/opencl/opencl_core.hpp"
-#include "common/logger.hpp"
+#include "logger/logger.hpp"
 #include <iostream>
 #include <sstream>
 

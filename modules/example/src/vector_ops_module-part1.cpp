@@ -1,5 +1,5 @@
 #include "vector_ops_module.hpp"
-#include "common/logger.hpp"
+#include "logger/logger.hpp"
 #include <fstream>
 #include <sstream>
 #include <stdexcept>

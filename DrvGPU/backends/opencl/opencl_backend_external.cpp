@@ -1,5 +1,5 @@
 #include "opencl_backend_external.hpp"
-#include "../../common/logger.hpp"
+#include "../../logger/logger.hpp"
 
 namespace drv_gpu_lib {
 

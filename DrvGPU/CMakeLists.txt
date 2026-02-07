@@ -20,7 +20,7 @@ option(BUILD_EXAMPLES "Build standalone example executables" OFF)
 option(BUILD_EXTERNAL_CONTEXT_SUPPORT "Build External Context support" ON)
 
 # ════════════════════════════════════════════════════════════════════
-# Найти OpenCL и spdlog
+# Найти OpenCL и plog
 # ════════════════════════════════════════════════════════════════════
 
 # Проверяем - если OpenCL уже найден в основном проекте, используем его
@@ -36,19 +36,19 @@ else()
   set(OPENCL_FOUND_PARENT FALSE)
 endif()
 
-# Найти spdlog (из vcpkg или системы)
-# SPDLOG_ROOT может быть установлен извне (например, из vcpkg)
-if(DEFINED ENV{SPDLOG_ROOT})
-    set(SPDLOG_ROOT "$ENV{SPDLOG_ROOT}")
-    message(STATUS "Using spdlog from SPDLOG_ROOT: ${SPDLOG_ROOT}")
-endif()
-
-# spdlog: используем из parent или ищем
-if(NOT spdlog_FOUND AND NOT TARGET spdlog::spdlog)
-    find_package(spdlog CONFIG QUIET)
-endif()
-if(NOT spdlog_FOUND AND NOT TARGET spdlog::spdlog)
-    message(STATUS "spdlog: using header-only mode (no link)")
+# plog: header-only logging library (замена spdlog)
+# Ищем в third_party/ (приоритет) или в системе
+set(PLOG_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/plog/include")
+if(EXISTS "${PLOG_INCLUDE_DIR}/plog/Log.h")
+    message(STATUS "plog: found in third_party/")
+else()
+    # Fallback: ищем в системных путях
+    find_path(PLOG_INCLUDE_DIR plog/Log.h PATHS /usr/include /usr/local/include)
+    if(PLOG_INCLUDE_DIR)
+        message(STATUS "plog: found in system (${PLOG_INCLUDE_DIR})")
+    else()
+        message(WARNING "plog not found! Clone: git clone https://github.com/SergiusTheBest/plog.git third_party/plog")
+    endif()
 endif()
 
 find_package(Threads REQUIRED)
@@ -221,33 +221,10 @@ target_include_directories(drvgpu
         ${OpenCL_INCLUDE_DIRS}
 )
 
-# Линковка spdlog (header-only mode или library)
-if(TARGET spdlog::spdlog)
-    target_link_libraries(drvgpu PUBLIC spdlog::spdlog)
-    message(STATUS "Using spdlog: TARGET")
-elseif(spdlog_FOUND)
-    if(TARGET spdlog::spdlog_header_only)
-        target_link_libraries(drvgpu PUBLIC spdlog::spdlog_header_only)
-        message(STATUS "Using spdlog: HEADER-ONLY")
-    else()
-        target_link_libraries(drvgpu PUBLIC spdlog::spdlog)
-        message(STATUS "Using spdlog: LIBRARY")
-    endif()
-    if(TARGET fmt::fmt-header-only)
-        target_link_libraries(drvgpu PUBLIC fmt::fmt-header-only)
-        message(STATUS "Using fmt: HEADER-ONLY")
-    endif()
-elseif(DEFINED SPDLOG_ROOT)
-    target_include_directories(drvgpu PUBLIC "${SPDLOG_ROOT}/include")
-    message(STATUS "Using spdlog: HEADER-ONLY (${SPDLOG_ROOT})")
-else()
-    find_path(SPDLOG_INCLUDE_DIR spdlog/spdlog.h PATHS /usr/include /usr/local/include)
-    if(SPDLOG_INCLUDE_DIR)
-        target_include_directories(drvgpu PUBLIC "${SPDLOG_INCLUDE_DIR}")
-        message(STATUS "Using spdlog: system headers")
-    else()
-        message(WARNING "spdlog not found! Install: sudo apt install libspdlog-dev")
-    endif()
+# plog: header-only — просто добавляем include path (без линковки!)
+if(PLOG_INCLUDE_DIR)
+    target_include_directories(drvgpu PUBLIC "${PLOG_INCLUDE_DIR}")
+    message(STATUS "Using plog: HEADER-ONLY (${PLOG_INCLUDE_DIR})")
 endif()
 
 # Линковка
@@ -270,8 +247,7 @@ if(BUILD_EXTERNAL_CONTEXT_SUPPORT)
     target_compile_definitions(drvgpu PUBLIC DRVGPU_EXTERNAL_CONTEXT_SUPPORT)
 endif()
 
-# Use header-only spdlog to avoid STL symbol issues
-target_compile_definitions(drvgpu PUBLIC SPDLOG_HEADER_ONLY)
+# plog is header-only — no special compile definitions needed
 
 # Алиас
 add_library(DrvGPU::drvgpu ALIAS drvgpu)
@@ -335,10 +311,6 @@ message(STATUS "  External Context:    ${BUILD_EXTERNAL_CONTEXT_SUPPORT}")
 message(STATUS "  OpenCL version:      ${OpenCL_VERSION_STRING}")
 message(STATUS "  OpenCL include:      ${OpenCL_INCLUDE_DIRS}")
 message(STATUS "  OpenCL library:      ${OpenCL_LIBRARIES}")
-if(spdlog_FOUND)
-    message(STATUS "  spdlog:              FOUND")
-else()
-    message(STATUS "  spdlog:              HEADER-ONLY (${SPDLOG_ROOT})")
-endif()
+message(STATUS "  plog:                HEADER-ONLY (${PLOG_INCLUDE_DIR})")
 message(STATUS "═══════════════════════════════════════")
 message(STATUS "")

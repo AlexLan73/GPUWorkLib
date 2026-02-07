@@ -12,7 +12,7 @@
  */
 
 #include "interface/antenna_fft_params.h"
-#include "common/i_backend.hpp"
+#include "interface/i_backend.hpp"
 
 #include <CL/cl.h>
 #include <clFFT.h>

@@ -21,7 +21,7 @@
 #include "drv_gpu.hpp"
 #include "backend_type.hpp"
 #include "load_balancing.hpp"
-#include "common/logger.hpp"
+#include "logger/logger.hpp"
 #include "backends/opencl/opencl_core.hpp"  // ✅ MULTI-GPU: Для реального обнаружения устройств
 
 #include <vector>

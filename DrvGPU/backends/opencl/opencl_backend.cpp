@@ -1,5 +1,5 @@
 #include "opencl_backend.hpp"
-#include "../../common/logger.hpp"
+#include "../../logger/logger.hpp"
 
 #include <sstream>
 #include <iomanip>

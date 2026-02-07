@@ -1,7 +1,7 @@
 // ЧАСТЬ 2: Остальные операции (SubOne, AddVectors) и компиляция kernels
 
 #include "vector_ops_module.hpp"
-#include "common/logger.hpp"
+#include "logger/logger.hpp"
 #include <memory>
 #include <cstddef>
 #include <string>

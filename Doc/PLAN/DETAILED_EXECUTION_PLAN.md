@@ -250,7 +250,7 @@ GPU Thread N ─→ Logger::Log(gpu_id=N, msg) ─→ Enqueue() ─→┘       
 
 **Logger и Profiler имеют ОДИНАКОВЫЙ ШАБЛОН (AsyncServiceBase),**
 но РАЗНУЮ обработку:
-- Logger → пишет в файл (spdlog)
+- Logger → пишет в файл (plog)
 - Profiler → собирает метрики, агрегирует статистику
 
 ### Задачи 3.1 Logger:

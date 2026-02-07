@@ -14,7 +14,7 @@
  * @date 2026-02-06
  */
 
-#include "common/i_backend.hpp"
+#include "interface/i_backend.hpp"
 #include "kernels/fft_kernel_sources.hpp"
 
 #include <CL/cl.h>

@@ -5,7 +5,7 @@
  * @brief ILogger - Интерфейс логирования для DrvGPU
  * 
  * Абстрактный интерфейс логирования. Позволяет подключить любой логер
- * (DefaultLogger со spdlog, custom logger из продакшена, etc.)
+ * (DefaultLogger с plog, custom logger из продакшена, etc.)
  * 
  * @author DrvGPU Team
  * @date 2026-02-01

@@ -1,7 +1,7 @@
 // ЧАСТЬ 3: CreateKernelObjects, ReleaseKernels, LoadKernelSource
 
 #include "vector_ops_module.hpp"
-#include "common/logger.hpp"
+#include "logger/logger.hpp"
 #include <stdexcept>
 #include <fstream>
 #include <sstream>

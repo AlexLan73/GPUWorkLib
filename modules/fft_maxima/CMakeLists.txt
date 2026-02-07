@@ -12,7 +12,7 @@
 #
 # ════════════════════════════════════════════════════════════════════════════
 
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.27)
 
 # Module name
 set(MODULE_NAME fft_maxima)
@@ -90,8 +90,7 @@ target_link_libraries(${MODULE_NAME}_core
 
 target_compile_features(${MODULE_NAME}_core PUBLIC cxx_std_17)
 
-# Header-only spdlog + fmt to avoid LNK2019 (inherited from drvgpu)
-target_compile_definitions(${MODULE_NAME}_core PUBLIC SPDLOG_HEADER_ONLY FMT_HEADER_ONLY)
+# plog is header-only — no special compile definitions needed (inherited from drvgpu)
 
 # ════════════════════════════════════════════════════════════════════════════
 # Release library (callbacks - production)
@@ -117,8 +116,7 @@ target_link_libraries(${MODULE_NAME}_release
 
 target_compile_features(${MODULE_NAME}_release PUBLIC cxx_std_17)
 
-# Header-only spdlog + fmt to avoid LNK2019
-target_compile_definitions(${MODULE_NAME}_release PUBLIC SPDLOG_HEADER_ONLY FMT_HEADER_ONLY)
+# plog is header-only — no special compile definitions needed
 
 # ════════════════════════════════════════════════════════════════════════════
 # Full library (both implementations)
@@ -145,8 +143,7 @@ target_link_libraries(${MODULE_NAME}
 
 target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
 
-# Header-only spdlog + fmt to avoid LNK2019
-target_compile_definitions(${MODULE_NAME} PUBLIC SPDLOG_HEADER_ONLY FMT_HEADER_ONLY)
+# plog is header-only — no special compile definitions needed
 
 # ════════════════════════════════════════════════════════════════════════════
 # Aliases for cleaner usage
@@ -203,7 +200,7 @@ set_target_properties(spectrum_maxima PROPERTIES
 )
 
 target_compile_features(spectrum_maxima PUBLIC cxx_std_17)
-target_compile_definitions(spectrum_maxima PUBLIC SPDLOG_HEADER_ONLY FMT_HEADER_ONLY)
+# plog is header-only — no special compile definitions needed for spectrum_maxima
 
 add_library(GPUWorkLib::spectrum_maxima ALIAS spectrum_maxima)
 

@@ -13,8 +13,10 @@
  * @date 2026-02-03
  */
 
-#include "common/i_compute_module.hpp"
-#include "common/i_backend.hpp"
+//#include "inteface/i_compute_module.hpp"
+//#include "inteface/i_backend.hpp"
+#include "i_compute_module.hpp"
+#include "i_backend.hpp"
 #include "memory/gpu_buffer.hpp"
 #include <CL/cl.h>
 #include <string>

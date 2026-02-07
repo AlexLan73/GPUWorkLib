@@ -42,7 +42,7 @@
 #include "console_output.hpp"
 #include "gpu_profiler.hpp"
 #include "../config/gpu_config.hpp"
-#include "../common/config_logger.hpp"
+#include "../logger/config_logger.hpp"
 
 #include <string>
 #include <iostream>
@@ -169,7 +169,7 @@ public:
      * - ConsoleOutput worker thread
      * - GPUProfiler worker thread
      *
-     * Logger (spdlog) does not need a separate thread (it's already async).
+     * Logger (plog) does not need a separate thread (it's file-based).
      *
      * IMPORTANT: Call InitializeFromConfig() or InitializeDefaults() first!
      */

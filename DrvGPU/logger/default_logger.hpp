@@ -2,48 +2,71 @@
 
 /**
  * @file default_logger.hpp
- * @brief DefaultLogger - Реализация ILogger на основе spdlog
- * 
- * Логирование ТОЛЬКО в файл с использованием spdlog.
+ * @brief DefaultLogger - Реализация ILogger на основе plog
+ *
+ * Логирование ТОЛЬКО в файл с использованием plog (header-only).
  * Автоматически создаёт структуру папок для логов.
- * 
+ *
  * Поведение:
  * - ConfigLogger::IsEnabled() == true  -> пишем в файл
  * - ConfigLogger::IsEnabled() == false -> не логируем вообще
- * 
+ *
+ * ЗАМЕНА spdlog → plog:
+ * - plog — header-only, нет зависимостей (нет fmt)
+ * - plog — стабильный, кросс-платформенный (Windows/Linux/macOS)
+ * - plog — простой API, rolling файлы, thread-safe
+ *
  * @author DrvGPU Team
  * @date 2026-02-01
+ * @modified 2026-02-07 (spdlog → plog migration)
  */
 
 #include "../interface/i_logger.hpp"
 #include "../logger/config_logger.hpp"
-//#include "config_logger.hpp"
 
-#include <spdlog/spdlog.h>
-#include <spdlog/sinks/basic_file_sink.h>
+// ═══════════════════════════════════════════════════════════════════════════
+// plog — header-only logging library
+// https://github.com/SergiusTheBest/plog
+// ═══════════════════════════════════════════════════════════════════════════
+#include <plog/Log.h>
+#include <plog/Initializers/RollingFileInitializer.h>
+
 #include <memory>
 #include <mutex>
+#include <string>
 
 namespace drv_gpu_lib {
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Уровни логирования plog:
+//   plog::verbose  = 6 (самый детальный)
+//   plog::debug    = 5
+//   plog::info     = 4
+//   plog::warning  = 3
+//   plog::error    = 2
+//   plog::fatal    = 1
+//   plog::none     = 0 (отключено)
+// ═══════════════════════════════════════════════════════════════════════════
+
 /**
  * @class DefaultLogger
- * @brief Реализация ILogger на основе spdlog (файловое логирование)
- * 
- * Использует spdlog для:
+ * @brief Реализация ILogger на основе plog (файловое логирование)
+ *
+ * Использует plog для:
  * - Логирования в файл с автоматическим созданием структуры папок
  * - Thread-safe логирования
- * 
+ * - Rolling файлов (автоматическая ротация по размеру)
+ *
  * Пример использования:
  * @code
  * // Включить логирование (по умолчанию включено)
  * ConfigLogger::GetInstance().Enable();
- * 
+ *
  * // Логировать сообщения (пишутся в файл)
  * DRVGPU_LOG_INFO("DrvGPU", "Initialized successfully");
  * DRVGPU_LOG_WARNING("OpenCL", "Memory low");
  * DRVGPU_LOG_ERROR("Backend", "Failed to allocate");
- * 
+ *
  * // Отключить логирование (ничего не пишется)
  * ConfigLogger::GetInstance().Disable();
  * @endcode
@@ -79,7 +102,7 @@ public:
      * @param message Текст сообщения
      * @return Отформатированное сообщение
      */
-    static std::string FormatMessage(const std::string& component, 
+    static std::string FormatMessage(const std::string& component,
                                       const std::string& message);
 
     /**
@@ -96,17 +119,11 @@ public:
 
 private:
 
-    /// Инициализировать spdlog
+    /// Инициализировать plog
     void Initialize();
 
-    /// Очистить spdlog
+    /// Очистить plog
     void Shutdown();
-
-    /// Умный указатель на file sink
-    std::shared_ptr<spdlog::sinks::basic_file_sink_st> file_sink_;
-
-    /// Основной логер spdlog
-    std::shared_ptr<spdlog::logger> logger_;
 
     /// Флаг инициализации
     bool initialized_;
@@ -114,8 +131,8 @@ private:
     /// Мьютекс для thread-safety
     mutable std::mutex mutex_;
 
-    /// Текущий уровень логирования
-    spdlog::level::level_enum current_level_;
+    /// Текущий уровень логирования (plog severity)
+    plog::Severity current_level_;
 };
 
 } // namespace drv_gpu_lib
