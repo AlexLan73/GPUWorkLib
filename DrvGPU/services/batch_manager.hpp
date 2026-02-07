@@ -2,28 +2,28 @@
 
 /**
  * @file batch_manager.hpp
- * @brief BatchManager - Universal batch processing manager for GPU modules
+ * @brief BatchManager — универсальный менеджер пакетной обработки для модулей GPU
  *
  * ============================================================================
- * PURPOSE:
- *   Centralized batch size calculation and batch range generation.
- *   Moved out of fft_maxima to be reusable across ALL GPU modules.
+ * НАЗНАЧЕНИЕ:
+ *   Централизованный расчёт размера пакетов и генерация диапазонов пакетов.
+ *   Вынесено из fft_maxima для использования во ВСЕХ модулях GPU.
  *
- * KEY FEATURES:
- *   - Analyzes REAL available GPU memory (not just total)
- *   - Takes configurable % of available memory (default 70%)
- *   - Smart tail merging: if last batch has 1-3 items, merge with previous
- *   - Works with any IBackend (not OpenCL-specific)
+ * ВОЗМОЖНОСТИ:
+ *   - Учитывает реальную доступную память GPU (не только общий объём)
+ *   - Настраиваемый % доступной памяти (по умолчанию 70%)
+ *   - Умное слияние хвоста: если в последнем пакете 1–3 элемента — объединить с предыдущим
+ *   - Работает с любым IBackend (не привязан к OpenCL)
  *
- * USAGE:
+ * ИСПОЛЬЗОВАНИЕ:
  *   BatchManager manager;
  *
- *   // Calculate optimal batch size
+ *   // Расчёт оптимального размера пакета
  *   size_t per_item_memory = nFFT * sizeof(complex<float>) * 2 + maxima_size;
  *   size_t batch_size = manager.CalculateOptimalBatchSize(
  *       backend, total_beams, per_item_memory, 0.7);
  *
- *   // Generate batch ranges (with smart tail merging)
+ *   // Генерация диапазонов пакетов (с умным слиянием хвоста)
  *   auto batches = manager.CreateBatches(total_beams, batch_size, 3, true);
  *
  *   for (auto& batch : batches) {
@@ -42,7 +42,7 @@
 #include <iostream>
 #include <iomanip>
 
-// Forward declaration (avoid circular dependency)
+// Предварительное объявление (избегаем циклического #include)
 namespace drv_gpu_lib {
     class IBackend;
 }
@@ -50,54 +50,54 @@ namespace drv_gpu_lib {
 namespace drv_gpu_lib {
 
 // ============================================================================
-// BatchRange - Describes one batch of items to process
+// BatchRange — описание одного пакета элементов для обработки
 // ============================================================================
 
 /**
  * @struct BatchRange
- * @brief Describes a range of items for one batch
+ * @brief Диапазон элементов для одного пакета
  *
- * Used by modules to iterate over batches:
+ * Используется модулями для итерации по пакетам:
  *   for (auto& batch : batches) {
  *       process(input_data, batch.start, batch.count);
  *   }
  */
 struct BatchRange {
-    /// Starting index (0-based)
+    /// Начальный индекс (с 0)
     size_t start = 0;
 
-    /// Number of items in this batch
+    /// Количество элементов в пакете
     size_t count = 0;
 
-    /// Batch index (0-based, sequential)
+    /// Индекс пакета (с 0, по порядку)
     size_t batch_idx = 0;
 
-    /// Flag: this batch was merged with a small tail
+    /// Флаг: пакет получен слиянием с коротким хвостом
     bool is_merged = false;
 };
 
 // ============================================================================
-// BatchManager - Universal batch processing manager
+// BatchManager — универсальный менеджер пакетной обработки
 // ============================================================================
 
 /**
  * @class BatchManager
- * @brief Calculates optimal batch sizes and generates batch ranges
+ * @brief Вычисляет оптимальные размеры пакетов и генерирует диапазоны
  *
- * NOT a singleton - can be created per-module if needed.
- * No internal state between calls (pure computation).
+ * Не синглтон — можно создавать отдельный экземпляр на модуль.
+ * Между вызовами внутреннее состояние не хранится (чистые вычисления).
  */
 class BatchManager {
 public:
     // ========================================================================
-    // Batch Size Calculation
+    // Расчёт размера пакета
     // ========================================================================
 
     /**
-     * @brief Calculate optimal batch size based on available GPU memory
+     * @brief Рассчитать оптимальный размер пакета по доступной памяти GPU
      *
-     * @param backend Pointer to IBackend (for memory queries)
-     * @param total_items Total number of items to process (e.g., beams)
+     * @param backend Указатель на IBackend (для запросов памяти)
+     * @param total_items Общее число элементов для обработки (напр., лучей)
      * @param item_memory_bytes Memory required per item on GPU
      *        Example: nFFT * sizeof(complex<float>) * 2 + maxima_buffer
      * @param memory_limit Fraction of available memory to use (0.0 - 1.0)

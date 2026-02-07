@@ -24,7 +24,7 @@
 
 namespace drv_gpu_lib {
 
-// Forward declarations
+// Предварительные объявления
 class IMemoryBuffer;
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -305,5 +305,5 @@ private:
     IMemoryBuffer* buffer_;
 };
 
-} // namespace ManagerOpenCL
+} // namespace drv_gpu_lib
 

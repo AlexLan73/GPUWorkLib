@@ -54,91 +54,91 @@
 namespace antenna_fft {
 
 // ============================================================================
-// FFTPlanKey - Unique key for a plan in the cache
+// FFTPlanKey — уникальный ключ плана в кэше
 // ============================================================================
 
 /**
  * @struct FFTPlanKey
- * @brief Unique identifier for a cached FFT plan
+ * @brief Уникальный идентификатор закешированного FFT-плана
  *
- * A plan is uniquely defined by:
- * - nFFT: FFT size (e.g., 2048, 4096)
- * - batch_size: number of batched FFTs (e.g., 10, 32)
+ * План однозначно задаётся:
+ * - nFFT: размер FFT (напр., 2048, 4096)
+ * - batch_size: количество FFT в пакете (напр., 10, 32)
  */
 struct FFTPlanKey {
-    size_t nFFT;        ///< FFT size
-    size_t batch_size;  ///< Number of batched transforms
+    size_t nFFT;        ///< Размер FFT
+    size_t batch_size;  ///< Количество преобразований в пакете
 
-    /// Comparison operator for std::map
+    /// Оператор сравнения для std::map
     bool operator<(const FFTPlanKey& other) const {
         if (nFFT != other.nFFT) return nFFT < other.nFFT;
         return batch_size < other.batch_size;
     }
 
-    /// Equality operator
+    /// Оператор равенства
     bool operator==(const FFTPlanKey& other) const {
         return nFFT == other.nFFT && batch_size == other.batch_size;
     }
 };
 
 // ============================================================================
-// FFTPlanEntry - One cached plan with its metadata
+// FFTPlanEntry — один закешированный план с метаданными
 // ============================================================================
 
 /**
  * @struct FFTPlanEntry
- * @brief A cached FFT plan with usage statistics
+ * @brief Закешированный FFT-план со статистикой использования
  */
 struct FFTPlanEntry {
-    clfftPlanHandle handle = 0;     ///< clFFT plan handle
-    bool baked = false;             ///< Is the plan baked (ready to use)?
-    size_t use_count = 0;           ///< How many times this plan was used
-    size_t nFFT = 0;                ///< FFT size
-    size_t batch_size = 0;          ///< Batch size
+    clfftPlanHandle handle = 0;     ///< Хэндл плана clFFT
+    bool baked = false;             ///< План испечён (готов к использованию)?
+    size_t use_count = 0;           ///< Сколько раз план использовался
+    size_t nFFT = 0;                ///< Размер FFT
+    size_t batch_size = 0;          ///< Размер пакета
 };
 
 // ============================================================================
-// FFTPlanCache - Cache of clFFT plans
+// FFTPlanCache — кэш планов clFFT
 // ============================================================================
 
 /**
  * @class FFTPlanCache
- * @brief Manages a cache of clFFT plans for different configurations
+ * @brief Управляет кэшем планов clFFT для разных конфигураций
  *
- * Plans are cached by (nFFT, batch_size) key.
- * Cache is NOT thread-safe (used from a single GPU thread).
+ * Планы кэшируются по ключу (nFFT, batch_size).
+ * Кэш НЕ потокобезопасен (используется из одного потока GPU).
  *
- * Memory management:
- * - Plans are destroyed in destructor (RAII)
- * - ClearAll() can be called to force release
+ * Управление памятью:
+ * - Планы освобождаются в деструкторе (RAII)
+ * - ClearAll() можно вызвать для принудительного освобождения
  */
 class FFTPlanCache {
 public:
     // ========================================================================
-    // Constructor / Destructor
+    // Конструктор / Деструктор
     // ========================================================================
 
     /**
-     * @brief Create plan cache for a specific OpenCL context
-     * @param context OpenCL context (for plan creation)
-     * @param queue Command queue (for plan baking)
+     * @brief Создать кэш планов для заданного контекста OpenCL
+     * @param context Контекст OpenCL (для создания планов)
+     * @param queue Очередь команд (для bake планов)
      */
     FFTPlanCache(cl_context context, cl_command_queue queue)
         : context_(context), queue_(queue) {
     }
 
     /**
-     * @brief Destructor - releases ALL cached plans
+     * @brief Деструктор — освобождает ВСЕ закешированные планы
      */
     ~FFTPlanCache() {
         ClearAll();
     }
 
-    // Delete copy (owns OpenCL resources)
+    // Запрет копирования (владеет ресурсами OpenCL)
     FFTPlanCache(const FFTPlanCache&) = delete;
     FFTPlanCache& operator=(const FFTPlanCache&) = delete;
 
-    // Allow move
+    // Разрешение перемещения
     FFTPlanCache(FFTPlanCache&& other) noexcept
         : context_(other.context_),
           queue_(other.queue_),
@@ -150,38 +150,38 @@ public:
     }
 
     // ========================================================================
-    // Core API
+    // Основной API
     // ========================================================================
 
     /**
-     * @brief Get or create a plan for the given configuration
-     * @param nFFT FFT size
-     * @param batch_size Number of batched transforms
-     * @return Reference to the plan handle (ready to use after Bake)
+     * @brief Получить или создать план для заданной конфигурации
+     * @param nFFT Размер FFT
+     * @param batch_size Количество преобразований в пакете
+     * @return Хэндл плана (готов к использованию после Bake)
      *
-     * If plan exists in cache: returns immediately (cache HIT)
-     * If plan doesn't exist: creates new plan, adds to cache (cache MISS)
+     * Если план есть в кэше: возврат сразу (попадание в кэш)
+     * Если нет: создаётся новый план и добавляется в кэш (промах кэша)
      *
-     * NOTE: The returned plan is NOT baked! Call BakeIfNeeded() or
-     *       manually bake with callbacks before use.
+     * ВАЖНО: Возвращённый план НЕ испечён! Вызвать BakeIfNeeded() или
+     *        вручную bake с колбэками перед использованием.
      */
     clfftPlanHandle GetOrCreate(size_t nFFT, size_t batch_size) {
         FFTPlanKey key{nFFT, batch_size};
 
         auto it = cache_.find(key);
         if (it != cache_.end()) {
-            // Cache HIT
+            // Попадание в кэш
             it->second.use_count++;
             total_hits_++;
             return it->second.handle;
         }
 
-        // Cache MISS - create new plan
+        // Промах кэша — создаём новый план
         FFTPlanEntry entry;
         entry.nFFT = nFFT;
         entry.batch_size = batch_size;
 
-        // Create plan
+        // Создание плана
         size_t dim = nFFT;
         clfftStatus status = clfftCreateDefaultPlan(&entry.handle, context_, CLFFT_1D, &dim);
         if (status != CLFFT_SUCCESS) {
@@ -189,7 +189,7 @@ public:
                 "[FFTPlanCache] clfftCreateDefaultPlan failed: " + std::to_string(status));
         }
 
-        // Configure plan
+        // Настройка плана
         clfftSetPlanPrecision(entry.handle, CLFFT_SINGLE);
         clfftSetLayout(entry.handle, CLFFT_COMPLEX_INTERLEAVED, CLFFT_COMPLEX_INTERLEAVED);
         clfftSetResultLocation(entry.handle, CLFFT_OUTOFPLACE);
@@ -211,10 +211,10 @@ public:
     }
 
     /**
-     * @brief Check if a plan exists in cache
-     * @param nFFT FFT size
-     * @param batch_size Batch size
-     * @return true if plan is cached
+     * @brief Проверить, есть ли план в кэше
+     * @param nFFT Размер FFT
+     * @param batch_size Размер пакета
+     * @return true, если план закеширован
      */
     bool HasPlan(size_t nFFT, size_t batch_size) const {
         FFTPlanKey key{nFFT, batch_size};
@@ -222,10 +222,10 @@ public:
     }
 
     /**
-     * @brief Check if a cached plan is baked (ready for execution)
-     * @param nFFT FFT size
-     * @param batch_size Batch size
-     * @return true if plan exists AND is baked
+     * @brief Проверить, испечён ли закешированный план (готов к выполнению)
+     * @param nFFT Размер FFT
+     * @param batch_size Размер пакета
+     * @return true, если план есть и испечён
      */
     bool IsBaked(size_t nFFT, size_t batch_size) const {
         FFTPlanKey key{nFFT, batch_size};
@@ -234,9 +234,9 @@ public:
     }
 
     /**
-     * @brief Mark a plan as baked (called after clfftBakePlan succeeds)
-     * @param nFFT FFT size
-     * @param batch_size Batch size
+     * @brief Пометить план как испечённый (вызывать после успешного clfftBakePlan)
+     * @param nFFT Размер FFT
+     * @param batch_size Размер пакета
      */
     void MarkBaked(size_t nFFT, size_t batch_size) {
         FFTPlanKey key{nFFT, batch_size};
@@ -247,9 +247,9 @@ public:
     }
 
     /**
-     * @brief Remove a specific plan from cache
-     * @param nFFT FFT size
-     * @param batch_size Batch size
+     * @brief Удалить конкретный план из кэша
+     * @param nFFT Размер FFT
+     * @param batch_size Размер пакета
      */
     void Remove(size_t nFFT, size_t batch_size) {
         FFTPlanKey key{nFFT, batch_size};
@@ -263,9 +263,9 @@ public:
     }
 
     /**
-     * @brief Clear entire cache (release all plans)
+     * @brief Очистить весь кэш (освободить все планы)
      *
-     * Called from destructor. Safe to call multiple times.
+     * Вызывается из деструктора. Безопасно вызывать несколько раз.
      */
     void ClearAll() {
         for (auto& [key, entry] : cache_) {
@@ -282,22 +282,22 @@ public:
     // ========================================================================
 
     /**
-     * @brief Get number of cached plans
+     * @brief Получить количество закешированных планов
      */
     size_t GetCacheSize() const { return cache_.size(); }
 
     /**
-     * @brief Get total number of plan creations (cache misses)
+     * @brief Получить общее число созданий планов (промахи кэша)
      */
     size_t GetTotalCreates() const { return total_creates_; }
 
     /**
-     * @brief Get total number of cache hits
+     * @brief Получить общее число попаданий в кэш
      */
     size_t GetTotalHits() const { return total_hits_; }
 
     /**
-     * @brief Get cache hit ratio (0.0 - 1.0)
+     * @brief Получить долю попаданий в кэш (0.0 — 1.0)
      */
     double GetHitRatio() const {
         size_t total = total_creates_ + total_hits_;
@@ -305,7 +305,7 @@ public:
     }
 
     /**
-     * @brief Print cache statistics
+     * @brief Вывести статистику кэша
      */
     void PrintStats() const {
         std::cout << "\n  FFTPlanCache Statistics:\n";
@@ -328,16 +328,16 @@ public:
 
 private:
     // ========================================================================
-    // Private members
+    // Приватные члены
     // ========================================================================
 
-    cl_context context_;                          ///< OpenCL context
-    cl_command_queue queue_;                       ///< Command queue
+    cl_context context_;                          ///< Контекст OpenCL
+    cl_command_queue queue_;                       ///< Очередь команд
 
-    std::map<FFTPlanKey, FFTPlanEntry> cache_;     ///< Plan cache
+    std::map<FFTPlanKey, FFTPlanEntry> cache_;     ///< Кэш планов
 
-    size_t total_creates_ = 0;                    ///< Total plan creations
-    size_t total_hits_ = 0;                       ///< Total cache hits
+    size_t total_creates_ = 0;                    ///< Всего созданий планов
+    size_t total_hits_ = 0;                       ///< Всего попаданий в кэш
 };
 
 } // namespace antenna_fft

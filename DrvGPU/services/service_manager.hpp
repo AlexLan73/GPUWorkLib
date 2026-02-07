@@ -2,37 +2,37 @@
 
 /**
  * @file service_manager.hpp
- * @brief ServiceManager - Centralised start/stop for all background services
+ * @brief ServiceManager — централизованный запуск/останов всех фоновых сервисов
  *
  * ============================================================================
- * PURPOSE:
- *   Single point for initialising, starting, and stopping all DrvGPU
- *   asynchronous services: Logger, Profiler, ConsoleOutput.
+ * НАЗНАЧЕНИЕ:
+ *   Единая точка инициализации, запуска и остановки всех асинхронных сервисов
+ *   DrvGPU: Logger, Profiler, ConsoleOutput.
  *
- *   Reads configGPU.json and enables/disables services per GPU.
+ *   Читает configGPU.json и включает/отключает сервисы по каждому GPU.
  *
- * LIFECYCLE:
- *   1. GPUManager creates GPUs
- *   2. ServiceManager::Initialize(config) - configure services from JSON
- *   3. ServiceManager::StartAll() - launch background threads
- *   4. ... GPU work, modules call Enqueue() ...
- *   5. ServiceManager::StopAll() - drain queues, join threads
+ * ЖИЗНЕННЫЙ ЦИКЛ:
+ *   1. GPUManager создаёт GPU
+ *   2. ServiceManager::InitializeFromConfig(config) — настройка сервисов из JSON
+ *   3. ServiceManager::StartAll() — запуск фоновых потоков
+ *   4. ... работа GPU, модули вызывают Enqueue() ...
+ *   5. ServiceManager::StopAll() — освобождение очередей, join потоков
  *
- * USAGE:
- *   // After GPUManager::InitializeAll():
+ * ИСПОЛЬЗОВАНИЕ:
+ *   // После GPUManager::InitializeAll():
  *   auto& sm = ServiceManager::GetInstance();
  *   sm.InitializeFromConfig("configGPU.json");
  *   sm.StartAll();
  *
- *   // ... GPU processing ...
+ *   // ... обработка на GPU ...
  *
- *   // Before exit:
+ *   // Перед выходом:
  *   sm.StopAll();
  *
- * THREAD SAFETY:
- *   - Initialize/Start/Stop are NOT meant to be called concurrently
- *   - They are called once from the main thread
- *   - Individual service APIs (Enqueue) are thread-safe
+ * ПОТОКОБЕЗОПАСНОСТЬ:
+ *   - Initialize/Start/Stop не предназначены для параллельного вызова
+ *   - Вызываются один раз из главного потока
+ *   - API отдельных сервисов (Enqueue) потокобезопасны
  * ============================================================================
  *
  * @author Codo (AI Assistant)
@@ -51,18 +51,18 @@
 namespace drv_gpu_lib {
 
 // ============================================================================
-// ServiceManager - Centralized service lifecycle manager
+// ServiceManager — централизованное управление жизненным циклом сервисов
 // ============================================================================
 
 /**
  * @class ServiceManager
- * @brief Singleton that manages the lifecycle of all background services
+ * @brief Синглтон, управляющий жизненным циклом всех фоновых сервисов
  *
- * Responsibilities:
- * - Read configGPU.json and configure services
- * - Start/stop ConsoleOutput, GPUProfiler background threads
- * - Configure per-GPU Logger paths
- * - Provide convenience API for service status
+ * Обязанности:
+ * - Чтение configGPU.json и настройка сервисов
+ * - Запуск/останов потоков ConsoleOutput, GPUProfiler
+ * - Настройка путей логера по каждому GPU
+ * - Удобный API для статуса сервисов
  */
 class ServiceManager {
 public:
@@ -71,14 +71,14 @@ public:
     // ========================================================================
 
     /**
-     * @brief Get singleton instance
+     * @brief Получить экземпляр синглтона
      */
     static ServiceManager& GetInstance() {
         static ServiceManager instance;
         return instance;
     }
 
-    // Delete copy
+    // Запрет копирования
     ServiceManager(const ServiceManager&) = delete;
     ServiceManager& operator=(const ServiceManager&) = delete;
 
@@ -87,20 +87,20 @@ public:
     // ========================================================================
 
     /**
-     * @brief Initialize services from configGPU.json
-     * @param config_file Path to configGPU.json
-     * @return true if configuration loaded successfully
+     * @brief Инициализировать сервисы из configGPU.json
+     * @param config_file Путь к configGPU.json
+     * @return true при успешной загрузке конфигурации
      *
-     * Reads the JSON config and applies settings:
-     * - is_console  -> ConsoleOutput per-GPU enable/disable
-     * - is_prof     -> GPUProfiler enable flag
-     * - is_logger   -> ConfigLogger per-GPU log paths
-     * - log_level   -> Logger level configuration
+     * Читает JSON-конфиг и применяет настройки:
+     * - is_console  -> включение/отключение ConsoleOutput по каждому GPU
+     * - is_prof     -> флаг включения GPUProfiler
+     * - is_logger   -> пути логов ConfigLogger по каждому GPU
+     * - log_level   -> уровень логирования
      *
-     * Does NOT start services (call StartAll() for that).
+     * Сервисы не запускает (для этого вызвать StartAll()).
      */
     bool InitializeFromConfig(const std::string& config_file) {
-        // Load config (or create default if missing)
+        // Загрузка конфига (или создание по умолчанию при отсутствии)
         bool ok = GPUConfig::GetInstance().LoadOrCreate(config_file);
         if (!ok) {
             std::cerr << "[ServiceManager] WARNING: Failed to load config, using defaults\n";
@@ -108,12 +108,12 @@ public:
 
         const auto& data = GPUConfig::GetInstance().GetData();
 
-        // Configure ConsoleOutput per-GPU
+        // Настройка ConsoleOutput по каждому GPU
         for (const auto& gpu : data.gpus) {
             ConsoleOutput::GetInstance().SetGPUEnabled(gpu.id, gpu.is_console);
         }
 
-        // Configure GPUProfiler
+        // Настройка GPUProfiler
         bool any_profiling = false;
         for (const auto& gpu : data.gpus) {
             if (gpu.is_prof) {
@@ -123,10 +123,10 @@ public:
         }
         GPUProfiler::GetInstance().SetEnabled(any_profiling);
 
-        // Configure Logger per-GPU paths
+        // Настройка путей логера по каждому GPU
         for (const auto& gpu : data.gpus) {
             if (gpu.is_logger) {
-                // Ensure log directory exists for this GPU
+                // Создание директории логов для данного GPU при необходимости
                 ConfigLogger::GetInstance().CreateLogDirectoryForGPU(gpu.id);
             }
         }
@@ -141,14 +141,14 @@ public:
     }
 
     /**
-     * @brief Initialize with default settings (no config file)
+     * @brief Инициализация настройками по умолчанию (без файла конфига)
      *
-     * Creates default config for a single GPU with all services enabled.
-     * Useful for testing and development.
+     * Создаёт конфиг по умолчанию для одного GPU со всеми сервисами.
+     * Удобно для тестов и разработки.
      */
     void InitializeDefaults() {
-        // GPUConfig already has defaults from constructor
-        // Just enable everything
+        // GPUConfig уже имеет значения по умолчанию из конструктора
+        // Включаем всё
         ConsoleOutput::GetInstance().SetEnabled(true);
         GPUProfiler::GetInstance().SetEnabled(true);
         ConfigLogger::GetInstance().Enable();
@@ -163,15 +163,15 @@ public:
     // ========================================================================
 
     /**
-     * @brief Start all background service threads
+     * @brief Запустить все фоновые потоки сервисов
      *
-     * Starts:
-     * - ConsoleOutput worker thread
-     * - GPUProfiler worker thread
+     * Запускает:
+     * - рабочий поток ConsoleOutput
+     * - рабочий поток GPUProfiler
      *
-     * Logger (plog) does not need a separate thread (it's file-based).
+     * Logger (plog) в отдельном потоке не нужен (работа с файлом).
      *
-     * IMPORTANT: Call InitializeFromConfig() or InitializeDefaults() first!
+     * ВАЖНО: Сначала вызвать InitializeFromConfig() или InitializeDefaults()!
      */
     void StartAll() {
         if (!initialized_) {
@@ -179,10 +179,10 @@ public:
             InitializeDefaults();
         }
 
-        // Start ConsoleOutput background thread
+        // Запуск фонового потока ConsoleOutput
         ConsoleOutput::GetInstance().Start();
 
-        // Start GPUProfiler background thread
+        // Запуск фонового потока GPUProfiler
         if (GPUProfiler::GetInstance().IsEnabled()) {
             GPUProfiler::GetInstance().Start();
         }
@@ -193,77 +193,77 @@ public:
     }
 
     /**
-     * @brief Stop all background service threads
+     * @brief Остановить все фоновые потоки сервисов
      *
-     * Drains all message queues, then joins worker threads.
-     * After this call, no more messages will be processed.
+     * Опустошает очереди сообщений, затем присоединяет рабочие потоки.
+     * После вызова новые сообщения не обрабатываются.
      *
-     * Safe to call multiple times.
+     * Безопасно вызывать несколько раз.
      */
     void StopAll() {
         if (!running_) return;
 
         ConsoleOutput::GetInstance().PrintSystem("ServiceManager", "Stopping all services...");
 
-        // Stop GPUProfiler first (it may still be recording during shutdown)
+        // Сначала останавливаем GPUProfiler (может ещё писать во время остановки)
         GPUProfiler::GetInstance().Stop();
 
-        // Stop ConsoleOutput last (so other services can log their shutdown)
+        // ConsoleOutput останавливаем последним (чтобы сервисы могли залогировать остановку)
         ConsoleOutput::GetInstance().Stop();
 
         running_ = false;
 
-        // Print summary after console is stopped (goes directly to stdout)
+        // Вывод итога после остановки консоли (напрямую в stdout)
         std::cout << "[ServiceManager] All services stopped.\n";
     }
 
     /**
-     * @brief Check if services are running
+     * @brief Проверить, запущены ли сервисы
      */
     bool IsRunning() const { return running_; }
 
     /**
-     * @brief Check if services are initialized
+     * @brief Проверить, инициализированы ли сервисы
      */
     bool IsInitialized() const { return initialized_; }
 
     // ========================================================================
-    // Convenience API
+    // Удобный API
     // ========================================================================
 
     /**
-     * @brief Export profiling data to JSON file
-     * @param file_path Output file path
-     * @return true on success
+     * @brief Экспорт данных профилирования в JSON-файл
+     * @param file_path Путь к выходному файлу
+     * @return true при успехе
      *
-     * Convenience wrapper around GPUProfiler::ExportJSON().
-     * Creates parent directories if needed.
+     * Обёртка над GPUProfiler::ExportJSON().
+     * Создаёт родительские директории при необходимости.
      */
     bool ExportProfiling(const std::string& file_path) const {
         return GPUProfiler::GetInstance().ExportJSON(file_path);
     }
 
     /**
-     * @brief Print profiling summary to console
+     * @brief Вывести сводку профилирования в консоль
      *
-     * Convenience wrapper around GPUProfiler::PrintSummary().
+     * Обёртка над GPUProfiler::PrintSummary().
      */
     void PrintProfilingSummary() const {
         GPUProfiler::GetInstance().PrintSummary();
     }
 
     /**
-     * @brief Print GPU config to console
+     * @brief Вывести конфигурацию GPU в консоль
      *
-     * Convenience wrapper around GPUConfig::Print().
+     * Обёртка над GPUConfig::Print().
      */
     void PrintConfig() const {
         GPUConfig::GetInstance().Print();
     }
 
     /**
-     * @brief Get service statistics string
-     * @return Human-readable service status
+     * @brief Получить строку со статистикой сервисов
+     * @return Человекочитаемый статус сервисов
      */
     std::string GetStatus() const {
         std::ostringstream oss;
@@ -283,26 +283,26 @@ public:
 
 private:
     // ========================================================================
-    // Private constructor (singleton)
+    // Приватный конструктор (синглтон)
     // ========================================================================
 
     ServiceManager() : initialized_(false), running_(false) {}
 
     ~ServiceManager() {
-        // Auto-stop on destruction
+        // Автоостановка при уничтожении
         if (running_) {
             StopAll();
         }
     }
 
     // ========================================================================
-    // Private members
+    // Приватные члены
     // ========================================================================
 
-    /// Initialization flag
+    /// Флаг инициализации
     bool initialized_;
 
-    /// Running flag
+    /// Флаг работы
     bool running_;
 };
 

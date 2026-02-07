@@ -8,23 +8,23 @@ namespace antenna_fft {
 namespace kernels {
 
 // ════════════════════════════════════════════════════════════════════════════
-// GetPaddingKernelSource() - Standalone Kernel для Batch Processing
+// GetPaddingKernelSource() — отдельное ядро для пакетной обработки
 // ════════════════════════════════════════════════════════════════════════════
 //
 // НАЗНАЧЕНИЕ:
-//   Подготовка данных для FFT: копирование count_points → nFFT с padding нулями
+//   Подготовка данных для FFT: копирование count_points → nFFT с дополнением нулями
 //   Используется когда нужно обработать БОЛЬШИЕ данные по частям (batch processing)
 //
 // АРХИТЕКТУРА:
-//   - Тип: Standalone OpenCL kernel (вызывается через clEnqueueNDRangeKernel)
-//   - Буферы: input и output - ОТДЕЛЬНЫЕ cl_mem объекты
+//   - Тип: отдельное ядро OpenCL (вызов через clEnqueueNDRangeKernel)
+//   - Буферы: input и output — отдельные объекты cl_mem
 //   - Аргументы: 6 параметров через clSetKernelArg()
 //
-// MEMORY LAYOUT:
-//   input  (cl_mem): [луч0][луч1][луч2]...[лучN] - весь массив
-//   output (cl_mem): [луч_batch0][луч_batch1]... - результат батча
+// РАЗМЕЩЕНИЕ В ПАМЯТИ:
+//   input  (cl_mem): [луч0][луч1][луч2]...[лучN] — весь массив
+//   output (cl_mem): [луч_batch0][луч_batch1]... — результат пакета
 //
-// КЛЮЧЕВАЯ ФИЧА - beam_offset:
+// КЛЮЧЕВАЯ ФИЧА — beam_offset:
 //   Позволяет обрабатывать данные по частям:
 //   - Batch 0: offset=0,  обрабатывает лучи 0-9
 //   - Batch 1: offset=10, обрабатывает лучи 10-19

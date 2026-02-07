@@ -2,26 +2,26 @@
 
 /**
  * @file console_output.hpp
- * @brief ConsoleOutput - Thread-safe singleton for console output from multiple GPUs
+ * @brief ConsoleOutput — потокобезопасный синглтон вывода в консоль с нескольких GPU
  *
  * ============================================================================
- * PROBLEM:
- *   When 8 GPUs write to stdout simultaneously, output becomes garbled.
- *   Messages from different GPUs interleave unpredictably.
+ * ПРОБЛЕМА:
+ *   При одновременной записи в stdout с 8 GPU вывод перемешивается.
+ *   Сообщения от разных GPU чередуются непредсказуемо.
  *
- * SOLUTION:
- *   ConsoleOutput is a singleton service with:
- *   - Dedicated background thread for all console output
- *   - Message queue (GPU threads only do Enqueue - almost instant)
- *   - Formatted output: [HH:MM:SS.mmm] [GPU_XX] [Module] message
- *   - Per-GPU enable/disable via configGPU.json (is_console flag)
+ * РЕШЕНИЕ:
+ *   ConsoleOutput — сервис-синглтон с:
+ *   - Выделенным фоновым потоком для всего вывода в консоль
+ *   - Очередью сообщений (потоки GPU только делают Enqueue — почти без задержки)
+ *   - Форматированием: [ЧЧ:ММ:СС.ммм] [GPU_XX] [Модуль] сообщение
+ *   - Включением/отключением по каждому GPU через configGPU.json (флаг is_console)
  *
- * ARCHITECTURE:
+ * АРХИТЕКТУРА:
  *   GPU Thread 0 --> Print(0, "FFT", "Done") --> Enqueue() --+
- *   GPU Thread 1 --> Print(1, "FFT", "Done") --> Enqueue() --+--> [Queue] --> Worker --> stdout
+ *   GPU Thread 1 --> Print(1, "FFT", "Done") --> Enqueue() --+--> [Очередь] --> Worker --> stdout
  *   GPU Thread N --> Print(N, "FFT", "Done") --> Enqueue() --+
  *
- * USAGE:
+ * ИСПОЛЬЗОВАНИЕ:
  *   ConsoleOutput::GetInstance().Start();
  *   ConsoleOutput::GetInstance().Print(0, "FFT", "Processing 1024 beams...");
  *   ConsoleOutput::GetInstance().PrintError(0, "FFT", "Failed to allocate!");
@@ -46,48 +46,48 @@
 namespace drv_gpu_lib {
 
 // ============================================================================
-// ConsoleMessage - Message type for console output queue
+// ConsoleMessage — тип сообщения для очереди вывода в консоль
 // ============================================================================
 
 /**
  * @struct ConsoleMessage
- * @brief Single message for console output
+ * @brief Одно сообщение для вывода в консоль
  */
 struct ConsoleMessage {
-    /// GPU device index (-1 = system message, no GPU prefix)
+    /// Индекс устройства GPU (-1 = системное сообщение, без префикса GPU)
     int gpu_id = -1;
 
-    /// Source module name (e.g., "FFT", "MemManager", "Backend")
+    /// Имя модуля-источника (напр., "FFT", "MemManager", "Backend")
     std::string module_name;
 
-    /// Message severity level
+    /// Уровень серьёзности сообщения
     enum class Level : uint8_t {
         DEBUG = 0,
         INFO = 1,
         WARNING = 2,
-        ERRLEVEL = 3  // Named ERRLEVEL to avoid Windows ERROR macro conflict
+        ERRLEVEL = 3  // ERRLEVEL, чтобы не конфликтовать с макросом Windows ERROR
     };
     Level level = Level::INFO;
 
-    /// Message text
+    /// Текст сообщения
     std::string message;
 
-    /// Timestamp (auto-set on creation)
+    /// Временная метка (устанавливается при создании)
     std::chrono::system_clock::time_point timestamp = std::chrono::system_clock::now();
 };
 
 // ============================================================================
-// ConsoleOutput - Thread-safe console output service
+// ConsoleOutput — потокобезопасный сервис вывода в консоль
 // ============================================================================
 
 /**
  * @class ConsoleOutput
- * @brief Singleton service for thread-safe console output
+ * @brief Синглтон для потокобезопасного вывода в консоль
  *
- * Inherits from AsyncServiceBase<ConsoleMessage>:
- * - Background worker thread
- * - Non-blocking Enqueue() for GPU threads
- * - Ordered, formatted output to stdout
+ * Наследуется от AsyncServiceBase<ConsoleMessage>:
+ * - Фоновый рабочий поток
+ * - Неблокирующий Enqueue() для потоков GPU
+ * - Упорядоченный форматированный вывод в stdout
  */
 class ConsoleOutput : public AsyncServiceBase<ConsoleMessage> {
 public:
@@ -96,26 +96,26 @@ public:
     // ========================================================================
 
     /**
-     * @brief Get the singleton instance
+     * @brief Получить экземпляр синглтона
      */
     static ConsoleOutput& GetInstance() {
         static ConsoleOutput instance;
         return instance;
     }
 
-    // Delete copy (singleton)
+    // Запрет копирования (синглтон)
     ConsoleOutput(const ConsoleOutput&) = delete;
     ConsoleOutput& operator=(const ConsoleOutput&) = delete;
 
     // ========================================================================
-    // Convenience API (non-blocking)
+    // Удобный API (неблокирующий)
     // ========================================================================
 
     /**
-     * @brief Print info message to console
-     * @param gpu_id GPU device index (-1 for system messages)
-     * @param module Source module name
-     * @param message Message text
+     * @brief Вывести информационное сообщение в консоль
+     * @param gpu_id Индекс устройства GPU (-1 для системных сообщений)
+     * @param module Имя модуля-источника
+     * @param message Текст сообщения
      */
     void Print(int gpu_id, const std::string& module, const std::string& message) {
         ConsoleMessage msg;
@@ -127,7 +127,7 @@ public:
     }
 
     /**
-     * @brief Print warning message to console
+     * @brief Вывести предупреждение в консоль
      */
     void PrintWarning(int gpu_id, const std::string& module, const std::string& message) {
         ConsoleMessage msg;
@@ -139,7 +139,7 @@ public:
     }
 
     /**
-     * @brief Print error message to console
+     * @brief Вывести сообщение об ошибке в консоль
      */
     void PrintError(int gpu_id, const std::string& module, const std::string& message) {
         ConsoleMessage msg;
@@ -151,7 +151,7 @@ public:
     }
 
     /**
-     * @brief Print debug message to console
+     * @brief Вывести отладочное сообщение в консоль
      */
     void PrintDebug(int gpu_id, const std::string& module, const std::string& message) {
         ConsoleMessage msg;
@@ -163,7 +163,7 @@ public:
     }
 
     /**
-     * @brief Print system message (no GPU prefix)
+     * @brief Вывести системное сообщение (без префикса GPU)
      */
     void PrintSystem(const std::string& module, const std::string& message) {
         Print(-1, module, message);
@@ -174,23 +174,23 @@ public:
     // ========================================================================
 
     /**
-     * @brief Enable or disable console output globally
+     * @brief Включить или отключить вывод в консоль глобально
      */
     void SetEnabled(bool enabled) {
         enabled_.store(enabled, std::memory_order_release);
     }
 
     /**
-     * @brief Check if console output is globally enabled
+     * @brief Проверить, включён ли глобально вывод в консоль
      */
     bool IsEnabled() const {
         return enabled_.load(std::memory_order_acquire);
     }
 
     /**
-     * @brief Enable or disable console output for specific GPU
-     * @param gpu_id GPU device index
-     * @param enabled true to enable, false to disable
+     * @brief Включить или отключить вывод в консоль для конкретного GPU
+     * @param gpu_id Индекс устройства GPU
+     * @param enabled true — включить, false — отключить
      */
     void SetGPUEnabled(int gpu_id, bool enabled) {
         std::lock_guard<std::mutex> lock(gpu_filter_mutex_);
@@ -202,7 +202,7 @@ public:
     }
 
     /**
-     * @brief Check if a specific GPU's console output is enabled
+     * @brief Проверить, включён ли вывод в консоль для данного GPU
      */
     bool IsGPUEnabled(int gpu_id) const {
         std::lock_guard<std::mutex> lock(gpu_filter_mutex_);
@@ -215,18 +215,18 @@ protected:
     // ========================================================================
 
     /**
-     * @brief Process one console message (runs in worker thread)
+     * @brief Обработать одно консольное сообщение (выполняется в рабочем потоке)
      *
-     * Formats and outputs the message to stdout.
-     * Format: [HH:MM:SS.mmm] [GPU_XX] [Module] message
+     * Форматирует и выводит сообщение в stdout.
+     * Формат: [ЧЧ:ММ:СС.ммм] [GPU_XX] [Модуль] сообщение
      */
     void ProcessMessage(const ConsoleMessage& msg) override {
-        // Check global enable
+        // Проверка глобального включения
         if (!enabled_.load(std::memory_order_acquire)) {
             return;
         }
 
-        // Check per-GPU enable
+        // Проверка включения для данного GPU
         if (msg.gpu_id >= 0) {
             std::lock_guard<std::mutex> lock(gpu_filter_mutex_);
             if (disabled_gpus_.find(msg.gpu_id) != disabled_gpus_.end()) {
@@ -234,7 +234,7 @@ protected:
             }
         }
 
-        // Format timestamp: HH:MM:SS.mmm
+        // Форматирование времени: ЧЧ:ММ:СС.ммм
         auto time_t = std::chrono::system_clock::to_time_t(msg.timestamp);
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             msg.timestamp.time_since_epoch()) % 1000;
@@ -286,7 +286,7 @@ protected:
         // Message
         oss << msg.message;
 
-        // Output to stdout (or stderr for errors)
+        // Вывод в stdout (или stderr для ошибок)
         if (msg.level == ConsoleMessage::Level::ERRLEVEL) {
             std::cerr << oss.str() << "\n";
         } else {
@@ -295,7 +295,7 @@ protected:
     }
 
     /**
-     * @brief Service name for diagnostics
+     * @brief Имя сервиса для диагностики
      */
     std::string GetServiceName() const override {
         return "ConsoleOutput";
@@ -303,22 +303,22 @@ protected:
 
 private:
     // ========================================================================
-    // Private constructor (singleton)
+    // Приватный конструктор (синглтон)
     // ========================================================================
 
     ConsoleOutput() : enabled_(true) {}
 
     // ========================================================================
-    // Private members
+    // Приватные члены
     // ========================================================================
 
-    /// Global enable flag
+    /// Глобальный флаг включения
     std::atomic<bool> enabled_;
 
-    /// Set of disabled GPU IDs
+    /// Множество отключённых GPU
     std::unordered_set<int> disabled_gpus_;
 
-    /// Mutex for disabled_gpus_ set
+    /// Мьютекс для множества disabled_gpus_
     mutable std::mutex gpu_filter_mutex_;
 };
 

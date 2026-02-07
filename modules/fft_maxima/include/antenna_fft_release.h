@@ -2,12 +2,12 @@
 
 /**
  * @file antenna_fft_release.h
- * @brief Release implementation of FFT processing with clFFT callbacks
+ * @brief Release-реализация FFT с колбэками clFFT
  *
- * High-performance implementation using clFFT pre/post callbacks
- * for zero-copy GPU processing.
+ * Высокопроизводительная реализация с pre/post колбэками clFFT
+ * для zero-copy обработки на GPU.
  *
- * Pipeline: pre-callback (padding) -> FFT -> post-callback (magnitude + select)
+ * Конвейер: pre-callback (дополнение) -> FFT -> post-callback (амплитуда + выбор)
  *
  * @author DrvGPU Team
  * @date 2026-02-04
@@ -23,17 +23,17 @@ namespace antenna_fft {
 
 /**
  * @class AntennaFFTProcMax
- * @brief Release implementation - uses clFFT callbacks for maximum performance
+ * @brief Release-реализация — колбэки clFFT для максимальной производительности
  *
- * This is the PRODUCTION class for FFT processing.
- * All processing happens in one clFFT call with callbacks.
+ * Продакшен-класс для FFT-обработки.
+ * Вся обработка выполняется одним вызовом clFFT с колбэками.
  *
- * Pipeline:
- * 1. Pre-callback: reads input data + padding to nFFT
- * 2. clFFT: forward FFT
- * 3. Post-callback: fftshift + magnitude calculation + select out_count_points_fft
+ * Конвейер:
+ * 1. Pre-callback: чтение входных данных + дополнение до nFFT
+ * 2. clFFT: прямое FFT
+ * 3. Post-callback: fftshift + расчёт амплитуды + выбор out_count_points_fft
  *
- * Usage:
+ * Использование:
  * ```cpp
  * AntennaFFTProcMax fft(params, backend);
  * auto result = fft.ProcessNew(input_data);
@@ -42,18 +42,18 @@ namespace antenna_fft {
 class AntennaFFTProcMax : public AntennaFFTCore {
 public:
     /**
-     * @brief Constructor
-     * @param params Processing parameters
-     * @param backend Pointer to IBackend (Multi-GPU support)
+     * @brief Конструктор
+     * @param params Параметры обработки
+     * @param backend Указатель на IBackend (поддержка Multi-GPU)
      */
     explicit AntennaFFTProcMax(const AntennaFFTParams& params, drv_gpu_lib::IBackend* backend);
 
     /**
-     * @brief Destructor
+     * @brief Деструктор
      */
     ~AntennaFFTProcMax() override;
 
-    // Delete copy, allow move
+    // Запрет копирования, разрешено перемещение
     AntennaFFTProcMax(const AntennaFFTProcMax&) = delete;
     AntennaFFTProcMax& operator=(const AntennaFFTProcMax&) = delete;
     AntennaFFTProcMax(AntennaFFTProcMax&&) noexcept = default;
@@ -61,21 +61,21 @@ public:
 
 protected:
     // ═══════════════════════════════════════════════════════════════════════════
-    // Virtual method implementations
+    // Реализации виртуальных методов
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @brief Initialize FFT plan with callbacks
+     * @brief Инициализировать FFT-план с колбэками
      */
     void Initialize() override;
 
     /**
-     * @brief Process all beams in single batch (through callbacks)
+     * @brief Обработать все лучи одним пакетом (через колбэки)
      */
     AntennaFFTResult ProcessSingleBatch(cl_mem input_signal) override;
 
     /**
-     * @brief Process one batch (through callbacks)
+     * @brief Обработать один пакет (через колбэки)
      */
     std::vector<FFTResult> ProcessBatch(
         cl_mem input_signal,
@@ -84,33 +84,33 @@ protected:
         BatchProfilingData* out_profiling = nullptr) override;
 
     /**
-     * @brief Allocate buffers for callback processing
+     * @brief Выделить буферы для обработки с колбэками
      */
     void AllocateBuffers(size_t num_beams) override;
 
     /**
-     * @brief Release allocated buffers
+     * @brief Освободить выделенные буферы
      */
     void ReleaseBuffers() override;
 
 private:
     // ═══════════════════════════════════════════════════════════════════════════
-    // Private methods
+    // Приватные методы
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @brief Create FFT plan with pre and post callbacks
-     * @param num_beams Number of beams (batch size)
+     * @brief Создать FFT-план с pre- и post-колбэками
+     * @param num_beams Количество лучей (размер пакета)
      */
     void CreateFFTPlanWithCallbacks(size_t num_beams);
 
     /**
-     * @brief Execute FFT with callbacks
-     * @param input_signal Input data buffer
-     * @param num_beams Number of beams to process
-     * @param start_beam Starting beam index (for batching)
-     * @param out_fft_event Output FFT completion event
-     * @return true if successful
+     * @brief Выполнить FFT с колбэками
+     * @param input_signal Буфер входных данных
+     * @param num_beams Количество лучей для обработки
+     * @param start_beam Начальный индекс луча (для батчинга)
+     * @param out_fft_event Событие завершения FFT
+     * @return true при успехе
      */
     bool ExecuteFFTWithCallbacks(
         cl_mem input_signal,
@@ -119,25 +119,25 @@ private:
         cl_event* out_fft_event);
 
     /**
-     * @brief Read results from GPU after FFT
-     * @param num_beams Number of beams
-     * @param start_beam Starting beam index
-     * @return Results for processed beams
+     * @brief Прочитать результаты с GPU после FFT
+     * @param num_beams Количество лучей
+     * @param start_beam Начальный индекс луча
+     * @return Результаты по обработанным лучам
      */
     std::vector<FFTResult> ReadResults(size_t num_beams, size_t start_beam);
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Private fields
+    // Приватные поля
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // Buffers for selected spectrum (output of post-callback)
-    cl_mem buffer_selected_complex_;       // Complex values of selected points
-    cl_mem buffer_selected_magnitude_;     // Magnitudes of selected points
+    // Буферы выбранного спектра (результат post-callback)
+    cl_mem buffer_selected_complex_;       // Комплексные значения выбранных точек
+    cl_mem buffer_selected_magnitude_;     // Магнитуды выбранных точек
 
-    // Cached plan parameters
-    size_t plan_num_beams_;                // Number of beams plan was created for
+    // Параметры закешированного плана
+    size_t plan_num_beams_;                // Количество лучей, для которого создан план
 
-    // FFT Plan Cache (avoids expensive plan recreation)
+    // Кэш FFT-планов (избегаем дорогого пересоздания)
     std::unique_ptr<FFTPlanCache> plan_cache_;
 };
 

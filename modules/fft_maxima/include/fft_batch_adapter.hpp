@@ -49,7 +49,7 @@
 namespace antenna_fft {
 
 // ============================================================================
-// FFTBatchAdapter — Bridge between AntennaFFT and DrvGPU::BatchManager
+// FFTBatchAdapter — связка между AntennaFFT и DrvGPU::BatchManager
 // ============================================================================
 
 /**

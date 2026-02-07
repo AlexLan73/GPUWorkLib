@@ -6,7 +6,7 @@
 namespace antenna_fft {
 
 // ════════════════════════════════════════════════════════════════════════════
-// Constructor / Destructor
+// Конструктор / Деструктор
 // ════════════════════════════════════════════════════════════════════════════
 
 AntennaFFTProcMax::AntennaFFTProcMax(const AntennaFFTParams& params, drv_gpu_lib::IBackend* backend)
@@ -15,7 +15,7 @@ AntennaFFTProcMax::AntennaFFTProcMax(const AntennaFFTParams& params, drv_gpu_lib
       buffer_selected_magnitude_(nullptr),
       plan_num_beams_(0) {
 
-    // Call virtual Initialize (create plan with callbacks)
+    // Вызов виртуального Initialize (создание плана с колбэками)
     Initialize();
 }
 
@@ -24,7 +24,7 @@ AntennaFFTProcMax::~AntennaFFTProcMax() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Virtual method implementations
+// Реализации виртуальных методов
 // ════════════════════════════════════════════════════════════════════════════
 
 void AntennaFFTProcMax::Initialize() {
@@ -34,10 +34,10 @@ void AntennaFFTProcMax::Initialize() {
     FFTLogger::Info("  nFFT: ", nFFT_);
     FFTLogger::Info("  out_count_points_fft: ", params_.out_count_points_fft);
 
-    // Create FFT plan cache for this context
+    // Создание кэша FFT-планов для данного контекста
     plan_cache_ = std::make_unique<FFTPlanCache>(context_, queue_);
 
-    // Allocate buffers for initial batch size
+    // Выделение буферов для начального размера пакета
     size_t initial_beams = batch_config_.beams_per_batch;
     if (initial_beams == 0) initial_beams = params_.beam_count;
 
@@ -54,7 +54,7 @@ AntennaFFTResult AntennaFFTProcMax::ProcessSingleBatch(cl_mem input_signal) {
     result.task_id = params_.task_id;
     result.module_name = params_.module_name;
 
-    // Ensure buffers and plan are ready for full batch
+    // Убедиться, что буферы и план готовы для полного пакета
     if (current_buffer_beams_ < params_.beam_count) {
         ReleaseBuffers();
         ReleaseFFTPlan();
@@ -62,22 +62,22 @@ AntennaFFTResult AntennaFFTProcMax::ProcessSingleBatch(cl_mem input_signal) {
         CreateFFTPlanWithCallbacks(params_.beam_count);
     }
 
-    // Copy input data to pre-callback userdata (after header)
+    // Копирование входных данных в userdata pre-callback (после заголовка)
     size_t input_size = params_.beam_count * params_.count_points * sizeof(std::complex<float>);
     cl_int err = clEnqueueCopyBuffer(queue_, input_signal, pre_callback_userdata_,
-                                      0, 32, // 32 bytes header offset
+                                      0, 32, // смещение заголовка 32 байта
                                       input_size, 0, nullptr, nullptr);
     if (err != CL_SUCCESS) {
         throw std::runtime_error("Failed to copy input to userdata: " + std::to_string(err));
     }
 
-    // Execute FFT with callbacks
+    // Выполнение FFT с колбэками
     cl_event fft_event;
     if (!ExecuteFFTWithCallbacks(input_signal, params_.beam_count, 0, &fft_event)) {
         throw std::runtime_error("FFT execution failed");
     }
 
-    // Wait for completion
+    // Ожидание завершения
     clWaitForEvents(1, &fft_event);
 
     // Profile

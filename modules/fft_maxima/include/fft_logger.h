@@ -2,10 +2,10 @@
 
 /**
  * @file fft_logger.h
- * @brief Simple logger for FFT module
+ * @brief Простой логер для модуля FFT
  *
- * Separates logging from business logic.
- * Can be disabled, redirected, or replaced.
+ * Отделяет логирование от бизнес-логики.
+ * Можно отключить, перенаправить или заменить.
  *
  * @author DrvGPU Team
  * @date 2026-02-04
@@ -20,18 +20,18 @@ namespace antenna_fft {
 
 /**
  * @class FFTLogger
- * @brief Simple static logger for FFT module
+ * @brief Простой статический логер для модуля FFT
  *
- * Usage:
+ * Использование:
  * ```cpp
  * FFTLogger::Info("Processing started");
  * FFTLogger::Debug("  nFFT = ", nfft);
  * FFTLogger::Error("Failed to allocate buffer");
  *
- * // Disable logging:
+ * // Отключить логирование:
  * FFTLogger::SetEnabled(false);
  *
- * // Custom output:
+ * // Свой вывод:
  * FFTLogger::SetOutputStream(&myStream);
  * ```
  */
@@ -45,38 +45,38 @@ public:
     };
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Configuration
+    // Настройки
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @brief Enable or disable logging
+     * @brief Включить или отключить логирование
      */
     static void SetEnabled(bool enabled) { enabled_ = enabled; }
 
     /**
-     * @brief Check if logging is enabled
+     * @brief Проверить, включено ли логирование
      */
     static bool IsEnabled() { return enabled_; }
 
     /**
-     * @brief Set minimum log level
+     * @brief Установить минимальный уровень лога
      */
     static void SetLevel(Level level) { min_level_ = level; }
 
     /**
-     * @brief Set output stream (default: std::cout)
+     * @brief Установить поток вывода (по умолчанию: std::cout)
      */
     static void SetOutputStream(std::ostream* stream) { output_ = stream; }
 
     /**
-     * @brief Set custom log callback
+     * @brief Установить пользовательский колбэк логирования
      */
     static void SetCallback(std::function<void(Level, const std::string&)> callback) {
         callback_ = callback;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Logging methods
+    // Методы логирования
     // ═══════════════════════════════════════════════════════════════════════════
 
     template<typename... Args>

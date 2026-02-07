@@ -511,5 +511,5 @@ inline void SVMBuffer::CheckCLError(cl_int err, const std::string& operation) {
     }
 }
 
-} // namespace ManagerOpenCL
+} // namespace drv_gpu_lib
 

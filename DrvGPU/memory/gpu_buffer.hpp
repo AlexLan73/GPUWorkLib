@@ -202,4 +202,4 @@ private:
     IBackend* backend_;      ///< Указатель на бэкенд (не владеет)
 };
 
-} // namespace DrvGPU
+} // namespace drv_gpu_lib

@@ -16,7 +16,7 @@
 
 namespace drv_gpu_lib {
 
-// Forward declaration
+// Предварительное объявление
 class IBackend;
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -99,4 +99,4 @@ public:
     virtual IBackend* GetBackend() const = 0;
 };
 
-} // namespace DrvGPU
+} // namespace drv_gpu_lib

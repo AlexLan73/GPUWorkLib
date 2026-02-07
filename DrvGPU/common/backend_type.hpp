@@ -31,4 +31,4 @@ inline const char* BackendTypeToString(BackendType type) {
     }
 }
 
-} // namespace DrvGPU
+} // namespace drv_gpu_lib

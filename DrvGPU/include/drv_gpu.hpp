@@ -232,4 +232,4 @@ private:
     void InitializeSubsystems();
 };
 
-} // namespace DrvGPU
+} // namespace drv_gpu_lib

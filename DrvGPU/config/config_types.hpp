@@ -2,26 +2,26 @@
 
 /**
  * @file config_types.hpp
- * @brief GPUConfigEntry - Configuration data types for GPU devices
+ * @brief GPUConfigEntry — типы конфигурации для устройств GPU
  *
  * ============================================================================
- * PURPOSE:
- *   Defines the configuration structure for each GPU device.
- *   Used by GPUConfig to load/save configGPU.json.
+ * НАЗНАЧЕНИЕ:
+ *   Определяет структуру конфигурации для каждого устройства GPU.
+ *   Используется GPUConfig для загрузки/сохранения configGPU.json.
  *
- * DESIGN PRINCIPLE:
- *   Every field has a DEFAULT value. If the field is missing in JSON,
- *   the default is used. This ensures forward/backward compatibility
- *   when new fields are added in the future.
+ * ПРИНЦИП ПРОЕКТИРОВАНИЯ:
+ *   У каждого поля есть значение по УМОЛЧАНИЮ. Если поля нет в JSON,
+ *   подставляется значение по умолчанию. Это обеспечивает совместимость
+ *   при добавлении новых полей в будущем.
  *
- * EXAMPLE JSON:
+ * ПРИМЕР JSON:
  *   {
  *     "id": 0,
  *     "name": "Alex",
  *     "is_prof": true,
  *     "is_logger": true
  *   }
- *   // is_console defaults to false, is_active defaults to true, etc.
+ *   // is_console по умолчанию false, is_active по умолчанию true и т.д.
  *
  * ============================================================================
  *
@@ -37,98 +37,98 @@
 namespace drv_gpu_lib {
 
 // ============================================================================
-// GPUConfigEntry - Configuration for one GPU device
+// GPUConfigEntry — конфигурация для одного GPU-устройства
 // ============================================================================
 
 /**
  * @struct GPUConfigEntry
- * @brief Configuration parameters for a single GPU device
+ * @brief Параметры конфигурации для одного GPU
  *
- * ALL fields have default values. When loading from JSON,
- * any missing field will use its default.
+ * У всех полей есть значения по умолчанию. При загрузке из JSON
+ * отсутствующие поля получают значение по умолчанию.
  *
- * Field semantics:
- * - id: GPU device index (0-based, matches OpenCL device index)
- * - name: Human-readable name (for logs, console, debugging)
- * - is_prof: Enable GPU profiling for this device
- * - is_logger: Enable file logging for this device
- * - is_console: Enable console output for this device
- * - is_active: Whether this GPU should be initialized at startup
- * - is_db: Enable database output (future)
- * - max_memory_percent: Maximum GPU memory usage (% of total)
- * - log_level: Minimum log level ("DEBUG", "INFO", "WARNING", "ERROR")
+ * Смысл полей:
+ * - id: индекс устройства GPU (с 0, совпадает с OpenCL device index)
+ * - name: человекочитаемое имя (для логов, консоли, отладки)
+ * - is_prof: включить профилирование GPU для этого устройства
+ * - is_logger: включить файловое логирование для этого устройства
+ * - is_console: включить вывод в консоль для этого устройства
+ * - is_active: инициализировать ли этот GPU при старте
+ * - is_db: вывод в БД (будущая возможность)
+ * - max_memory_percent: макс. использование памяти GPU (% от общей)
+ * - log_level: минимальный уровень лога ("DEBUG", "INFO", "WARNING", "ERROR")
  */
 struct GPUConfigEntry {
     // ========================================================================
-    // Core identification
+    // Идентификация
     // ========================================================================
 
-    /// GPU device index (0-based, corresponds to OpenCL device index)
+    /// Индекс устройства GPU (с 0, соответствует OpenCL device index)
     int id = 0;
 
-    /// Human-readable name for this GPU (used in logs and console)
+    /// Человекочитаемое имя GPU (в логах и консоли)
     std::string name = "GPU";
 
     // ========================================================================
-    // Feature flags (all default to false for safety)
+    // Флаги возможностей (по умолчанию false для безопасности)
     // ========================================================================
 
-    /// Enable profiling data collection for this GPU
-    /// When true, kernel execution times and memory stats are recorded
+    /// Включить сбор данных профилирования для этого GPU
+    /// При true записываются время выполнения ядер и статистика памяти
     bool is_prof = false;
 
-    /// Enable file logging for this GPU
-    /// When true, log files created at: ${path}/Logs/DRVGPU_XX/YYYY-MM-DD/HH-MM-SS.log
+    /// Включить файловое логирование для этого GPU
+    /// При true файлы логов: ${path}/Logs/DRVGPU_XX/YYYY-MM-DD/HH-MM-SS.log
     bool is_logger = false;
 
-    /// Enable console output for this GPU
-    /// When true, messages from this GPU appear in stdout
+    /// Включить вывод в консоль для этого GPU
+    /// При true сообщения этого GPU выводятся в stdout
     bool is_console = false;
 
-    /// Whether this GPU is active and should be initialized
-    /// Set to false to skip this GPU during GPUManager::InitializeAll()
+    /// Активен ли этот GPU и должен ли инициализироваться
+    /// false — пропустить при GPUManager::InitializeAll()
     bool is_active = true;
 
-    /// Enable database output (future feature)
+    /// Вывод в БД (будущая возможность)
     bool is_db = false;
 
     // ========================================================================
-    // Resource limits
+    // Лимиты ресурсов
     // ========================================================================
 
-    /// Maximum GPU memory to use (percentage of total global memory)
-    /// Used by BatchManager to calculate batch sizes
-    /// Default: 70% (conservative, leaves room for OS and other processes)
+    /// Максимальная доля памяти GPU (процент от общей глобальной памяти)
+    /// Используется BatchManager для расчёта размеров пакетов
+    /// По умолчанию: 70% (с запасом для ОС и других процессов)
     size_t max_memory_percent = 70;
 
     // ========================================================================
-    // Logging settings
+    // Настройки логирования
     // ========================================================================
 
-    /// Minimum log level for this GPU
-    /// Options: "DEBUG", "INFO", "WARNING", "ERROR"
-    /// Default: "INFO" (skip debug messages in production)
+    /// Минимальный уровень лога для этого GPU
+    /// Варианты: "DEBUG", "INFO", "WARNING", "ERROR"
+    /// По умолчанию: "INFO" (в продакшене отладочные сообщения не пишутся)
     std::string log_level = "INFO";
 };
 
 // ============================================================================
-// GPUConfigData - Root configuration structure
+// GPUConfigData — корневая структура конфигурации
 // ============================================================================
 
 /**
  * @struct GPUConfigData
- * @brief Root structure for configGPU.json
+ * @brief Корневая структура для configGPU.json
  *
- * Contains version info and list of GPU configurations.
+ * Содержит версию и список конфигураций GPU.
  */
 struct GPUConfigData {
-    /// Configuration file format version
+    /// Версия формата файла конфигурации
     std::string version = "1.0";
 
-    /// Human-readable description
+    /// Человекочитаемое описание
     std::string description = "GPU Configuration for DrvGPU";
 
-    /// List of GPU configurations
+    /// Список конфигураций GPU
     std::vector<GPUConfigEntry> gpus;
 };
 

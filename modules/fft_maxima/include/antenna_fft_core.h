@@ -2,10 +2,10 @@
 
 /**
  * @file antenna_fft_core.h
- * @brief Base abstract class for FFT processing with maxima search
+ * @brief Базовый абстрактный класс для FFT с поиском максимумов
  *
- * Core functionality shared between Release and Debug implementations.
- * Contains common batching logic, buffer management, and utilities.
+ * Общая функциональность для Release и Debug реализаций.
+ * Содержит общую логику пакетной обработки, управление буферами и утилиты.
  *
  * @author DrvGPU Team
  * @date 2026-02-04
@@ -26,26 +26,26 @@ namespace antenna_fft {
 
 /**
  * @class AntennaFFTCore
- * @brief Abstract base class for FFT processing
+ * @brief Абстрактный базовый класс для FFT-обработки
  *
- * Provides common functionality:
- * - Batching logic (ProcessWithBatching)
- * - Buffer allocation
- * - FFT plan management
- * - Profiling
+ * Предоставляет общую функциональность:
+ * - Логика пакетной обработки (ProcessWithBatching)
+ * - Выделение буферов
+ * - Управление FFT-планом
+ * - Профилирование
  *
- * Derived classes implement:
- * - ProcessSingleBatch() - how to process one batch
- * - Initialize() - specific initialization (callbacks vs kernels)
+ * Производные классы реализуют:
+ * - ProcessSingleBatch() — обработка одного пакета
+ * - Initialize() — специфичная инициализация (колбэки или ядра)
  */
 class AntennaFFTCore {
 public:
     // ═══════════════════════════════════════════════════════════════════════════
-    // Public types
+    // Публичные типы
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @brief Profiling data for one batch
+     * @brief Данные профилирования для одного пакета
      */
     struct BatchProfilingData {
         size_t batch_index = 0;
@@ -58,112 +58,112 @@ public:
     };
 
     /**
-     * @brief Batch processing configuration
+     * @brief Конфигурация пакетной обработки
      */
     struct BatchConfig {
-        double memory_usage_limit = 0.65;    // 65% of available memory
-        double batch_size_ratio = 0.22;      // 22% of beams per batch
-        size_t min_beams_for_batch = 10;     // Minimum beams for batch mode
-        size_t beams_per_batch = 0;          // Computed beams per batch
+        double memory_usage_limit = 0.65;    // 65% доступной памяти
+        double batch_size_ratio = 0.22;      // 22% лучей на пакет
+        size_t min_beams_for_batch = 10;     // Минимум лучей для пакетного режима
+        size_t beams_per_batch = 0;          // Вычисленное число лучей на пакет
     };
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Constructor / Destructor
+    // Конструктор / Деструктор
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @brief Constructor with IBackend for Multi-GPU support
-     * @param params Processing parameters
-     * @param backend Pointer to IBackend (NOT SINGLETON!)
+     * @brief Конструктор с IBackend для поддержки Multi-GPU
+     * @param params Параметры обработки
+     * @param backend Указатель на IBackend (не синглтон!)
      */
     explicit AntennaFFTCore(const AntennaFFTParams& params, drv_gpu_lib::IBackend* backend);
 
     /**
-     * @brief Virtual destructor
+     * @brief Виртуальный деструктор
      */
     virtual ~AntennaFFTCore();
 
-    // Delete copy, allow move
+    // Запрет копирования, разрешено перемещение
     AntennaFFTCore(const AntennaFFTCore&) = delete;
     AntennaFFTCore& operator=(const AntennaFFTCore&) = delete;
     AntennaFFTCore(AntennaFFTCore&&) noexcept;
     AntennaFFTCore& operator=(AntennaFFTCore&&) noexcept;
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Public interface (common for all implementations)
+    // Публичный интерфейс (общий для всех реализаций)
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @brief Main entry point - process data from CPU
-     * @param input_data Vector of complex numbers (beam_count * count_points)
-     * @return Processing results for all beams
+     * @brief Основная точка входа — обработка данных с CPU
+     * @param input_data Вектор комплексных чисел (beam_count * count_points)
+     * @return Результаты обработки по всем лучам
      */
     AntennaFFTResult ProcessNew(const std::vector<std::complex<float>>& input_data);
 
     /**
-     * @brief Main entry point - process data from GPU
-     * @param input_signal GPU buffer with input data
-     * @return Processing results for all beams
+     * @brief Основная точка входа — обработка данных с GPU
+     * @param input_signal Буфер GPU с входными данными
+     * @return Результаты обработки по всем лучам
      */
     AntennaFFTResult ProcessNew(cl_mem input_signal);
 
     /**
-     * @brief Process using batching (common loop, virtual ProcessBatch)
-     * @param input_signal GPU buffer with all input data
-     * @return Processing results for all beams
+     * @brief Обработка с разбиением на пакеты (общий цикл, виртуальный ProcessBatch)
+     * @param input_signal Буфер GPU со всеми входными данными
+     * @return Результаты обработки по всем лучам
      */
     AntennaFFTResult ProcessWithBatching(cl_mem input_signal);
 
     /**
-     * @brief Get last profiling results
+     * @brief Получить последние результаты профилирования
      */
     const FFTProfilingResults& GetLastProfilingResults() const { return last_profiling_results_; }
 
     /**
-     * @brief Get computed nFFT size
+     * @brief Получить вычисленный размер nFFT
      */
     size_t GetNFFT() const { return nFFT_; }
 
     /**
-     * @brief Get processing parameters
+     * @brief Получить параметры обработки
      */
     const AntennaFFTParams& GetParams() const { return params_; }
 
     /**
-     * @brief Get batch profiling data
+     * @brief Получить данные профилирования по пакетам
      */
     const std::vector<BatchProfilingData>& GetBatchProfiling() const { return batch_profiling_; }
 
     /**
-     * @brief Check if batch mode was used in last processing
+     * @brief Проверить, использовался ли пакетный режим в последней обработке
      */
     bool WasBatchModeUsed() const { return last_used_batch_mode_; }
 
 protected:
     // ═══════════════════════════════════════════════════════════════════════════
-    // Virtual methods (implemented by derived classes)
+    // Виртуальные методы (реализуются производными классами)
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @brief Initialize specific resources (FFT plans, kernels)
-     * Called from constructor after base initialization
+     * @brief Инициализировать специфичные ресурсы (FFT-планы, ядра)
+     * Вызывается из конструктора после базовой инициализации
      */
     virtual void Initialize() = 0;
 
     /**
-     * @brief Process single batch (all beams fit in memory)
-     * @param input_signal GPU buffer with input data
-     * @return Processing results
+     * @brief Обработать один пакет (все лучи помещаются в память)
+     * @param input_signal Буфер GPU с входными данными
+     * @return Результаты обработки
      */
     virtual AntennaFFTResult ProcessSingleBatch(cl_mem input_signal) = 0;
 
     /**
-     * @brief Process one batch in batching mode
-     * @param input_signal Full input buffer (all beams)
-     * @param start_beam Starting beam index
-     * @param num_beams Number of beams in this batch
-     * @param out_profiling Optional profiling output
-     * @return Results for beams in this batch
+     * @brief Обработать один пакет в режиме батчинга
+     * @param input_signal Полный входной буфер (все лучи)
+     * @param start_beam Начальный индекс луча
+     * @param num_beams Количество лучей в пакете
+     * @param out_profiling Опциональный вывод профилирования
+     * @return Результаты по лучам этого пакета
      */
     virtual std::vector<FFTResult> ProcessBatch(
         cl_mem input_signal,
@@ -172,117 +172,117 @@ protected:
         BatchProfilingData* out_profiling = nullptr) = 0;
 
     /**
-     * @brief Allocate GPU buffers for processing
-     * @param num_beams Number of beams to allocate for
+     * @brief Выделить буферы GPU для обработки
+     * @param num_beams Количество лучей, на которое выделять
      */
     virtual void AllocateBuffers(size_t num_beams) = 0;
 
     /**
-     * @brief Release allocated buffers
+     * @brief Освободить выделенные буферы
      */
     virtual void ReleaseBuffers() = 0;
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Protected utilities (common implementation)
+    // Защищённые утилиты (общая реализация)
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * @brief Calculate nFFT from count_points
+     * @brief Вычислить nFFT по count_points
      */
     size_t CalculateNFFT(size_t count_points) const;
 
     /**
-     * @brief Check if number is power of two
+     * @brief Проверить, является ли число степенью двойки
      */
     bool IsPowerOf2(size_t n) const;
 
     /**
-     * @brief Find next larger power of two
+     * @brief Найти следующую большую степень двойки
      */
     size_t NextPowerOf2(size_t n) const;
 
     /**
-     * @brief Estimate required memory for given number of beams
+     * @brief Оценить требуемую память для заданного числа лучей
      */
     size_t EstimateRequiredMemory(size_t num_beams) const;
 
     /**
-     * @brief Check if available memory is sufficient
+     * @brief Проверить, достаточно ли доступной памяти
      */
     bool CheckAvailableMemory(size_t required_memory, double threshold = 0.4) const;
 
     /**
-     * @brief Calculate batch configuration
+     * @brief Вычислить конфигурацию пакетов
      */
     void CalculateBatchConfig();
 
     /**
-     * @brief Check if batching is needed
+     * @brief Проверить, нужна ли пакетная обработка
      */
     bool NeedsBatching() const;
 
     /**
-     * @brief Create input buffer from CPU data
+     * @brief Создать входной буфер из данных CPU
      */
     cl_mem CreateInputBuffer(const std::vector<std::complex<float>>& input_data);
 
     /**
-     * @brief Create pre-callback userdata buffer
+     * @brief Создать буфер userdata для pre-callback
      */
     void CreatePreCallbackUserData(size_t num_beams);
 
     /**
-     * @brief Create post-callback userdata buffer
+     * @brief Создать буфер userdata для post-callback
      */
     void CreatePostCallbackUserData(size_t num_beams);
 
     /**
-     * @brief Profile OpenCL event
+     * @brief Профилировать событие OpenCL
      */
     double ProfileEvent(cl_event event, const std::string& operation_name);
 
     /**
-     * @brief Release FFT plan
+     * @brief Освободить FFT-план
      */
     void ReleaseFFTPlan();
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Protected fields (accessible by derived classes)
+    // Защищённые поля (доступны производным классам)
     // ═══════════════════════════════════════════════════════════════════════════
 
-    AntennaFFTParams params_;              // Processing parameters
-    size_t nFFT_;                          // Computed FFT size
+    AntennaFFTParams params_;              // Параметры обработки
+    size_t nFFT_;                          // Вычисленный размер FFT
 
-    // DrvGPU backend (Multi-GPU support)
-    drv_gpu_lib::IBackend* backend_;       // Pointer to backend (NOT owned)
+    // Бэкенд DrvGPU (поддержка Multi-GPU)
+    drv_gpu_lib::IBackend* backend_;       // Указатель на бэкенд (не владеет)
 
-    // OpenCL resources (obtained from backend)
-    cl_context context_;                   // OpenCL context
-    cl_command_queue queue_;               // Command queue
-    cl_device_id device_;                  // OpenCL device
+    // Ресурсы OpenCL (получаются из бэкенда)
+    cl_context context_;                   // Контекст OpenCL
+    cl_command_queue queue_;               // Очередь команд
+    cl_device_id device_;                  // Устройство OpenCL
 
-    // clFFT resources
-    clfftPlanHandle plan_handle_;          // FFT plan handle
-    bool plan_created_;                    // Plan creation flag
+    // Ресурсы clFFT
+    clfftPlanHandle plan_handle_;          // Хэндл FFT-плана
+    bool plan_created_;                    // Флаг создания плана
 
-    // Common GPU buffers
-    cl_mem buffer_fft_input_;              // FFT input buffer (nFFT * beam_count)
-    cl_mem buffer_fft_output_;             // FFT output buffer
-    cl_mem buffer_maxima_;                 // Maxima buffer
+    // Общие буферы GPU
+    cl_mem buffer_fft_input_;              // Входной буфер FFT (nFFT * beam_count)
+    cl_mem buffer_fft_output_;             // Выходной буфер FFT
+    cl_mem buffer_maxima_;                 // Буфер максимумов
 
-    // Userdata buffers for callbacks
-    cl_mem pre_callback_userdata_;         // Userdata for pre-callback
-    cl_mem post_callback_userdata_;        // Userdata for post-callback
+    // Буферы userdata для колбэков
+    cl_mem pre_callback_userdata_;         // Userdata для pre-callback
+    cl_mem post_callback_userdata_;        // Userdata для post-callback
 
-    // Profiling
+    // Профилирование
     FFTProfilingResults last_profiling_results_;
     std::vector<BatchProfilingData> batch_profiling_;
     double batch_total_cpu_time_ms_;
     bool last_used_batch_mode_;
 
-    // Batch configuration
+    // Конфигурация пакетов
     BatchConfig batch_config_;
-    size_t current_buffer_beams_;          // Current allocated buffer size
+    size_t current_buffer_beams_;          // Текущий выделенный размер буфера
 };
 
 } // namespace antenna_fft

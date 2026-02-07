@@ -7,7 +7,7 @@
 namespace antenna_fft {
 
 // ════════════════════════════════════════════════════════════════════════════
-// Constructor / Destructor
+// Конструктор / Деструктор
 // ════════════════════════════════════════════════════════════════════════════
 
 AntennaFFTCore::AntennaFFTCore(const AntennaFFTParams& params, drv_gpu_lib::IBackend* backend)
@@ -28,27 +28,27 @@ AntennaFFTCore::AntennaFFTCore(const AntennaFFTParams& params, drv_gpu_lib::IBac
       last_used_batch_mode_(false),
       current_buffer_beams_(0) {
 
-    // Validate parameters
+    // Проверка параметров
     if (!params_.IsValid()) {
         throw std::invalid_argument("AntennaFFTParams: invalid parameters");
     }
 
-    // Check backend
+    // Проверка бэкенда
     if (!backend_ || !backend_->IsInitialized()) {
         throw std::runtime_error("Backend not initialized. Call Initialize() first.");
     }
 
-    // Get context, device and queue from backend (Multi-GPU!)
+    // Получить context, device и queue из бэкенда (Multi-GPU!)
     context_ = static_cast<cl_context>(backend_->GetNativeContext());
     device_ = static_cast<cl_device_id>(backend_->GetNativeDevice());
     queue_ = static_cast<cl_command_queue>(backend_->GetNativeQueue());
 
-    // Calculate nFFT
+    // Вычисление nFFT
     nFFT_ = CalculateNFFT(params_.count_points);
 
-    // Initialize clFFT library
+    // Инициализация библиотеки clFFT
     clfftSetupData fftSetup;
-    // Manually initialize setup data (equivalent to clfftInitSetupData)
+    // Ручная инициализация (эквивалент clfftInitSetupData)
     fftSetup.major = clfftVersionMajor;
     fftSetup.minor = clfftVersionMinor;
     fftSetup.patch = clfftVersionPatch;
@@ -58,10 +58,10 @@ AntennaFFTCore::AntennaFFTCore(const AntennaFFTParams& params, drv_gpu_lib::IBac
         throw std::runtime_error("clfftSetup failed with status: " + std::to_string(status));
     }
 
-    // Initialize profiling
+    // Инициализация профилирования
     last_profiling_results_ = {};
 
-    // Calculate batch config
+    // Расчёт конфигурации пакетов
     CalculateBatchConfig();
 }
 
@@ -77,7 +77,7 @@ AntennaFFTCore::~AntennaFFTCore() {
         post_callback_userdata_ = nullptr;
     }
 
-    // Note: derived classes must release their own buffers
+    // Примечание: производные классы освобождают свои буферы сами
 }
 
 AntennaFFTCore::AntennaFFTCore(AntennaFFTCore&& other) noexcept

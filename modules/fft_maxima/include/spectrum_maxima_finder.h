@@ -250,10 +250,10 @@ private:
     bool plan_created_ = false;
 
     // GPU буферы
-    cl_mem pre_callback_userdata_ = nullptr;    ///< [32 bytes params][input data]
-    cl_mem fft_input_ = nullptr;                ///< FFT input buffer
-    cl_mem fft_output_ = nullptr;               ///< FFT output buffer
-    cl_mem maxima_output_ = nullptr;            ///< Post-kernel results
+    cl_mem pre_callback_userdata_ = nullptr;    ///< [32 байт параметры][входные данные]
+    cl_mem fft_input_ = nullptr;                ///< Входной буфер FFT
+    cl_mem fft_output_ = nullptr;               ///< Выходной буфер FFT
+    cl_mem maxima_output_ = nullptr;            ///< Результаты post-kernel
 
     // Post-kernel
     cl_program post_program_ = nullptr;

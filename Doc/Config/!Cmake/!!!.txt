@@ -1,0 +1,12 @@
+Файл include/DrvGPU/cmake/CMake-Config.cmake.in — это шаблон конфигурационного CMake-файла для установленной библиотеки DrvGPU.
+Для чего он нужен
+Поиск DrvGPU из других проектов
+Когда DrvGPU устанавливают (например, cmake --install или пакетом), в установку попадает сгенерированный из этого шаблона файл (обычно DrvGPUConfig.cmake). Другой проект может написать:
+   find_package(DrvGPU REQUIRED)   target_link_libraries(my_app PRIVATE DrvGPU::drvgpu)
+CMake найдёт именно этот конфиг и подключит DrvGPU.
+Что делает шаблон после подстановки @PACKAGE_INIT@, @PROJECT_VERSION@ и т.д.:
+задаёт версию DrvGPU (DrvGPU_VERSION);
+подтягивает зависимости (OpenCL, Threads) через find_dependency;
+подключает импортируемые targets из DrvGPUTargets.cmake (в т.ч. DrvGPU::drvgpu);
+помечает пакет как найденный (DrvGPU_FOUND TRUE) и при необходимости проверяет компоненты через check_required_components(DrvGPU).
+Итог: файл нужен, чтобы DrvGPU можно было использовать как внешнюю зависимость через find_package(DrvGPU) после установки библиотеки, а не только как подпроект в том же репозитории.

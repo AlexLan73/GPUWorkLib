@@ -1,13 +1,13 @@
 /**
  * @file batch_manager.cpp
- * @brief BatchManager implementation - methods that depend on IBackend
+ * @brief Реализация BatchManager — методы, зависящие от IBackend
  *
  * ============================================================================
- * SEPARATION:
- *   Header (batch_manager.hpp): inline methods that don't need IBackend
- *   This file: methods that query IBackend for GPU memory info
+ * РАЗДЕЛЕНИЕ:
+ *   Заголовок (batch_manager.hpp): inline-методы без зависимости от IBackend
+ *   Этот файл: методы, запрашивающие у IBackend информацию о памяти GPU
  *
- * This avoids circular #include issues between services/ and common/.
+ * Избегаем циклических #include между services/ и common/.
  * ============================================================================
  *
  * @author Codo (AI Assistant)
@@ -23,7 +23,7 @@
 namespace drv_gpu_lib {
 
 // ============================================================================
-// Memory-dependent methods
+// Методы, зависящие от памяти
 // ============================================================================
 
 size_t BatchManager::GetAvailableMemory(IBackend* backend) {
@@ -31,12 +31,12 @@ size_t BatchManager::GetAvailableMemory(IBackend* backend) {
         return 0;
     }
 
-    // Get total global memory from device
+    // Получить общий объём глобальной памяти устройства
     size_t total_memory = backend->GetGlobalMemorySize();
 
-    // Estimate: assume 10% is used by OS/driver/other allocations
-    // This is a rough heuristic. For precise control, modules should
-    // track their own allocations via MemoryManager.
+    // Оценка: считаем, что 10% занято ОС/драйвером/другими аллокациями
+    // Эвристика. Для точного контроля модули должны отслеживать
+    // свои аллокации через MemoryManager.
     size_t estimated_available = static_cast<size_t>(
         static_cast<double>(total_memory) * 0.9);
 
@@ -53,11 +53,11 @@ size_t BatchManager::CalculateOptimalBatchSize(
         return total_items;
     }
 
-    // Get available memory
+    // Получить доступную память
     size_t available = GetAvailableMemory(backend);
 
     if (available == 0) {
-        // Fallback: use 22% of items (conservative guess)
+        // Запасной вариант: 22% элементов (консервативная оценка)
         size_t fallback = std::max(
             static_cast<size_t>(total_items * 0.22),
             static_cast<size_t>(1));
@@ -66,7 +66,7 @@ size_t BatchManager::CalculateOptimalBatchSize(
         return fallback;
     }
 
-    // Calculate using the inline helper
+    // Расчёт через inline-вспомогательную функцию
     size_t batch_size = CalculateBatchSizeFromMemory(
         available, total_items, item_memory_bytes, memory_limit);
 
