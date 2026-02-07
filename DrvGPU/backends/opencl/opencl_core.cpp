@@ -1,6 +1,6 @@
 #include "opencl_core.hpp"
 #include "../../memory/svm_capabilities.hpp"
-#include "../../common/logger.hpp"
+#include "../../logger/logger.hpp"
 #include <iostream>
 #include <sstream>
 #include <iomanip>

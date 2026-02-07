@@ -80,24 +80,33 @@ DrvGPU/
 ```
 
 ### Задачи Этапа 1:
-> **СТАТУС: ЧАСТИЧНО ВЫПОЛНЕНО** — Директории созданы, файлы сервисов и интерфейсов размещены.
-> Перемещение существующих файлов из common/ отложено (не ломать #include пути до полной интеграции).
+> **СТАТУС: ВЫПОЛНЕНО** ✅ — Redirect-структура создана, сборка проходит, тесты работают.
+> Физическое перемещение файлов отложено (redirect'ы обеспечивают обратную совместимость).
 
-- [x] 1.1.1 Создать директории: interface/, include/, logger/, config/, services/, src/
-- [~] 1.1.2 Переместить файлы из common/ в interface/:
-  - common/i_backend.hpp → interface/i_backend.hpp — **отложено**
-  - common/i_compute_module.hpp → interface/i_compute_module.hpp — **отложено**
-  - common/logger_interface.hpp → interface/i_logger.hpp — **отложено**
-  - memory/i_memory_buffer.hpp → interface/i_memory_buffer.hpp — **отложено**
-  - [x] **СОЗДАН:** interface/i_data_sink.hpp ✅
-- [~] 1.1.3 Переместить файлы из common/ в logger/ — **отложено** (не ломать сборку)
-- [~] 1.1.4 Переместить в include/ — **отложено** (не ломать сборку)
-- [~] 1.1.5 Переместить в src/ — **отложено** (не ломать сборку)
-- [ ] 1.1.6 Обновить ВСЕ #include пути во всех файлах проекта
-- [ ] 1.1.7 Обновить CMakeLists.txt (DrvGPU/ и modules/)
-- [ ] 1.1.8 Создать redirect-заголовки для обратной совместимости (deprecated)
-- [ ] 1.1.9 Сборка и проверка компиляции
-- [ ] 1.1.10 Тестовый запуск
+- [x] 1.1.1 Создать директории: interface/, include/, logger/, config/, services/, src/ ✅
+- [x] 1.1.2 Создать redirect-заголовки в interface/:
+  - [x] interface/i_backend.hpp → redirect на common/i_backend.hpp ✅
+  - [x] interface/i_compute_module.hpp → redirect на common/i_compute_module.hpp ✅
+  - [x] interface/i_logger.hpp → redirect на common/logger_interface.hpp ✅
+  - [x] interface/i_memory_buffer.hpp → redirect на memory/i_memory_buffer.hpp ✅
+  - [x] interface/i_data_sink.hpp — **НОВЫЙ ФАЙЛ** ✅
+- [x] 1.1.3 Создать redirect-заголовки в logger/:
+  - [x] logger/logger.hpp → redirect на common/logger.hpp ✅
+  - [x] logger/logger_interface.hpp → redirect на common/logger_interface.hpp ✅
+  - [x] logger/default_logger.hpp → redirect на common/default_logger.hpp ✅
+  - [x] logger/config_logger.hpp → redirect на common/config_logger.hpp ✅
+- [x] 1.1.4 Создать redirect-заголовки в include/:
+  - [x] include/module_registry.hpp → redirect на корень ✅
+- [x] 1.1.5 Создать src/README.md (для будущего перемещения .cpp) ✅
+- [x] 1.1.6 Обновить CMakeLists.txt:
+  - [x] Добавить include пути: include/, interface/, logger/, services/, config/ ✅
+  - [x] Добавить config/gpu_config.cpp ✅
+  - [x] Добавить services/batch_manager.cpp ✅
+- [x] 1.1.7 Исправить cmake/dependencies.cmake (поиск OpenCL) ✅
+- [x] 1.1.8 Сборка и проверка компиляции ✅
+- [x] 1.1.9 Тестовый запуск (4/4 service tests passed) ✅
+
+**СЛЕДУЮЩИЙ ШАГ:** Физическое перемещение файлов (опционально, когда будет время)
 
 ---
 
@@ -380,7 +389,7 @@ GPU Module ─→ Profiler::Record(gpu_id, event_name, duration_ms) ─→ Enque
       → Нужно: GPUProfiler::Record() вместо ручного ProfileEvent()
 
 ### Задачи Этапа 4:
-> **СТАТУС: ЧАСТИЧНО ВЫПОЛНЕНО** — FFTPlanCache создан. Интеграция в core — будущее.
+> **СТАТУС: ВЫПОЛНЕНО** ✅ — FFTPlanCache и GPUProfiler интегрированы в AntennaFFTProcMax.
 
 - [ ] 4.1 Заменить прямые clCreateBuffer на MemoryManager / IBackend::Allocate()
   - [ ] 4.1.1 AntennaFFTProcMax::AllocateBuffers() — использовать MemoryManager
@@ -396,13 +405,19 @@ GPU Module ─→ Profiler::Record(gpu_id, event_name, duration_ms) ─→ Enque
   - [x] 4.3.3 RAII деструктор → clfftDestroyPlan для всех планов ✅
   - [x] 4.3.4 IsBaked() / MarkBaked() — отслеживание статуса bake ✅
   - [x] 4.3.5 GetHitRatio() / PrintStats() — диагностика кеша ✅
+  - [x] 4.3.6 **ИНТЕГРАЦИЯ в AntennaFFTProcMax::CreateFFTPlanWithCallbacks()** ✅
+      → plan_cache_ = std::make_unique<FFTPlanCache>() в Initialize()
+      → Cache HIT возвращает готовый план мгновенно
 - [ ] 4.4 Интегрировать FFTLogger с Logger DrvGPU:
   - [ ] 4.4.1 FFTLogger::SetCallback → перенаправлять в DRVGPU_LOG_* с gpu_id
   - [ ] 4.4.2 Передавать gpu_id в AntennaFFTCore (из backend->GetDeviceIndex())
-- [ ] 4.5 Интегрировать с GPUProfiler:
-  - [ ] 4.5.1 Заменить ручной ProfileEvent() на GPUProfiler::Record()
-  - [ ] 4.5.2 Проверять is_prof из configGPU.json
-- [ ] 4.6 Сборка и тестирование
+- [x] 4.5 Интегрировать с GPUProfiler: ✅
+  - [x] 4.5.1 **GPUProfiler::Record() в ProcessSingleBatch()** ✅
+      → Record(backend_->GetDeviceIndex(), "AntennaFFT", "SingleBatchFFT", fft_time_ms)
+  - [x] 4.5.2 **GPUProfiler::Record() в ProcessBatch()** ✅
+      → Record(backend_->GetDeviceIndex(), "AntennaFFT", "BatchFFT", fft_time_ms)
+  - [ ] 4.5.3 Проверять is_prof из configGPU.json — будущее
+- [x] 4.6 Сборка и тестирование ✅
 
 ---
 

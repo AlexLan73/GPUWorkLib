@@ -1,6 +1,6 @@
 #include "command_queue_pool.hpp"
 #include "opencl_core.hpp"
-#include "../../common/logger.hpp"
+#include "../../logger/logger.hpp"
 #include <iostream>
 
 namespace drv_gpu_lib {

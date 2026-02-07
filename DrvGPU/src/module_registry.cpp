@@ -1,5 +1,5 @@
 #include "module_registry.hpp"
-#include "common/logger.hpp"
+#include "../logger/logger.hpp"
 #include <iostream>
 
 namespace drv_gpu_lib {

@@ -4,12 +4,6 @@
 
 # DrvGPU as subdirectory - no project() to avoid subproject
 
-# Политика: find_package использует <PACKAGENAME>_ROOT (spdlog_ROOT и т.д.)
-# CMP0144: Используем нижний регистр для имени пакета в переменной _ROOT
-if(POLICY CMP0144)
-    cmake_policy(SET CMP0144 NEW)
-endif()
-
 # ════════════════════════════════════════════════════════════════════
 # Настройки
 # ════════════════════════════════════════════════════════════════════
@@ -43,11 +37,10 @@ else()
 endif()
 
 # Найти spdlog (из vcpkg или системы)
-# spdlog_ROOT может быть установлен извне (например, из vcpkg)
-# Используем spdlog_ROOT вместо SPDLOG_ROOT согласно политике CMP0144
+# SPDLOG_ROOT может быть установлен извне (например, из vcpkg)
 if(DEFINED ENV{SPDLOG_ROOT})
-    set(spdlog_ROOT "$ENV{SPDLOG_ROOT}")
-    message(STATUS "Using spdlog from spdlog_ROOT: ${spdlog_ROOT}")
+    set(SPDLOG_ROOT "$ENV{SPDLOG_ROOT}")
+    message(STATUS "Using spdlog from SPDLOG_ROOT: ${SPDLOG_ROOT}")
 endif()
 
 # spdlog: используем из parent или ищем
@@ -66,8 +59,8 @@ find_package(Threads REQUIRED)
 
 # DrvGPU Core
 set(DRVGPU_CORE_SOURCES
-  "${CMAKE_CURRENT_SOURCE_DIR}/drv_gpu.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/module_registry.cpp"
+#  "${CMAKE_CURRENT_SOURCE_DIR}/src/drv_gpu.cpp"
+#  "${CMAKE_CURRENT_SOURCE_DIR}/src/module_registry.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/memory/memory_manager.cpp"
 )
 
@@ -117,26 +110,56 @@ else()
 endif()
 
 # Common Headers
+#set(DRVGPU_COMMON_HEADERS
+#    "${CMAKE_CURRENT_SOURCE_DIR}/include/module_registry.hpp"
+#    "${CMAKE_CURRENT_SOURCE_DIR}/backend_type.hpp"
+#    "${CMAKE_CURRENT_SOURCE_DIR}/include/gpu_device_info.hpp"
+#    "${CMAKE_CURRENT_SOURCE_DIR}/include/load_balancing.hpp"
+#    "${CMAKE_CURRENT_SOURCE_DIR}/include/logger_interface.hpp"
+#    "${CMAKE_CURRENT_SOURCE_DIR}/include/config_logger.hpp"
+#    "${CMAKE_CURRENT_SOURCE_DIR}/include/default_logger.hpp"
+#    "${CMAKE_CURRENT_SOURCE_DIR}/include/logger.hpp"
+#)
+
+
+
 set(DRVGPU_COMMON_HEADERS
-    "${CMAKE_CURRENT_SOURCE_DIR}/drv_gpu.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/gpu_manager.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/module_registry.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/common/i_compute_module.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/common/i_backend.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/common/backend_type.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/common/gpu_device_info.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/common/load_balancing.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/common/logger_interface.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/common/config_logger.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/common/default_logger.hpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/common/logger.hpp"
+)
+
+
+set(DRVGPU_HEADERS
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/drv_gpu.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/gpu_manager.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/module_registry.hpp"
+)
+
+
+set(DRVGPU_SRC_SOURCES
+"${CMAKE_CURRENT_SOURCE_DIR}/src/drv_gpu.cpp"
+"${CMAKE_CURRENT_SOURCE_DIR}/src/module_registry.cpp"
 )
 
 # Logger Sources
 set(DRVGPU_LOGGER_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/common/config_logger.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/common/default_logger.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/common/logger.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/logger/config_logger.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/logger/config_logger.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/logger/default_logger.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/logger/default_logger.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/logger/logger.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/logger/logger.hpp"
+)
+
+# Config Sources (NEW)
+set(DRVGPU_CONFIG_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/gpu_config.cpp"
+)
+
+# Services Sources (NEW)
+set(DRVGPU_SERVICES_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/services/batch_manager.cpp"
 )
 
 # ════════════════════════════════════════════════════════════════════
@@ -146,18 +169,36 @@ set(DRVGPU_LOGGER_SOURCES
 add_library(drvgpu
     # Core
     ${DRVGPU_CORE_SOURCES}
-    
+
+    # Headers
+    ${DRVGPU_HEADERS}
+
+    # Interface
+    ${DRVGPU_INTERFACE_SOURCES}
+
     # Logger
     ${DRVGPU_LOGGER_SOURCES}
-    
+
+    # Config (NEW)
+    ${DRVGPU_CONFIG_SOURCES}
+
+    # Services (NEW)
+    ${DRVGPU_SERVICES_SOURCES}
+
+    # SRC
+    ${DRVGPU_SRC_SOURCES}
+
+    # Common
+    ${DRVGPU_COMMON_HEADERS}
+
     # OpenCL Backend
     ${DRVGPU_OPENCL_SOURCES}
-    
+
     # External Context (if enabled)
     ${DRVGPU_EXTERNAL_CONTEXT_SOURCES}
-    
+
     # Headers (для IDE visibility)
-    ${DRVGPU_COMMON_HEADERS}
+    ${DRVGPU_HEADERS}
     ${DRVGPU_MEMORY_HEADERS}
     ${DRVGPU_OPENCL_HEADERS}
     ${DRVGPU_EXTERNAL_CONTEXT_HEADERS}
@@ -167,33 +208,43 @@ add_library(drvgpu
 target_include_directories(drvgpu
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include      # NEW: redirect headers
         ${CMAKE_CURRENT_SOURCE_DIR}/common
+        ${CMAKE_CURRENT_SOURCE_DIR}/interface    # NEW: interfaces
+        ${CMAKE_CURRENT_SOURCE_DIR}/logger       # NEW: logger redirect
+        ${CMAKE_CURRENT_SOURCE_DIR}/services     # NEW: services
+        ${CMAKE_CURRENT_SOURCE_DIR}/config       # NEW: config
         ${CMAKE_CURRENT_SOURCE_DIR}/memory
         ${CMAKE_CURRENT_SOURCE_DIR}/backends
         ${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${OpenCL_INCLUDE_DIRS}
 )
 
-# Линковка spdlog — только header-only, чтобы избежать LNK2019 (несовместимость ABI с vcpkg spdlogd.lib)
-if(TARGET spdlog::spdlog_header_only)
-    target_link_libraries(drvgpu PUBLIC spdlog::spdlog_header_only)
-    message(STATUS "Using spdlog: HEADER-ONLY (target)")
-elseif(spdlog_FOUND AND TARGET spdlog::spdlog)
-    # Заголовки от find_package, но НЕ линкуем spdlog::spdlog — только include + SPDLOG_HEADER_ONLY
-    get_target_property(SPDLOG_INC spdlog::spdlog INTERFACE_INCLUDE_DIRECTORIES)
-    target_include_directories(drvgpu PUBLIC ${SPDLOG_INC})
-    message(STATUS "Using spdlog: HEADER-ONLY (no link, avoid ABI mismatch)")
+# Линковка spdlog (header-only mode или library)
+if(TARGET spdlog::spdlog)
+    target_link_libraries(drvgpu PUBLIC spdlog::spdlog)
+    message(STATUS "Using spdlog: TARGET")
 elseif(spdlog_FOUND)
-    target_include_directories(drvgpu PUBLIC "${spdlog_INCLUDE_DIR}")
-    message(STATUS "Using spdlog: HEADER-ONLY (no link)")
-elseif(DEFINED spdlog_ROOT)
-    target_include_directories(drvgpu PUBLIC "${spdlog_ROOT}/include")
-    message(STATUS "Using spdlog: HEADER-ONLY (${spdlog_ROOT})")
+    if(TARGET spdlog::spdlog_header_only)
+        target_link_libraries(drvgpu PUBLIC spdlog::spdlog_header_only)
+        message(STATUS "Using spdlog: HEADER-ONLY")
+    else()
+        target_link_libraries(drvgpu PUBLIC spdlog::spdlog)
+        message(STATUS "Using spdlog: LIBRARY")
+    endif()
+    if(TARGET fmt::fmt-header-only)
+        target_link_libraries(drvgpu PUBLIC fmt::fmt-header-only)
+        message(STATUS "Using fmt: HEADER-ONLY")
+    endif()
+elseif(DEFINED SPDLOG_ROOT)
+    target_include_directories(drvgpu PUBLIC "${SPDLOG_ROOT}/include")
+    message(STATUS "Using spdlog: HEADER-ONLY (${SPDLOG_ROOT})")
 else()
     find_path(SPDLOG_INCLUDE_DIR spdlog/spdlog.h PATHS /usr/include /usr/local/include)
     if(SPDLOG_INCLUDE_DIR)
         target_include_directories(drvgpu PUBLIC "${SPDLOG_INCLUDE_DIR}")
-        message(STATUS "Using spdlog: system headers (header-only)")
+        message(STATUS "Using spdlog: system headers")
     else()
         message(WARNING "spdlog not found! Install: sudo apt install libspdlog-dev")
     endif()
@@ -219,8 +270,8 @@ if(BUILD_EXTERNAL_CONTEXT_SUPPORT)
     target_compile_definitions(drvgpu PUBLIC DRVGPU_EXTERNAL_CONTEXT_SUPPORT)
 endif()
 
-# Header-only spdlog + fmt to avoid LNK2019 (vcpkg libs use dllimport/другая ABI)
-target_compile_definitions(drvgpu PUBLIC SPDLOG_HEADER_ONLY FMT_HEADER_ONLY)
+# Use header-only spdlog to avoid STL symbol issues
+target_compile_definitions(drvgpu PUBLIC SPDLOG_HEADER_ONLY)
 
 # Алиас
 add_library(DrvGPU::drvgpu ALIAS drvgpu)
@@ -287,7 +338,7 @@ message(STATUS "  OpenCL library:      ${OpenCL_LIBRARIES}")
 if(spdlog_FOUND)
     message(STATUS "  spdlog:              FOUND")
 else()
-    message(STATUS "  spdlog:              HEADER-ONLY (${spdlog_ROOT})")
+    message(STATUS "  spdlog:              HEADER-ONLY (${SPDLOG_ROOT})")
 endif()
 message(STATUS "═══════════════════════════════════════")
 message(STATUS "")

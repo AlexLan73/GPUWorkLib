@@ -13,7 +13,7 @@
  * @fixed 2026-02-02 - Deadlock fix (TrackAllocation/TrackFree)
  */
 
-#include "../common/i_backend.hpp"
+#include "../interface/i_backend.hpp"
 #include "gpu_buffer.hpp"
 #include <memory>
 #include <mutex>

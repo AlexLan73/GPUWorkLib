@@ -15,7 +15,7 @@
  */
 
 #include "batch_manager.hpp"
-#include "../common/i_backend.hpp"
+#include "../interface/i_backend.hpp"
 
 #include <algorithm>
 #include <iostream>

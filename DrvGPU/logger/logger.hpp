@@ -31,23 +31,13 @@
  * @date 2026-02-01
  */
 
-#include "logger_interface.hpp"
-#include "default_logger.hpp"
-#include "config_logger.hpp"
-
+// #include "../common/logger_interface.hpp"
+ #include "../interface/i_logger.hpp"
+#include "../logger/default_logger.hpp"
+#include "../logger/config_logger.hpp"
 #include <string>
 
 namespace drv_gpu_lib {
-
-// ════════════════════════════════════════════════════════════════════════════
-// Logger - Фасад системы логирования
-// ════════════════════════════════════════════════════════════════════════════
-
-/**
- * @class Logger
- * @brief Фасад для доступа к системе логирования
- * 
- * Позволяет:
  * - Получить текущий логер
  * - Установить свой логер (для продакшена)
  * - Быстрое логирование через статические методы

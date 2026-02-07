@@ -20,9 +20,13 @@
  * @date 2026-02-06
  */
 
-#include "../../common/i_backend.hpp"
+#include "../../interface/i_backend.hpp"
 #include "../../common/backend_type.hpp"
 #include "../../common/gpu_device_info.hpp"
+#include "../../interface/i_logger.hpp"
+#include "../../logger/config_logger.hpp"
+#include "../../logger/default_logger.hpp"
+#include "../../logger/logger.hpp"
 
 // Включаем ваш OpenCL код (из той же папки backends/opencl)
 #include "opencl_core.hpp"

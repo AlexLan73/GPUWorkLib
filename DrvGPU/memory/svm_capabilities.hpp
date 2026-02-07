@@ -120,11 +120,7 @@ struct SVMCapabilities {
         if (err == CL_SUCCESS) {
             // Формат: "OpenCL X.Y ..."
             int major = 0, minor = 0;
-            #if defined(_MSC_VER)
-            if (sscanf_s(version_str, "OpenCL %d.%d", &major, &minor) == 2) {
-#else
             if (sscanf(version_str, "OpenCL %d.%d", &major, &minor) == 2) {
-#endif
                 caps.opencl_major_version = static_cast<cl_uint>(major);
                 caps.opencl_minor_version = static_cast<cl_uint>(minor);
             }
