@@ -187,8 +187,96 @@ bool ConfigLogger::CreateLogDirectory() const {
 }
 
 /**
+ * @brief Получить полный путь к файлу лога для конкретного GPU
+ * @param gpu_id Индекс GPU устройства (0-based)
+ * @return Полный путь к файлу лога
+ *
+ * Создаёт структуру с ID GPU (двузначный номер с ведущим нулём):
+ *   {log_path}/Logs/DRVGPU_00/{YYYY-MM-DD}/{HH-MM-SS}.log
+ *   {log_path}/Logs/DRVGPU_01/{YYYY-MM-DD}/{HH-MM-SS}.log
+ *   {log_path}/Logs/DRVGPU_13/{YYYY-MM-DD}/{HH-MM-SS}.log
+ *
+ * Используется для Multi-GPU: каждый GPU пишет в свою директорию.
+ * Формат поддиректории: DRVGPU_XX (XX — двузначный номер GPU).
+ */
+std::string ConfigLogger::GetLogFilePathForGPU(int gpu_id) const {
+    // Получаем текущее время
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+    std::tm now_tm;
+
+#if defined(_WIN32)
+    localtime_s(&now_tm, &now_time);
+#else
+    localtime_r(&now_time, &now_tm);
+#endif
+
+    // Дата: YYYY-MM-DD
+    std::ostringstream date_ss;
+    date_ss << std::put_time(&now_tm, "%Y-%m-%d");
+    std::string date_str = date_ss.str();
+
+    // Время: HH-MM-SS
+    std::ostringstream time_ss;
+    time_ss << std::put_time(&now_tm, "%H-%M-%S");
+    std::string time_str = time_ss.str();
+
+    // Формат поддиректории: DRVGPU_XX (двузначный номер GPU)
+    std::ostringstream subdir_ss;
+    subdir_ss << kLogSubdir << "_" << std::setfill('0') << std::setw(2) << gpu_id;
+    std::string gpu_subdir = subdir_ss.str();
+
+    // Базовый путь
+    std::string base_path = log_path_;
+    if (base_path.empty()) {
+        base_path = std::filesystem::current_path().string();
+    }
+
+    // Полный путь: {base_path}/Logs/DRVGPU_XX/{date}/{time}.log
+    std::ostringstream path_ss;
+    path_ss << base_path;
+    if (!base_path.empty() && base_path.back() != '/' && base_path.back() != '\\') {
+        path_ss << std::filesystem::path::preferred_separator;
+    }
+    path_ss << kLogsDir << std::filesystem::path::preferred_separator;
+    path_ss << gpu_subdir << std::filesystem::path::preferred_separator;
+    path_ss << date_str << std::filesystem::path::preferred_separator;
+    path_ss << time_str << ".log";
+
+    return path_ss.str();
+}
+
+/**
+ * @brief Создать директорию для логов конкретного GPU
+ * @param gpu_id Индекс GPU устройства
+ * @return true если успешно создан или уже существует, false при ошибке
+ *
+ * Создаёт структуру:
+ *   {log_path}/Logs/DRVGPU_XX/{YYYY-MM-DD}/
+ *
+ * Используется совместно с GetLogFilePathForGPU().
+ */
+bool ConfigLogger::CreateLogDirectoryForGPU(int gpu_id) const {
+    std::string file_path = GetLogFilePathForGPU(gpu_id);
+
+    // Извлекаем директорию из полного пути к файлу
+    std::filesystem::path log_file_path(file_path);
+    std::filesystem::path log_dir = log_file_path.parent_path();
+
+    try {
+        if (!std::filesystem::exists(log_dir)) {
+            std::filesystem::create_directories(log_dir);
+        }
+        return true;
+    } catch (const std::filesystem::filesystem_error& e) {
+        std::cerr << "[ConfigLogger] Failed to create GPU log directory: " << e.what() << "\n";
+        return false;
+    }
+}
+
+/**
  * @brief Сбросить настройки на значения по умолчанию
- * 
+ *
  * Сбрасывает:
  * - log_path_ = "" (путь по умолчанию)
  * - enabled_ = true (логирование включено)

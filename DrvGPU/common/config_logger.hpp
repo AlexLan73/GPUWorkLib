@@ -76,11 +76,32 @@ public:
     /**
      * @brief Получить полный путь к файлу лога с датой и временем
      * @return Полный путь к файлу лога
-     * 
+     *
      * Создаёт структуру:
      *   {log_path}/Logs/DRVGPU/{YYYY-MM-DD}/{HH-MM-SS}.log
      */
     std::string GetLogFilePath() const;
+
+    /**
+     * @brief Получить полный путь к файлу лога для конкретного GPU
+     * @param gpu_id Индекс GPU устройства (0-based)
+     * @return Полный путь к файлу лога
+     *
+     * Создаёт структуру с ID GPU (двузначный номер с ведущим нулём):
+     *   {log_path}/Logs/DRVGPU_00/{YYYY-MM-DD}/{HH-MM-SS}.log
+     *   {log_path}/Logs/DRVGPU_01/{YYYY-MM-DD}/{HH-MM-SS}.log
+     *   {log_path}/Logs/DRVGPU_13/{YYYY-MM-DD}/{HH-MM-SS}.log
+     *
+     * Используется для Multi-GPU: каждый GPU пишет в свою директорию.
+     */
+    std::string GetLogFilePathForGPU(int gpu_id) const;
+
+    /**
+     * @brief Создать директорию для логов конкретного GPU
+     * @param gpu_id Индекс GPU устройства
+     * @return true если успешно создан или уже существует
+     */
+    bool CreateLogDirectoryForGPU(int gpu_id) const;
 
     // ═══════════════════════════════════════════════════════════════════════
     // Настройки включения/выключения
