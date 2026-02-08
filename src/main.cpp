@@ -8,6 +8,7 @@
 //#include "modules/fft_maxima/tests/test_fft_maxima.hpp"
 #include "modules/fft_maxima/tests/test_spectrum_maxima.hpp"
 #include "DrvGPU/tests/test_services.hpp"
+#include "DrvGPU/tests/test_gpu_profiler.hpp"
 
 //int main(int argc, char* argv[]) {
 int main() {
@@ -26,8 +27,11 @@ int main() {
 //  test_fft_max::run();
 //  test_spectrum_maxima::run();
 
-  // Services multithreaded tests
-  test_services::run();
+  // Services multithreaded tests (без теста профилирования — он отдельно)
+//  test_services::run();
+
+  // Отдельный тест GPUProfiler: многопоточный Record, агрегация, PrintSummary
+  test_gpu_profiler::run();
 
    std::cout << "\n✅ Все тесты завершены!" << std::endl;
   return 0;

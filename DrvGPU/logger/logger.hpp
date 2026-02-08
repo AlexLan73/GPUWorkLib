@@ -46,13 +46,20 @@ namespace drv_gpu_lib {
 class Logger {
 public:
     /**
-     * @brief Получить текущий логер
+     * @brief Получить логер по умолчанию (GPU 0 или установленный через SetInstance)
      * @return Ссылка на ILogger
      */
     static ILogger& GetInstance();
 
     /**
-     * @brief Установить свой логер (для продакшена)
+     * @brief Получить логер для конкретного GPU (per-GPU: log_path/Logs/DRVGPU_XX/...)
+     * @param gpu_id Номер GPU (0, 1, 2, ...)
+     * @return Ссылка на ILogger для этого GPU
+     */
+    static ILogger& GetInstance(int gpu_id);
+
+    /**
+     * @brief Установить свой логер (для продакшена, только для GetInstance() без аргументов)
      * @param logger Умный указатель на ILogger
      */
     static void SetInstance(ILoggerPtr logger);
@@ -63,24 +70,44 @@ public:
     static void ResetToDefault();
 
     /**
-     * @brief Логировать отладочное сообщение
+     * @brief Логировать отладочное сообщение (в логер по умолчанию / GPU 0)
      */
     static void Debug(const std::string& component, const std::string& message);
 
     /**
-     * @brief Логировать информационное сообщение
+     * @brief Логировать отладочное сообщение в лог указанного GPU
+     */
+    static void Debug(int gpu_id, const std::string& component, const std::string& message);
+
+    /**
+     * @brief Логировать информационное сообщение (в логер по умолчанию / GPU 0)
      */
     static void Info(const std::string& component, const std::string& message);
 
     /**
-     * @brief Логировать предупреждение
+     * @brief Логировать информационное сообщение в лог указанного GPU
+     */
+    static void Info(int gpu_id, const std::string& component, const std::string& message);
+
+    /**
+     * @brief Логировать предупреждение (в логер по умолчанию / GPU 0)
      */
     static void Warning(const std::string& component, const std::string& message);
 
     /**
-     * @brief Логировать ошибку
+     * @brief Логировать предупреждение в лог указанного GPU
+     */
+    static void Warning(int gpu_id, const std::string& component, const std::string& message);
+
+    /**
+     * @brief Логировать ошибку (в логер по умолчанию / GPU 0)
      */
     static void Error(const std::string& component, const std::string& message);
+
+    /**
+     * @brief Логировать ошибку в лог указанного GPU
+     */
+    static void Error(int gpu_id, const std::string& component, const std::string& message);
 
     /**
      * @brief Проверить, включено ли логирование
@@ -111,86 +138,43 @@ private:
     // Release сборка: DEBUG отключён, остальные уровни активны
     // ═══════════════════════════════════════════════════════════════════════
 
-    /**
-     * @brief Логирование отладочного сообщения (только Debug)
-     */
-    #define DRVGPU_LOG_DEBUG(component, message) \
-        ((void)0)
-
-    /**
-     * @brief Логирование информационного сообщения
-     */
+    #define DRVGPU_LOG_DEBUG(component, message) ((void)0)
+    #define DRVGPU_LOG_DEBUG_GPU(gpu_id, component, message) \
+        do { if (drv_gpu_lib::Logger::IsEnabled()) drv_gpu_lib::Logger::Debug(gpu_id, component, message); } while (0)
     #define DRVGPU_LOG_INFO(component, message) \
-        do { \
-            if (drv_gpu_lib::Logger::IsEnabled()) { \
-                drv_gpu_lib::Logger::Info(component, message); \
-            } \
-        } while (0)
-
-    /**
-     * @brief Логирование предупреждения
-     */
+        do { if (drv_gpu_lib::Logger::IsEnabled()) drv_gpu_lib::Logger::Info(component, message); } while (0)
+    #define DRVGPU_LOG_INFO_GPU(gpu_id, component, message) \
+        do { if (drv_gpu_lib::Logger::IsEnabled()) drv_gpu_lib::Logger::Info(gpu_id, component, message); } while (0)
     #define DRVGPU_LOG_WARNING(component, message) \
-        do { \
-            if (drv_gpu_lib::Logger::IsEnabled()) { \
-                drv_gpu_lib::Logger::Warning(component, message); \
-            } \
-        } while (0)
-
-    /**
-     * @brief Логирование ошибки
-     */
+        do { if (drv_gpu_lib::Logger::IsEnabled()) drv_gpu_lib::Logger::Warning(component, message); } while (0)
+    #define DRVGPU_LOG_WARNING_GPU(gpu_id, component, message) \
+        do { if (drv_gpu_lib::Logger::IsEnabled()) drv_gpu_lib::Logger::Warning(gpu_id, component, message); } while (0)
     #define DRVGPU_LOG_ERROR(component, message) \
-        do { \
-            if (drv_gpu_lib::Logger::IsEnabled()) { \
-                drv_gpu_lib::Logger::Error(component, message); \
-            } \
-        } while (0)
+        do { if (drv_gpu_lib::Logger::IsEnabled()) drv_gpu_lib::Logger::Error(component, message); } while (0)
+    #define DRVGPU_LOG_ERROR_GPU(gpu_id, component, message) \
+        do { if (drv_gpu_lib::Logger::IsEnabled()) drv_gpu_lib::Logger::Error(gpu_id, component, message); } while (0)
 
 #else
     // ═══════════════════════════════════════════════════════════════════════
     // Debug сборка: все уровни активны
     // ═══════════════════════════════════════════════════════════════════════
 
-    /**
-     * @brief Логирование отладочного сообщения (Debug only)
-     */
     #define DRVGPU_LOG_DEBUG(component, message) \
-        do { \
-            if (drv_gpu_lib::Logger::IsEnabled()) { \
-                drv_gpu_lib::Logger::Debug(component, message); \
-            } \
-        } while (0)
-
-    /**
-     * @brief Логирование информационного сообщения
-     */
+        do { if (drv_gpu_lib::Logger::IsEnabled()) drv_gpu_lib::Logger::Debug(component, message); } while (0)
+    #define DRVGPU_LOG_DEBUG_GPU(gpu_id, component, message) \
+        do { if (drv_gpu_lib::Logger::IsEnabled()) drv_gpu_lib::Logger::Debug(gpu_id, component, message); } while (0)
     #define DRVGPU_LOG_INFO(component, message) \
-        do { \
-            if (drv_gpu_lib::Logger::IsEnabled()) { \
-                drv_gpu_lib::Logger::Info(component, message); \
-            } \
-        } while (0)
-
-    /**
-     * @brief Логирование предупреждения
-     */
+        do { if (drv_gpu_lib::Logger::IsEnabled()) drv_gpu_lib::Logger::Info(component, message); } while (0)
+    #define DRVGPU_LOG_INFO_GPU(gpu_id, component, message) \
+        do { if (drv_gpu_lib::Logger::IsEnabled()) drv_gpu_lib::Logger::Info(gpu_id, component, message); } while (0)
     #define DRVGPU_LOG_WARNING(component, message) \
-        do { \
-            if (drv_gpu_lib::Logger::IsEnabled()) { \
-                drv_gpu_lib::Logger::Warning(component, message); \
-            } \
-        } while (0)
-
-    /**
-     * @brief Логирование ошибки
-     */
+        do { if (drv_gpu_lib::Logger::IsEnabled()) drv_gpu_lib::Logger::Warning(component, message); } while (0)
+    #define DRVGPU_LOG_WARNING_GPU(gpu_id, component, message) \
+        do { if (drv_gpu_lib::Logger::IsEnabled()) drv_gpu_lib::Logger::Warning(gpu_id, component, message); } while (0)
     #define DRVGPU_LOG_ERROR(component, message) \
-        do { \
-            if (drv_gpu_lib::Logger::IsEnabled()) { \
-                drv_gpu_lib::Logger::Error(component, message); \
-            } \
-        } while (0)
+        do { if (drv_gpu_lib::Logger::IsEnabled()) drv_gpu_lib::Logger::Error(component, message); } while (0)
+    #define DRVGPU_LOG_ERROR_GPU(gpu_id, component, message) \
+        do { if (drv_gpu_lib::Logger::IsEnabled()) drv_gpu_lib::Logger::Error(gpu_id, component, message); } while (0)
 
 #endif // NDEBUG
 

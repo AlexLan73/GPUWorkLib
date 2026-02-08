@@ -26,7 +26,7 @@ OpenCLBackendExternal::OpenCLBackendExternal()
     // Переопределяем на false для external контекста
     owns_resources_ = false;
     
-    DRVGPU_LOG_INFO("OpenCLBackendExternal", 
+    DRVGPU_LOG_INFO_GPU(0, "OpenCLBackendExternal", 
         "Created in non-owning mode (owns_resources = false)");
 }
 
@@ -39,7 +39,7 @@ OpenCLBackendExternal::OpenCLBackendExternal()
 OpenCLBackendExternal::~OpenCLBackendExternal() {
     // Родительский деструктор вызовет Cleanup()
     // Cleanup() увидит owns_resources_ = false и не освободит контекст/queue
-    DRVGPU_LOG_INFO("OpenCLBackendExternal", 
+    DRVGPU_LOG_INFO_GPU(0, "OpenCLBackendExternal", 
         "Destructor called - parent will handle cleanup (non-owning)");
 }
 
@@ -79,7 +79,7 @@ void OpenCLBackendExternal::InitializeFromExternalContext(
         );
     }
     
-    DRVGPU_LOG_INFO("OpenCLBackendExternal", 
+    DRVGPU_LOG_INFO_GPU(0, "OpenCLBackendExternal", 
         "Initializing from external OpenCL context");
     
     // ═══════════════════════════════════════════════════════════════════════
@@ -88,7 +88,7 @@ void OpenCLBackendExternal::InitializeFromExternalContext(
     // Должно быть false из конструктора, но явно устанавливаем для надёжности
     owns_resources_ = false;
     
-    DRVGPU_LOG_INFO("OpenCLBackendExternal", 
+    DRVGPU_LOG_INFO_GPU(0, "OpenCLBackendExternal", 
         "owns_resources_ = false (external resources will NOT be released)");
     
     // ═══════════════════════════════════════════════════════════════════════
@@ -101,7 +101,7 @@ void OpenCLBackendExternal::InitializeFromExternalContext(
     device_ = external_device;
     queue_ = external_queue;
     
-    DRVGPU_LOG_INFO("OpenCLBackendExternal", 
+    DRVGPU_LOG_INFO_GPU(0, "OpenCLBackendExternal", 
         "External OpenCL handles saved (context, device, queue) - NON-OWNING");
     
     // ═══════════════════════════════════════════════════════════════════════
@@ -111,14 +111,14 @@ void OpenCLBackendExternal::InitializeFromExternalContext(
         SVMCapabilities::Query(device_)
     );
     
-    DRVGPU_LOG_INFO("OpenCLBackendExternal", "SVM capabilities initialized");
+    DRVGPU_LOG_INFO_GPU(0, "OpenCLBackendExternal", "SVM capabilities initialized");
     
     // ═══════════════════════════════════════════════════════════════════════
     // Инициализируем MemoryManager
     // ═══════════════════════════════════════════════════════════════════════
     memory_manager_ = std::make_unique<MemoryManager>(this);
     
-    DRVGPU_LOG_INFO("OpenCLBackendExternal", "MemoryManager initialized");
+    DRVGPU_LOG_INFO_GPU(0, "OpenCLBackendExternal", "MemoryManager initialized");
     
     // ═══════════════════════════════════════════════════════════════════════
     // Завершение
@@ -126,9 +126,9 @@ void OpenCLBackendExternal::InitializeFromExternalContext(
     initialized_ = true;
     device_index_ = 0;  // External контекст = виртуальный device 0
     
-    DRVGPU_LOG_INFO("OpenCLBackendExternal", 
+    DRVGPU_LOG_INFO_GPU(0, "OpenCLBackendExternal", 
         "✅ Successfully initialized from external OpenCL context (owns_resources = false)");
-    DRVGPU_LOG_INFO("OpenCLBackendExternal", 
+    DRVGPU_LOG_INFO_GPU(0, "OpenCLBackendExternal", 
         "⚠️  External code MUST release context/device/queue after use!");
 }
 

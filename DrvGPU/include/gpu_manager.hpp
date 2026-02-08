@@ -23,8 +23,11 @@
 #include "load_balancing.hpp"
 #include "logger/logger.hpp"
 #include "backends/opencl/opencl_core.hpp"  // ✅ MULTI-GPU: Для реального обнаружения устройств
+#include "backends/opencl/opencl_backend.hpp"
+#include "services/gpu_profiler.hpp"  // ✅ AUTO-FILL: Для автоматической передачи GPU info
 
 #include <vector>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <atomic>
@@ -217,7 +220,24 @@ public:
      * @brief Получить строку со статистикой
      */
     std::string GetStatistics() const;
-    
+
+    /**
+     * @brief Получить информацию о драйверах всех GPU
+     * @return Вектор map с версиями драйверов для каждой GPU
+     */
+    std::vector<std::map<std::string, std::string>> GetDriverSet() const;
+
+    /**
+     * @brief Получить GPUReportInfo для конкретной GPU (для профайлера)
+     * @param gpu_id Индекс GPU
+     * @return GPUReportInfo с заполненными drivers[] из реальной системы
+     *
+     * Использование:
+     *   auto info = manager.GetGPUReportInfo(0);
+     *   profiler.SetGPUInfo(0, info);
+     */
+    GPUReportInfo GetGPUReportInfo(int gpu_id) const;
+
     /**
      * @brief Сбросить статистику всех GPU
      */
@@ -334,7 +354,7 @@ inline void GPUManager::InitializeAll(BackendType backend_type) {
         InitializeGPU(i);
     }
     
-    DRVGPU_LOG_INFO("GPUManager", "Initialized " + std::to_string(gpus_.size()) + " GPU(s)");
+    DRVGPU_LOG_INFO_GPU(0, "GPUManager", "Initialized " + std::to_string(gpus_.size()) + " GPU(s)");
 }
 
 inline void GPUManager::InitializeSpecific(BackendType backend_type,
@@ -350,7 +370,7 @@ inline void GPUManager::InitializeSpecific(BackendType backend_type,
         InitializeGPU(index);
     }
     
-    DRVGPU_LOG_INFO("GPUManager", "Initialized " + std::to_string(gpus_.size()) + " specific GPU(s)");
+    DRVGPU_LOG_INFO_GPU(0, "GPUManager", "Initialized " + std::to_string(gpus_.size()) + " specific GPU(s)");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -373,7 +393,7 @@ inline void GPUManager::CleanupInternal() {
     gpu_task_count_.clear();
     round_robin_index_ = 0;
     
-    DRVGPU_LOG_INFO("GPUManager", "CleanupInternal: GPU instances moved, will be destroyed on scope exit");
+    DRVGPU_LOG_INFO_GPU(0, "GPUManager", "CleanupInternal: GPU instances moved, will be destroyed on scope exit");
     
     // temp_gpus автоматически очистится при выходе из scope
     // Деструкторы ~DrvGPU() вызовутся здесь
@@ -507,6 +527,76 @@ inline std::string GPUManager::GetStatistics() const {
     return oss.str();
 }
 
+inline std::vector<std::map<std::string, std::string>> GPUManager::GetDriverSet() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::map<std::string, std::string>> result;
+
+    for (size_t i = 0; i < gpus_.size(); ++i) {
+        auto info = gpus_[i]->GetDeviceInfo();
+        std::map<std::string, std::string> gpu_info;
+        gpu_info["gpu_id"] = std::to_string(i);
+        gpu_info["gpu_name"] = info.name;
+        gpu_info["driver_version"] = info.driver_version;
+        gpu_info["opencl_version"] = info.opencl_version;
+        gpu_info["vendor"] = info.vendor;
+        result.push_back(gpu_info);
+    }
+
+    return result;
+}
+
+inline GPUReportInfo GPUManager::GetGPUReportInfo(int gpu_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    GPUReportInfo report_info;
+
+    if (gpu_id < 0 || static_cast<size_t>(gpu_id) >= gpus_.size()) {
+        return report_info;  // Пустая структура если GPU не найдена
+    }
+
+    auto device_info = gpus_[gpu_id]->GetDeviceInfo();
+    report_info.gpu_name = device_info.name;
+    report_info.backend_type = backend_type_;
+    report_info.global_mem_mb = device_info.global_memory_size / (1024 * 1024);
+
+    // drivers[0] = OpenCL info (читаем из реальной системы)
+    if (backend_type_ == BackendType::OPENCL ||
+        backend_type_ == BackendType::OPENCLandROCm ||
+        backend_type_ == BackendType::AUTO) {
+
+        std::map<std::string, std::string> opencl_driver;
+        opencl_driver["driver_type"] = "OpenCL";
+        opencl_driver["version"] = device_info.opencl_version;
+        opencl_driver["driver_version"] = device_info.driver_version;
+        opencl_driver["vendor"] = device_info.vendor;
+
+        // Platform name из OpenCL backend
+        try {
+            auto* backend = dynamic_cast<OpenCLBackend*>(&gpus_[gpu_id]->GetBackend());
+            if (backend && backend->GetCore().IsInitialized()) {
+                opencl_driver["platform_name"] = backend->GetCore().GetPlatformName();
+            }
+        } catch (...) {
+            // Ignore cast errors
+        }
+
+        report_info.drivers.push_back(opencl_driver);
+    }
+
+    // drivers[1] = ROCm info (ЗАКОММЕНТИРОВАНО - нет ROCm драйверов)
+    /*
+    if (backend_type_ == BackendType::ROCm ||
+        backend_type_ == BackendType::OPENCLandROCm) {
+        std::map<std::string, std::string> rocm_driver;
+        rocm_driver["driver_type"] = "ROCm";
+        // ... читаем из /opt/rocm/.info/version и HIP API
+        report_info.drivers.push_back(rocm_driver);
+    }
+    */
+
+    return report_info;
+}
+
 inline void GPUManager::ResetStatistics() {
     std::lock_guard<std::mutex> lock(mutex_);
     
@@ -516,7 +606,7 @@ inline void GPUManager::ResetStatistics() {
 }
 
 inline int GPUManager::DiscoverGPUs(BackendType backend_type) {
-    DRVGPU_LOG_DEBUG("GPUManager", "Discovering GPUs...");
+    DRVGPU_LOG_DEBUG_GPU(0, "GPUManager", "Discovering GPUs...");
 
     // ═══════════════════════════════════════════════════════════════════════
     // ✅ MULTI-GPU: Реальное обнаружение устройств!
@@ -531,27 +621,27 @@ inline int GPUManager::DiscoverGPUs(BackendType backend_type) {
             // Используем OpenCLCore для обнаружения GPU
             device_count = OpenCLCore::GetAvailableDeviceCount(DeviceType::GPU);
 
-            DRVGPU_LOG_INFO("GPUManager",
+            DRVGPU_LOG_INFO_GPU(0, "GPUManager",
                 "Found " + std::to_string(device_count) + " OpenCL GPU(s)");
 
             // Выводим информацию о найденных устройствах
             if (device_count > 0) {
                 std::string devices_info = OpenCLCore::GetAllDevicesInfo(DeviceType::GPU);
-                DRVGPU_LOG_DEBUG("GPUManager", devices_info);
+                DRVGPU_LOG_DEBUG_GPU(0, "GPUManager", devices_info);
             }
             break;
         }
 
         case BackendType::ROCm: {
             // TODO: Реализовать для ROCm
-            DRVGPU_LOG_WARNING("GPUManager", "ROCm discovery not implemented yet");
+            DRVGPU_LOG_WARNING_GPU(0, "GPUManager", "ROCm discovery not implemented yet");
             // Пока используем OpenCL discovery (ROCm поддерживает OpenCL)
             device_count = OpenCLCore::GetAvailableDeviceCount(DeviceType::GPU);
             break;
         }
 
         default:
-            DRVGPU_LOG_ERROR("GPUManager", "Unknown backend type");
+            DRVGPU_LOG_ERROR_GPU(0, "GPUManager", "Unknown backend type");
             device_count = 0;
             break;
     }
@@ -563,11 +653,79 @@ inline void GPUManager::InitializeGPU(int device_index) {
     try {
         auto gpu = std::make_unique<DrvGPU>(backend_type_, device_index);
         gpu->Initialize();
+
+        // ═══════════════════════════════════════════════════════════════
+        // AUTO-FILL: Автоматически передаём GPU info в профайлер
+        // Формируем drivers[] vector с информацией о драйверах
+        // ═══════════════════════════════════════════════════════════════
+        auto device_info = gpu->GetDeviceInfo();
+        GPUReportInfo report_info;
+        report_info.gpu_name = device_info.name;
+        report_info.backend_type = backend_type_;
+        report_info.global_mem_mb = device_info.global_memory_size / (1024 * 1024);
+
+        // drivers[0] = OpenCL info (читаем из реальной системы)
+        if (backend_type_ == BackendType::OPENCL ||
+            backend_type_ == BackendType::OPENCLandROCm ||
+            backend_type_ == BackendType::AUTO) {
+            std::map<std::string, std::string> opencl_driver;
+            opencl_driver["driver_type"] = "OpenCL";
+            opencl_driver["version"] = device_info.opencl_version;
+            opencl_driver["driver_version"] = device_info.driver_version;
+            opencl_driver["vendor"] = device_info.vendor;
+
+            // Platform name из OpenCL backend
+            try {
+                auto* backend = dynamic_cast<OpenCLBackend*>(&gpu->GetBackend());
+                if (backend && backend->GetCore().IsInitialized()) {
+                    opencl_driver["platform_name"] = backend->GetCore().GetPlatformName();
+                }
+            } catch (...) {
+                // Ignore cast errors
+            }
+
+            report_info.drivers.push_back(opencl_driver);
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // drivers[1] = ROCm info (ЗАКОММЕНТИРОВАНО - нет ROCm драйверов)
+        // Раскомментировать когда будут установлены ROCm/HIP
+        // ═══════════════════════════════════════════════════════════════
+        /*
+        if (backend_type_ == BackendType::ROCm ||
+            backend_type_ == BackendType::OPENCLandROCm) {
+            std::map<std::string, std::string> rocm_driver;
+            rocm_driver["driver_type"] = "ROCm";
+
+            // Версия ROCm из /opt/rocm/.info/version
+            std::ifstream f("/opt/rocm/.info/version");
+            if (f.is_open()) {
+                std::string version;
+                std::getline(f, version);
+                rocm_driver["version"] = version;  // "5.4.3"
+            }
+
+            // HIP версия через hipRuntimeGetVersion
+            // int hipVersion = 0;
+            // hipRuntimeGetVersion(&hipVersion);
+            // rocm_driver["hip_version"] = std::to_string(hipVersion);
+
+            // int driverVersion = 0;
+            // hipDriverGetVersion(&driverVersion);
+            // rocm_driver["hip_driver"] = std::to_string(driverVersion);
+
+            report_info.drivers.push_back(rocm_driver);
+        }
+        */
+
+        GPUProfiler::GetInstance().SetGPUInfo(device_index, report_info);
+        // ═══════════════════════════════════════════════════════════════
+
         gpus_.push_back(std::move(gpu));
         gpu_task_count_.emplace_back(0);
-        DRVGPU_LOG_INFO("GPUManager", "Initialized GPU " + std::to_string(device_index));
+        DRVGPU_LOG_INFO_GPU(device_index, "GPUManager", "Initialized GPU " + std::to_string(device_index));
     } catch (const std::exception& e) {
-        DRVGPU_LOG_ERROR("GPUManager", "Failed to initialize GPU " + std::to_string(device_index) + ": " + e.what());
+        DRVGPU_LOG_ERROR_GPU(device_index, "GPUManager", "Failed to initialize GPU " + std::to_string(device_index) + ": " + e.what());
     }
 }
 

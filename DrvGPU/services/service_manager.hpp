@@ -43,6 +43,7 @@
 #include "gpu_profiler.hpp"
 #include "../config/gpu_config.hpp"
 #include "../logger/config_logger.hpp"
+#include "../logger/logger.hpp"
 
 #include <string>
 #include <iostream>
@@ -113,21 +114,21 @@ public:
             ConsoleOutput::GetInstance().SetGPUEnabled(gpu.id, gpu.is_console);
         }
 
-        // Настройка GPUProfiler
+        // Настройка GPUProfiler: глобально и по каждому GPU (is_prof)
         bool any_profiling = false;
         for (const auto& gpu : data.gpus) {
             if (gpu.is_prof) {
                 any_profiling = true;
-                break;
             }
+            GPUProfiler::GetInstance().SetGPUEnabled(gpu.id, gpu.is_prof);
         }
         GPUProfiler::GetInstance().SetEnabled(any_profiling);
 
-        // Настройка путей логера по каждому GPU
+        // Настройка путей логера по каждому GPU и предсоздание инстансов логеров
         for (const auto& gpu : data.gpus) {
             if (gpu.is_logger) {
-                // Создание директории логов для данного GPU при необходимости
                 ConfigLogger::GetInstance().CreateLogDirectoryForGPU(gpu.id);
+                (void)Logger::GetInstance(gpu.id);  // создать логер для DRVGPU_XX при старте
             }
         }
 

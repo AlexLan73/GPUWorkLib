@@ -122,6 +122,7 @@ public:
     std::string GetDeviceName() const;
     std::string GetVendor() const;
     std::string GetDriverVersion() const;
+    std::string GetPlatformName() const;
     size_t GetGlobalMemorySize() const;
     size_t GetLocalMemorySize() const;
     cl_uint GetComputeUnits() const;

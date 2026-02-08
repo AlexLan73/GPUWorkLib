@@ -1,38 +1,39 @@
 #include "default_logger.hpp"
+#include <plog/Record.h>
 #include <iostream>
 
 namespace drv_gpu_lib {
 
 // ════════════════════════════════════════════════════════════════════════════
-// DefaultLogger Implementation - Реализация файлового логирования на plog
-// ════════════════════════════════════════════════════════════════════════════
-// ЗАМЕНА: spdlog → plog (2026-02-07)
-// Причина: spdlog был капризным при кросс-платформенной сборке (fmt зависимость,
-//          LNK2019 errors, SPDLOG_HEADER_ONLY / FMT_HEADER_ONLY hacks).
-// plog: header-only, zero dependencies, стабильный.
+// DefaultLogger Implementation - Per-GPU файловое логирование на plog
 // ════════════════════════════════════════════════════════════════════════════
 
+std::map<int, std::unique_ptr<DefaultLogger>> DefaultLogger::instances_;
+std::mutex DefaultLogger::instances_mutex_;
+
 /**
- * @brief Получить единственный экземпляр DefaultLogger (Singleton)
- * @return Ссылка на статический экземпляр
- *
- * Thread-safe инициализация через static local variable.
+ * @brief Получить логер для данного GPU (отдельный инстанс на каждый gpu_id)
+ * @param gpu_id Номер GPU (0, 1, 2, ...). Путь: log_path/Logs/DRVGPU_XX/{YYYY-MM-DD}/
  */
-DefaultLogger& DefaultLogger::GetInstance() {
-    static DefaultLogger instance;
-    return instance;
+DefaultLogger& DefaultLogger::GetInstance(int gpu_id) {
+    if (gpu_id < 0 || gpu_id >= kMaxGpuLogInstances) {
+        gpu_id = 0;
+    }
+    std::lock_guard<std::mutex> lock(instances_mutex_);
+    auto it = instances_.find(gpu_id);
+    if (it == instances_.end()) {
+        it = instances_.emplace(gpu_id, std::make_unique<DefaultLogger>(gpu_id)).first;
+    }
+    return *it->second;
 }
 
 /**
- * @brief Конструктор DefaultLogger
- *
- * Инициализирует:
- * - initialized_ = false
- * - current_level_ = debug
- * - Вызывает Initialize() для настройки plog
+ * @brief Конструктор DefaultLogger для конкретного GPU
+ * @param gpu_id Номер GPU (путь лога: Logs/DRVGPU_XX/)
  */
-DefaultLogger::DefaultLogger()
-    : initialized_(false)
+DefaultLogger::DefaultLogger(int gpu_id)
+    : gpu_id_(gpu_id)
+    , initialized_(false)
     , current_level_(plog::debug) {
     Initialize();
 }
@@ -46,23 +47,15 @@ DefaultLogger::~DefaultLogger() {
     Shutdown();
 }
 
+// Диспетчеризация plog::init по instance ID (compile-time)
+#define DRVGPU_PLOG_INIT_CASE(N) \
+    case N: plog::init<N>(plog::debug, log_file_path.c_str(), kMaxFileSize, kMaxFiles); break;
+
 /**
- * @brief Инициализировать plog file logger
+ * @brief Инициализировать plog file logger для этого GPU
  *
- * Логика инициализации:
- * 1. Проверяем ConfigLogger::IsEnabled()
- * 2. Если отключено - помечаем как инициализированный без логера
- * 3. Если включено:
- *    - Создаём директорию для логов
- *    - Получаем путь к файлу лога
- *    - Инициализируем plog с RollingFileAppender
- *    - Устанавливаем уровень логирования
- *
- * plog::init() можно вызвать только один раз!
- * Для нескольких логеров (GPU) используются разные instance IDs.
- *
- * @note Если CreateLogDirectory() не удалось, логер помечается как
- *       инициализированный, но без функциональности.
+ * Путь: log_path/Logs/DRVGPU_XX/{YYYY-MM-DD}/{HH-MM-SS}.log
+ * Использует GetLogFilePathForGPU(gpu_id_) и CreateLogDirectoryForGPU(gpu_id_).
  */
 void DefaultLogger::Initialize() {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -71,44 +64,62 @@ void DefaultLogger::Initialize() {
         return;
     }
 
-    // Проверяем, включено ли логирование
     if (!ConfigLogger::GetInstance().IsEnabled()) {
-        initialized_ = true;  // Помечаем как "инициализированный", но без логера
+        initialized_ = true;
         return;
     }
 
     try {
-        // Создаём директорию для логов
-        ConfigLogger::GetInstance().CreateLogDirectory();
-
-        // Получаем путь к файлу лога (с датой и временем)
-        std::string log_file_path = ConfigLogger::GetInstance().GetLogFilePath();
-
-        // ═══════════════════════════════════════════════════════════════
-        // Инициализация plog
-        // ═══════════════════════════════════════════════════════════════
-        // plog::init(severity, filename, maxFileSize, maxFiles)
-        //   - severity: минимальный уровень логирования
-        //   - filename: путь к файлу лога
-        //   - maxFileSize: максимальный размер файла (5 MB по умолчанию)
-        //   - maxFiles: количество файлов для ротации (3 по умолчанию)
-        //
-        // ВАЖНО: plog::init() вызывается один раз на весь процесс.
-        // Для multi-GPU используем разные instance IDs (будущее).
-        // ═══════════════════════════════════════════════════════════════
+        ConfigLogger::GetInstance().CreateLogDirectoryForGPU(gpu_id_);
+        std::string log_file_path = ConfigLogger::GetInstance().GetLogFilePathForGPU(gpu_id_);
 
         static const size_t kMaxFileSize = 5 * 1024 * 1024;  // 5 MB
-        static const int    kMaxFiles    = 3;                  // 3 файла ротации
+        static const int    kMaxFiles    = 3;
 
-        plog::init(plog::debug, log_file_path.c_str(), kMaxFileSize, kMaxFiles);
+        switch (gpu_id_) {
+            DRVGPU_PLOG_INIT_CASE(0)  DRVGPU_PLOG_INIT_CASE(1)  DRVGPU_PLOG_INIT_CASE(2)  DRVGPU_PLOG_INIT_CASE(3)
+            DRVGPU_PLOG_INIT_CASE(4)  DRVGPU_PLOG_INIT_CASE(5)  DRVGPU_PLOG_INIT_CASE(6)  DRVGPU_PLOG_INIT_CASE(7)
+            DRVGPU_PLOG_INIT_CASE(8)  DRVGPU_PLOG_INIT_CASE(9)  DRVGPU_PLOG_INIT_CASE(10) DRVGPU_PLOG_INIT_CASE(11)
+            DRVGPU_PLOG_INIT_CASE(12) DRVGPU_PLOG_INIT_CASE(13) DRVGPU_PLOG_INIT_CASE(14) DRVGPU_PLOG_INIT_CASE(15)
+            DRVGPU_PLOG_INIT_CASE(16) DRVGPU_PLOG_INIT_CASE(17) DRVGPU_PLOG_INIT_CASE(18) DRVGPU_PLOG_INIT_CASE(19)
+            DRVGPU_PLOG_INIT_CASE(20) DRVGPU_PLOG_INIT_CASE(21) DRVGPU_PLOG_INIT_CASE(22) DRVGPU_PLOG_INIT_CASE(23)
+            DRVGPU_PLOG_INIT_CASE(24) DRVGPU_PLOG_INIT_CASE(25) DRVGPU_PLOG_INIT_CASE(26) DRVGPU_PLOG_INIT_CASE(27)
+            DRVGPU_PLOG_INIT_CASE(28) DRVGPU_PLOG_INIT_CASE(29) DRVGPU_PLOG_INIT_CASE(30) DRVGPU_PLOG_INIT_CASE(31)
+            default: break;
+        }
 
         initialized_ = true;
-
     } catch (const std::exception& e) {
-        // Любое исключение при инициализации
         (void)e;
-        initialized_ = true;  // Помечаем как инициализированный, но без логера
+        initialized_ = true;
     }
+}
+
+#undef DRVGPU_PLOG_INIT_CASE
+
+namespace {
+template<int InstanceId>
+void WriteToPlogInstance(plog::Severity severity, const std::string& message) {
+    plog::Logger<InstanceId>* log = plog::get<InstanceId>();
+    if (log && log->checkSeverity(severity)) {
+        (*log) += plog::Record(severity, "", 0, "", nullptr, InstanceId).ref() << message;
+    }
+}
+#define DRVGPU_PLOG_WRITE_CASE(N) case N: WriteToPlogInstance<N>(severity, formatted); break;
+void WriteToPlogByGpuId(int gpu_id, plog::Severity severity, const std::string& formatted) {
+    switch (gpu_id) {
+        DRVGPU_PLOG_WRITE_CASE(0)  DRVGPU_PLOG_WRITE_CASE(1)  DRVGPU_PLOG_WRITE_CASE(2)  DRVGPU_PLOG_WRITE_CASE(3)
+        DRVGPU_PLOG_WRITE_CASE(4)  DRVGPU_PLOG_WRITE_CASE(5)  DRVGPU_PLOG_WRITE_CASE(6)  DRVGPU_PLOG_WRITE_CASE(7)
+        DRVGPU_PLOG_WRITE_CASE(8)  DRVGPU_PLOG_WRITE_CASE(9)  DRVGPU_PLOG_WRITE_CASE(10) DRVGPU_PLOG_WRITE_CASE(11)
+        DRVGPU_PLOG_WRITE_CASE(12) DRVGPU_PLOG_WRITE_CASE(13) DRVGPU_PLOG_WRITE_CASE(14) DRVGPU_PLOG_WRITE_CASE(15)
+        DRVGPU_PLOG_WRITE_CASE(16) DRVGPU_PLOG_WRITE_CASE(17) DRVGPU_PLOG_WRITE_CASE(18) DRVGPU_PLOG_WRITE_CASE(19)
+        DRVGPU_PLOG_WRITE_CASE(20) DRVGPU_PLOG_WRITE_CASE(21) DRVGPU_PLOG_WRITE_CASE(22) DRVGPU_PLOG_WRITE_CASE(23)
+        DRVGPU_PLOG_WRITE_CASE(24) DRVGPU_PLOG_WRITE_CASE(25) DRVGPU_PLOG_WRITE_CASE(26) DRVGPU_PLOG_WRITE_CASE(27)
+        DRVGPU_PLOG_WRITE_CASE(28) DRVGPU_PLOG_WRITE_CASE(29) DRVGPU_PLOG_WRITE_CASE(30) DRVGPU_PLOG_WRITE_CASE(31)
+        default: WriteToPlogInstance<0>(severity, formatted); break;
+    }
+}
+#undef DRVGPU_PLOG_WRITE_CASE
 }
 
 /**
@@ -128,50 +139,27 @@ void DefaultLogger::Shutdown() {
  * @param message Текст сообщения
  */
 void DefaultLogger::Debug(const std::string& component, const std::string& message) {
-    if (!initialized_) {
-        return;
-    }
+    if (!initialized_) return;
     std::string formatted = FormatMessage(component, message);
-    PLOG_DEBUG << formatted;
+    WriteToPlogByGpuId(gpu_id_, plog::debug, formatted);
 }
 
-/**
- * @brief Логировать информационное сообщение
- * @param component Имя компонента
- * @param message Текст сообщения
- */
 void DefaultLogger::Info(const std::string& component, const std::string& message) {
-    if (!initialized_) {
-        return;
-    }
+    if (!initialized_) return;
     std::string formatted = FormatMessage(component, message);
-    PLOG_INFO << formatted;
+    WriteToPlogByGpuId(gpu_id_, plog::info, formatted);
 }
 
-/**
- * @brief Логировать предупреждение
- * @param component Имя компонента
- * @param message Текст сообщения
- */
 void DefaultLogger::Warning(const std::string& component, const std::string& message) {
-    if (!initialized_) {
-        return;
-    }
+    if (!initialized_) return;
     std::string formatted = FormatMessage(component, message);
-    PLOG_WARNING << formatted;
+    WriteToPlogByGpuId(gpu_id_, plog::warning, formatted);
 }
 
-/**
- * @brief Логировать ошибку
- * @param component Имя компонента
- * @param message Текст сообщения
- */
 void DefaultLogger::Error(const std::string& component, const std::string& message) {
-    if (!initialized_) {
-        return;
-    }
+    if (!initialized_) return;
     std::string formatted = FormatMessage(component, message);
-    PLOG_ERROR << formatted;
+    WriteToPlogByGpuId(gpu_id_, plog::error, formatted);
 }
 
 /**

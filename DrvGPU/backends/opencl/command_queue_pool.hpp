@@ -75,9 +75,10 @@ public:
      * @param context OpenCL контекст
      * @param device OpenCL устройство
      * @param num_queues Количество очередей (0 = авто, 2 по умолчанию)
+     * @param device_index Индекс GPU (0, 1, 8, ...) для логов в DRVGPU_XX
      * @return true если успешно созданы хотя бы одна очередь
      */
-    bool Initialize(cl_context context, cl_device_id device, size_t num_queues = 0);
+    bool Initialize(cl_context context, cl_device_id device, size_t num_queues = 0, int device_index = 0);
     
     /**
      * @brief Очистить все очереди и освободить ресурсы
@@ -109,6 +110,7 @@ private:
     std::vector<cl_command_queue> queues_;  ///< Список созданных очередей
     cl_context context_;                     ///< OpenCL контекст (не владеет)
     cl_device_id device_;                    ///< OpenCL устройство (не владеет)
+    int device_index_;                       ///< Индекс GPU для логов (DRVGPU_XX)
     bool initialized_;                       ///< Флаг инициализации
     mutable std::mutex mutex_;               ///< Мьютекс для thread-safety
 };

@@ -1,6 +1,7 @@
 #include "antenna_fft_release.h"
 #include "fft_logger.h"
 #include "services/gpu_profiler.hpp"
+#include "backends/opencl/opencl_profiling.hpp"
 #include <cstring>
 
 namespace antenna_fft {
@@ -80,17 +81,16 @@ AntennaFFTResult AntennaFFTProcMax::ProcessSingleBatch(cl_mem input_signal) {
     // Ожидание завершения
     clWaitForEvents(1, &fft_event);
 
-    // Profile
-    double fft_time_ms = ProfileEvent(fft_event, "FFT");
-    last_profiling_results_.fft_time_ms = fft_time_ms;
-
-    // Record to GPUProfiler (async, non-blocking)
-    drv_gpu_lib::GPUProfiler::GetInstance().Record(
-        backend_->GetDeviceIndex(),
-        "AntennaFFT",
-        "SingleBatchFFT",
-        fft_time_ms
-    );
+    drv_gpu_lib::OpenCLProfilingData data{};
+    if (drv_gpu_lib::FillOpenCLProfilingData(fft_event, data)) {
+        last_profiling_results_.fft_time_ms = (data.end_ns - data.start_ns) * 1e-6;
+        drv_gpu_lib::GPUProfiler::GetInstance().Record(
+            backend_->GetDeviceIndex(),
+            "AntennaFFT",
+            "SingleBatchFFT",
+            data
+        );
+    }
 
     clReleaseEvent(fft_event);
 
@@ -135,31 +135,27 @@ std::vector<FFTResult> AntennaFFTProcMax::ProcessBatch(
 
     // Execute FFT with callbacks
     cl_event fft_event;
-    auto fft_start = std::chrono::high_resolution_clock::now();
-
     if (!ExecuteFFTWithCallbacks(input_signal, num_beams, start_beam, &fft_event)) {
         throw std::runtime_error("Batch FFT execution failed");
     }
 
     clWaitForEvents(1, &fft_event);
 
-    auto fft_end = std::chrono::high_resolution_clock::now();
-
-    // Profile
-    double fft_time_ms = ProfileEvent(fft_event, "BatchFFT");
-    if (out_profiling) {
-        out_profiling->fft_time_ms = fft_time_ms;
-        out_profiling->padding_time_ms = 0; // Included in pre-callback
-        out_profiling->post_time_ms = 0;    // Included in post-callback
+    drv_gpu_lib::OpenCLProfilingData data{};
+    if (drv_gpu_lib::FillOpenCLProfilingData(fft_event, data)) {
+        double fft_time_ms = (data.end_ns - data.start_ns) * 1e-6;
+        if (out_profiling) {
+            out_profiling->fft_time_ms = fft_time_ms;
+            out_profiling->padding_time_ms = 0; // Included in pre-callback
+            out_profiling->post_time_ms = 0;    // Included in post-callback
+        }
+        drv_gpu_lib::GPUProfiler::GetInstance().Record(
+            backend_->GetDeviceIndex(),
+            "AntennaFFT",
+            "BatchFFT",
+            data
+        );
     }
-
-    // Record to GPUProfiler (async, non-blocking)
-    drv_gpu_lib::GPUProfiler::GetInstance().Record(
-        backend_->GetDeviceIndex(),
-        "AntennaFFT",
-        "BatchFFT",
-        fft_time_ms
-    );
 
     clReleaseEvent(fft_event);
 

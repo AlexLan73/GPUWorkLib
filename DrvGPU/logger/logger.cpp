@@ -9,22 +9,15 @@ namespace drv_gpu_lib {
 // Статический член класса - текущий логер (по умолчанию nullptr)
 ILoggerPtr Logger::current_logger_ = nullptr;
 
-/**
- * @brief Получить текущий логер (создаёт DefaultLogger при первом вызове)
- * @return Ссылка на ILogger
- * 
- * Если логер ещё не установлен, создаёт DefaultLogger.
- * 
- * @code
- * ILogger& logger = Logger::GetInstance();
- * logger.Info("Component", "Message");
- * @endcode
- */
 ILogger& Logger::GetInstance() {
-    if (!current_logger_) {
-        current_logger_ = std::make_shared<DefaultLogger>();
+    if (current_logger_) {
+        return *current_logger_;
     }
-    return *current_logger_;
+    return DefaultLogger::GetInstance(0);
+}
+
+ILogger& Logger::GetInstance(int gpu_id) {
+    return DefaultLogger::GetInstance(gpu_id);
 }
 
 /**
@@ -49,7 +42,7 @@ void Logger::SetInstance(ILoggerPtr logger) {
  * Заменяет текущий логер на новый экземпляр DefaultLogger.
  */
 void Logger::ResetToDefault() {
-    current_logger_ = std::make_shared<DefaultLogger>();
+    current_logger_ = nullptr;  // следующий GetInstance() вернёт DefaultLogger::GetInstance(0)
 }
 
 /**
@@ -86,6 +79,22 @@ void Logger::Warning(const std::string& component, const std::string& message) {
  */
 void Logger::Error(const std::string& component, const std::string& message) {
     GetInstance().Error(component, message);
+}
+
+void Logger::Debug(int gpu_id, const std::string& component, const std::string& message) {
+    GetInstance(gpu_id).Debug(component, message);
+}
+
+void Logger::Info(int gpu_id, const std::string& component, const std::string& message) {
+    GetInstance(gpu_id).Info(component, message);
+}
+
+void Logger::Warning(int gpu_id, const std::string& component, const std::string& message) {
+    GetInstance(gpu_id).Warning(component, message);
+}
+
+void Logger::Error(int gpu_id, const std::string& component, const std::string& message) {
+    GetInstance(gpu_id).Error(component, message);
 }
 
 /**

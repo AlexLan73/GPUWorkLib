@@ -340,9 +340,9 @@ static bool TestA_ClMemInput_CpuOutput(ExternalOpenCLContext& ext_ctx) {
         auto t_end = std::chrono::high_resolution_clock::now();
         double time_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
 
-        // Профилирование
+        auto prof_data = drv_gpu_lib::MakeOpenCLFromDurationMs(time_ms);
         drv_gpu_lib::GPUProfiler::GetInstance().Record(
-            0, "ExternalA", "FFT_Total", time_ms);
+            0, "ExternalA", "FFT_Total", prof_data);
 
         std::cout << "   FFT time: " << std::fixed << std::setprecision(2) << time_ms << " ms\n";
 
@@ -410,8 +410,8 @@ static bool TestB_AdapterInput_CpuOutput(ExternalOpenCLContext& ext_ctx) {
         std::cout << "   Read via adapter: " << data_from_gpu.size()
                   << " elements in " << std::fixed << std::setprecision(2) << read_ms << " ms\n";
 
-        // Профилирование
-        drv_gpu_lib::GPUProfiler::GetInstance().Record(0, "ExternalB", "Read", read_ms);
+        auto read_data = drv_gpu_lib::MakeOpenCLFromDurationMs(read_ms);
+        drv_gpu_lib::GPUProfiler::GetInstance().Record(0, "ExternalB", "Read", read_data);
 
         // 5. FFT обработка
         antenna_fft::AntennaFFTParams params(
@@ -427,7 +427,8 @@ static bool TestB_AdapterInput_CpuOutput(ExternalOpenCLContext& ext_ctx) {
         auto t_fft_end = std::chrono::high_resolution_clock::now();
         double fft_ms = std::chrono::duration<double, std::milli>(t_fft_end - t_fft_start).count();
 
-        drv_gpu_lib::GPUProfiler::GetInstance().Record(0, "ExternalB", "FFT_Total", fft_ms);
+        auto fft_data_b = drv_gpu_lib::MakeOpenCLFromDurationMs(fft_ms);
+        drv_gpu_lib::GPUProfiler::GetInstance().Record(0, "ExternalB", "FFT_Total", fft_data_b);
         std::cout << "   FFT time: " << fft_ms << " ms\n";
 
         // 6. Проверяем
@@ -507,7 +508,8 @@ static bool TestC_SvmToClMem(ExternalOpenCLContext& ext_ctx) {
         double conv_ms = std::chrono::duration<double, std::milli>(t_conv_end - t_conv_start).count();
 
         std::cout << "   SVM → CPU read: " << conv_ms << " ms\n";
-        drv_gpu_lib::GPUProfiler::GetInstance().Record(0, "ExternalC", "SVM_Read", conv_ms);
+        auto conv_data = drv_gpu_lib::MakeOpenCLFromDurationMs(conv_ms);
+        drv_gpu_lib::GPUProfiler::GetInstance().Record(0, "ExternalC", "SVM_Read", conv_data);
 
         // 6. FFT обработка
         antenna_fft::AntennaFFTParams params(
@@ -523,7 +525,8 @@ static bool TestC_SvmToClMem(ExternalOpenCLContext& ext_ctx) {
         auto t_fft_end = std::chrono::high_resolution_clock::now();
         double fft_ms = std::chrono::duration<double, std::milli>(t_fft_end - t_fft_start).count();
 
-        drv_gpu_lib::GPUProfiler::GetInstance().Record(0, "ExternalC", "FFT_Total", fft_ms);
+        auto fft_data_c = drv_gpu_lib::MakeOpenCLFromDurationMs(fft_ms);
+        drv_gpu_lib::GPUProfiler::GetInstance().Record(0, "ExternalC", "FFT_Total", fft_data_c);
         std::cout << "   FFT time: " << fft_ms << " ms\n";
 
         // 7. Проверяем

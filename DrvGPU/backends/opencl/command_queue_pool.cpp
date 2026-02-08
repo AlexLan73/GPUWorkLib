@@ -20,6 +20,7 @@ namespace drv_gpu_lib {
 CommandQueuePool::CommandQueuePool()
     : context_(nullptr),
       device_(nullptr),
+      device_index_(0),
       initialized_(false) {
 }
 
@@ -55,7 +56,7 @@ CommandQueuePool::~CommandQueuePool() {
  * @note Каждая очередь создаётся с флагами по умолчанию (0)
  * @note При ошибке создания одной очереди - пропускаем и пробуем следующую
  */
-bool CommandQueuePool::Initialize(cl_context context, cl_device_id device, size_t num_queues) {
+bool CommandQueuePool::Initialize(cl_context context, cl_device_id device, size_t num_queues, int device_index) {
     std::lock_guard<std::mutex> lock(mutex_);
     
     // Если уже инициализирован - очищаем старые очереди
@@ -66,6 +67,7 @@ bool CommandQueuePool::Initialize(cl_context context, cl_device_id device, size_
     // Сохраняем параметры
     context_ = context;
     device_ = device;
+    device_index_ = device_index;
     
     // Определяем количество очередей
     if (num_queues == 0) {
@@ -85,7 +87,7 @@ bool CommandQueuePool::Initialize(cl_context context, cl_device_id device, size_
         
         if (err != CL_SUCCESS) {
             // Логируем ошибку, но продолжаем создавать остальные очереди
-            DRVGPU_LOG_ERROR("CommandQueuePool", "Failed to create command queue: " + std::to_string(err));
+            DRVGPU_LOG_ERROR_GPU(device_index_, "CommandQueuePool", "Failed to create command queue: " + std::to_string(err));
             continue;  // Пропускаем эту очередь
         }
         

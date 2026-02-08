@@ -61,9 +61,10 @@ public:
     // ═══════════════════════════════════════════════════════════════
     
     /**
-     * @brief Создать ModuleRegistry
+     * @brief Создать ModuleRegistry для указанного GPU (логи в DRVGPU_XX)
+     * @param gpu_id Индекс GPU (0, 1, ...) для привязки логов
      */
-    ModuleRegistry();
+    explicit ModuleRegistry(int gpu_id = 0);
     
     /**
      * @brief Деструктор (очистит все модули)
@@ -161,10 +162,8 @@ private:
     // Члены класса
     // ═══════════════════════════════════════════════════════════════
     
-    // Хранилище модулей (имя -> модуль)
+    int gpu_id_;  ///< Индекс GPU для логов (DRVGPU_XX)
     std::unordered_map<std::string, std::shared_ptr<IComputeModule>> modules_;
-    
-    // Thread-safety
     mutable std::mutex mutex_;
 };
 

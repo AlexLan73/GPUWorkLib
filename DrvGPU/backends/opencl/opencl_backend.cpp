@@ -109,7 +109,7 @@ void OpenCLBackend::Initialize(int device_index) {
     // ✅ MULTI-GPU: Создаём СОБСТВЕННЫЙ OpenCLCore для этого устройства
     // ═══════════════════════════════════════════════════════════════════════
 
-    DRVGPU_LOG_INFO("OpenCLBackend", "Creating OpenCLCore for device " + std::to_string(device_index));
+    DRVGPU_LOG_INFO_GPU(device_index, "OpenCLBackend", "Creating OpenCLCore for device " + std::to_string(device_index));
 
     core_ = std::make_unique<OpenCLCore>(device_index, DeviceType::GPU);
     core_->Initialize();
@@ -121,7 +121,7 @@ void OpenCLBackend::Initialize(int device_index) {
     context_ = core_->GetContext();
     device_ = core_->GetDevice();
 
-    DRVGPU_LOG_INFO("OpenCLBackend", "Got context and device from OpenCLCore");
+    DRVGPU_LOG_INFO_GPU(device_index_, "OpenCLBackend", "Got context and device from OpenCLCore");
 
     // ═══════════════════════════════════════════════════════════════════════
     // Создаём COMMAND QUEUE для этого устройства
@@ -144,7 +144,7 @@ void OpenCLBackend::Initialize(int device_index) {
         );
     }
 
-    DRVGPU_LOG_INFO("OpenCLBackend", "Command queue created for device " + std::to_string(device_index));
+    DRVGPU_LOG_INFO_GPU(device_index_, "OpenCLBackend", "Command queue created for device " + std::to_string(device_index));
 
     // ═══════════════════════════════════════════════════════════════════════
     // SVM capabilities и MemoryManager
@@ -158,7 +158,7 @@ void OpenCLBackend::Initialize(int device_index) {
 
     initialized_ = true;
 
-    DRVGPU_LOG_INFO("OpenCLBackend",
+    DRVGPU_LOG_INFO_GPU(device_index_, "OpenCLBackend",
         "Initialized for device " + std::to_string(device_index) +
         " (" + core_->GetDeviceName() + ")");
 }
@@ -175,7 +175,8 @@ void OpenCLBackend::Cleanup() {
         return;
     }
 
-    DRVGPU_LOG_INFO("OpenCLBackend",
+    int gpu_id_for_log = device_index_;
+    DRVGPU_LOG_INFO_GPU(gpu_id_for_log, "OpenCLBackend",
         "Cleanup started for device " + std::to_string(device_index_) +
         " (owns_resources = " + std::string(owns_resources_ ? "true" : "false") + ")");
 
@@ -191,7 +192,7 @@ void OpenCLBackend::Cleanup() {
         if (queue_) {
             clReleaseCommandQueue(queue_);
             queue_ = nullptr;
-            DRVGPU_LOG_DEBUG("OpenCLBackend", "Command queue released");
+            DRVGPU_LOG_DEBUG_GPU(device_index_, "OpenCLBackend", "Command queue released");
         }
 
         // ✅ MULTI-GPU: Очищаем СВОЙ OpenCLCore
@@ -202,7 +203,7 @@ void OpenCLBackend::Cleanup() {
 
     } else {
         // NON-OWNING MODE: Просто обнуляем указатели
-        DRVGPU_LOG_DEBUG("OpenCLBackend", "Non-owning mode: NOT releasing resources");
+        DRVGPU_LOG_DEBUG_GPU(device_index_, "OpenCLBackend", "Non-owning mode: NOT releasing resources");
 
         queue_ = nullptr;
         context_ = nullptr;
@@ -213,7 +214,7 @@ void OpenCLBackend::Cleanup() {
     device_index_ = -1;
     initialized_ = false;
 
-    DRVGPU_LOG_INFO("OpenCLBackend", "Cleanup complete");
+    DRVGPU_LOG_INFO_GPU(gpu_id_for_log, "OpenCLBackend", "Cleanup complete");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -278,7 +279,7 @@ void OpenCLBackend::Free(void* ptr) {
 
 void OpenCLBackend::MemcpyHostToDevice(void* dst, const void* src, size_t size_bytes) {
     if (!context_ || !queue_ || !dst || !src) {
-        DRVGPU_LOG_ERROR("OpenCLBackend", "MemcpyHostToDevice - Invalid parameters");
+        DRVGPU_LOG_ERROR_GPU(device_index_, "OpenCLBackend", "MemcpyHostToDevice - Invalid parameters");
         return;
     }
 
@@ -295,7 +296,7 @@ void OpenCLBackend::MemcpyHostToDevice(void* dst, const void* src, size_t size_b
     );
 
     if (err != CL_SUCCESS) {
-        DRVGPU_LOG_ERROR("OpenCLBackend", "MemcpyHostToDevice error: " + std::to_string(err));
+        DRVGPU_LOG_ERROR_GPU(device_index_, "OpenCLBackend", "MemcpyHostToDevice error: " + std::to_string(err));
     }
 }
 
@@ -319,7 +320,7 @@ void OpenCLBackend::MemcpyDeviceToHost(void* dst, const void* src, size_t size_b
     );
 
     if (err != CL_SUCCESS) {
-        DRVGPU_LOG_ERROR("OpenCLBackend", "MemcpyDeviceToHost error: " + std::to_string(err));
+        DRVGPU_LOG_ERROR_GPU(device_index_, "OpenCLBackend", "MemcpyDeviceToHost error: " + std::to_string(err));
     }
 }
 
@@ -344,7 +345,7 @@ void OpenCLBackend::MemcpyDeviceToDevice(void* dst, const void* src, size_t size
     );
 
     if (err != CL_SUCCESS) {
-        DRVGPU_LOG_ERROR("OpenCLBackend", "MemcpyDeviceToDevice error: " + std::to_string(err));
+        DRVGPU_LOG_ERROR_GPU(device_index_, "OpenCLBackend", "MemcpyDeviceToDevice error: " + std::to_string(err));
     }
 }
 

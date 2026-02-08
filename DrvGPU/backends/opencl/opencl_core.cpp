@@ -26,7 +26,7 @@ OpenCLCore::OpenCLCore(int device_index, DeviceType device_type)
       platform_(nullptr),
       device_(nullptr),
       context_(nullptr) {
-    DRVGPU_LOG_DEBUG("OpenCLCore", "Created for device index " + std::to_string(device_index));
+    DRVGPU_LOG_DEBUG_GPU(device_index, "OpenCLCore", "Created for device index " + std::to_string(device_index));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -105,14 +105,14 @@ void OpenCLCore::Initialize() {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (initialized_) {
-        DRVGPU_LOG_WARNING("OpenCLCore", "Device " + std::to_string(device_index_) + " already initialized");
+        DRVGPU_LOG_WARNING_GPU(device_index_, "OpenCLCore", "Device " + std::to_string(device_index_) + " already initialized");
         return;
     }
 
     InitializeOpenCL();
     initialized_ = true;
 
-    DRVGPU_LOG_INFO("OpenCLCore", "Device " + std::to_string(device_index_) + " initialized: " + GetDeviceName());
+    DRVGPU_LOG_INFO_GPU(device_index_, "OpenCLCore", "Device " + std::to_string(device_index_) + " initialized: " + GetDeviceName());
 }
 
 /**
@@ -159,7 +159,7 @@ void OpenCLCore::InitializeOpenCL() {
     context_ = clCreateContext(props, 1, &device_, nullptr, nullptr, &err);
     CheckCLError(err, "clCreateContext for device " + std::to_string(device_index_));
 
-    DRVGPU_LOG_DEBUG("OpenCLCore", "Context created for device " + std::to_string(device_index_));
+    DRVGPU_LOG_DEBUG_GPU(device_index_, "OpenCLCore", "Context created for device " + std::to_string(device_index_));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -177,7 +177,7 @@ void OpenCLCore::Cleanup() {
     if (initialized_) {
         ReleaseResources();
         initialized_ = false;
-        DRVGPU_LOG_DEBUG("OpenCLCore", "Device " + std::to_string(device_index_) + " cleaned up");
+        DRVGPU_LOG_DEBUG_GPU(device_index_, "OpenCLCore", "Device " + std::to_string(device_index_) + " cleaned up");
     }
 }
 
@@ -326,7 +326,7 @@ T OpenCLCore::GetDeviceInfoValue(cl_device_info param) const {
     if (device_) {
         cl_int err = clGetDeviceInfo(device_, param, sizeof(T), &value, nullptr);
         if (err != CL_SUCCESS) {
-            DRVGPU_LOG_WARNING("OpenCLCore", "Failed to get device info param " + std::to_string(param));
+            DRVGPU_LOG_WARNING_GPU(device_index_, "OpenCLCore", "Failed to get device info param " + std::to_string(param));
         }
     }
     return value;
@@ -366,6 +366,13 @@ std::string OpenCLCore::GetVendor() const {
 
 std::string OpenCLCore::GetDriverVersion() const {
     return GetDeviceInfoString(CL_DRIVER_VERSION);
+}
+
+std::string OpenCLCore::GetPlatformName() const {
+    if (!platform_) return "";
+    char name[256] = {0};
+    clGetPlatformInfo(platform_, CL_PLATFORM_NAME, sizeof(name), name, nullptr);
+    return std::string(name);
 }
 
 size_t OpenCLCore::GetGlobalMemorySize() const {

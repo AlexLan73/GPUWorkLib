@@ -121,7 +121,7 @@ void DrvGPU::CreateBackend() {
  */
 void DrvGPU::InitializeSubsystems() {
     memory_manager_ = std::make_unique<MemoryManager>(backend_.get());
-    module_registry_ = std::make_unique<ModuleRegistry>();
+    module_registry_ = std::make_unique<ModuleRegistry>(device_index_);
 }
 
 /**
@@ -141,7 +141,7 @@ void DrvGPU::InitializeSubsystems() {
 void DrvGPU::Initialize() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (initialized_) {
-        DRVGPU_LOG_WARNING("DrvGPU", "Already initialized");
+        DRVGPU_LOG_WARNING_GPU(device_index_, "DrvGPU", "Already initialized");
         return;
     }
 
@@ -151,7 +151,7 @@ void DrvGPU::Initialize() {
 
     backend_->Initialize(device_index_);
     initialized_ = true;
-    DRVGPU_LOG_INFO("DrvGPU", "Initialized successfully");
+    DRVGPU_LOG_INFO_GPU(device_index_, "DrvGPU", "Initialized successfully");
 }
 
 /**
@@ -182,7 +182,7 @@ void DrvGPU::Cleanup() {
     module_registry_.reset();
     backend_.reset();
     initialized_ = false;
-    DRVGPU_LOG_INFO("DrvGPU", "Cleaned up");
+    DRVGPU_LOG_INFO_GPU(device_index_, "DrvGPU", "Cleaned up");
 }
 
 /**
@@ -215,11 +215,11 @@ std::string DrvGPU::GetDeviceName() const {
  */
 void DrvGPU::PrintDeviceInfo() const {
     if (!initialized_ || !backend_) {
-        DRVGPU_LOG_WARNING("DrvGPU", "Device not initialized");
+        DRVGPU_LOG_WARNING_GPU(device_index_, "DrvGPU", "Device not initialized");
         return;
     }
     auto info = backend_->GetDeviceInfo();
-    DRVGPU_LOG_INFO("DrvGPU", "Device Info - Name: " + info.name + ", Vendor: " + info.vendor);
+    DRVGPU_LOG_INFO_GPU(device_index_, "DrvGPU", "Device Info - Name: " + info.name + ", Vendor: " + info.vendor);
 }
 
 /**

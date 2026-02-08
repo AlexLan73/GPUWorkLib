@@ -9,11 +9,11 @@ namespace drv_gpu_lib {
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
- * @brief Конструктор ModuleRegistry по умолчанию
- * 
- * Создаёт пустой реестр модулей.
+ * @brief Конструктор ModuleRegistry
+ * @param gpu_id Индекс GPU для привязки логов (DRVGPU_XX)
  */
-ModuleRegistry::ModuleRegistry() = default;
+ModuleRegistry::ModuleRegistry(int gpu_id) : gpu_id_(gpu_id) {
+}
 
 /**
  * @brief Деструктор ModuleRegistry
@@ -35,7 +35,8 @@ ModuleRegistry::~ModuleRegistry() {
  * Переносит все модули из other в новый объект.
  * Thread-safe: блокирует mutex other.
  */
-ModuleRegistry::ModuleRegistry(ModuleRegistry&& other) noexcept {
+ModuleRegistry::ModuleRegistry(ModuleRegistry&& other) noexcept
+    : gpu_id_(other.gpu_id_) {
     std::lock_guard<std::mutex> lock(other.mutex_);
     modules_ = std::move(other.modules_);
 }
@@ -49,6 +50,7 @@ ModuleRegistry& ModuleRegistry::operator=(ModuleRegistry&& other) noexcept {
     if (this != &other) {
         std::lock_guard<std::mutex> lock_this(mutex_);
         std::lock_guard<std::mutex> lock_other(other.mutex_);
+        gpu_id_ = other.gpu_id_;
         modules_ = std::move(other.modules_);
     }
     return *this;
@@ -183,13 +185,13 @@ std::vector<std::string> ModuleRegistry::GetModuleNames() const {
 void ModuleRegistry::PrintModules() const {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    DRVGPU_LOG_DEBUG("ModuleRegistry", "Printing registered modules");
+    DRVGPU_LOG_DEBUG_GPU(gpu_id_, "ModuleRegistry", "Printing registered modules");
     
     if (modules_.empty()) {
-        DRVGPU_LOG_DEBUG("ModuleRegistry", "No modules registered");
+        DRVGPU_LOG_DEBUG_GPU(gpu_id_, "ModuleRegistry", "No modules registered");
     } else {
         for (const auto& pair : modules_) {
-            DRVGPU_LOG_DEBUG("ModuleRegistry", "  - " + pair.first);
+            DRVGPU_LOG_DEBUG_GPU(gpu_id_, "ModuleRegistry", "  - " + pair.first);
         }
     }
 }

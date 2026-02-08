@@ -372,9 +372,9 @@ inline int run() {
         auto t_svm_end = std::chrono::high_resolution_clock::now();
         double svm_time = std::chrono::duration<double, std::milli>(t_svm_end - t_svm_start).count();
 
-        // Профилирование через async GPUProfiler (non-blocking Enqueue)
+        auto upload_data = drv_gpu_lib::MakeOpenCLFromDurationMs(svm_time);
         drv_gpu_lib::GPUProfiler::GetInstance().Record(
-            0, "TestSVM", "DataUpload", svm_time);
+            0, "TestSVM", "DataUpload", upload_data);
 
         std::cout << "   Upload time: " << std::fixed << std::setprecision(2)
                   << svm_time << " ms\n\n";
@@ -409,9 +409,9 @@ inline int run() {
         auto t_fft_end = std::chrono::high_resolution_clock::now();
         double fft_time = std::chrono::duration<double, std::milli>(t_fft_end - t_fft_start).count();
 
-        // Профилирование
+        auto fft_data = drv_gpu_lib::MakeOpenCLFromDurationMs(fft_time);
         drv_gpu_lib::GPUProfiler::GetInstance().Record(
-            0, "TestSVM", "FFT_Total", fft_time);
+            0, "TestSVM", "FFT_Total", fft_data);
 
         std::cout << "   FFT processing time: " << fft_time << " ms\n";
         std::cout << "   Batch mode used: "

@@ -78,6 +78,7 @@ set(DRVGPU_MEMORY_HEADERS ${DRVGPU_MEMORY_SOURCES})
 set(DRVGPU_OPENCL_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/opencl_backend.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/opencl_core.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/opencl_profiling.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/command_queue_pool.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/opencl_backend.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/opencl_core.hpp"

@@ -34,8 +34,12 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <map>
 
 namespace drv_gpu_lib {
+
+/// Максимальное количество GPU для отдельных логеров (plog требует compile-time instance ID)
+constexpr int kMaxGpuLogInstances = 32;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Уровни логирования plog:
@@ -73,8 +77,8 @@ namespace drv_gpu_lib {
  */
 class DefaultLogger : public ILogger {
 public:
-    /// Получить единственный экземпляр DefaultLogger
-    static DefaultLogger& GetInstance();
+    /// Получить логер для GPU (по умолчанию gpu_id=0). Per-GPU: отдельный инстанс на каждый gpu_id.
+    static DefaultLogger& GetInstance(int gpu_id = 0);
 
     // ═══════════════════════════════════════════════════════════════════════
     // Реализация ILogger
@@ -114,16 +118,19 @@ public:
     /// Деструктор
     ~DefaultLogger();
 
-    /// Конструктор
-    DefaultLogger();
+    /// Конструктор (приватный; используйте GetInstance(gpu_id))
+    explicit DefaultLogger(int gpu_id);
 
 private:
 
-    /// Инициализировать plog
+    /// Инициализировать plog для этого GPU
     void Initialize();
 
     /// Очистить plog
     void Shutdown();
+
+    /// Номер GPU (путь: Logs/DRVGPU_XX/)
+    int gpu_id_;
 
     /// Флаг инициализации
     bool initialized_;
@@ -133,6 +140,10 @@ private:
 
     /// Текущий уровень логирования (plog severity)
     plog::Severity current_level_;
+
+    /// Хранилище инстансов по gpu_id (синглтон на GPU)
+    static std::map<int, std::unique_ptr<DefaultLogger>> instances_;
+    static std::mutex instances_mutex_;
 };
 
 } // namespace drv_gpu_lib
