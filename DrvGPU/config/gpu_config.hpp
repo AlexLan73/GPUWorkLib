@@ -2,17 +2,17 @@
 
 /**
  * @file gpu_config.hpp
- * @brief GPUConfig - Singleton for managing GPU configuration (configGPU.json)
+ * @brief GPUConfig — Singleton для управления конфигурацией GPU (configGPU.json)
  *
  * ============================================================================
- * PURPOSE:
- *   Centralized GPU configuration management:
- *   - Load/Save configGPU.json
- *   - Provide per-GPU configuration (is_prof, is_logger, etc.)
- *   - Auto-create default config if file doesn't exist
- *   - Thread-safe access
+ * НАЗНАЧЕНИЕ:
+ *   Централизованное управление конфигурацией GPU:
+ *   - Загрузка/сохранение configGPU.json
+ *   - Конфигурация по каждому GPU (is_prof, is_logger и т.д.)
+ *   - Автосоздание конфига по умолчанию, если файл отсутствует
+ *   - Потокобезопасный доступ
  *
- * JSON FORMAT (configGPU.json):
+ * ФОРМАТ JSON (configGPU.json):
  *   {
  *     "version": "1.0",
  *     "description": "GPU Configuration for DrvGPU",
@@ -31,23 +31,23 @@
  *     ]
  *   }
  *
- * MISSING FIELDS:
- *   If a field is missing in JSON, the default value from GPUConfigEntry
- *   is used. Example: GPU id=1 above has is_prof=false (default).
+ * ОТСУТСТВУЮЩИЕ ПОЛЯ:
+ *   Если поле отсутствует в JSON, используется значение по умолчанию из GPUConfigEntry.
+ *   Пример: GPU id=1 выше имеет is_prof=false (по умолчанию).
  *
- * AUTO-CREATE:
- *   If configGPU.json doesn't exist, it is created with a single GPU:
+ * АВТОСОЗДАНИЕ:
+ *   Если configGPU.json не существует, создаётся конфиг с одним GPU:
  *   { id: 0, name: "TEST", is_prof: true, is_logger: true }
  *
- * USAGE:
- *   // Load configuration
+ * ИСПОЛЬЗОВАНИЕ:
+ *   // Загрузить конфигурацию
  *   GPUConfig::GetInstance().Load("./configGPU.json");
  *
- *   // Get config for specific GPU
+ *   // Получить конфиг для конкретного GPU
  *   auto& cfg = GPUConfig::GetInstance().GetConfig(0);
  *   if (cfg.is_prof) { ... }
  *
- *   // Get all configs
+ *   // Получить все конфиги
  *   auto& all = GPUConfig::GetInstance().GetAllConfigs();
  * ============================================================================
  *
@@ -65,208 +65,207 @@
 namespace drv_gpu_lib {
 
 // ============================================================================
-// GPUConfig - Singleton for GPU configuration
+// GPUConfig — Singleton конфигурации GPU
 // ============================================================================
 
 /**
  * @class GPUConfig
- * @brief Singleton manager for GPU configuration
+ * @brief Менеджер-Singleton конфигурации GPU
  *
- * Provides centralized access to GPU configuration loaded from configGPU.json.
- * Thread-safe for concurrent reads from multiple GPU threads.
+ * Обеспечивает централизованный доступ к конфигурации GPU из configGPU.json.
+ * Потокобезопасен при параллельном чтении из нескольких потоков GPU.
  *
- * Lifecycle:
- * 1. GPUConfig::GetInstance().Load(path) or LoadOrCreate(path)
- * 2. GPUConfig::GetInstance().GetConfig(gpu_id) - per-GPU access
- * 3. Optional: Save() to persist changes
+ * Жизненный цикл:
+ * 1. GPUConfig::GetInstance().Load(path) или LoadOrCreate(path)
+ * 2. GPUConfig::GetInstance().GetConfig(gpu_id) — доступ по GPU
+ * 3. Опционально: Save() для сохранения изменений
  */
 class GPUConfig {
 public:
     // ========================================================================
-    // Singleton access
+    // Доступ к Singleton
     // ========================================================================
 
     /**
-     * @brief Get the singleton instance
-     * @return Reference to the global GPUConfig
+     * @brief Получить единственный экземпляр
+     * @return Ссылка на глобальный GPUConfig
      */
     static GPUConfig& GetInstance();
 
-    // Delete copy/move (singleton)
+    // Запрет копирования/перемещения (singleton)
     GPUConfig(const GPUConfig&) = delete;
     GPUConfig& operator=(const GPUConfig&) = delete;
 
     // ========================================================================
-    // Loading and Saving
+    // Загрузка и сохранение
     // ========================================================================
 
     /**
-     * @brief Load configuration from JSON file
-     * @param file_path Path to configGPU.json
-     * @return true if loaded successfully, false on error
+     * @brief Загрузить конфигурацию из JSON-файла
+     * @param file_path Путь к configGPU.json
+     * @return true при успешной загрузке, false при ошибке
      *
-     * If loading fails (file not found, parse error), returns false
-     * and keeps current configuration unchanged.
+     * При ошибке загрузки (файл не найден, ошибка разбора) возвращается false,
+     * текущая конфигурация не изменяется.
      */
     bool Load(const std::string& file_path);
 
     /**
-     * @brief Load configuration from file, or create default if not found
-     * @param file_path Path to configGPU.json
-     * @return true if loaded or created successfully
+     * @brief Загрузить конфигурацию из файла или создать по умолчанию, если не найден
+     * @param file_path Путь к configGPU.json
+     * @return true при успешной загрузке или создании
      *
-     * If the file doesn't exist:
-     * 1. Creates default configuration (single GPU: id=0, name="TEST", is_prof=true, is_logger=true)
-     * 2. Saves it to file_path
-     * 3. Returns true
+     * Если файл не существует:
+     * 1. Создаётся конфигурация по умолчанию (один GPU: id=0, name="TEST", is_prof=true, is_logger=true)
+     * 2. Сохраняется в file_path
+     * 3. Возвращается true
      *
-     * If the file exists but has errors:
-     * 1. Returns false
-     * 2. Configuration unchanged
+     * Если файл есть, но с ошибками:
+     * 1. Возвращается false
+     * 2. Конфигурация не изменяется
      */
     bool LoadOrCreate(const std::string& file_path);
 
     /**
-     * @brief Save current configuration to JSON file
-     * @param file_path Path to save (empty = last loaded path)
-     * @return true if saved successfully
+     * @brief Сохранить текущую конфигурацию в JSON-файл
+     * @param file_path Путь для сохранения (пусто = последний загруженный путь)
+     * @return true при успешном сохранении
      */
     bool Save(const std::string& file_path = "");
 
     /**
-     * @brief Check if configuration is loaded
-     * @return true if Load() or LoadOrCreate() was called successfully
+     * @brief Проверить, загружена ли конфигурация
+     * @return true если Load() или LoadOrCreate() были вызваны успешно
      */
     bool IsLoaded() const;
 
     // ========================================================================
-    // Configuration Access (Thread-Safe)
+    // Доступ к конфигурации (потокобезопасно)
     // ========================================================================
 
     /**
-     * @brief Get configuration for specific GPU
-     * @param gpu_id GPU device index
-     * @return Reference to GPUConfigEntry for this GPU
+     * @brief Получить конфигурацию для конкретного GPU
+     * @param gpu_id Индекс устройства GPU
+     * @return Ссылка на GPUConfigEntry для этого GPU
      *
-     * If gpu_id is not found in configuration, returns a default
-     * GPUConfigEntry with the given id.
+     * Если gpu_id не найден в конфигурации, возвращается запись по умолчанию с указанным id.
      */
     const GPUConfigEntry& GetConfig(int gpu_id) const;
 
     /**
-     * @brief Get all GPU configurations
-     * @return Reference to vector of all GPUConfigEntry
+     * @brief Получить все конфигурации GPU
+     * @return Ссылка на вектор всех GPUConfigEntry
      */
     const std::vector<GPUConfigEntry>& GetAllConfigs() const;
 
     /**
-     * @brief Get root configuration data (includes version, description)
-     * @return Reference to GPUConfigData
+     * @brief Получить корневые данные конфигурации (версия, описание)
+     * @return Ссылка на GPUConfigData
      */
     const GPUConfigData& GetData() const;
 
     /**
-     * @brief Get list of active GPU IDs (is_active == true)
-     * @return Vector of GPU IDs that should be initialized
+     * @brief Получить список активных ID GPU (is_active == true)
+     * @return Вектор ID GPU, которые следует инициализировать
      */
     std::vector<int> GetActiveGPUIDs() const;
 
     /**
-     * @brief Check if a specific GPU has profiling enabled
-     * @param gpu_id GPU device index
-     * @return true if is_prof == true for this GPU
+     * @brief Проверить, включено ли профилирование для данного GPU
+     * @param gpu_id Индекс устройства GPU
+     * @return true если is_prof == true для этого GPU
      */
     bool IsProfilingEnabled(int gpu_id) const;
 
     /**
-     * @brief Check if a specific GPU has logging enabled
-     * @param gpu_id GPU device index
-     * @return true if is_logger == true for this GPU
+     * @brief Проверить, включено ли логирование для данного GPU
+     * @param gpu_id Индекс устройства GPU
+     * @return true если is_logger == true для этого GPU
      */
     bool IsLoggingEnabled(int gpu_id) const;
 
     /**
-     * @brief Check if a specific GPU has console output enabled
-     * @param gpu_id GPU device index
-     * @return true if is_console == true for this GPU
+     * @brief Проверить, включён ли вывод в консоль для данного GPU
+     * @param gpu_id Индекс устройства GPU
+     * @return true если is_console == true для этого GPU
      */
     bool IsConsoleEnabled(int gpu_id) const;
 
     /**
-     * @brief Get maximum memory percentage for a GPU
-     * @param gpu_id GPU device index
-     * @return Memory limit in percent (e.g., 70 means 70%)
+     * @brief Получить максимальный процент памяти для GPU
+     * @param gpu_id Индекс устройства GPU
+     * @return Лимит памяти в процентах (напр., 70 означает 70%)
      */
     size_t GetMaxMemoryPercent(int gpu_id) const;
 
     // ========================================================================
-    // Modification
+    // Изменение конфигурации
     // ========================================================================
 
     /**
-     * @brief Set or update configuration for a GPU
-     * @param entry New configuration entry
+     * @brief Установить или обновить конфигурацию для GPU
+     * @param entry Новая запись конфигурации
      *
-     * If a GPU with the same id exists, it is replaced.
-     * If not, a new entry is added.
+     * Если GPU с таким id уже есть — запись заменяется.
+     * Иначе добавляется новая запись.
      */
     void SetConfig(const GPUConfigEntry& entry);
 
     /**
-     * @brief Reset to default configuration
-     * Creates a single GPU: id=0, name="TEST", is_prof=true, is_logger=true
+     * @brief Сбросить к конфигурации по умолчанию
+     * Создаётся один GPU: id=0, name="TEST", is_prof=true, is_logger=true
      */
     void ResetToDefault();
 
     // ========================================================================
-    // Utilities
+    // Утилиты
     // ========================================================================
 
     /**
-     * @brief Get the file path that was last used for Load/Save
-     * @return File path string (empty if not loaded)
+     * @brief Получить путь к файлу, последний раз использованный для Load/Save
+     * @return Строка пути (пустая, если не загружали)
      */
     std::string GetFilePath() const;
 
     /**
-     * @brief Print configuration to stdout (for debugging)
+     * @brief Вывести конфигурацию в stdout (для отладки)
      */
     void Print() const;
 
 private:
     // ========================================================================
-    // Private Constructor (Singleton)
+    // Приватный конструктор (Singleton)
     // ========================================================================
 
     GPUConfig();
 
     // ========================================================================
-    // Private Methods
+    // Приватные методы
     // ========================================================================
 
-    /// Create default configuration data
+    /// Создать данные конфигурации по умолчанию
     GPUConfigData CreateDefaultConfig() const;
 
-    /// Find config entry by GPU ID (returns nullptr if not found)
+    /// Найти запись конфигурации по ID GPU (возвращает nullptr, если не найдено)
     const GPUConfigEntry* FindConfig(int gpu_id) const;
 
     // ========================================================================
-    // Private Members
+    // Приватные члены
     // ========================================================================
 
-    /// Root configuration data
+    /// Корневые данные конфигурации
     GPUConfigData data_;
 
-    /// Default entry returned when GPU ID not found
+    /// Запись по умолчанию при ненайденном ID GPU
     mutable GPUConfigEntry default_entry_;
 
-    /// Path to configuration file
+    /// Путь к файлу конфигурации
     std::string file_path_;
 
-    /// Flag indicating config was loaded
+    /// Флаг загрузки конфигурации
     bool loaded_ = false;
 
-    /// Mutex for thread-safe access
+    /// Мьютекс для потокобезопасного доступа
     mutable std::mutex mutex_;
 };
 

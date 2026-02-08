@@ -24,7 +24,7 @@ int main() {
 //  test_example_mat::run();  
 //  test_find_3_max::run();
 //  test_fft_max::run();
-  test_spectrum_maxima::run();
+//  test_spectrum_maxima::run();
 
   // Services multithreaded tests
   test_services::run();

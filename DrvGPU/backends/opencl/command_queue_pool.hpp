@@ -55,8 +55,8 @@ namespace drv_gpu_lib {
  * 
  * Особенности:
  * - Ленивое создание очередей (только при Initialize)
- * - Round-robin распредеQueue(index)
- * - Сление при Getинхронизация всех очередей одним вызовом
+ * - Round-robin распределение при GetQueue(index)
+ * - Синхронизация всех очередей одним вызовом
  */
 class CommandQueuePool {
 public:

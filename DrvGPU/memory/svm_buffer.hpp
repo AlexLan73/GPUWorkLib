@@ -55,7 +55,7 @@ public:
     
     /**
      * @brief Создать SVM буфер
-     * @param context OpenCL context
+     * @param context OpenCL-контекст
      * @param queue Command queue для операций
      * @param num_elements Количество complex<float> элементов
      * @param strategy SVM стратегия (COARSE или FINE)
@@ -159,7 +159,7 @@ private:
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// Реализация (inline для header-only или в .cpp)
+// Реализация (inline в заголовке или в .cpp)
 // ════════════════════════════════════════════════════════════════════════════
 
 inline SVMBuffer::SVMBuffer(
@@ -211,17 +211,17 @@ inline SVMBuffer::SVMBuffer(SVMBuffer&& other) noexcept
       mem_type_(other.mem_type_),
       is_mapped_(other.is_mapped_) {
     
-    // Invalidate source
+    // Инвалидируем источник
     other.svm_ptr_ = nullptr;
     other.is_mapped_ = false;
 }
 
 inline SVMBuffer& SVMBuffer::operator=(SVMBuffer&& other) noexcept {
     if (this != &other) {
-        // Free current resources
+        // Освобождаем текущие ресурсы
         FreeSVM();
         
-        // Move from other
+        // Перемещаем из other
         context_      = other.context_;
         queue_        = other.queue_;
         svm_ptr_      = other.svm_ptr_;
@@ -231,7 +231,7 @@ inline SVMBuffer& SVMBuffer::operator=(SVMBuffer&& other) noexcept {
         mem_type_     = other.mem_type_;
         is_mapped_    = other.is_mapped_;
         
-        // Invalidate source
+        // Инвалидируем источник
         other.svm_ptr_ = nullptr;
         other.is_mapped_ = false;
     }
@@ -254,7 +254,7 @@ inline void SVMBuffer::AllocateSVM() {
 
 inline void SVMBuffer::FreeSVM() {
     if (svm_ptr_) {
-        // Unmap first if needed
+        // Сначала unmap при необходимости
         if (is_mapped_) {
             Unmap();
         }
@@ -267,23 +267,23 @@ inline void SVMBuffer::FreeSVM() {
 inline cl_svm_mem_flags SVMBuffer::GetSVMFlags() const {
     cl_svm_mem_flags flags = 0;
     
-    // Base flags based on strategy
+    // Базовые флаги по стратегии
     switch (strategy_) {
         case MemoryStrategy::SVM_FINE_GRAIN:
             flags = CL_MEM_SVM_FINE_GRAIN_BUFFER;
             break;
         case MemoryStrategy::SVM_FINE_SYSTEM:
-            // Fine-grain system doesn't use flags here
+            // Fine-grain system здесь не использует флаги
             flags = CL_MEM_SVM_FINE_GRAIN_BUFFER;
             break;
         case MemoryStrategy::SVM_COARSE_GRAIN:
         default:
-            // Coarse-grain is default (no special flags)
+            // Coarse-grain по умолчанию (без специальных флагов)
             flags = 0;
             break;
     }
     
-    // Add read/write flags
+    // Добавляем флаги чтения/записи
     switch (mem_type_) {
         case MemoryType::GPU_READ_ONLY:
             flags |= CL_MEM_READ_ONLY;
@@ -302,17 +302,17 @@ inline cl_svm_mem_flags SVMBuffer::GetSVMFlags() const {
 
 inline void SVMBuffer::Map(bool write, bool read) {
     if (is_mapped_) {
-        return;  // Already mapped
+        return;  // Уже отображён
     }
     
-    // Fine-grained SVM doesn't need explicit map
+    // Fine-grained SVM не требует явного map
     if (strategy_ == MemoryStrategy::SVM_FINE_GRAIN || 
         strategy_ == MemoryStrategy::SVM_FINE_SYSTEM) {
         is_mapped_ = true;
         return;
     }
     
-    // Coarse-grained needs explicit map
+    // Coarse-grained требует явного map
     cl_map_flags map_flags = 0;
     if (write) map_flags |= CL_MAP_WRITE;
     if (read)  map_flags |= CL_MAP_READ;
@@ -332,17 +332,17 @@ inline void SVMBuffer::Map(bool write, bool read) {
 
 inline void SVMBuffer::Unmap() {
     if (!is_mapped_) {
-        return;  // Not mapped
+        return;  // Не отображён
     }
     
-    // Fine-grained SVM doesn't need explicit unmap
+    // Fine-grained SVM не требует явного unmap
     if (strategy_ == MemoryStrategy::SVM_FINE_GRAIN || 
         strategy_ == MemoryStrategy::SVM_FINE_SYSTEM) {
         is_mapped_ = false;
         return;
     }
     
-    // Coarse-grained needs explicit unmap
+    // Coarse-grained требует явного unmap
     cl_int err = clEnqueueSVMUnmap(
         queue_,
         svm_ptr_,
@@ -377,10 +377,10 @@ inline void SVMBuffer::WriteRaw(const void* data, size_t size_bytes) {
     bool was_mapped = is_mapped_;
     
     if (!is_mapped_) {
-        Map(true, false);  // Map for write
+        Map(true, false);  // Отображение для записи
     }
     
-    // Direct memory copy (zero-copy!)
+    // Прямое копирование памяти (без лишнего копирования)
     std::memcpy(svm_ptr_, data, size_bytes);
     
     if (!was_mapped) {
@@ -414,10 +414,10 @@ inline void SVMBuffer::ReadRaw(void* dest, size_t size_bytes) {
     bool was_mapped = is_mapped_;
     
     if (!is_mapped_) {
-        Map(false, true);  // Map for read
+        Map(false, true);  // Отображение для чтения
     }
     
-    // Direct memory copy (zero-copy!)
+    // Прямое копирование памяти (без лишнего копирования)
     std::memcpy(dest, svm_ptr_, size_bytes);
     
     if (!was_mapped) {
@@ -434,10 +434,10 @@ inline cl_event SVMBuffer::WriteAsync(const ComplexVector& data) {
     
     cl_event event = nullptr;
     
-    // For SVM, we use clEnqueueSVMMemcpy
+    // Для SVM используем clEnqueueSVMMemcpy
     cl_int err = clEnqueueSVMMemcpy(
         queue_,
-        CL_FALSE,  // Non-blocking
+        CL_FALSE,  // Неблокирующий режим
         svm_ptr_,
         data.data(),
         data.size() * sizeof(ComplexFloat),
@@ -458,7 +458,7 @@ inline cl_event SVMBuffer::ReadAsync(ComplexVector& out_data) {
     
     cl_int err = clEnqueueSVMMemcpy(
         queue_,
-        CL_FALSE,  // Non-blocking
+        CL_FALSE,  // Неблокирующий режим
         out_data.data(),
         svm_ptr_,
         num_elements_ * sizeof(ComplexFloat),

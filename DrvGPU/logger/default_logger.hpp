@@ -25,7 +25,7 @@
 #include "../logger/config_logger.hpp"
 
 // ═══════════════════════════════════════════════════════════════════════════
-// plog — header-only logging library
+// plog — header-only библиотека логирования
 // https://github.com/SergiusTheBest/plog
 // ═══════════════════════════════════════════════════════════════════════════
 #include <plog/Log.h>

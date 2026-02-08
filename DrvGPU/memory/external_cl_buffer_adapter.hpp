@@ -6,7 +6,7 @@
  * 
  * КЛЮЧЕВАЯ ФУНКЦИОНАЛЬНОСТЬ: Загрузка/Выгрузка данных из внешних OpenCL буферов
  * 
- * USE CASE: Обмен данными между DrvGPU и вашим существующим OpenCL кодом
+ * Сценарий: обмен данными между DrvGPU и вашим существующим OpenCL-кодом
  * 
  * @author DrvGPU Team
  * @date 2026-02-01
@@ -107,7 +107,7 @@ public:
      * @return std::vector с данными из GPU
      * @throws std::runtime_error при ошибке OpenCL
      * 
-     * USE CASE: Чтение результатов обработки на GPU
+     * Сценарий: чтение результатов обработки на GPU
      * @code
      * // GPU обработал данные, теперь читаем результат
      * std::vector<float> result = adapter.Read();
@@ -137,7 +137,7 @@ public:
      * @param data Вектор данных для записи
      * @throws std::runtime_error если data.size() > num_elements_
      * 
-     * USE CASE: Передача обработанных данных обратно на GPU
+     * Сценарий: передача обработанных данных обратно на GPU
      * @code
      * // Подготовили данные на CPU
      * std::vector<float> processed_data(1024);
@@ -226,7 +226,7 @@ private:
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// Template реализация (inline для header-only)
+// Шаблонная реализация (inline для header-only)
 // ════════════════════════════════════════════════════════════════════════════
 
 template<typename T>
@@ -298,7 +298,7 @@ ExternalCLBufferAdapter<T>& ExternalCLBufferAdapter<T>::operator=(
         queue_ = other.queue_;
         owns_buffer_ = other.owns_buffer_;
 
-        // Инвалидировать источник
+        // Инвалидируем источник
         other.buffer_ = nullptr;
         other.owns_buffer_ = false;
     }
@@ -337,14 +337,14 @@ void ExternalCLBufferAdapter<T>::ReadTo(T* host_dest, size_t num_elements) {
         throw std::runtime_error("ReadTo: requested elements exceed buffer size");
     }
 
-    // Синхронное чтение с GPU -> Host
+    // Синхронное чтение GPU -> Host
     cl_int err = clEnqueueReadBuffer(
         queue_,
         buffer_,
-        CL_TRUE,                        // blocking
-        0,                              // offset
-        num_elements * sizeof(T),       // size
-        host_dest,                      // dest pointer
+        CL_TRUE,                        // блокирующий режим
+        0,                              // смещение
+        num_elements * sizeof(T),       // размер
+        host_dest,                      // указатель приёмника
         0,                              // num_events_in_wait_list
         nullptr,                        // event_wait_list
         nullptr                         // event
@@ -379,14 +379,14 @@ void ExternalCLBufferAdapter<T>::WriteFrom(const T* host_data, size_t num_elemen
         throw std::runtime_error("WriteFrom: requested elements exceed buffer size");
     }
 
-    // Синхронная запись с Host -> GPU
+    // Синхронная запись Host -> GPU
     cl_int err = clEnqueueWriteBuffer(
         queue_,
         buffer_,
-        CL_TRUE,                        // blocking
-        0,                              // offset
-        num_elements * sizeof(T),       // size
-        host_data,                      // src pointer
+        CL_TRUE,                        // блокирующий режим
+        0,                              // смещение
+        num_elements * sizeof(T),       // размер
+        host_data,                      // указатель источника
         0,                              // num_events_in_wait_list
         nullptr,                        // event_wait_list
         nullptr                         // event
@@ -409,7 +409,7 @@ cl_event ExternalCLBufferAdapter<T>::ReadAsync(std::vector<T>& out_data) {
     cl_int err = clEnqueueReadBuffer(
         queue_,
         buffer_,
-        CL_FALSE,                       // non-blocking
+        CL_FALSE,                       // неблокирующий режим
         0,
         num_elements_ * sizeof(T),
         out_data.data(),
@@ -432,7 +432,7 @@ cl_event ExternalCLBufferAdapter<T>::WriteAsync(const std::vector<T>& data) {
     cl_int err = clEnqueueWriteBuffer(
         queue_,
         buffer_,
-        CL_FALSE,                       // non-blocking
+        CL_FALSE,                       // неблокирующий режим
         0,
         data.size() * sizeof(T),
         data.data(),
