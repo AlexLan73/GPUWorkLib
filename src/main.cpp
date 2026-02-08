@@ -25,13 +25,13 @@ int main() {
 //  test_example_mat::run();  
 //  test_find_3_max::run();
 //  test_fft_max::run();
-//  test_spectrum_maxima::run();
+  test_spectrum_maxima::run();
 
   // Services multithreaded tests (без теста профилирования — он отдельно)
 //  test_services::run();
 
   // Отдельный тест GPUProfiler: многопоточный Record, агрегация, PrintSummary
-  test_gpu_profiler::run();
+//  test_gpu_profiler::run();
 
    std::cout << "\n✅ Все тесты завершены!" << std::endl;
   return 0;

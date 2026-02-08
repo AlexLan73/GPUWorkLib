@@ -86,7 +86,7 @@ inline std::vector<ExpectedResult> CalculateExpected(const SpectrumParams& param
 
     for (uint32_t antenna = 0; antenna < params.antenna_count; ++antenna) {
         ExpectedResult result;
-        result.frequency = 2.5f * (antenna + 1);
+        result.frequency =  2.5f *(1.0f + (antenna + 1)/10.0f);
         result.expected_bin = result.frequency * params.nFFT / params.sample_rate;
         result.nearest_bin = static_cast<uint32_t>(std::round(result.expected_bin));
 
@@ -189,7 +189,7 @@ inline int run() {
         SpectrumParams params;
         params.antenna_count = 5;
         params.n_point = 1000;
-        params.repeat_count = 2;
+        params.repeat_count = 4;
         params.sample_rate = 1000.0f;
 
         // 3. Создать и инициализировать SpectrumMaximaFinder

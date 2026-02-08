@@ -256,27 +256,21 @@ __kernel void post_kernel(
         // Проверяем границы для левой точки
         bool has_left = false;
         if (center_idx > 0) {
-            // Проверяем что left_idx в одном из диапазонов
             uint left_idx = center_idx - 1;
-            if ((left_idx < half_range) || (left_idx >= range2_start)) {
-                left_val = fft_output[base_fft_idx + left_idx];
-                y_left = sqrt(left_val.x * left_val.x + left_val.y * left_val.y);
-                has_left = true;
-            }
+            left_val = fft_output[base_fft_idx + left_idx];
+            y_left = sqrt(left_val.x * left_val.x + left_val.y * left_val.y);
+            has_left = true;
         }
 
         // Проверяем границы для правой точки
         bool has_right = false;
         if (center_idx < nFFT - 1) {
-            // Проверяем что right_idx в одном из диапазонов
             uint right_idx = center_idx + 1;
-            if ((right_idx < half_range) || (right_idx >= range2_start)) {
-                right_val = fft_output[base_fft_idx + right_idx];
-                y_right = sqrt(right_val.x * right_val.x + right_val.y * right_val.y);
-                has_right = true;
-            }
+            right_val = fft_output[base_fft_idx + right_idx];
+            y_right = sqrt(right_val.x * right_val.x + right_val.y * right_val.y);
+            has_right = true;
         }
-
+            
         // ═══════════════════════════════════════════════════════════════════
         // ШАГ 5: Параболическая интерполяция
         // ═══════════════════════════════════════════════════════════════════
