@@ -174,15 +174,15 @@ private:
 template<typename T>
 std::shared_ptr<T> ModuleRegistry::GetModule(const std::string& name) {
     static_assert(std::is_base_of<IComputeModule, T>::value,
-                  "T must be derived from IComputeModule");
+                  "T должен быть наследником IComputeModule");
     
     auto module = GetModule(name);
     auto typed_module = std::dynamic_pointer_cast<T>(module);
     
     if (!typed_module) {
         throw std::runtime_error(
-            "ModuleRegistry::GetModule: module '" + name + 
-            "' is not of requested type");
+            "ModuleRegistry::GetModule: модуль '" + name +
+            "' не совпадает с запрошенным типом");
     }
     
     return typed_module;

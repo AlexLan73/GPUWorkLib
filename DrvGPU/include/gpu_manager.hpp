@@ -10,7 +10,7 @@
  *
  * GPUManager управляет множественными экземплярами DrvGPU и предоставляет:
  * - ✅ Автоматическое обнаружение ВСЕХ GPU (реальное!)
- * - Load balancing (Round-Robin, Least Loaded, Manual)
+ * - Балансировка нагрузки (Round-Robin, наименее загруженная, вручную)
  * - Централизованное управление ресурсами
  * - Thread-safe доступ к GPU
  *
@@ -66,14 +66,14 @@ namespace drv_gpu_lib {
  * auto& gpu0 = manager.GetGPU(0);
  * auto& gpu1 = manager.GetGPU(1);
  * 
- * // Load balancing
+ * // Балансировка нагрузки
  * auto& least_loaded = manager.GetLeastLoadedGPU();
  * @endcode
  * 
  * Паттерны:
  * - Facade (упрощение работы с Multi-GPU)
  * - Factory (создание DrvGPU экземпляров)
- * - Strategy (load balancing strategies)
+ * - Strategy (стратегии балансировки нагрузки)
  */
 class GPUManager {
 public:
@@ -182,7 +182,7 @@ public:
     // ═══════════════════════════════════════════════════════════════
     
     /**
-     * @brief Установить стратегию load balancing
+     * @brief Установить стратегию балансировки нагрузки
      */
     void SetLoadBalancingStrategy(LoadBalancingStrategy strategy);
     
@@ -203,7 +203,7 @@ public:
     void SynchronizeAll();
     
     /**
-     * @brief Flush всех GPU
+     * @brief Сброс буфера команд всех GPU
      */
     void FlushAll();
     
@@ -264,13 +264,13 @@ private:
     // GPU экземпляры (владение через unique_ptr)
     std::vector<std::unique_ptr<DrvGPU>> gpus_;
     
-    // Round-Robin счётчик (thread-safe)
+    // Счётчик Round-Robin (потокобезопасный)
     std::atomic<size_t> round_robin_index_;
     
-    // Load tracking (простая метрика: количество задач, защищено мьютексом)
+    // Учёт нагрузки (метрика: количество задач, защищено мьютексом)
     std::vector<size_t> gpu_task_count_;
     
-    // Thread-safety
+    // Потокобезопасность
     mutable std::mutex mutex_;
     
     // ═══════════════════════════════════════════════════════════════
@@ -300,7 +300,7 @@ private:
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// GPUManager Inline Implementation (Header-Only)
+// Inline-реализация GPUManager (только заголовки)
 // ════════════════════════════════════════════════════════════════════════════
 
 inline GPUManager::GPUManager()
@@ -411,7 +411,7 @@ inline void GPUManager::Cleanup() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Остальные методы (без изменений)
+// Остальные методы
 // ════════════════════════════════════════════════════════════════════════════
 
 inline DrvGPU& GPUManager::GetGPU(size_t index) {
@@ -577,7 +577,7 @@ inline GPUReportInfo GPUManager::GetGPUReportInfo(int gpu_id) const {
                 opencl_driver["platform_name"] = backend->GetCore().GetPlatformName();
             }
         } catch (...) {
-            // Ignore cast errors
+            // Игнорируем ошибки приведения типа
         }
 
         report_info.drivers.push_back(opencl_driver);

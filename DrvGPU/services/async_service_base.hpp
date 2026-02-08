@@ -2,41 +2,41 @@
 
 /**
  * @file async_service_base.hpp
- * @brief AsyncServiceBase - Base class for asynchronous background services
+ * @brief AsyncServiceBase — базовый класс асинхронных фоновых сервисов
  *
  * ============================================================================
- * PURPOSE:
- *   Template base class for Logger, Profiler, ConsoleOutput, and future services.
- *   Provides a worker thread + message queue + observer pattern.
+ * НАЗНАЧЕНИЕ:
+ *   Шаблонный базовый класс для Logger, Profiler, ConsoleOutput и будущих сервисов.
+ *   Обеспечивает рабочий поток + очередь сообщений + паттерн наблюдателя.
  *
- * ARCHITECTURE:
+ * АРХИТЕКТУРА:
  *   GPU Thread 0 --> Enqueue(msg) --+
- *   GPU Thread 1 --> Enqueue(msg) --+--> [Queue] --> Worker Thread --> ProcessMessage(msg)
+ *   GPU Thread 1 --> Enqueue(msg) --+--> [Очередь] --> Worker Thread --> ProcessMessage(msg)
  *   GPU Thread N --> Enqueue(msg) --+
  *
- * GUARANTEES:
- *   - GPU threads NEVER block on output (only lock-free-ish Enqueue)
- *   - All processing happens in dedicated background thread
- *   - On Stop(): waits for all queued messages to be processed
- *   - Thread-safe: multiple producers, single consumer
+ * ГАРАНТИИ:
+ *   - Потоки GPU НИКОГДА не блокируются на выводе (только lock-free Enqueue)
+ *   - Вся обработка выполняется в выделенном фоновом потоке
+ *   - При Stop(): ожидание обработки всех сообщений в очереди
+ *   - Потокобезопасность: много производителей, один потребитель
  *
- * PATTERN: Producer-Consumer + Observer
- *   - Producers: GPU threads call Enqueue()
- *   - Consumer: Worker thread calls ProcessMessage() (virtual)
- *   - Observer: Worker wakes up on condition_variable notify
+ * ПАТТЕРН: Producer-Consumer + Наблюдатель
+ *   - Производители: потоки GPU вызывают Enqueue()
+ *   - Потребитель: рабочий поток вызывает ProcessMessage() (виртуальный)
+ *   - Наблюдатель: рабочий поток пробуждается по condition_variable
  *
- * USAGE:
+ * ИСПОЛЬЗОВАНИЕ:
  *   class MyService : public AsyncServiceBase<MyMessage> {
  *   protected:
  *       void ProcessMessage(const MyMessage& msg) override {
- *           // Handle message in background thread
+ *           // Обработка сообщения в фоновом потоке
  *       }
  *   };
  *
  *   MyService service;
  *   service.Start();
- *   service.Enqueue({...});  // Non-blocking!
- *   service.Stop();          // Waits for queue drain
+ *   service.Enqueue({...});  // Неблокирующий вызов!
+ *   service.Stop();          // Ожидание опустошения очереди
  * ============================================================================
  *
  * @author Codo (AI Assistant)
@@ -55,70 +55,70 @@
 namespace drv_gpu_lib {
 
 // ============================================================================
-// AsyncServiceBase - Template base for background services
+// AsyncServiceBase — шаблонная база фоновых сервисов
 // ============================================================================
 
 /**
  * @class AsyncServiceBase
- * @brief Template base class for asynchronous services with message queue
+ * @brief Шаблонный базовый класс асинхронных сервисов с очередью сообщений
  *
- * @tparam TMessage Type of messages processed by this service
+ * @tparam TMessage Тип сообщений, обрабатываемых сервисом
  *
- * Derived classes must implement:
- * - ProcessMessage(const TMessage& msg) - handle one message
- * - GetServiceName() - return human-readable service name
+ * Наследники должны реализовать:
+ * - ProcessMessage(const TMessage& msg) — обработка одного сообщения
+ * - GetServiceName() — человекочитаемое имя сервиса
  *
- * Lifecycle:
- * 1. Construct derived class
- * 2. Call Start() to launch worker thread
- * 3. Call Enqueue() from any thread (non-blocking)
- * 4. Call Stop() to shutdown (drains queue first)
+ * Жизненный цикл:
+ * 1. Создать объект наследника
+ * 2. Вызвать Start() для запуска рабочего потока
+ * 3. Вызывать Enqueue() из любого потока (неблокирующе)
+ * 4. Вызвать Stop() для остановки (сначала опустошается очередь)
  *
- * Thread Model:
- * - Worker thread runs WorkerLoop() in background
- * - WorkerLoop() waits on condition_variable
- * - When messages arrive, wakes up and processes all pending
- * - On Stop(), processes remaining messages and joins thread
+ * Модель потоков:
+ * - Рабочий поток выполняет WorkerLoop() в фоне
+ * - WorkerLoop() ожидает на condition_variable
+ * - При появлении сообщений пробуждается и обрабатывает все накопившиеся
+ * - При Stop() обрабатывает оставшиеся сообщения и присоединяет поток
  */
 template<typename TMessage>
 class AsyncServiceBase {
 public:
     // ========================================================================
-    // Constructor / Destructor
+    // Конструктор / Деструктор
     // ========================================================================
 
     /**
-     * @brief Default constructor (does NOT start worker thread)
-     * Call Start() to begin processing.
+     * @brief Конструктор по умолчанию (НЕ запускает рабочий поток)
+     * Вызовите Start() для начала обработки.
      */
     AsyncServiceBase() = default;
 
     /**
-     * @brief Destructor - automatically stops worker thread
-     * Waits for all queued messages to be processed.
+     * @brief Деструктор — автоматически останавливает рабочий поток
+     * Ожидает обработки всех сообщений в очереди.
      */
     virtual ~AsyncServiceBase() {
         Stop();
     }
 
-    // Delete copy, allow move
+    // Запрет копирования, разрешение перемещения
     AsyncServiceBase(const AsyncServiceBase&) = delete;
     AsyncServiceBase& operator=(const AsyncServiceBase&) = delete;
 
     // ========================================================================
-    // Lifecycle Management
+    // Управление жизненным циклом
     // ========================================================================
 
     /**
-     * @brief Start the worker thread
+     * @brief Запустить рабочий поток
      *
-     * Launches a background thread that processes messages from the queue.
-     * Safe to call multiple times (only starts once).
+     * Запускает фоновый поток, обрабатывающий сообщения из очереди.
+     * Безопасно вызывать несколько раз (запуск только один раз).
      *
-     * @note Must be called before Enqueue() will have any effect.
+     * @note Необходимо вызвать до Enqueue(), иначе сообщения не обрабатываются.
      */
     void Start() {
-        // Avoid double-start
+        // Избегаем повторного запуска
         if (running_.load(std::memory_order_acquire)) {
             return;
         }
@@ -131,56 +131,56 @@ public:
     }
 
     /**
-     * @brief Stop the worker thread
+     * @brief Остановить рабочий поток
      *
-     * Signals the worker to stop, then waits for all queued messages
-     * to be processed before joining the thread.
+     * Подаёт сигнал остановки, затем ждёт обработки всех сообщений в очереди
+     * перед присоединением потока.
      *
-     * Safe to call multiple times (only stops once).
-     * Called automatically from destructor.
+     * Безопасно вызывать несколько раз (остановка только один раз).
+     * Вызывается автоматически из деструктора.
      */
     void Stop() {
-        // Signal stop
+        // Сигнал остановки
         bool expected = true;
         if (!running_.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) {
-            return; // Already stopped or never started
+            return; // Уже остановлен или не был запущен
         }
 
-        // Wake up worker thread to notice the stop signal
+        // Пробудить рабочий поток для реакции на остановку
         cv_.notify_one();
 
-        // Wait for worker thread to finish
+        // Ожидание завершения рабочего потока
         if (worker_thread_.joinable()) {
             worker_thread_.join();
         }
     }
 
     /**
-     * @brief Check if the service is running
-     * @return true if worker thread is active
+     * @brief Проверить, запущен ли сервис
+     * @return true если рабочий поток активен
      */
     bool IsRunning() const {
         return running_.load(std::memory_order_acquire);
     }
 
     // ========================================================================
-    // Message Queue (Non-Blocking Producer API)
+    // Очередь сообщений (неблокирующий API производителя)
     // ========================================================================
 
     /**
-     * @brief Enqueue a message for background processing
+     * @brief Поставить сообщение в очередь для фоновой обработки
      *
-     * This is the PRIMARY API for GPU threads.
-     * Almost non-blocking: only acquires mutex for queue push.
+     * Основной API для потоков GPU.
+     * Практически неблокирующий: только захват мьютекса для добавления в очередь.
      *
-     * @param msg Message to process (moved into queue)
+     * @param msg Сообщение для обработки (перемещается в очередь)
      *
-     * @note If service is not running, message is silently dropped.
-     *       This is intentional to avoid blocking GPU threads.
+     * @note Если сервис не запущен, сообщение тихо отбрасывается.
+     *       Это сделано намеренно, чтобы не блокировать потоки GPU.
      */
     void Enqueue(TMessage msg) {
         if (!running_.load(std::memory_order_acquire)) {
-            return; // Service not running, drop message
+            return; // Сервис не запущен — отбрасываем сообщение
         }
 
         {
@@ -188,17 +188,17 @@ public:
             queue_.push(std::move(msg));
         }
 
-        // Wake up worker thread
+        // Пробудить рабочий поток
         cv_.notify_one();
     }
 
     /**
-     * @brief Enqueue multiple messages at once (batch)
+     * @brief Поставить несколько сообщений в очередь (пакет)
      *
-     * More efficient than calling Enqueue() multiple times
-     * as it only locks once and notifies once.
+     * Эффективнее многократного вызова Enqueue():
+     * один захват мьютекса и одно уведомление.
      *
-     * @param messages Vector of messages to enqueue
+     * @param messages Вектор сообщений для постановки в очередь
      */
     void EnqueueBatch(std::vector<TMessage> messages) {
         if (!running_.load(std::memory_order_acquire) || messages.empty()) {
@@ -216,8 +216,8 @@ public:
     }
 
     /**
-     * @brief Get current queue size (approximate, for diagnostics)
-     * @return Number of pending messages
+     * @brief Текущий размер очереди (приблизительно, для диагностики)
+     * @return Количество необработанных сообщений
      */
     size_t GetQueueSize() const {
         std::lock_guard<std::mutex> lock(queue_mutex_);
@@ -225,8 +225,8 @@ public:
     }
 
     /**
-     * @brief Get total number of messages processed since Start()
-     * @return Count of processed messages
+     * @brief Общее число обработанных сообщений с момента Start()
+     * @return Количество обработанных сообщений
      */
     uint64_t GetProcessedCount() const {
         return processed_count_.load(std::memory_order_acquire);
@@ -234,58 +234,58 @@ public:
 
 protected:
     // ========================================================================
-    // Virtual Methods (must be implemented by derived classes)
+    // Виртуальные методы (реализуются наследниками)
     // ========================================================================
 
     /**
-     * @brief Process one message from the queue
+     * @brief Обработать одно сообщение из очереди
      *
-     * Called by the worker thread for each message.
-     * This is where derived classes implement their logic.
+     * Вызывается рабочим потоком для каждого сообщения.
+     * Здесь наследники реализуют свою логику.
      *
-     * IMPORTANT: This runs in the WORKER THREAD, not the GPU thread!
-     * So it's safe to do I/O, file writes, console output, etc.
+     * ВАЖНО: Выполняется в РАБОЧЕМ ПОТОКЕ, а не в потоке GPU!
+     * Безопасно выполнять I/O, запись в файл, вывод в консоль и т.д.
      *
-     * @param msg The message to process
+     * @param msg Сообщение для обработки
      */
     virtual void ProcessMessage(const TMessage& msg) = 0;
 
     /**
-     * @brief Get human-readable service name (for diagnostics)
-     * @return Service name (e.g., "Logger", "Profiler", "ConsoleOutput")
+     * @brief Человекочитаемое имя сервиса (для диагностики)
+     * @return Имя сервиса (напр., "Logger", "Profiler", "ConsoleOutput")
      */
     virtual std::string GetServiceName() const = 0;
 
     /**
-     * @brief Called when worker thread starts (optional override)
-     * Use for thread-local initialization.
+     * @brief Вызывается при запуске рабочего потока (необязательная перегрузка)
+     * Использовать для локальной инициализации потока.
      */
     virtual void OnWorkerStart() {}
 
     /**
-     * @brief Called when worker thread stops (optional override)
-     * Use for thread-local cleanup.
+     * @brief Вызывается при остановке рабочего потока (необязательная перегрузка)
+     * Использовать для локальной очистки потока.
      */
     virtual void OnWorkerStop() {}
 
 private:
     // ========================================================================
-    // Worker Thread Implementation
+    // Реализация рабочего потока
     // ========================================================================
 
     /**
-     * @brief Main worker loop (runs in background thread)
+     * @brief Основной цикл рабочего потока (выполняется в фоне)
      *
-     * Algorithm:
-     * 1. Wait on condition_variable (sleeps when queue is empty)
-     * 2. Wake up on notify (from Enqueue) or stop signal
-     * 3. Drain all pending messages from queue
-     * 4. Process each message via ProcessMessage()
-     * 5. Repeat until Stop() is called
-     * 6. On stop: drain remaining messages, then exit
+     * Алгоритм:
+     * 1. Ожидание на condition_variable (сон при пустой очереди)
+     * 2. Пробуждение по notify (от Enqueue) или сигналу остановки
+     * 3. Извлечение всех накопившихся сообщений из очереди
+     * 4. Обработка каждого сообщения через ProcessMessage()
+     * 5. Повтор до вызова Stop()
+     * 6. При остановке: обработать оставшиеся сообщения и выйти
      */
     void WorkerLoop() {
-        // Thread-local initialization
+        // Локальная инициализация потока
         OnWorkerStart();
 
         while (true) {

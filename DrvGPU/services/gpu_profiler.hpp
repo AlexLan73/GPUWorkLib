@@ -2,36 +2,36 @@
 
 /**
  * @file gpu_profiler.hpp
- * @brief GPUProfiler - Async singleton for GPU profiling data collection
+ * @brief GPUProfiler — асинхронный синглтон сбора данных профилирования GPU
  *
  * ============================================================================
- * PURPOSE:
- *   Centralized collection and aggregation of GPU profiling data.
- *   Modules send profiling records (kernel times, memory ops, etc.)
- *   via non-blocking Enqueue. Background thread aggregates statistics.
+ * НАЗНАЧЕНИЕ:
+ *   Централизованный сбор и агрегация данных профилирования GPU.
+ *   Модули отправляют записи (время ядер, операции с памятью и т.д.)
+ *   через неблокирующий Enqueue. Фоновый поток агрегирует статистику.
  *
- * ARCHITECTURE:
- *   GPU Module --> Profiler::Record(gpu_id, "FFT", 12.5ms) --> Enqueue() --+
+ * АРХИТЕКТУРА:
+ *   Модуль GPU --> Profiler::Record(gpu_id, "FFT", 12.5ms) --> Enqueue() --+
  *                                                                           |
- *                                                                    [Worker Thread]
+ *                                                                    [Рабочий поток]
  *                                                                           |
- *                                                              Aggregation (min/max/avg)
- *                                                              JSON export
- *                                                              Observer notification
+ *                                                              Агрегация (min/max/avg)
+ *                                                              Экспорт в JSON
+ *                                                              Уведомление наблюдателей
  *
- * USAGE:
+ * ИСПОЛЬЗОВАНИЕ:
  *   GPUProfiler::GetInstance().Start();
  *
- *   // From any GPU thread (non-blocking):
- *   GPUProfiler::GetInstance().Record(0, "AntennaFFT", "FFT_Execute", 12.5);
- *   GPUProfiler::GetInstance().Record(0, "AntennaFFT", "Padding_Kernel", 0.8);
- *   GPUProfiler::GetInstance().Record(1, "VectorOps", "VectorAdd", 3.2);
+ *   // Из любого потока GPU (неблокирующе):
+ *   GPUProfiler::GetInstance().Record(0, "AntennaFFT", "FFT_Execute", data_opencl);
+ *   GPUProfiler::GetInstance().Record(0, "AntennaFFT", "Padding_Kernel", data_opencl);
+ *   GPUProfiler::GetInstance().Record(1, "VectorOps", "VectorAdd", data_rocm);
  *
- *   // Get aggregated stats:
+ *   // Получить агрегированную статистику:
  *   auto stats = GPUProfiler::GetInstance().GetStats(0);
  *   auto all_stats = GPUProfiler::GetInstance().GetAllStats();
  *
- *   // Export to JSON:
+ *   // Экспорт в JSON:
  *   GPUProfiler::GetInstance().ExportJSON("./Results/Profiler/2026-02-07_14-30-00.json");
  *
  *   GPUProfiler::GetInstance().Stop();
@@ -59,26 +59,26 @@
 namespace drv_gpu_lib {
 
 // ============================================================================
-// GPUProfiler - Async profiling service
+// GPUProfiler — асинхронный сервис профилирования
 // ============================================================================
 
 /**
  * @class GPUProfiler
- * @brief Singleton service for GPU profiling data collection
+ * @brief Синглтон-сервис сбора данных профилирования GPU
  *
- * Inherits from AsyncServiceBase<ProfilingMessage>:
- * - Background worker thread for aggregation
- * - Non-blocking Record() for GPU threads
- * - Thread-safe stats access via GetStats()
+ * Наследует AsyncServiceBase<ProfilingMessage>:
+ * - Фоновый рабочий поток для агрегации
+ * - Неблокирующий Record() для потоков GPU
+ * - Потокобезопасный доступ к статистике через GetStats()
  */
 class GPUProfiler : public AsyncServiceBase<ProfilingMessage> {
 public:
     // ========================================================================
-    // Singleton
+    // Синглтон
     // ========================================================================
 
     /**
-     * @brief Get the singleton instance
+     * @brief Получить экземпляр синглтона
      */
     static GPUProfiler& GetInstance() {
         static GPUProfiler instance;
@@ -102,17 +102,17 @@ public:
         return oss.str();
     }
 
-    // Delete copy (singleton)
+    // Запрет копирования (синглтон)
     GPUProfiler(const GPUProfiler&) = delete;
     GPUProfiler& operator=(const GPUProfiler&) = delete;
 
     // ========================================================================
-    // Recording API (non-blocking)
+    // API записи (неблокирующий)
     // ========================================================================
 
     /**
-     * @brief Record a profiling event (OpenCL: 5 параметров cl_profiling_info)
-     * Конвертация в duration_ms выполняется в воркере.
+     * @brief Записать событие профилирования (OpenCL: 5 параметров cl_profiling_info)
+     * Конвертация в duration_ms выполняется в рабочем потоке.
      */
     void Record(int gpu_id, const std::string& module,
                 const std::string& event, const OpenCLProfilingData& data) {
@@ -126,7 +126,7 @@ public:
     }
 
     /**
-     * @brief Record a profiling event (ROCm/HIP: база + доп. параметры)
+     * @brief Записать событие профилирования (ROCm/HIP: база + доп. параметры)
      */
     void Record(int gpu_id, const std::string& module,
                 const std::string& event, const ROCmProfilingData& data) {
@@ -140,13 +140,13 @@ public:
     }
 
     // ========================================================================
-    // Statistics Access (thread-safe reads)
+    // Доступ к статистике (потокобезопасное чтение)
     // ========================================================================
 
     /**
-     * @brief Get statistics for a specific GPU
-     * @param gpu_id GPU device index
-     * @return Map of module_name -> ModuleStats
+     * @brief Получить статистику для указанной GPU
+     * @param gpu_id Индекс устройства GPU
+     * @return Отображение имя_модуля -> ModuleStats
      */
     std::map<std::string, ModuleStats> GetStats(int gpu_id) const {
         std::lock_guard<std::mutex> lock(stats_mutex_);
@@ -158,8 +158,8 @@ public:
     }
 
     /**
-     * @brief Get statistics for all GPUs
-     * @return Map of gpu_id -> (module_name -> ModuleStats)
+     * @brief Получить статистику по всем GPU
+     * @return Отображение gpu_id -> (имя_модуля -> ModuleStats)
      */
     std::map<int, std::map<std::string, ModuleStats>> GetAllStats() const {
         std::lock_guard<std::mutex> lock(stats_mutex_);
@@ -167,7 +167,7 @@ public:
     }
 
     /**
-     * @brief Reset all collected statistics
+     * @brief Сбросить всю собранную статистику
      */
     void Reset() {
         std::lock_guard<std::mutex> lock(stats_mutex_);
@@ -175,26 +175,26 @@ public:
     }
 
     // ========================================================================
-    // Enable/Disable
+    // Включение/выключение
     // ========================================================================
 
     /**
-     * @brief Enable or disable profiling globally
+     * @brief Включить или выключить профилирование глобально
      */
     void SetEnabled(bool enabled) {
         enabled_.store(enabled, std::memory_order_release);
     }
 
     /**
-     * @brief Check if profiling is enabled globally
+     * @brief Проверить, включено ли профилирование глобально
      */
     bool IsEnabled() const {
         return enabled_.load(std::memory_order_acquire);
     }
 
     /**
-     * @brief Enable or disable profiling for a specific GPU (from config: is_prof)
-     * @param gpu_id GPU device index
+     * @brief Включить или выключить профилирование для указанной GPU (из конфига: is_prof)
+     * @param gpu_id Индекс устройства GPU
      * @param enabled true — записывать профиль для этого GPU, false — отключить
      */
     void SetGPUEnabled(int gpu_id, bool enabled) {
@@ -207,7 +207,7 @@ public:
     }
 
     /**
-     * @brief Check if profiling is enabled for this GPU
+     * @brief Проверить, включено ли профилирование для данной GPU
      */
     bool IsGPUEnabled(int gpu_id) const {
         std::lock_guard<std::mutex> lock(profile_filter_mutex_);
@@ -220,7 +220,7 @@ public:
 
     /**
      * @brief Установить информацию о GPU для отчёта
-     * @param gpu_id GPU device index
+     * @param gpu_id Индекс устройства GPU
      * @param info Структура с информацией о GPU
      */
     void SetGPUInfo(int gpu_id, const GPUReportInfo& info) {
@@ -230,8 +230,8 @@ public:
 
     /**
      * @brief Получить информацию о GPU
-     * @param gpu_id GPU device index
-     * @return GPUReportInfo или пустая структура если не задано
+     * @param gpu_id Индекс устройства GPU
+     * @return GPUReportInfo или пустая структура, если не задано
      */
     GPUReportInfo GetGPUInfo(int gpu_id) const {
         std::lock_guard<std::mutex> lock(gpu_info_mutex_);
@@ -251,7 +251,7 @@ public:
     }
 
     // ========================================================================
-    // ROCm Detection
+    // Обнаружение ROCm
     // ========================================================================
 
     /**
@@ -305,13 +305,13 @@ public:
     }
 
     // ========================================================================
-    // Export
+    // Экспорт
     // ========================================================================
 
     /**
-     * @brief Export profiling data to JSON file
-     * @param file_path Path to output JSON file
-     * @return true if exported successfully
+     * @brief Экспорт данных профилирования в JSON-файл
+     * @param file_path Путь к выходному JSON-файлу
+     * @return true при успешном экспорте
      */
     bool ExportJSON(const std::string& file_path) const {
         std::lock_guard<std::mutex> lock(stats_mutex_);
@@ -323,10 +323,10 @@ public:
                 return false;
             }
 
-            // Manually build JSON string
+            // Ручная сборка JSON-строки
             file << "{\n";
 
-            // Timestamp
+            // Временная метка
             auto now = std::chrono::system_clock::now();
             auto time_t = std::chrono::system_clock::to_time_t(now);
             std::tm tm_buf;
@@ -338,7 +338,7 @@ public:
             file << "  \"timestamp\": \""
                  << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%S") << "\",\n";
 
-            // GPUs
+            // GPU
             file << "  \"gpus\": {\n";
             bool first_gpu = true;
             for (const auto& [gpu_id, modules] : stats_) {
@@ -388,7 +388,7 @@ public:
     }
 
     /**
-     * @brief Print profiling summary to stdout
+     * @brief Вывести сводку профилирования в stdout
      */
     void PrintSummary() const {
         std::lock_guard<std::mutex> lock(stats_mutex_);
@@ -423,9 +423,9 @@ public:
     }
 
     /**
-     * @brief Print beautiful profiling report with GPU info header
+     * @brief Вывести отчёт профилирования с шапкой с информацией о GPU
      *
-     * Таблица с ВСЕМИ 5 полями времени ProfilingDataBase:
+     * Таблица со всеми 5 полями времени ProfilingDataBase:
      * Очередь, Отправка, Старт, Конец, Готово
      */
     void PrintReport() const {
@@ -459,7 +459,7 @@ public:
                 info = it->second;
             }
 
-            // GPU Header
+            // Шапка GPU
             std::cout << "|" << pad("  GPU " + std::to_string(gpu_id) + ": " +
                 (info.gpu_name.empty() ? "Unknown" : info.gpu_name), W - 2) << "|\n";
             if (info.global_mem_mb > 0) {
@@ -496,7 +496,7 @@ public:
             }
             std::cout << "+" << std::string(W - 2, '-') << "+\n";
 
-            // Data rows - разделяем по типу таблицы (OpenCL vs ROCm)
+            // Строки данных — разделение по типу таблицы (OpenCL и ROCm)
             for (const auto& [mod_name, mod_stats] : modules) {
                 bool is_rocm_module = HasModuleROCmData(mod_stats);
 
@@ -505,7 +505,7 @@ public:
                     std::cout << "| [ROCm] Модуль: " << pad(mod_name, W - 19) << "|\n";
                     std::cout << "+" << std::string(W - 2, '-') << "+\n";
 
-                    // ROCm Header - расширенный
+                    // Шапка ROCm (расширенная)
                     std::cout << "| " << std::left << std::setw(16) << "Событие"
                               << "| " << std::setw(5) << "N"
                               << "| " << std::setw(6) << "Домен"
@@ -556,7 +556,7 @@ public:
                         }
                     }
 
-                    // Module subtotal ROCm
+                    // Промежуточный итог по модулю (ROCm)
                     std::cout << "| " << std::left << std::setw(16) << "--- ИТОГО ---"
                               << "| " << std::right << std::setw(4) << mod_stats.GetTotalCalls() << " "
                               << "| " << std::string(5, ' ') << " "
@@ -576,7 +576,7 @@ public:
                     std::cout << "| [OpenCL] Модуль: " << pad(mod_name, W - 21) << "|\n";
                     std::cout << "+" << std::string(W - 2, '-') << "+\n";
 
-                    // OpenCL Header
+                    // Шапка OpenCL
                     std::cout << "| " << std::left << std::setw(16) << "Событие"
                               << "| " << std::setw(5) << "N"
                               << "| " << std::setw(12) << "Очередь"
@@ -609,7 +609,7 @@ public:
                                   << "|\n";
                     }
 
-                    // Module subtotal OpenCL
+                    // Промежуточный итог по модулю (OpenCL)
                     std::cout << "| " << std::left << std::setw(16) << "--- ИТОГО ---"
                               << "| " << std::right << std::setw(4) << mod_stats.GetTotalCalls() << " "
                               << "| " << std::string(11, ' ') << " "
@@ -662,9 +662,9 @@ public:
     }
 
     /**
-     * @brief Export profiling report to Markdown file
-     * @param file_path Path to output .md file
-     * @return true if exported successfully
+     * @brief Экспорт отчёта профилирования в Markdown-файл
+     * @param file_path Путь к выходному .md файлу
+     * @return true при успешном экспорте
      */
     bool ExportMarkdown(const std::string& file_path) const {
         std::lock_guard<std::mutex> lock(stats_mutex_);
@@ -724,7 +724,7 @@ public:
                 }
                 file << "\n";
 
-                // Table
+                // Таблица
                 file << "### Результаты профилирования\n\n";
                 file << "| Модуль | Событие | N | Очередь | Отправка | Старт | Конец | Готово |\n";
                 file << "|--------|---------|--:|--------:|---------:|------:|------:|-------:|\n";
@@ -751,7 +751,7 @@ public:
                 file << "\n";
             }
 
-            // Legend
+            // Легенда
             file << "---\n\n";
             file << "## Легенда\n\n";
             file << "| Колонка | Описание |\n";
@@ -776,11 +776,11 @@ public:
 
 protected:
     // ========================================================================
-    // AsyncServiceBase implementation
+    // Реализация AsyncServiceBase
     // ========================================================================
 
     /**
-     * @brief Process one profiling message (runs in worker thread)
+     * @brief Обработать одно сообщение профилирования (выполняется в рабочем потоке)
      */
     void ProcessMessage(const ProfilingMessage& msg) override {
         {
@@ -805,7 +805,7 @@ protected:
     }
 
     /**
-     * @brief Service name for diagnostics
+     * @brief Имя сервиса для диагностики
      */
     std::string GetServiceName() const override {
         return "GPUProfiler";
@@ -813,24 +813,24 @@ protected:
 
 private:
     // ========================================================================
-    // Private constructor (singleton)
+    // Приватный конструктор (синглтон)
     // ========================================================================
 
     GPUProfiler() : enabled_(true) {}
 
     // ========================================================================
-    // Private members
+    // Приватные члены
     // ========================================================================
 
-    /// Aggregated statistics: gpu_id -> module_name -> ModuleStats
+    /// Агрегированная статистика: gpu_id -> имя_модуля -> ModuleStats
     std::map<int, std::map<std::string, ModuleStats>> stats_;
     mutable std::mutex stats_mutex_;
 
-    /// Per-GPU disable set
+    /// Множество отключённых по GPU
     std::unordered_set<int> disabled_gpus_;
     mutable std::mutex profile_filter_mutex_;
 
-    /// GPU info for report headers
+    /// Информация о GPU для шапок отчётов
     std::map<int, GPUReportInfo> gpu_info_;
     mutable std::mutex gpu_info_mutex_;
 

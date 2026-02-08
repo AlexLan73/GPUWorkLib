@@ -16,7 +16,7 @@ namespace drv_gpu_lib {
  * @brief Получить единственный экземпляр ConfigLogger (Singleton)
  * @return Ссылка на статический экземпляр
  * 
- * Thread-safe инициализация через static local variable.
+ * Потокобезопасная инициализация через статическую локальную переменную.
  * Гарантирует создание только одного экземпляра.
  */
 ConfigLogger& ConfigLogger::GetInstance() {

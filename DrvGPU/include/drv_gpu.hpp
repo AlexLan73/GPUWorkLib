@@ -10,7 +10,7 @@
  * Архитектура:
  * - Backend Abstraction через IBackend интерфейс
  * - RAII управление ресурсами
- * - Thread-safe операции
+ * - Потокобезопасные операции
  * - Поддержка OpenCL (расширяемо на CUDA/Vulkan)
  * 
  * @author DrvGPU Team
@@ -175,7 +175,7 @@ public:
     void Synchronize();
     
     /**
-     * @brief Flush всех команд (без ожидания)
+     * @brief Сброс буфера команд (без ожидания завершения)
      */
     void Flush();
     
@@ -207,14 +207,14 @@ private:
     int device_index_;
     bool initialized_;
     
-    // Backend (Bridge Pattern)
+    // Бэкенд (паттерн Bridge)
     std::unique_ptr<IBackend> backend_;
     
     // Подсистемы
     std::unique_ptr<MemoryManager> memory_manager_;
     std::unique_ptr<ModuleRegistry> module_registry_;
     
-    // Thread-safety
+    // Потокобезопасность
     mutable std::mutex mutex_;
     
     // ═══════════════════════════════════════════════════════════════

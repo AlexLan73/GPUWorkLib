@@ -2,7 +2,7 @@
 
 /**
  * @file load_balancing_strategy.hpp
- * @brief Стратегии load balancing для Multi-GPU
+ * @brief Стратегии балансировки нагрузки для Multi-GPU
  */
 
 namespace drv_gpu_lib {

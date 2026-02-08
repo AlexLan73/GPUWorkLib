@@ -98,20 +98,20 @@ public:
      *
      * @param backend Указатель на IBackend (для запросов памяти)
      * @param total_items Общее число элементов для обработки (напр., лучей)
-     * @param item_memory_bytes Memory required per item on GPU
-     *        Example: nFFT * sizeof(complex<float>) * 2 + maxima_buffer
-     * @param memory_limit Fraction of available memory to use (0.0 - 1.0)
-     *        Default: 0.7 (use 70% of available GPU memory)
-     * @return Optimal number of items per batch
+     * @param item_memory_bytes Память на один элемент на GPU (байты)
+     *        Пример: nFFT * sizeof(complex<float>) * 2 + maxima_buffer
+     * @param memory_limit Доля доступной памяти (0.0 — 1.0)
+     *        По умолчанию: 0.7 (70% доступной памяти GPU)
+     * @return Оптимальное число элементов в пакете
      *
-     * ALGORITHM:
-     * 1. Query total GPU memory (GetGlobalMemorySize)
-     * 2. Estimate allocated memory (heuristic: 10% overhead)
+     * АЛГОРИТМ:
+     * 1. Запрос общей памяти GPU (GetGlobalMemorySize)
+     * 2. Оценка занятой памяти (эвристика: 10% накладных)
      * 3. available = total * memory_limit
      * 4. batch_size = available / item_memory_bytes
-     * 5. Clamp to [1, total_items]
+     * 5. Ограничение диапазоном [1, total_items]
      *
-     * If all items fit in memory, returns total_items (no batching needed).
+     * Если все элементы помещаются в память, возвращается total_items (пакетирование не нужно).
      */
     static size_t CalculateOptimalBatchSize(
         IBackend* backend,
@@ -120,16 +120,16 @@ public:
         double memory_limit = 0.7);
 
     /**
-     * @brief Calculate batch size from known available memory
+     * @brief Рассчитать размер пакета по известной доступной памяти
      *
-     * @param available_memory_bytes Available GPU memory in bytes
-     * @param total_items Total number of items
-     * @param item_memory_bytes Memory per item
-     * @param memory_limit Fraction of available memory to use
-     * @return Optimal batch size
+     * @param available_memory_bytes Доступная память GPU в байтах
+     * @param total_items Общее число элементов
+     * @param item_memory_bytes Память на один элемент
+     * @param memory_limit Доля доступной памяти
+     * @return Оптимальный размер пакета
      *
-     * Use this when you already know the available memory
-     * (e.g., from MemoryManager::GetFreeMemory()).
+     * Использовать, когда доступная память уже известна
+     * (напр., из MemoryManager::GetFreeMemory()).
      */
     static size_t CalculateBatchSizeFromMemory(
         size_t available_memory_bytes,
@@ -138,33 +138,33 @@ public:
         double memory_limit = 0.7);
 
     // ========================================================================
-    // Batch Range Generation
+    // Генерация диапазонов пакетов
     // ========================================================================
 
     /**
-     * @brief Create list of batch ranges with smart tail merging
+     * @brief Создать список диапазонов пакетов с умным слиянием хвоста
      *
-     * @param total_items Total number of items to process
-     * @param items_per_batch Items per batch (from CalculateOptimalBatchSize)
-     * @param min_tail Minimum items for the last batch to be standalone
-     *        If last batch has fewer items, merge with previous batch.
-     *        Default: 3 (if last batch has 1-3 items, merge)
-     * @param merge_small_tail Enable tail merging optimization
-     *        Default: true
-     * @return Vector of BatchRange structs
+     * @param total_items Общее число элементов для обработки
+     * @param items_per_batch Элементов в пакете (из CalculateOptimalBatchSize)
+     * @param min_tail Минимум элементов в последнем пакете, чтобы оставить его отдельно
+     *        Если в последнем пакете меньше — объединить с предыдущим.
+     *        По умолчанию: 3 (если в последнем 1–3 элемента — слияние)
+     * @param merge_small_tail Включить оптимизацию слияния хвоста
+     *        По умолчанию: true
+     * @return Вектор структур BatchRange
      *
-     * TAIL MERGING EXAMPLE:
+     * ПРИМЕР СЛИЯНИЯ ХВОСТА:
      *   total=23, per_batch=10, min_tail=3
-     *   WITHOUT merging: [0-9], [10-19], [20-22]  (3 batches, last has 3 items)
-     *   WITH merging:    [0-9], [10-22]            (2 batches, last has 13 items)
+     *   БЕЗ слияния: [0-9], [10-19], [20-22]  (3 пакета, в последнем 3)
+     *   С слиянием:  [0-9], [10-22]            (2 пакета, в последнем 13)
      *
      *   total=22, per_batch=10, min_tail=3
-     *   WITHOUT merging: [0-9], [10-19], [20-21]  (3 batches, last has 2 items)
-     *   WITH merging:    [0-9], [10-21]            (2 batches, last has 12 items)
+     *   БЕЗ слияния: [0-9], [10-19], [20-21]  (3 пакета, в последнем 2)
+     *   С слиянием:  [0-9], [10-21]            (2 пакета, в последнем 12)
      *
      *   total=25, per_batch=10, min_tail=3
-     *   WITHOUT merging: [0-9], [10-19], [20-24]  (3 batches, last has 5 items)
-     *   WITH merging:    [0-9], [10-19], [20-24]  (3 batches, NO merge - tail >= min_tail+1)
+     *   БЕЗ слияния: [0-9], [10-19], [20-24]  (3 пакета, в последнем 5)
+     *   С слиянием:  [0-9], [10-19], [20-24]  (3 пакета, без слияния — хвост >= min_tail+1)
      */
     static std::vector<BatchRange> CreateBatches(
         size_t total_items,
@@ -173,27 +173,27 @@ public:
         bool merge_small_tail = true);
 
     // ========================================================================
-    // Memory Queries
+    // Запросы памяти
     // ========================================================================
 
     /**
-     * @brief Get estimated available GPU memory
-     * @param backend Pointer to IBackend
-     * @return Available memory in bytes (total * 0.9 - rough estimate)
+     * @brief Получить оценку доступной памяти GPU
+     * @param backend Указатель на IBackend
+     * @return Доступная память в байтах (total * 0.9 — грубая оценка)
      *
-     * NOTE: This is an ESTIMATE. OpenCL doesn't provide exact free memory.
-     * We use: total_memory * 0.9 (assume 10% is used by OS/driver).
-     * For more precise control, use MemoryManager::GetAllocatedSize().
+     * ПРИМЕЧАНИЕ: Это оценка. OpenCL не даёт точный объём свободной памяти.
+     * Используется: total_memory * 0.9 (предполагаем 10% занято ОС/драйвером).
+     * Для точного контроля используйте MemoryManager::GetAllocatedSize().
      */
     static size_t GetAvailableMemory(IBackend* backend);
 
     /**
-     * @brief Check if all items fit in memory (no batching needed)
-     * @param backend Pointer to IBackend
-     * @param total_items Total number of items
-     * @param item_memory_bytes Memory per item
-     * @param memory_limit Fraction of memory to use
-     * @return true if all items fit, false if batching is needed
+     * @brief Проверить, помещаются ли все элементы в память (пакетирование не нужно)
+     * @param backend Указатель на IBackend
+     * @param total_items Общее число элементов
+     * @param item_memory_bytes Память на один элемент
+     * @param memory_limit Доля используемой памяти
+     * @return true если все помещаются, false если нужно пакетирование
      */
     static bool AllItemsFit(
         IBackend* backend,
@@ -202,13 +202,13 @@ public:
         double memory_limit = 0.7);
 
     // ========================================================================
-    // Diagnostics
+    // Диагностика
     // ========================================================================
 
     /**
-     * @brief Print batch configuration to stdout
-     * @param batches Vector of batch ranges
-     * @param total_items Total items being processed
+     * @brief Вывести конфигурацию пакетов в stdout
+     * @param batches Вектор диапазонов пакетов
+     * @param total_items Общее число обрабатываемых элементов
      */
     static void PrintBatchInfo(
         const std::vector<BatchRange>& batches,
@@ -216,7 +216,7 @@ public:
 };
 
 // ============================================================================
-// Inline Implementation
+// Inline-реализация
 // ============================================================================
 
 inline size_t BatchManager::CalculateBatchSizeFromMemory(
@@ -229,14 +229,14 @@ inline size_t BatchManager::CalculateBatchSizeFromMemory(
         return total_items;
     }
 
-    // Usable memory
+    // Используемая память
     size_t usable = static_cast<size_t>(
         static_cast<double>(available_memory_bytes) * memory_limit);
 
-    // How many items fit?
+    // Сколько элементов помещается?
     size_t fits = usable / item_memory_bytes;
 
-    // Clamp to [1, total_items]
+    // Ограничение диапазоном [1, total_items]
     fits = std::max(fits, static_cast<size_t>(1));
     fits = std::min(fits, total_items);
 
@@ -255,7 +255,7 @@ inline std::vector<BatchRange> BatchManager::CreateBatches(
         return batches;
     }
 
-    // If all items fit in one batch
+    // Если все элементы помещаются в один пакет
     if (items_per_batch >= total_items) {
         BatchRange single;
         single.start = 0;
@@ -265,21 +265,21 @@ inline std::vector<BatchRange> BatchManager::CreateBatches(
         return batches;
     }
 
-    // Calculate number of full batches and remainder
+    // Число полных пакетов и остаток
     size_t num_full = total_items / items_per_batch;
     size_t remainder = total_items % items_per_batch;
 
-    // Tail merging: if remainder is small (1..min_tail), merge with previous
+    // Слияние хвоста: если остаток мал (1..min_tail), объединить с предыдущим
     if (merge_small_tail && remainder > 0 && remainder <= min_tail && num_full > 0) {
         num_full--;
         remainder += items_per_batch;
     }
 
-    // Generate batch ranges
+    // Формирование диапазонов пакетов
     size_t current = 0;
     size_t idx = 0;
 
-    // Full batches
+    // Полные пакеты
     for (size_t i = 0; i < num_full; ++i) {
         BatchRange batch;
         batch.start = current;
@@ -289,13 +289,13 @@ inline std::vector<BatchRange> BatchManager::CreateBatches(
         current += items_per_batch;
     }
 
-    // Last batch (remainder)
+    // Последний пакет (остаток)
     if (remainder > 0 && current < total_items) {
         BatchRange batch;
         batch.start = current;
         batch.count = remainder;
         batch.batch_idx = idx;
-        batch.is_merged = (remainder > items_per_batch);  // Flag if merged
+        batch.is_merged = (remainder > items_per_batch);  // Флаг слияния
         batches.push_back(batch);
     }
 

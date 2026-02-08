@@ -14,7 +14,7 @@
  * ЗАМЕНА spdlog → plog:
  * - plog — header-only, нет зависимостей (нет fmt)
  * - plog — стабильный, кросс-платформенный (Windows/Linux/macOS)
- * - plog — простой API, rolling файлы, thread-safe
+ * - plog — простой API, rolling файлы, потокобезопасность
  *
  * @author DrvGPU Team
  * @date 2026-02-01
@@ -58,7 +58,7 @@ constexpr int kMaxGpuLogInstances = 32;
  *
  * Использует plog для:
  * - Логирования в файл с автоматическим созданием структуры папок
- * - Thread-safe логирования
+ * - Потокобезопасное логирование
  * - Rolling файлов (автоматическая ротация по размеру)
  *
  * Пример использования:
@@ -135,7 +135,7 @@ private:
     /// Флаг инициализации
     bool initialized_;
 
-    /// Мьютекс для thread-safety
+    /// Мьютекс для потокобезопасности
     mutable std::mutex mutex_;
 
     /// Текущий уровень логирования (plog severity)
