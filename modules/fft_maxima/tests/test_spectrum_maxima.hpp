@@ -224,11 +224,15 @@ inline bool ValidateResultsCPUvsGPU(
         std::cout << "\n  Антена " << i << ":\n";
         std::cout << "  ├─ Left:  GPU freq " << std::fixed << std::setprecision(4)
                   << gpu_r.SpectrMax_left.interpolated.refined_frequency << " vs CPU "
-                  << cpu_r.SpectrMax_left.interpolated.refined_frequency << " Hz "
-                  << (ok_L ? "✅" : "❌") << "\n";
+                  << cpu_r.SpectrMax_left.interpolated.refined_frequency << " Hz, "
+                  << "ampl " << gpu_r.SpectrMax_left.center_point.magnitude << " vs "
+                  << cpu_r.SpectrMax_left.center_point.magnitude
+                  << (ok_L ? " ✅" : " ❌") << "\n";
         std::cout << "  ├─ Right: GPU freq " << gpu_r.SpectrMax_right.interpolated.refined_frequency
-                  << " vs CPU " << cpu_r.SpectrMax_right.interpolated.refined_frequency << " Hz "
-                  << (ok_R ? "✅" : "❌") << "\n";
+                  << " vs CPU " << cpu_r.SpectrMax_right.interpolated.refined_frequency << " Hz, "
+                  << "ampl " << gpu_r.SpectrMax_right.center_point.magnitude << " vs "
+                  << cpu_r.SpectrMax_right.center_point.magnitude
+                  << (ok_R ? " ✅" : " ❌") << "\n";
         std::cout << "  └─ Статус: " << (passed ? "✅ PASS" : "❌ FAIL") << "\n";
     }
 

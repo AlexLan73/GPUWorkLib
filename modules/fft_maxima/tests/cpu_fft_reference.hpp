@@ -216,6 +216,8 @@ inline CPUSpectrumResult FindMaximumWithInterpolation(
             r_refined_frequency = (static_cast<float>(ind_r) + offset) * bin_width;
         }
     }
+    // Зеркало: правый диапазон = отрицательные частоты → sample_rate - raw (2.75 вместо 997.25)
+    r_refined_frequency = sample_rate - r_refined_frequency;
 
     result.SpectrMax_right.antenna_id = antenna_id;
     result.SpectrMax_right.interpolated = MakeMaxValue(ind_r, r_center_val.real(), r_center_val.imag(),
@@ -224,15 +226,15 @@ inline CPUSpectrumResult FindMaximumWithInterpolation(
     result.SpectrMax_right.left_point = has_r_minus1
         ? MakeMaxValue(ind_r - 1, r_minus1_val.real(), r_minus1_val.imag(), y_r_minus1,
             std::atan2(r_minus1_val.imag(), r_minus1_val.real()) * 57.29577951f,
-            0.0f, static_cast<float>(ind_r - 1) * bin_width)
+            0.0f, sample_rate - static_cast<float>(ind_r - 1) * bin_width)
         : MaxValue{};
     result.SpectrMax_right.center_point = MakeMaxValue(ind_r, r_center_val.real(), r_center_val.imag(),
         y_r_center, std::atan2(r_center_val.imag(), r_center_val.real()) * 57.29577951f,
-        0.0f, static_cast<float>(ind_r) * bin_width);
+        0.0f, sample_rate - static_cast<float>(ind_r) * bin_width);
     result.SpectrMax_right.right_point = has_r_plus1
         ? MakeMaxValue(ind_r + 1, r_plus1_val.real(), r_plus1_val.imag(), y_r_plus1,
             std::atan2(r_plus1_val.imag(), r_plus1_val.real()) * 57.29577951f,
-            0.0f, static_cast<float>(ind_r + 1) * bin_width)
+            0.0f, sample_rate - static_cast<float>(ind_r + 1) * bin_width)
         : MaxValue{};
 
     return result;

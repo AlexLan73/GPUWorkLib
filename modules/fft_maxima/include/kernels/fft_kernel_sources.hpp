@@ -289,8 +289,8 @@ __kernel void post_kernel(
         float bin_width = sample_rate / (float)nFFT;
         uint out_base = beam_idx * 8;
 
-        // Макрос для записи 4 MaxValue (интерполированный, left, center, right)
-        #define WRITE_FOUR(base_offset, center_idx) do { \
+        // Макрос: mirror_freq=true для правого диапазона — частота = sample_rate - raw (зеркало 2.75 вместо 997.25)
+        #define WRITE_FOUR(base_offset, center_idx, mirror_freq) do { \
             float2 cv = fft_output[base_fft_idx + center_idx]; \
             float y_c = sqrt(cv.x * cv.x + cv.y * cv.y); \
             float2 lv = (float2)(0.0f, 0.0f); \
@@ -306,6 +306,7 @@ __kernel void post_kernel(
                 float denom = y_l - 2.0f*y_c + y_r; \
                 if (fabs(denom) > 1e-10f) { fo = clamp(0.5f*(y_l-y_r)/denom, -0.5f, 0.5f); rf = ((float)center_idx + fo) * bin_width; } \
             } \
+            if (mirror_freq) { rf = sample_rate - rf; } \
             maxima_output[out_base + base_offset + 0].index = center_idx; \
             maxima_output[out_base + base_offset + 0].real = cv.x; \
             maxima_output[out_base + base_offset + 0].imag = cv.y; \
@@ -314,36 +315,42 @@ __kernel void post_kernel(
             maxima_output[out_base + base_offset + 0].freq_offset = fo; \
             maxima_output[out_base + base_offset + 0].refined_frequency = rf; \
             maxima_output[out_base + base_offset + 0].pad = 0; \
+            float rf_l = hl ? (float)(center_idx-1)*bin_width : 0.0f; \
+            if (mirror_freq && hl) rf_l = sample_rate - rf_l; \
             maxima_output[out_base + base_offset + 1].index = hl ? center_idx-1 : 0; \
             maxima_output[out_base + base_offset + 1].real = lv.x; \
             maxima_output[out_base + base_offset + 1].imag = lv.y; \
             maxima_output[out_base + base_offset + 1].magnitude = y_l; \
             maxima_output[out_base + base_offset + 1].phase = hl ? atan2(lv.y, lv.x)*57.29577951f : 0.0f; \
             maxima_output[out_base + base_offset + 1].freq_offset = 0.0f; \
-            maxima_output[out_base + base_offset + 1].refined_frequency = hl ? (float)(center_idx-1)*bin_width : 0.0f; \
+            maxima_output[out_base + base_offset + 1].refined_frequency = rf_l; \
             maxima_output[out_base + base_offset + 1].pad = 0; \
+            float rf_c = (float)center_idx * bin_width; \
+            if (mirror_freq) rf_c = sample_rate - rf_c; \
             maxima_output[out_base + base_offset + 2].index = center_idx; \
             maxima_output[out_base + base_offset + 2].real = cv.x; \
             maxima_output[out_base + base_offset + 2].imag = cv.y; \
             maxima_output[out_base + base_offset + 2].magnitude = y_c; \
             maxima_output[out_base + base_offset + 2].phase = atan2(cv.y, cv.x) * 57.29577951f; \
             maxima_output[out_base + base_offset + 2].freq_offset = 0.0f; \
-            maxima_output[out_base + base_offset + 2].refined_frequency = (float)center_idx * bin_width; \
+            maxima_output[out_base + base_offset + 2].refined_frequency = rf_c; \
             maxima_output[out_base + base_offset + 2].pad = 0; \
+            float rf_r = hr ? (float)(center_idx+1)*bin_width : 0.0f; \
+            if (mirror_freq && hr) rf_r = sample_rate - rf_r; \
             maxima_output[out_base + base_offset + 3].index = hr ? center_idx+1 : 0; \
             maxima_output[out_base + base_offset + 3].real = rv.x; \
             maxima_output[out_base + base_offset + 3].imag = rv.y; \
             maxima_output[out_base + base_offset + 3].magnitude = y_r; \
             maxima_output[out_base + base_offset + 3].phase = hr ? atan2(rv.y, rv.x)*57.29577951f : 0.0f; \
             maxima_output[out_base + base_offset + 3].freq_offset = 0.0f; \
-            maxima_output[out_base + base_offset + 3].refined_frequency = hr ? (float)(center_idx+1)*bin_width : 0.0f; \
+            maxima_output[out_base + base_offset + 3].refined_frequency = rf_r; \
             maxima_output[out_base + base_offset + 3].pad = 0; \
         } while(0)
 
-        // Левый диапазон [0..3]
-        WRITE_FOUR(0, global_left_idx);
-        // Правый диапазон [4..7]
-        WRITE_FOUR(4, global_right_idx);
+        // Левый диапазон [0..3] — положительные частоты
+        WRITE_FOUR(0, global_left_idx, false);
+        // Правый диапазон [4..7] — зеркало: sample_rate - raw → 2.75 вместо 997.25
+        WRITE_FOUR(4, global_right_idx, true);
 
         #undef WRITE_FOUR
     }
