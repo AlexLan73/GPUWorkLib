@@ -191,6 +191,21 @@ set_target_properties(GPUWorkLib PROPERTIES
 )
 
 # ============================================================================
+# POST-BUILD: Копирование configGPU.json в каталог запуска (Ref03)
+# ============================================================================
+if(EXISTS "${CMAKE_SOURCE_DIR}/DrvGPU/config/configGPU.json")
+    add_custom_command(TARGET GPUWorkLib POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/DrvGPU/config/configGPU.json"
+            "$<TARGET_FILE_DIR:GPUWorkLib>/configGPU.json"
+        COMMENT "Copying configGPU.json to executable directory"
+    )
+    message(STATUS "✅ Will copy configGPU.json to output directory")
+else()
+    message(WARNING "⚠️  configGPU.json not found, will be created at runtime")
+endif()
+
+# ============================================================================
 # POST-BUILD: Копирование DLL на Windows (если есть)
 # ============================================================================
 

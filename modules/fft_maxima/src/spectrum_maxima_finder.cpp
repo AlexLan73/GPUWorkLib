@@ -533,7 +533,7 @@ double SpectrumMaximaFinder::ProfileEvent(cl_event event, const char* name) {
                                            sizeof(cl_ulong), &end, nullptr);
 
     if (err1 != CL_SUCCESS || err2 != CL_SUCCESS) {
-        // Профилирование недоступно (queue без CL_QUEUE_PROFILING_ENABLE)
+        std::cerr << "[ProfileEvent] " << name << " failed: " << err1 << "," << err2 << "\n";
         return 0.0;
     }
 

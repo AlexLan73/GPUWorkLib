@@ -1,4 +1,5 @@
 #include "opencl_backend.hpp"
+#include "../../config/gpu_config.hpp"
 #include "../../logger/logger.hpp"
 
 #include <sstream>
@@ -128,12 +129,18 @@ void OpenCLBackend::Initialize(int device_index) {
     // ═══════════════════════════════════════════════════════════════════════
 
     cl_int err;
+    bool want_prof = !GPUConfig::GetInstance().IsLoaded()
+        || GPUConfig::GetInstance().IsProfilingEnabled(device_index);
 
     #ifdef CL_VERSION_2_0
-        cl_queue_properties props[] = {0};
-        queue_ = clCreateCommandQueueWithProperties(context_, device_, props, &err);
+        static const cl_queue_properties PROPS_PROF[] = {CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0};
+        static const cl_queue_properties PROPS_NONE[] = {0};
+        queue_ = clCreateCommandQueueWithProperties(context_, device_,
+            want_prof ? PROPS_PROF : PROPS_NONE, &err);
     #else
-        queue_ = clCreateCommandQueue(context_, device_, 0, &err);
+        cl_command_queue_properties flags = want_prof
+            ? static_cast<cl_command_queue_properties>(CL_QUEUE_PROFILING_ENABLE) : 0;
+        queue_ = clCreateCommandQueue(context_, device_, flags, &err);
     #endif
 
     if (err != CL_SUCCESS || !queue_) {

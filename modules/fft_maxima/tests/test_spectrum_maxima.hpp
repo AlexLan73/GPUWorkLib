@@ -295,7 +295,7 @@ inline int run() {
         auto cpu_results = cpu_reference::NewProcessAllBeams_CPU(input_data, params);
 
         // 5. Аналитический расчёт ожидаемых результатов
-        auto expected = CalculateExpected(params);
+//        auto expected = CalculateExpected(params);
 
         // 6. Обработка данных (GPU — возвращает vector<SpectrumResult>)
         std::cout << "🚀 Запуск обработки...\n";

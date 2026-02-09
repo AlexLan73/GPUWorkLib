@@ -8,6 +8,7 @@
  */
 
 #include "drv_gpu.hpp"
+#include "config/gpu_config.hpp"
 #include "memory/memory_manager.hpp"
 #include "backends/opencl/opencl_backend.hpp"
 #include "backends/opencl/opencl_core.hpp"
@@ -147,6 +148,11 @@ void DrvGPU::Initialize() {
 
     if (!backend_) {
         throw std::runtime_error("DrvGPU: backend is null");
+    }
+
+    // Ref03: Загрузка configGPU.json перед инициализацией backend (is_prof и др.)
+    if (!GPUConfig::GetInstance().IsLoaded()) {
+        GPUConfig::GetInstance().LoadOrCreate("configGPU.json");
     }
 
     backend_->Initialize(device_index_);
