@@ -227,23 +227,23 @@ std::string ConfigLogger::GetLogFilePathForGPU(int gpu_id) const {
     std::string gpu_subdir = subdir_ss.str();
 
     // Базовый путь
-    std::string base_path = log_path_;
-    if (base_path.empty()) {
-        base_path = std::filesystem::current_path().string();
+    std::filesystem::path base_path_fs;
+    if (log_path_.empty()) {
+        base_path_fs = std::filesystem::current_path();
+    } else {
+        base_path_fs = log_path_;
     }
 
     // Полный путь: {base_path}/Logs/DRVGPU_XX/{date}/{time}.log
-    std::ostringstream path_ss;
-    path_ss << base_path;
-    if (!base_path.empty() && base_path.back() != '/' && base_path.back() != '\\') {
-        path_ss << std::filesystem::path::preferred_separator;
-    }
-    path_ss << kLogsDir << std::filesystem::path::preferred_separator;
-    path_ss << gpu_subdir << std::filesystem::path::preferred_separator;
-    path_ss << date_str << std::filesystem::path::preferred_separator;
-    path_ss << time_str << ".log";
+    // Используем std::filesystem::path с operator/= для правильной конкатенации
+    // (избегаем проблемы с preferred_separator который выводится как число в ostringstream)
+    std::filesystem::path full_path = base_path_fs;
+    full_path /= kLogsDir;                    // "Logs"
+    full_path /= gpu_subdir;                  // "DRVGPU_00"
+    full_path /= date_str;                    // "2026-02-09"
+    full_path /= (time_str + ".log");         // "21-17-52.log"
 
-    return path_ss.str();
+    return full_path.string();
 }
 
 /**

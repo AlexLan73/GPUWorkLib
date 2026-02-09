@@ -8,8 +8,9 @@
  * Автоматически создаёт структуру папок для логов.
  *
  * Поведение:
- * - ConfigLogger::IsEnabled() == true  -> пишем в файл
- * - ConfigLogger::IsEnabled() == false -> не логируем вообще
+ * - GPUConfig::IsLoggingEnabled(gpu_id) == true  -> пишем в файл
+ * - GPUConfig::IsLoggingEnabled(gpu_id) == false -> не логируем вообще
+ * - Флаг is_logger читается из configGPU.json
  *
  * ЗАМЕНА spdlog → plog:
  * - plog — header-only, нет зависимостей (нет fmt)

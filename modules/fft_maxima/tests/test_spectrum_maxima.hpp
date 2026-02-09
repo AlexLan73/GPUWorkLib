@@ -280,6 +280,13 @@ inline int run() {
         gpu.Initialize();
         std::cout << "  ✅ GPU: " << gpu.GetDeviceName() << "\n\n";
 
+        // 1a. Запуск GPUProfiler (если профилирование включено в конфиге)
+        auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
+        const bool is_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(0);
+        if (is_prof) {
+            profiler.Start();
+        }
+
         // 2. Параметры теста (по плану Pl1.md)
         SpectrumParams params;
         params.antenna_count = 5;
@@ -309,15 +316,15 @@ inline int run() {
         auto gpu_vector = finder.Process(input_data);
         std::cout << "  ✅ Обработка завершена!\n\n";
 
-        // 7. Вывод профилирования (при is_prof — полный отчёт профайлера; иначе старый блок)
-        {
-            auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
-            if (profiler.IsEnabled() && profiler.IsGPUEnabled(0)) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                profiler.PrintReport();
-            } else {
-                PrintProfiling(finder.GetProfilingData());
-            }
+        // 7. Вывод профилирования (Ref04: ветвление по is_prof)
+        // При is_prof=true — PrintReport() с полной таблицей (5 полей OpenCL)
+        // При is_prof=false — старый локальный вывод PrintProfiling()
+        if (is_prof) {
+            // Даём профайлеру обработать асинхронную очередь
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            profiler.PrintReport();
+        } else {
+            PrintProfiling(finder.GetProfilingData());
         }
 
         // 8. Конвертация в map для валидации
@@ -336,6 +343,11 @@ inline int run() {
             std::cout << "║     ❌ ТЕСТ НЕ ПРОЙДЕН!                                   ║\n";
         }
         std::cout << "╚══════════════════════════════════════════════════════════╝\n\n";
+
+        // 11. Остановка GPUProfiler (если был запущен)
+        if (is_prof) {
+            profiler.Stop();
+        }
 
         return passed ? 0 : 1;
 

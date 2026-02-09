@@ -576,15 +576,14 @@ public:
                     std::cout << "| [OpenCL] Модуль: " << pad(mod_name, W - 21) << "|\n";
                     std::cout << "+" << std::string(W - 2, '-') << "+\n";
 
-                    // Шапка OpenCL
+                    // Шапка OpenCL (дельты между этапами, мс)
                     std::cout << "| " << std::left << std::setw(16) << "Событие"
                               << "| " << std::setw(5) << "N"
-                              << "| " << std::setw(12) << "Очередь"
-                              << "| " << std::setw(12) << "Отправка"
-                              << "| " << std::setw(12) << "Старт"
-                              << "| " << std::setw(12) << "Конец"
-                              << "| " << std::setw(12) << "Готово"
-                              << "| " << std::setw(12) << "Время"
+                              << "| " << std::setw(12) << "В очереди"
+                              << "| " << std::setw(12) << "Запуск"
+                              << "| " << std::setw(12) << "Выполн."
+                              << "| " << std::setw(12) << "Заверш."
+                              << "| " << std::setw(12) << "Всего"
                               << "|\n";
                     std::cout << "+" << std::string(17, '-')
                               << "+" << std::string(6, '-')
@@ -593,26 +592,23 @@ public:
                               << "+" << std::string(13, '-')
                               << "+" << std::string(13, '-')
                               << "+" << std::string(13, '-')
-                              << "+" << std::string(13, '-')
                               << "+\n";
 
                     for (const auto& [evt_name, evt_stats] : mod_stats.events) {
-                        // Основная строка OpenCL: 5 полей времени + время выполнения
+                        // Основная строка OpenCL: дельты между этапами (мс)
                         std::cout << "| " << std::left << std::setw(16) << evt_name.substr(0, 15)
                                   << "| " << std::right << std::setw(4) << evt_stats.total_calls << " "
-                                  << "| " << std::setw(11) << fmtD(evt_stats.queued.GetAvgMs()) << " "
-                                  << "| " << std::setw(11) << fmtD(evt_stats.submit.GetAvgMs()) << " "
-                                  << "| " << std::setw(11) << fmtD(evt_stats.start.GetAvgMs()) << " "
-                                  << "| " << std::setw(11) << fmtD(evt_stats.end.GetAvgMs()) << " "
-                                  << "| " << std::setw(11) << fmtD(evt_stats.complete.GetAvgMs()) << " "
+                                  << "| " << std::setw(11) << fmtD(evt_stats.queue_delay.GetAvgMs()) << " "
+                                  << "| " << std::setw(11) << fmtD(evt_stats.submit_delay.GetAvgMs()) << " "
                                   << "| " << std::setw(11) << fmtD(evt_stats.exec_time.GetAvgMs()) << " "
+                                  << "| " << std::setw(11) << fmtD(evt_stats.complete_delay.GetAvgMs()) << " "
+                                  << "| " << std::setw(11) << fmtD(evt_stats.GetAvgTimeMs()) << " "
                                   << "|\n";
                     }
 
                     // Промежуточный итог по модулю (OpenCL)
                     std::cout << "| " << std::left << std::setw(16) << "--- ИТОГО ---"
                               << "| " << std::right << std::setw(4) << mod_stats.GetTotalCalls() << " "
-                              << "| " << std::string(11, ' ') << " "
                               << "| " << std::string(11, ' ') << " "
                               << "| " << std::string(11, ' ') << " "
                               << "| " << std::string(11, ' ') << " "
@@ -637,11 +633,11 @@ public:
         std::cout << "+--- ЛЕГЕНДА ---+\n";
         std::cout << "| Время в миллисекундах (мс), усреднённое значение                           |\n";
         std::cout << "+---------------+------------------------------------------------------------+\n";
-        std::cout << "| Очередь       | Команда попала в очередь хоста (queued_ns)                 |\n";
-        std::cout << "| Отправка      | Команда отправлена на GPU (submit_ns)                      |\n";
-        std::cout << "| Старт         | Кернел начал выполняться (start_ns)                        |\n";
-        std::cout << "| Конец         | Кернел закончил выполняться (end_ns)                       |\n";
-        std::cout << "| Готово        | Данные выгружены/доступны (complete_ns)                    |\n";
+        std::cout << "| В очереди     | Ожидание в очереди хоста (submit - queued)                 |\n";
+        std::cout << "| Запуск        | Задержка запуска на GPU (start - submit)                   |\n";
+        std::cout << "| Выполн.       | Время выполнения кернела (end - start)                     |\n";
+        std::cout << "| Заверш.       | Задержка завершения (complete - end)                       |\n";
+        std::cout << "| Всего         | Общее время операции (end - start)                         |\n";
         std::cout << "+---------------+------------------------------------------------------------+\n";
 
         // ROCm легенда (показываем если есть ROCm данные)
@@ -726,8 +722,8 @@ public:
 
                 // Таблица
                 file << "### Результаты профилирования\n\n";
-                file << "| Модуль | Событие | N | Очередь | Отправка | Старт | Конец | Готово |\n";
-                file << "|--------|---------|--:|--------:|---------:|------:|------:|-------:|\n";
+                file << "| Модуль | Событие | N | В очереди | Запуск | Выполн. | Заверш. | Всего |\n";
+                file << "|--------|---------|--:|----------:|-------:|--------:|--------:|------:|\n";
 
                 for (const auto& [mod_name, mod_stats] : modules) {
                     bool first_event = true;
@@ -735,17 +731,17 @@ public:
                         file << "| " << (first_event ? mod_name : "")
                              << " | " << evt_name
                              << " | " << evt_stats.total_calls
-                             << " | " << fmtD(evt_stats.queued.GetAvgMs())
-                             << " | " << fmtD(evt_stats.submit.GetAvgMs())
-                             << " | " << fmtD(evt_stats.start.GetAvgMs())
-                             << " | " << fmtD(evt_stats.end.GetAvgMs())
-                             << " | " << fmtD(evt_stats.complete.GetAvgMs())
+                             << " | " << fmtD(evt_stats.queue_delay.GetAvgMs())
+                             << " | " << fmtD(evt_stats.submit_delay.GetAvgMs())
+                             << " | " << fmtD(evt_stats.exec_time.GetAvgMs())
+                             << " | " << fmtD(evt_stats.complete_delay.GetAvgMs())
+                             << " | " << fmtD(evt_stats.GetAvgTimeMs())
                              << " |\n";
                         first_event = false;
                     }
                     file << "| | **ИТОГО** | " << mod_stats.GetTotalCalls()
-                         << " | " << std::fixed << std::setprecision(2) << mod_stats.GetTotalTimeMs()
-                         << " | | | | |\n";
+                         << " | | | | | " << std::fixed << std::setprecision(2) << mod_stats.GetTotalTimeMs()
+                         << " |\n";
                 }
 
                 file << "\n";
@@ -757,11 +753,11 @@ public:
             file << "| Колонка | Описание |\n";
             file << "|---------|----------|\n";
             file << "| **N** | Количество вызовов |\n";
-            file << "| **Очередь** | Команда попала в очередь хоста (queued_ns) |\n";
-            file << "| **Отправка** | Команда отправлена на GPU (submit_ns) |\n";
-            file << "| **Старт** | Кернел начал выполняться (start_ns) |\n";
-            file << "| **Конец** | Кернел закончил выполняться (end_ns) |\n";
-            file << "| **Готово** | Данные выгружены/доступны (complete_ns) |\n";
+            file << "| **В очереди** | Ожидание в очереди хоста (submit - queued) |\n";
+            file << "| **Запуск** | Задержка запуска на GPU (start - submit) |\n";
+            file << "| **Выполн.** | Время выполнения кернела (end - start) |\n";
+            file << "| **Заверш.** | Задержка завершения (complete - end) |\n";
+            file << "| **Всего** | Общее время операции (end - start) |\n";
             file << "\n*Время в миллисекундах (мс), усреднённое значение*\n";
 
             file.close();

@@ -1,6 +1,47 @@
 #include "default_logger.hpp"
+#include "../config/gpu_config.hpp"
 #include <plog/Record.h>
+#include <plog/Appenders/RollingFileAppender.h>
 #include <iostream>
+#include <iomanip>
+
+namespace plog {
+
+// ════════════════════════════════════════════════════════════════════════════
+// DrvGPUFormatter — кастомный форматтер для plog
+// Формат: "YYYY-MM-DD HH:MM:SS.mmm LEVEL [Component] Message"
+// Убраны: [ThreadID] [@InstanceID] (не нужны для GPU логов)
+// ════════════════════════════════════════════════════════════════════════════
+class DrvGPUFormatter {
+public:
+    static util::nstring header() {
+        return util::nstring();
+    }
+
+    static util::nstring format(const Record& record) {
+        tm t;
+        util::localtime_s(&t, &record.getTime().time);
+
+        util::nostringstream ss;
+        // Дата: YYYY-MM-DD
+        ss << t.tm_year + 1900 << PLOG_NSTR("-")
+           << std::setfill(PLOG_NSTR('0')) << std::setw(2) << t.tm_mon + 1 << PLOG_NSTR("-")
+           << std::setfill(PLOG_NSTR('0')) << std::setw(2) << t.tm_mday << PLOG_NSTR(" ");
+        // Время: HH:MM:SS.mmm
+        ss << std::setfill(PLOG_NSTR('0')) << std::setw(2) << t.tm_hour << PLOG_NSTR(":")
+           << std::setfill(PLOG_NSTR('0')) << std::setw(2) << t.tm_min << PLOG_NSTR(":")
+           << std::setfill(PLOG_NSTR('0')) << std::setw(2) << t.tm_sec << PLOG_NSTR(".")
+           << std::setfill(PLOG_NSTR('0')) << std::setw(3) << static_cast<int>(record.getTime().millitm) << PLOG_NSTR(" ");
+        // Уровень: DEBUG/INFO/WARN/ERROR
+        ss << std::setfill(PLOG_NSTR(' ')) << std::setw(5) << std::left << severityToString(record.getSeverity()) << PLOG_NSTR(" ");
+        // Сообщение
+        ss << record.getMessage() << PLOG_NSTR("\n");
+
+        return ss.str();
+    }
+};
+
+} // namespace plog
 
 namespace drv_gpu_lib {
 
@@ -47,9 +88,10 @@ DefaultLogger::~DefaultLogger() {
     Shutdown();
 }
 
-// Диспетчеризация plog::init по instance ID (compile-time)
+// Диспетчеризация plog::init по instance ID с кастомным форматтером DrvGPUFormatter
+// Формат: "YYYY-MM-DD HH:MM:SS.mmm LEVEL [Component] Message" (без ThreadID, без InstanceID)
 #define DRVGPU_PLOG_INIT_CASE(N) \
-    case N: plog::init<N>(plog::debug, log_file_path.c_str(), kMaxFileSize, kMaxFiles); break;
+    case N: plog::init<plog::DrvGPUFormatter, N>(plog::debug, log_file_path.c_str(), kMaxFileSize, kMaxFiles); break;
 
 /**
  * @brief Инициализировать plog file logger для этого GPU
@@ -64,7 +106,8 @@ void DefaultLogger::Initialize() {
         return;
     }
 
-    if (!ConfigLogger::GetInstance().IsEnabled()) {
+    // Проверяем is_logger из configGPU.json для данного GPU
+    if (!GPUConfig::GetInstance().IsLoggingEnabled(gpu_id_)) {
         initialized_ = true;
         return;
     }

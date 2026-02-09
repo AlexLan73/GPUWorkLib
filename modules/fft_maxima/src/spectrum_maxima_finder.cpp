@@ -172,10 +172,11 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::Process(
             profiler.Record(gpu_id, "SpectrumMaxima", "Upload", data);
         }
     }
-    clReleaseEvent(upload_event);
+    // НЕ освобождаем upload_event здесь — он нужен как зависимость для FFT
 
-    // 2. Выполнить FFT с pre-callback
+    // 2. Выполнить FFT с pre-callback (зависит от upload_event)
     cl_event fft_event = ExecuteFFT(upload_event);
+    clReleaseEvent(upload_event);  // ✅ Теперь можно — upload_event уже использован
     profiling_.fft_time_ms = ProfileEvent(fft_event, "FFT");
     if (do_prof) {
         drv_gpu_lib::OpenCLProfilingData data{};
@@ -183,10 +184,11 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::Process(
             profiler.Record(gpu_id, "SpectrumMaxima", "FFT", data);
         }
     }
-    clReleaseEvent(fft_event);
+    // НЕ освобождаем fft_event здесь — он нужен как зависимость для post-kernel
 
-    // 3. Выполнить post-kernel
+    // 3. Выполнить post-kernel (зависит от fft_event)
     cl_event post_event = ExecutePostKernel(fft_event);
+    clReleaseEvent(fft_event);  // ✅ Теперь можно — fft_event уже использован
     profiling_.post_kernel_time_ms = ProfileEvent(post_event, "PostKernel");
     if (do_prof) {
         drv_gpu_lib::OpenCLProfilingData data{};
@@ -194,10 +196,11 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::Process(
             profiler.Record(gpu_id, "SpectrumMaxima", "PostKernel", data);
         }
     }
+    // НЕ освобождаем post_event здесь — он нужен как зависимость для ReadResults
 
-    // 4. Прочитать результаты (Download — FillOpenCLProfilingData + Record внутри ReadResults при do_prof)
+    // 4. Прочитать результаты (зависит от post_event)
     std::vector<SpectrumResult> results = ReadResults(post_event, do_prof);
-    clReleaseEvent(post_event);
+    clReleaseEvent(post_event);  // ✅ Теперь можно — post_event уже использован
 
     // Общее время
     profiling_.total_time_ms = profiling_.upload_time_ms +
