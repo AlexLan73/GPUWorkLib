@@ -163,7 +163,8 @@ private:
     cl_event ExecutePostKernel(cl_event wait_event);
 
     /// Прочитать результаты (8 MaxValue на луч → vector<SpectrumResult>)
-    std::vector<SpectrumResult> ReadResults(cl_event wait_event);
+    /// @param send_to_profiler при true — отправить событие read в GPUProfiler (все 5 полей OpenCL)
+    std::vector<SpectrumResult> ReadResults(cl_event wait_event, bool send_to_profiler = false);
 
     /// Профилирование события
     double ProfileEvent(cl_event event, const char* name);

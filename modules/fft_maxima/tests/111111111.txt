@@ -1,36 +1,7 @@
-😱 ПОНЯЛ!!!
+l_event SpectrumMaximaFinder::ExecuteFFT(cl_event wait_event) {
+    cl_event event = nullptr;
 
-Алекс, ты хочешь чтобы я показал ПОЛНЫЙ ПУТЬ где считается CPU спектр и максимум!
+    // Выполнить FFT с pre-callback
+    clfftStatus status = clfftEnqueueTransform( 
 
-📂 ПОЛНЫЙ ПУТЬ К ФАЙЛУ:
-C:\Users\user\.claude-worktrees\GPUWorkLib\laughing-satoshi\modules\fft_maxima\tests\cpu_fft_reference.hpp
-
-📍 ГДЕ ИМЕННО СЧИТАЕТСЯ:
-1️⃣ FFT СПЕКТР на CPU:
-C:\Users\user\.claude-worktrees\GPUWorkLib\laughing-satoshi\modules\fft_maxima\tests\cpu_fft_reference.hpp
-Строки: 65-93
-Функция: ComputeFFT_CPU()
-
-2️⃣ ЛЕВЫЙ МАКСИМУМ на CPU:
-C:\Users\user\.claude-worktrees\GPUWorkLib\laughing-satoshi\modules\fft_maxima\tests\cpu_fft_reference.hpp
-Строки: 120-126
-Внутри: FindMaximumWithInterpolation()
-
-3️⃣ ПРАВЫЙ МАКСИМУМ на CPU:
-C:\Users\user\.claude-worktrees\GPUWorkLib\laughing-satoshi\modules\fft_maxima\tests\cpu_fft_reference.hpp
-Строки: 216-222
-Внутри: FindMaximumWithInterpolation()
-
-4️⃣ ВЫЗОВ CPU ОБРАБОТКИ:
-C:\Users\user\.claude-worktrees\GPUWorkLib\laughing-satoshi\modules\fft_maxima\tests\test_spectrum_maxima.hpp
-Строки: 291-299
-Функция: cpu_reference::ProcessAllBeams_CPU()
-
-ВСЁ В ОДНОМ ФАЙЛЕ:
-
-modules/fft_maxima/tests/cpu_fft_reference.hpp
-
-Теперь ясно? 🎯
-
-
-Manually create PR
+строка 438      

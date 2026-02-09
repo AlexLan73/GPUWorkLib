@@ -16,6 +16,7 @@
 #include "spectrum_maxima_finder.h"
 #include "drv_gpu.hpp"
 #include "common/backend_type.hpp"
+#include "DrvGPU/services/gpu_profiler.hpp"
 
 #include <iostream>
 #include <iomanip>
@@ -25,6 +26,8 @@
 #define _USE_MATH_DEFINES  // ✅ Windows: для M_PI
 #include <cmath>
 #include <string>
+#include <thread>
+#include <chrono>
 
 #include "modules/fft_maxima/tests/cpu_fft_reference.hpp"
 
@@ -306,8 +309,16 @@ inline int run() {
         auto gpu_vector = finder.Process(input_data);
         std::cout << "  ✅ Обработка завершена!\n\n";
 
-        // 7. Вывод профилирования
-        PrintProfiling(finder.GetProfilingData());
+        // 7. Вывод профилирования (при is_prof — полный отчёт профайлера; иначе старый блок)
+        {
+            auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
+            if (profiler.IsEnabled() && profiler.IsGPUEnabled(0)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                profiler.PrintReport();
+            } else {
+                PrintProfiling(finder.GetProfilingData());
+            }
+        }
 
         // 8. Конвертация в map для валидации
         auto gpu_map = VectorToMapForValidation(gpu_vector);

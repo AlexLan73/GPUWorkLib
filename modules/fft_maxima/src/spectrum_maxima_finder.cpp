@@ -1,4 +1,6 @@
 #include "spectrum_maxima_finder.h"
+#include "backends/opencl/opencl_profiling.hpp"
+#include "services/gpu_profiler.hpp"
 #include <iostream>
 #include <iomanip>
 #include <stdexcept>
@@ -157,22 +159,44 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::Process(
     // Сбросить профилирование
     profiling_ = ProfilingData{};
 
+    const int gpu_id = 0;
+    auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
+    const bool do_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(gpu_id);
+
     // 1. Загрузить данные на GPU
     cl_event upload_event = UploadData(input_data);
     profiling_.upload_time_ms = ProfileEvent(upload_event, "Upload");
+    if (do_prof) {
+        drv_gpu_lib::OpenCLProfilingData data{};
+        if (drv_gpu_lib::FillOpenCLProfilingData(upload_event, data)) {
+            profiler.Record(gpu_id, "SpectrumMaxima", "Upload", data);
+        }
+    }
+    clReleaseEvent(upload_event);
 
     // 2. Выполнить FFT с pre-callback
     cl_event fft_event = ExecuteFFT(upload_event);
     profiling_.fft_time_ms = ProfileEvent(fft_event, "FFT");
-    clReleaseEvent(upload_event);
+    if (do_prof) {
+        drv_gpu_lib::OpenCLProfilingData data{};
+        if (drv_gpu_lib::FillOpenCLProfilingData(fft_event, data)) {
+            profiler.Record(gpu_id, "SpectrumMaxima", "FFT", data);
+        }
+    }
+    clReleaseEvent(fft_event);
 
     // 3. Выполнить post-kernel
     cl_event post_event = ExecutePostKernel(fft_event);
     profiling_.post_kernel_time_ms = ProfileEvent(post_event, "PostKernel");
-    clReleaseEvent(fft_event);
+    if (do_prof) {
+        drv_gpu_lib::OpenCLProfilingData data{};
+        if (drv_gpu_lib::FillOpenCLProfilingData(post_event, data)) {
+            profiler.Record(gpu_id, "SpectrumMaxima", "PostKernel", data);
+        }
+    }
 
-    // 4. Прочитать результаты
-    std::vector<SpectrumResult> results = ReadResults(post_event);
+    // 4. Прочитать результаты (Download — FillOpenCLProfilingData + Record внутри ReadResults при do_prof)
+    std::vector<SpectrumResult> results = ReadResults(post_event, do_prof);
     clReleaseEvent(post_event);
 
     // Общее время
@@ -467,7 +491,7 @@ cl_event SpectrumMaximaFinder::ExecutePostKernel(cl_event wait_event) {
     return event;
 }
 
-std::vector<SpectrumResult> SpectrumMaximaFinder::ReadResults(cl_event wait_event) {
+std::vector<SpectrumResult> SpectrumMaximaFinder::ReadResults(cl_event wait_event, bool send_to_profiler) {
     // Читаем 8 MaxValue на луч
     size_t num_results = params_.antenna_count * 8;
     std::vector<MaxValue> raw_results(num_results);
@@ -491,6 +515,13 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ReadResults(cl_event wait_even
     // Ждём завершения
     clWaitForEvents(1, &read_event);
     profiling_.download_time_ms = ProfileEvent(read_event, "Download");
+    if (send_to_profiler) {
+        const int gpu_id = 0;
+        drv_gpu_lib::OpenCLProfilingData data{};
+        if (drv_gpu_lib::FillOpenCLProfilingData(read_event, data)) {
+            drv_gpu_lib::GPUProfiler::GetInstance().Record(gpu_id, "SpectrumMaxima", "Download", data);
+        }
+    }
     clReleaseEvent(read_event);
 
     // Преобразуем в vector<SpectrumResult>: [left0, right0, left1, right1, ...]
