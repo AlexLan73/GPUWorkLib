@@ -285,8 +285,8 @@ void SpectrumMaximaFinder::AllocateBuffers() {
         throw std::runtime_error("Failed to create fft_output buffer: " + std::to_string(err));
     }
 
-    // 3. Maxima output: antenna_count * 4 * sizeof(MaxValue)
-    size_t maxima_size = params_.antenna_count * 4 * sizeof(MaxValue);
+    // 3. Maxima output: antenna_count * 8 * sizeof(MaxValue) (4 left + 4 right)
+    size_t maxima_size = params_.antenna_count * 8 * sizeof(MaxValue);
     static_assert(sizeof(MaxValue) == 32, "MaxValue must be 32 bytes");
 
     maxima_output_ = clCreateBuffer(context_, CL_MEM_READ_WRITE,
@@ -468,8 +468,8 @@ cl_event SpectrumMaximaFinder::ExecutePostKernel(cl_event wait_event) {
 }
 
 std::vector<SpectrumResult> SpectrumMaximaFinder::ReadResults(cl_event wait_event) {
-    // Читаем все MaxValue структуры
-    size_t num_results = params_.antenna_count * 4;
+    // Читаем 8 MaxValue на луч
+    size_t num_results = params_.antenna_count * 8;
     std::vector<MaxValue> raw_results(num_results);
 
     cl_event read_event = nullptr;
@@ -493,18 +493,28 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ReadResults(cl_event wait_even
     profiling_.download_time_ms = ProfileEvent(read_event, "Download");
     clReleaseEvent(read_event);
 
-    // Преобразуем в SpectrumResult
+    // Преобразуем в vector<SpectrumResult>: [left0, right0, left1, right1, ...]
     std::vector<SpectrumResult> results;
-    results.reserve(params_.antenna_count);
+    results.reserve(params_.antenna_count * 2);
 
     for (uint32_t i = 0; i < params_.antenna_count; ++i) {
-        SpectrumResult result;
-        result.antenna_id = i;
-        result.interpolated = raw_results[i * 4 + 0];
-        result.left_point = raw_results[i * 4 + 1];
-        result.center_point = raw_results[i * 4 + 2];
-        result.right_point = raw_results[i * 4 + 3];
-        results.push_back(result);
+        size_t base = i * 8;
+
+        SpectrumResult left{};
+        left.antenna_id = i;
+        left.interpolated = raw_results[base + 0];
+        left.left_point = raw_results[base + 1];
+        left.center_point = raw_results[base + 2];
+        left.right_point = raw_results[base + 3];
+        results.push_back(left);
+
+        SpectrumResult right{};
+        right.antenna_id = i;
+        right.interpolated = raw_results[base + 4];
+        right.left_point = raw_results[base + 5];
+        right.center_point = raw_results[base + 6];
+        right.right_point = raw_results[base + 7];
+        results.push_back(right);
     }
 
     return results;

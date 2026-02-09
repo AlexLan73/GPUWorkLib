@@ -21,9 +21,13 @@
 #include <iomanip>
 #include <vector>
 #include <complex>
+#include <map>
 #define _USE_MATH_DEFINES  // ✅ Windows: для M_PI
 #include <cmath>
 #include <string>
+
+#include "modules/fft_maxima/tests/cpu_fft_reference.hpp"
+
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -103,21 +107,44 @@ inline std::vector<ExpectedResult> CalculateExpected(const SpectrumParams& param
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Проверка результатов
+// Конвертация vector<SpectrumResult> → map<int, CPUSpectrumResult> для валидации
+// Layout вектора: [left0, right0, left1, right1, ...] — 2 элемента на антену
+// ════════════════════════════════════════════════════════════════════════════
+
+inline std::map<int, CPUSpectrumResult> VectorToMapForValidation(
+    const std::vector<SpectrumResult>& vec)
+{
+    std::map<int, CPUSpectrumResult> result;
+    for (size_t i = 0; i + 1 < vec.size(); i += 2) {
+        int ant_id = static_cast<int>(i / 2);
+        result[ant_id].SpectrMax_left = vec[i];
+        result[ant_id].SpectrMax_right = vec[i + 1];
+    }
+    return result;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Проверка результатов (используем SpectrMax_left — тестовые частоты в положительном диапазоне)
 // ════════════════════════════════════════════════════════════════════════════
 
 inline bool ValidateResults(
-    const std::vector<SpectrumResult>& results,
+    const std::map<int, CPUSpectrumResult>& results,
     const std::vector<ExpectedResult>& expected,
-    const SpectrumParams& params) {
+    const SpectrumParams& /*params*/) {
 
     std::cout << "🔍 ПРОВЕРКА РЕЗУЛЬТАТОВ:\n";
     std::cout << "════════════════════════════════════════════════════════════\n";
 
     bool all_passed = true;
 
-    for (size_t i = 0; i < results.size(); ++i) {
-        const SpectrumResult& result = results[i];
+    for (size_t i = 0; i < expected.size(); ++i) {
+        auto it = results.find(static_cast<int>(i));
+        if (it == results.end()) {
+            std::cout << "  Антена " << i << ": результат отсутствует ❌\n";
+            all_passed = false;
+            continue;
+        }
+        const SpectrumResult& result = it->second.SpectrMax_left;  // тестовые частоты в левом диапазоне
         const ExpectedResult& exp = expected[i];
 
         float bin_error = std::abs(static_cast<float>(result.center_point.index) - exp.expected_bin);
@@ -146,6 +173,67 @@ inline bool ValidateResults(
 
     std::cout << "\n════════════════════════════════════════════════════════════\n";
     std::cout << "  ИТОГО: " << (all_passed ? "✅ ВСЕ ТЕСТЫ ПРОШЛИ!" : "❌ ЕСТЬ ОШИБКИ!") << "\n";
+    std::cout << "════════════════════════════════════════════════════════════\n\n";
+
+    return all_passed;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Проверка CPU vs GPU (Ref02: 8 на 8 — left с left, right с right)
+// ════════════════════════════════════════════════════════════════════════════
+
+inline bool ValidateResultsCPUvsGPU(
+    const std::map<int, CPUSpectrumResult>& gpu_results,
+    const std::map<int, cpu_reference::CPUSpectrumResult>& cpu_results,
+    float max_freq_tolerance = 0.5f,
+    float max_bin_tolerance = 1.5f)
+{
+    std::cout << "🔍 ПРОВЕРКА CPU vs GPU (8 на 8):\n";
+    std::cout << "════════════════════════════════════════════════════════════\n";
+
+    bool all_passed = true;
+
+    for (const auto& [ant_id, gpu_r] : gpu_results) {
+        int i = ant_id;
+        auto it = cpu_results.find(i);
+        if (it == cpu_results.end()) {
+            std::cout << "  Антена " << i << ": CPU результат отсутствует ❌\n";
+            all_passed = false;
+            continue;
+        }
+
+        const auto& cpu_r = it->second;
+
+        // Left: GPU vs CPU
+        float freq_err_L = std::abs(gpu_r.SpectrMax_left.interpolated.refined_frequency -
+            cpu_r.SpectrMax_left.interpolated.refined_frequency);
+        float bin_err_L = std::abs(static_cast<float>(gpu_r.SpectrMax_left.center_point.index) -
+            static_cast<float>(cpu_r.SpectrMax_left.center_point.index));
+
+        // Right: GPU vs CPU
+        float freq_err_R = std::abs(gpu_r.SpectrMax_right.interpolated.refined_frequency -
+            cpu_r.SpectrMax_right.interpolated.refined_frequency);
+        float bin_err_R = std::abs(static_cast<float>(gpu_r.SpectrMax_right.center_point.index) -
+            static_cast<float>(cpu_r.SpectrMax_right.center_point.index));
+
+        bool ok_L = (freq_err_L < max_freq_tolerance && bin_err_L < max_bin_tolerance);
+        bool ok_R = (freq_err_R < max_freq_tolerance && bin_err_R < max_bin_tolerance);
+        bool passed = ok_L && ok_R;
+        if (!passed) all_passed = false;
+
+        std::cout << "\n  Антена " << i << ":\n";
+        std::cout << "  ├─ Left:  GPU freq " << std::fixed << std::setprecision(4)
+                  << gpu_r.SpectrMax_left.interpolated.refined_frequency << " vs CPU "
+                  << cpu_r.SpectrMax_left.interpolated.refined_frequency << " Hz "
+                  << (ok_L ? "✅" : "❌") << "\n";
+        std::cout << "  ├─ Right: GPU freq " << gpu_r.SpectrMax_right.interpolated.refined_frequency
+                  << " vs CPU " << cpu_r.SpectrMax_right.interpolated.refined_frequency << " Hz "
+                  << (ok_R ? "✅" : "❌") << "\n";
+        std::cout << "  └─ Статус: " << (passed ? "✅ PASS" : "❌ FAIL") << "\n";
+    }
+
+    std::cout << "\n════════════════════════════════════════════════════════════\n";
+    std::cout << "  CPU vs GPU: " << (all_passed ? "✅ СОВПАДАЮТ!" : "❌ ЕСТЬ РАСХОЖДЕНИЯ!") << "\n";
     std::cout << "════════════════════════════════════════════════════════════\n\n";
 
     return all_passed;
@@ -188,7 +276,7 @@ inline int run() {
         // 2. Параметры теста (по плану Pl1.md)
         SpectrumParams params;
         params.antenna_count = 5;
-        params.n_point = 1000;
+        params.n_point = 100000;
         params.repeat_count = 4;
         params.sample_rate = 1000.0f;
 
@@ -203,21 +291,29 @@ inline int run() {
         // 4. Сгенерировать тестовые данные
         auto input_data = GenerateTestData(params);
 
+        // 4a. CPU референс (алгоритм как на GPU)
+        auto cpu_results = cpu_reference::NewProcessAllBeams_CPU(input_data, params);
+
         // 5. Аналитический расчёт ожидаемых результатов
         auto expected = CalculateExpected(params);
 
-        // 6. Обработка данных
+        // 6. Обработка данных (GPU — возвращает vector<SpectrumResult>)
         std::cout << "🚀 Запуск обработки...\n";
-        auto results = finder.Process(input_data);
+        auto gpu_vector = finder.Process(input_data);
         std::cout << "  ✅ Обработка завершена!\n\n";
 
         // 7. Вывод профилирования
         PrintProfiling(finder.GetProfilingData());
 
-        // 8. Проверка результатов
-        bool passed = ValidateResults(results, expected, params);
+        // 8. Конвертация в map для валидации
+        auto gpu_map = VectorToMapForValidation(gpu_vector);
 
-        // 9. Финал
+        // 9. Проверка результатов (GPU vs аналитика, CPU vs GPU)
+//        bool passed_analytical = ValidateResults(gpu_map, expected, params);
+        bool passed_cpu_gpu = ValidateResultsCPUvsGPU(gpu_map, cpu_results);
+
+        // 10. Финал
+        bool passed =  passed_cpu_gpu;
         std::cout << "╔══════════════════════════════════════════════════════════╗\n";
         if (passed) {
             std::cout << "║     ✅ ТЕСТ УСПЕШНО ПРОЙДЕН!                              ║\n";

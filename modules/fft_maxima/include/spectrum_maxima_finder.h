@@ -15,6 +15,7 @@
  */
 
 #include "interface/i_backend.hpp"
+#include "interface/spectrum_maxima_types.h"
 #include "kernels/fft_kernel_sources.hpp"
 
 #include <CL/cl.h>
@@ -26,65 +27,6 @@
 #include <cstdint>
 
 namespace antenna_fft {
-
-// ════════════════════════════════════════════════════════════════════════════
-// Структуры данных
-// ════════════════════════════════════════════════════════════════════════════
-
-/**
- * @struct SpectrumParams
- * @brief Параметры для поиска максимума спектра
- */
-struct SpectrumParams {
-    uint32_t antenna_count = 5;         ///< Количество антен (1-256)
-    uint32_t n_point = 1000;            ///< Точек на антену (исходный размер сигнала)
-    uint32_t repeat_count = 2;          ///< Множитель размера FFT (2^n: 1,2,4,8...)
-    float sample_rate = 1000.0f;        ///< Частота дискретизации (Гц)
-    uint32_t search_range = 0;          ///< Диапазон поиска максимума (0 = авто = nFFT/4)
-
-    // Вычисляемые параметры (заполняются в Initialize)
-    uint32_t nFFT = 0;                  ///< Размер FFT = nextPow2(n_point) * repeat_count
-    uint32_t base_fft = 0;              ///< Базовый размер = nextPow2(n_point)
-};
-
-/**
- * @struct MaxValue
- * @brief Результат поиска максимума (должен совпадать с GPU структурой!)
- */
-struct MaxValue {
-    uint32_t index;             ///< Индекс в FFT спектре
-    float real;                 ///< Re компонента
-    float imag;                 ///< Im компонента
-    float magnitude;            ///< |magnitude| = sqrt(re^2 + im^2)
-    float phase;                ///< Фаза в градусах
-    float freq_offset;          ///< Параболическая поправка [-0.5, 0.5]
-    float refined_frequency;    ///< Уточнённая частота (Гц)
-    uint32_t pad;               ///< Padding для выравнивания (32 bytes total)
-};
-
-/**
- * @struct SpectrumResult
- * @brief Результат обработки для одной антены
- */
-struct SpectrumResult {
-    uint32_t antenna_id;        ///< Номер антены
-    MaxValue interpolated;      ///< Результат параболической интерполяции
-    MaxValue left_point;        ///< Левая точка (index-1)
-    MaxValue center_point;      ///< Центральная точка (максимум)
-    MaxValue right_point;       ///< Правая точка (index+1)
-};
-
-/**
- * @struct ProfilingData
- * @brief Данные профилирования GPU
- */
-struct ProfilingData {
-    double upload_time_ms = 0.0;        ///< Время загрузки данных Host→GPU
-    double fft_time_ms = 0.0;           ///< Время выполнения FFT (с pre-callback)
-    double post_kernel_time_ms = 0.0;   ///< Время выполнения post-kernel
-    double download_time_ms = 0.0;      ///< Время выгрузки результатов GPU→Host
-    double total_time_ms = 0.0;         ///< Общее время
-};
 
 // ════════════════════════════════════════════════════════════════════════════
 // Класс SpectrumMaximaFinder
@@ -165,7 +107,7 @@ public:
     /**
      * @brief Обработка данных
      * @param input_data Входные данные [antenna_count × n_point] complex<float>
-     * @return Вектор результатов для каждой антены
+     * @return Вектор результатов: 2*antenna_count SpectrumResult [left0, right0, left1, right1, ...]
      * @throws std::runtime_error при ошибке обработки
      */
     std::vector<SpectrumResult> Process(
@@ -220,7 +162,7 @@ private:
     /// Выполнить post-kernel
     cl_event ExecutePostKernel(cl_event wait_event);
 
-    /// Прочитать результаты
+    /// Прочитать результаты (8 MaxValue на луч → vector<SpectrumResult>)
     std::vector<SpectrumResult> ReadResults(cl_event wait_event);
 
     /// Профилирование события

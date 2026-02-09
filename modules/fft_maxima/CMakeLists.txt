@@ -62,6 +62,7 @@ set(HEADERS
     include/fft_logger.h
     include/fft_result_writer.hpp
     include/interface/antenna_fft_params.h
+    include/interface/spectrum_maxima_types.h
     include/kernels/fft_kernel_sources.hpp
 )
 
