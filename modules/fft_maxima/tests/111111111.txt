@@ -5,3 +5,5 @@ l_event SpectrumMaximaFinder::ExecuteFFT(cl_event wait_event) {
     clfftStatus status = clfftEnqueueTransform( 
 
 строка 438      
+
+GetPostKernelSource_TwoPeaks()

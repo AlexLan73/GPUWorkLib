@@ -60,6 +60,19 @@
 
 ---
 
+## 🎯 Текущие рефакторинг-темы (2026-02-10)
+
+| Тема | Приоритет | Спецификация | Описание |
+|------|-----------|--------------|----------|
+| **DrvGPU Optimization** | 🔵 Аналитика (ПЕРВАЯ!) | [specs/drvgpu_optimization.md](specs/drvgpu_optimization.md) | Анализ и оптимизация DrvGPU без ухудшения функциональности |
+| **Kernel Refactoring** | 🔥 Высокий | [specs/kernel_refactoring.md](specs/kernel_refactoring.md) | Разделение кернелов: OnePeak и TwoPeaks |
+| **Batch Large Data** | 🔥 Высокий | [specs/batch_large_data.md](specs/batch_large_data.md) | Тестирование 256 лучей × 1300000 точек |
+| **API Refactoring** | 🔥 Критический | [specs/api_refactoring.md](specs/api_refactoring.md) | Универсальный API SpectrumMaximaFinder (InputData<T>) |
+
+**Порядок работы**: ТЕМА 4 (DrvGPU) → ТЕМА 3 (Kernels) → ТЕМА 2 (Batch) → ТЕМА 1 (API)
+
+---
+
 ## 💬 Сессии с AI
 
 | Файл | Описание |
@@ -80,4 +93,4 @@
 
 ---
 
-*Последнее обновление: 2026-02-09*
+*Последнее обновление: 2026-02-10*
