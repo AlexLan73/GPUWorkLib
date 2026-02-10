@@ -41,6 +41,15 @@ namespace test_spectrum_maxima {
 using namespace antenna_fft;
 using namespace drv_gpu_lib;
 
+/**
+ * @enum TestMode
+ * @brief Режим тестирования: 1 или 2 пика
+ */
+enum class TestMode {
+    ONE_PEAK,   ///< Тестировать OnePeak кернел (4 MaxValue на луч)
+    TWO_PEAKS   ///< Тестировать TwoPeaks кернел (8 MaxValue на луч)
+};
+
 // ════════════════════════════════════════════════════════════════════════════
 // Вспомогательные структуры
 // ════════════════════════════════════════════════════════════════════════════
@@ -264,14 +273,85 @@ inline void PrintProfiling(const ProfilingData& profiling) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Главная функция теста
+// Конвертация для ONE_PEAK режима (1 результат на антену)
 // ════════════════════════════════════════════════════════════════════════════
 
-inline int run() {
+inline std::map<int, SpectrumResult> VectorToMapForOnePeak(
+    const std::vector<SpectrumResult>& vec)
+{
+    std::map<int, SpectrumResult> result;
+    for (size_t i = 0; i < vec.size(); ++i) {
+        result[static_cast<int>(i)] = vec[i];
+    }
+    return result;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Валидация для ONE_PEAK: проверяем что найденный максимум корректен
+// ════════════════════════════════════════════════════════════════════════════
+
+inline bool ValidateOnePeakResults(
+    const std::map<int, SpectrumResult>& results,
+    const std::vector<ExpectedResult>& expected)
+{
+    std::cout << "🔍 ПРОВЕРКА РЕЗУЛЬТАТОВ (ONE_PEAK):\n";
+    std::cout << "════════════════════════════════════════════════════════════\n";
+
+    bool all_passed = true;
+
+    for (size_t i = 0; i < expected.size(); ++i) {
+        auto it = results.find(static_cast<int>(i));
+        if (it == results.end()) {
+            std::cout << "  Антена " << i << ": результат отсутствует ❌\n";
+            all_passed = false;
+            continue;
+        }
+        const SpectrumResult& result = it->second;
+        const ExpectedResult& exp = expected[i];
+
+        float bin_error = std::abs(static_cast<float>(result.center_point.index) - exp.expected_bin);
+        float freq_error = std::abs(result.interpolated.refined_frequency - exp.frequency);
+
+        bool bin_ok = (bin_error < 1.5f);
+        bool freq_ok = (freq_error < 0.5f);
+        bool passed = bin_ok && freq_ok;
+
+        if (!passed) all_passed = false;
+
+        std::cout << "\n  Антена " << i << ":\n";
+        std::cout << "  ├─ Ожидаемая частота:  " << std::fixed << std::setprecision(2)
+                  << exp.frequency << " Hz\n";
+        std::cout << "  ├─ Найденная частота:  " << result.interpolated.refined_frequency << " Hz\n";
+        std::cout << "  ├─ Ошибка частоты:     " << freq_error << " Hz "
+                  << (freq_ok ? "✅" : "❌") << "\n";
+        std::cout << "  ├─ Ожидаемый bin:      " << exp.expected_bin << "\n";
+        std::cout << "  ├─ Найденный bin:      " << result.center_point.index << "\n";
+        std::cout << "  ├─ Ошибка bin:         " << bin_error << " "
+                  << (bin_ok ? "✅" : "❌") << "\n";
+        std::cout << "  ├─ Magnitude:          " << result.center_point.magnitude << "\n";
+        std::cout << "  └─ Статус:             " << (passed ? "✅ PASS" : "❌ FAIL") << "\n";
+    }
+
+    std::cout << "\n════════════════════════════════════════════════════════════\n";
+    std::cout << "  ИТОГО: " << (all_passed ? "✅ ВСЕ ТЕСТЫ ПРОШЛИ!" : "❌ ЕСТЬ ОШИБКИ!") << "\n";
+    std::cout << "════════════════════════════════════════════════════════════\n\n";
+
+    return all_passed;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Главная функция теста с переключателем режима
+// ════════════════════════════════════════════════════════════════════════════
+
+inline int run(TestMode mode = TestMode::TWO_PEAKS) {
     try {
         std::cout << "\n";
         std::cout << "╔══════════════════════════════════════════════════════════╗\n";
-        std::cout << "║     TEST: SpectrumMaximaFinder с синусоидами             ║\n";
+        if (mode == TestMode::ONE_PEAK) {
+            std::cout << "║     TEST: SpectrumMaximaFinder (ONE_PEAK mode)            ║\n";
+        } else {
+            std::cout << "║     TEST: SpectrumMaximaFinder (TWO_PEAKS mode)           ║\n";
+        }
         std::cout << "╚══════════════════════════════════════════════════════════╝\n\n";
 
         // 1. Инициализация DrvGPU
@@ -294,6 +374,11 @@ inline int run() {
         params.repeat_count = 4;
         params.sample_rate = 1000.0f;
 
+        // Установка режима поиска пиков
+        params.peak_mode = (mode == TestMode::ONE_PEAK)
+            ? PeakSearchMode::ONE_PEAK
+            : PeakSearchMode::TWO_PEAKS;
+
         // 3. Создать и инициализировать SpectrumMaximaFinder
         SpectrumMaximaFinder finder(params, &gpu.GetBackend());
         finder.Initialize();
@@ -305,37 +390,35 @@ inline int run() {
         // 4. Сгенерировать тестовые данные
         auto input_data = GenerateTestData(params);
 
-        // 4a. CPU референс (алгоритм как на GPU)
-        auto cpu_results = cpu_reference::NewProcessAllBeams_CPU(input_data, params);
-
-        // 5. Аналитический расчёт ожидаемых результатов
-//        auto expected = CalculateExpected(params);
-
-        // 6. Обработка данных (GPU — возвращает vector<SpectrumResult>)
+        // 5. Обработка данных (GPU)
         std::cout << "🚀 Запуск обработки...\n";
         auto gpu_vector = finder.Process(input_data);
         std::cout << "  ✅ Обработка завершена!\n\n";
 
-        // 7. Вывод профилирования (Ref04: ветвление по is_prof)
-        // При is_prof=true — PrintReport() с полной таблицей (5 полей OpenCL)
-        // При is_prof=false — старый локальный вывод PrintProfiling()
+        // 6. Вывод профилирования
         if (is_prof) {
-            // Даём профайлеру обработать асинхронную очередь
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             profiler.PrintReport();
         } else {
             PrintProfiling(finder.GetProfilingData());
         }
 
-        // 8. Конвертация в map для валидации
-        auto gpu_map = VectorToMapForValidation(gpu_vector);
+        // 7. Валидация результатов
+        bool passed = false;
 
-        // 9. Проверка результатов (GPU vs аналитика, CPU vs GPU)
-//        bool passed_analytical = ValidateResults(gpu_map, expected, params);
-        bool passed_cpu_gpu = ValidateResultsCPUvsGPU(gpu_map, cpu_results);
+        if (mode == TestMode::ONE_PEAK) {
+            // ONE_PEAK: один результат на антену
+            auto gpu_map = VectorToMapForOnePeak(gpu_vector);
+            auto expected = CalculateExpected(params);
+            passed = ValidateOnePeakResults(gpu_map, expected);
+        } else {
+            // TWO_PEAKS: CPU референс + сравнение
+            auto cpu_results = cpu_reference::NewProcessAllBeams_CPU(input_data, params);
+            auto gpu_map = VectorToMapForValidation(gpu_vector);
+            passed = ValidateResultsCPUvsGPU(gpu_map, cpu_results);
+        }
 
-        // 10. Финал
-        bool passed =  passed_cpu_gpu;
+        // 8. Финал
         std::cout << "╔══════════════════════════════════════════════════════════╗\n";
         if (passed) {
             std::cout << "║     ✅ ТЕСТ УСПЕШНО ПРОЙДЕН!                              ║\n";
@@ -344,7 +427,7 @@ inline int run() {
         }
         std::cout << "╚══════════════════════════════════════════════════════════╝\n\n";
 
-        // 11. Остановка GPUProfiler (если был запущен)
+        // 9. Остановка GPUProfiler
         if (is_prof) {
             profiler.Stop();
         }
@@ -355,6 +438,16 @@ inline int run() {
         std::cerr << "\n❌ ОШИБКА: " << e.what() << "\n\n";
         return 1;
     }
+}
+
+// Перегрузка без аргументов — для обратной совместимости (TWO_PEAKS)
+inline int run_two_peaks() {
+    return run(TestMode::TWO_PEAKS);
+}
+
+// Запуск теста ONE_PEAK
+inline int run_one_peak() {
+    return run(TestMode::ONE_PEAK);
 }
 
 } // namespace test_spectrum_maxima

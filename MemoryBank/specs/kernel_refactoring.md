@@ -83,7 +83,7 @@ inline const char* GetPostKernelSource_OnePeak() {
 // Post Kernel: ONE PEAK (весь диапазон)
 // ════════════════════════════════════════════════════════════════════════════
 // НАЗНАЧЕНИЕ:
-//   Поиск ОДНОГО максимума во ВСЁМ диапазоне [0, search_range]
+//   Поиск ОДНОГО максимума во ВСЁМ диапазоне [0..search_range/2, ... nFFT-1-search_range/2..nFFT-1]
 //
 // АЛГОРИТМ:
 //   ┌──────────────────────────────────────────────────────────────────┐
@@ -91,111 +91,80 @@ inline const char* GetPostKernelSource_OnePeak() {
 //   │ Кодо проверит и учтёт пожелания!                                 │
 //   └──────────────────────────────────────────────────────────────────┘
 //
-//   Предположительно:
-//   1. Ищем максимум во всём диапазоне [0, search_range]
-//   2. Берём 3 точки вокруг максимума [max_idx-1, max_idx, max_idx+1]
-//   3. Параболическая интерполяция для уточнения частоты
+// ════════════════════════════════════════════════════════════════════════════
+// GetPostKernelSource_OnePeaks() - Post Kernel с поиском максимума в краевых диапазонах
+// ════════════════════════════════════════════════════════════════════════════
 //
-// ВЫХОД: 4 MaxValue структуры на каждый луч
-//   [0] - интерполяция (freq_offset, refined_frequency)
-//   [1] - левая точка (index-1)
-//   [2] - центральная точка (главный максимум)
-//   [3] - правая точка (index+1)
+// НАЗНАЧЕНИЕ:
+//   Post-processing kernel: поиск ОДНОГО максимума в краевых диапазонах
+//   спектра (левый и правый) + параболическая интерполяция + вывод 3х соседних точек
 //
-// ПАРАМЕТРЫ: те же что и в TwoPeaks (совместимость)
+// АЛГОРИТМ:
+//   1. Делим search_range пополам → half_range
+//   2. Ищем максимум ОТДЕЛЬНО в левом [0, half_range] и правом [nFFT-half_range, nFFT-1]
+//   3. Выбираем максимальный получаем индекс max_idx 
+//   4. Для пика: 3 точки [max_idx-1, max_idx, max_idx+1] + парабола
+//   5. Выводим 4 структур MaxValue на каждый луч:
+//      [0] - результат параболической интерполяции (с freq_offset, refined_frequency)
+//      [1] - левая точка (max_idx-1)
+//      [2] - центральная точка (главный максимум)
+//      [3] - правая точка (max_idx+1)
+//
+
+// ВХОДНЫЕ ПАРАМЕТРЫ:
+//   fft_output    - результат FFT (beam_count * nFFT комплексных чисел)
+//   maxima_output - выходной массив (beam_count * 8 структуры MaxValue)
+//   beam_count    - количество лучей
+//   nFFT          - размер FFT
+//   search_range  - ширина анализируемого диапазона (half_range = search_range/2)
+//   sample_rate   - частота дискретизации для вычисления частоты в Гц
+//
+// ВЫХОДНОЙ ФОРМАТ (4 структуры MaxValue на луч):
+//   MaxValue[0]: Параболическая интерполяция центральной точки
+//     - index: center_idx
+//     - real/imag: комплексное значение центра
+//     - magnitude: |magnitude| центра
+//     - phase: фаза в градусах
+//     - freq_offset: параболическая поправка [-0.5, 0.5]
+//     - refined_frequency: уточнённая частота (center + offset) * bin_width
+//
+//   MaxValue[1]: Левая точка (index-1)
+//     - index: center_idx - 1
+//     - real/imag: комплексное значение (или 0.0 если за границей)
+//     - magnitude: |magnitude| (или 0.0)
+//     - phase: фаза (или 0.0)
+//     - freq_offset: 0.0
+//     - refined_frequency: (center-1) * bin_width
+//
+//   MaxValue[2]: Центральная точка (главный максимум)
+//     - index: center_idx
+//     - real/imag: комплексное значение
+//     - magnitude: |magnitude|
+//     - phase: фаза
+//     - freq_offset: 0.0
+//     - refined_frequency: center * bin_width
+//
+//   MaxValue[3]: Правая точка (index+1)
+//     - index: center_idx + 1
+//     - real/imag: комплексное значение (или 0.0 если за границей)
+//     - magnitude: |magnitude| (или 0.0)
+//     - phase: фаза (или 0.0)
+//     - freq_offset: 0.0
+//     - refined_frequency: (center+1) * bin_width
+//
+// ГРАНИЧНЫЕ СЛУЧАИ:
+//   - Если max_idx == 0 или за границей диапазона → пишем 0.0 для отсутствующих точек
+//
+// ПРИМЕР:
+//   nFFT = 2048, search_range = 512, half_range = 256
+//   Ищем в: [0..255] и [1792..2047]
+//   Игнорируем: [256..1791]
+//   Найден максимум от полученных максимумов с лева и права. найдем индекс ind
+//   Найден найдем соседние точки ind-1б ind+1  и расчитаем значения для них и 
+//      выведем 4 структуры MaxValue для луча
+//
 // ════════════════════════════════════════════════════════════════════════════
 
-__kernel void post_kernel_one_peak(
-    __global const float2* fft_output,
-    __global MaxValue* output,
-    uint nFFT,
-    uint beam_count,
-    uint search_range,
-    float sample_rate
-) {
-    uint beam_idx = get_global_id(0);
-    if (beam_idx >= beam_count) return;
-
-    __global const float2* beam_spectrum = fft_output + beam_idx * nFFT;
-    __global MaxValue* beam_output = output + beam_idx * 4;  // 4 MaxValue!
-
-    // ═══════════════════════════════════════════════════════════
-    // ШАГ 1: Найти максимум во всём диапазоне [0, search_range]
-    // ═══════════════════════════════════════════════════════════
-    uint max_idx = 0;
-    float max_magnitude = 0.0f;
-
-    for (uint i = 0; i < search_range && i < nFFT; ++i) {
-        float2 val = beam_spectrum[i];
-        float magnitude = sqrt(val.x * val.x + val.y * val.y);
-
-        if (magnitude > max_magnitude) {
-            max_magnitude = magnitude;
-            max_idx = i;
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // ШАГ 2: Собрать 3 точки [max_idx-1, max_idx, max_idx+1]
-    // ═══════════════════════════════════════════════════════════
-    uint idx_left  = (max_idx > 0) ? max_idx - 1 : 0;
-    uint idx_center = max_idx;
-    uint idx_right = (max_idx + 1 < nFFT) ? max_idx + 1 : nFFT - 1;
-
-    float2 val_left   = beam_spectrum[idx_left];
-    float2 val_center = beam_spectrum[idx_center];
-    float2 val_right  = beam_spectrum[idx_right];
-
-    float mag_left   = sqrt(val_left.x * val_left.x + val_left.y * val_left.y);
-    float mag_center = sqrt(val_center.x * val_center.x + val_center.y * val_center.y);
-    float mag_right  = sqrt(val_right.x * val_right.x + val_right.y * val_right.y);
-
-    // ═══════════════════════════════════════════════════════════
-    // ШАГ 3: Параболическая интерполяция
-    // ═══════════════════════════════════════════════════════════
-    float denom = 2.0f * (2.0f * mag_center - mag_left - mag_right);
-    float freq_offset = 0.0f;
-
-    if (fabs(denom) > 1e-6f) {
-        freq_offset = (mag_left - mag_right) / denom;
-        // Ограничиваем offset: [-0.5, 0.5]
-        freq_offset = clamp(freq_offset, -0.5f, 0.5f);
-    }
-
-    float refined_index = (float)idx_center + freq_offset;
-    float bin_width = sample_rate / (float)nFFT;
-    float refined_frequency = refined_index * bin_width;
-
-    // ═══════════════════════════════════════════════════════════
-    // ШАГ 4: Заполнить выходной массив (4 MaxValue)
-    // ═══════════════════════════════════════════════════════════
-
-    // [0] - Интерполированный результат
-    beam_output[0].index = idx_center;
-    beam_output[0].magnitude = mag_center;
-    beam_output[0].freq_offset = freq_offset;
-    beam_output[0].refined_frequency = refined_frequency;
-
-    // [1] - Левая точка
-    beam_output[1].index = idx_left;
-    beam_output[1].magnitude = mag_left;
-    beam_output[1].freq_offset = 0.0f;
-    beam_output[1].refined_frequency = (float)idx_left * bin_width;
-
-    // [2] - Центральная точка
-    beam_output[2].index = idx_center;
-    beam_output[2].magnitude = mag_center;
-    beam_output[2].freq_offset = 0.0f;
-    beam_output[2].refined_frequency = (float)idx_center * bin_width;
-
-    // [3] - Правая точка
-    beam_output[3].index = idx_right;
-    beam_output[3].magnitude = mag_right;
-    beam_output[3].freq_offset = 0.0f;
-    beam_output[3].refined_frequency = (float)idx_right * bin_width;
-}
-)CL";
-}
 ```
 
 ### 3️⃣ Обновить вызовы кернела
@@ -226,7 +195,7 @@ if (mode == PeakSearchMode::ONE_PEAK) {
 **Проблема** (из задачи Alex 3.5):
 > "Исправить на уровне кернел значение пика в правой стороне привести его к значению как с лева"
 
-**Что исправить**: В `GetPostKernelSource_TwoPeaks()` правая сторона спектра имеет неправильную амплитуду.
+**Что исправить**: В `GetPostKernelSource_TwoPeaks()` правая сторона спектра имеет неправое представление частоты .
 
 **Решение**: Будет реализовано в таске при работе над ТЕМОЙ 3.
 

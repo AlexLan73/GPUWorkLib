@@ -8,12 +8,13 @@
  * 
  * ✅ ОБНОВЛЕНО: Соответствует новой реализации с owns_resources_
  * ✅ ИСПРАВЛЕНО: Убраны несуществующие методы, используется реальный API
- * 
+ * ✅ ОБНОВЛЕНО 2026-02-10: OpenCLBackendExternal удалён, используется OpenCLBackend
+ *
  * @author DrvGPU Team
- * @date 2026-02-02
+ * @date 2026-02-10
  */
 
- #include "DrvGPU/backends/opencl/opencl_backend_external.hpp"
+ #include "DrvGPU/backends/opencl/opencl_backend.hpp"
  #include "DrvGPU/drv_gpu.hpp"
  #include <iostream>
  #include <vector>
@@ -157,8 +158,8 @@
      // ────────────────────────────────────────────────────────────────
      // ШАГ 2: Создаем DrvGPU backend (пустой конструктор)
      // ────────────────────────────────────────────────────────────────
-     std::cout << "\n📌 ШАГ 2: Создаём OpenCLBackendExternal...\n";
-     auto backend = std::make_unique<drv_gpu_lib::OpenCLBackendExternal>();
+     std::cout << "\n📌 ШАГ 2: Создаём OpenCLBackend...\n";
+     auto backend = std::make_unique<drv_gpu_lib::OpenCLBackend>();
      
      std::cout << "   ✅ Backend создан (owns_resources = false автоматически)\n";
      
@@ -220,7 +221,7 @@
      YourExistingOpenCL your_opencl;
      
      // ШАГ 2: DrvGPU backend с внешним контекстом
-     auto backend = std::make_unique<drv_gpu_lib::OpenCLBackendExternal>();
+     auto backend = std::make_unique<drv_gpu_lib::OpenCLBackend>();
      backend->InitializeFromExternalContext(
          your_opencl.GetContext(),
          your_opencl.GetDevice(),
@@ -310,7 +311,7 @@
      
      YourExistingOpenCL your_opencl;
      
-     auto backend = std::make_unique<drv_gpu_lib::OpenCLBackendExternal>();
+     auto backend = std::make_unique<drv_gpu_lib::OpenCLBackend>();
      backend->InitializeFromExternalContext(
          your_opencl.GetContext(),
          your_opencl.GetDevice(),
@@ -393,7 +394,7 @@
      YourExistingOpenCL your_opencl;
      
      std::cout << "📌 Создаём external backend...\n";
-     auto backend = std::make_unique<drv_gpu_lib::OpenCLBackendExternal>();
+     auto backend = std::make_unique<drv_gpu_lib::OpenCLBackend>();
      
      std::cout << "   OwnsResources() = " << backend->OwnsResources() << " (false)\n";
      
@@ -419,7 +420,7 @@
      std::cout << "\n📌 Уничтожаем backend...\n";
      backend.reset();
      
-     std::cout << "   ✅ ~OpenCLBackendExternal() вызван\n";
+     std::cout << "   ✅ ~OpenCLBackend() вызван\n";
      std::cout << "   ✅ ~OpenCLBackend() → Cleanup() вызван\n";
      std::cout << "   ✅ Cleanup() увидел owns_resources_ = false\n";
      std::cout << "   ✅ НЕ вызвал clReleaseCommandQueue/clReleaseContext!\n";
@@ -447,7 +448,7 @@ void Example5_UsingBackendDirectly() {
   // ────────────────────────────────────────────────────────────────
   std::cout << "📌 Создаём external backend...\n";
   
-  auto backend = std::make_unique<drv_gpu_lib::OpenCLBackendExternal>();
+  auto backend = std::make_unique<drv_gpu_lib::OpenCLBackend>();
   backend->InitializeFromExternalContext(
       your_opencl.GetContext(),
       your_opencl.GetDevice(),
@@ -558,7 +559,7 @@ void Example5_UsingBackendDirectly() {
   
   std::cout << "\n🎉 Backend работает идеально с вашим OpenCL контекстом!\n";
   
-  // ~OpenCLBackendExternal() → НЕ освобождает ваш контекст (owns_resources = false)
+  // ~OpenCLBackend() → НЕ освобождает ваш контекст (owns_resources = false)
 }
 // ════════════════════════════════════════════════════════════════════════════
 // MAIN: Запуск всех примеров
@@ -577,7 +578,7 @@ namespace external_context_example {
   ║       Версия: 2.0 (с owns_resources_)                                      ║
   ║                                                                            ║
   ║       ✅ КЛЮЧЕВАЯ ОСОБЕННОСТЬ:                                             ║
-  ║       OpenCLBackendExternal автоматически устанавливает                    ║
+  ║       OpenCLBackend автоматически устанавливает                    ║
   ║       owns_resources_ = false → НЕ освобождает ваш контекст!              ║
   ║                                                                            ║
   ║       📚 API используется:                                                 ║

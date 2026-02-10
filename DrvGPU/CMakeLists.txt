@@ -91,24 +91,11 @@ set(DRVGPU_OPENCL_HEADERS
     "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/command_queue_pool.hpp"
 )
 
-# OpenCL Backend EXTERNAL CONTEXT
-if(BUILD_EXTERNAL_CONTEXT_SUPPORT)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/opencl_backend_external.cpp")
-        set(DRVGPU_EXTERNAL_CONTEXT_SOURCES
-            "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/opencl_backend_external.cpp"
-        )
-        set(DRVGPU_EXTERNAL_CONTEXT_HEADERS
-            "${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl/opencl_backend_external.hpp"
-        )
-    else()
-        set(DRVGPU_EXTERNAL_CONTEXT_SOURCES "")
-        set(DRVGPU_EXTERNAL_CONTEXT_HEADERS "")
-        message(WARNING "BUILD_EXTERNAL_CONTEXT_SUPPORT is ON but opencl_backend_external.cpp not found")
-    endif()
-else()
-    set(DRVGPU_EXTERNAL_CONTEXT_SOURCES "")
-    set(DRVGPU_EXTERNAL_CONTEXT_HEADERS "")
-endif()
+# ✅ ОБНОВЛЕНО 2026-02-10: OpenCLBackendExternal объединён с OpenCLBackend
+# Функциональность InitializeFromExternalContext() теперь встроена в OpenCLBackend
+# Переменные оставлены для совместимости, но теперь пусты
+set(DRVGPU_EXTERNAL_CONTEXT_SOURCES "")
+set(DRVGPU_EXTERNAL_CONTEXT_HEADERS "")
 
 # Common Headers
 #set(DRVGPU_COMMON_HEADERS

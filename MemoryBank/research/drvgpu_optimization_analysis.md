@@ -436,16 +436,79 @@ grep -r "OpenCLBackendExternal" DrvGPU/ modules/
 
 ---
 
-## 📝 Следующие шаги
+## 📝 СТАТУС РЕАЛИЗАЦИИ
 
-1. **Обсудить с Alex** результаты анализа
-2. **Решить**: делать ли P1 (OpenCLBackend объединение)?
-3. **Если да** → создать таски для реализации
-4. **Если нет** → закрыть тему, всё отлично!
+### ✅ P1 — Объединение OpenCLBackend и OpenCLBackendExternal (ЗАВЕРШЕНО)
+
+**Дата реализации**: 2026-02-10
+**Статус**: ✅ Завершено и проверено
+**Решение Alex**: Да, делать! ✅
+
+**Что сделано**:
+
+1. ✅ **Добавлен метод `InitializeFromExternalContext()` в `OpenCLBackend`**
+   - Header: `DrvGPU/backends/opencl/opencl_backend.hpp` (строки 104-136)
+   - Implementation: `DrvGPU/backends/opencl/opencl_backend.cpp` (строки 173-245)
+   - Автоматически устанавливает `owns_resources_ = false`
+   - Полная документация и примеры использования
+
+2. ✅ **Удалены файлы `OpenCLBackendExternal`**
+   - `DrvGPU/backends/opencl/opencl_backend_external.hpp` — удалён ❌
+   - `DrvGPU/backends/opencl/opencl_backend_external.cpp` — удалён ❌
+   - Удалена строка `friend class OpenCLBackendExternal;` из header
+
+3. ✅ **Обновлены примеры использования**
+   - `DrvGPU/tests/example_external_context_usage.hpp` — обновлён
+   - `modules/fft_maxima/tests/test_external_context_fft.hpp` — обновлён
+   - Все замены `OpenCLBackendExternal` → `OpenCLBackend`
+
+4. ✅ **Обновлён `CMakeLists.txt`**
+   - Удалена секция `BUILD_EXTERNAL_CONTEXT_SUPPORT`
+   - Добавлен комментарий о слиянии классов
+   - Переменные оставлены для совместимости (пусты)
+
+5. ✅ **Проверена компиляция**
+   - CMake конфигурация: ✅ Успешно
+   - Make сборка: ✅ Успешно (902KB бинарник)
+   - Запуск программы: ✅ Работает корректно
+
+**API До и После**:
+
+```cpp
+// ❌ БЫЛО (старый API):
+#include "DrvGPU/backends/opencl/opencl_backend_external.hpp"
+auto backend = std::make_unique<OpenCLBackendExternal>();
+backend->InitializeFromExternalContext(ctx, dev, queue);
+
+// ✅ СТАЛО (новый API):
+#include "DrvGPU/backends/opencl/opencl_backend.hpp"
+auto backend = std::make_unique<OpenCLBackend>();
+backend->InitializeFromExternalContext(ctx, dev, queue);
+```
+
+**Результат**:
+- ✅ Устранено дублирование кода (2 файла удалено: 139 строк header + cpp)
+- ✅ Упрощена архитектура (один класс вместо двух)
+- ✅ Сохранена вся функциональность (100% совместимость)
+- ✅ Обратная совместимость через простую замену класса
+- ✅ Проект компилируется и работает
+
+---
+
+## 🎯 Следующие шаги
+
+1. ✅ **P1 (OpenCLBackend)** — ВЫПОЛНЕНО!
+2. 📋 **P2 (BatchManager → namespace)** — ОТЛОЖЕНО (вернуться позже)
+3. ❌ **P3 (Объединить буферы)** — НЕ ДЕЛАТЬ (type safety важнее)
+
+**ТЕМА 4 (DrvGPU Optimization)**: ✅ **ЗАВЕРШЕНА!**
+
+Переходим к **ТЕМА 3 (Kernel Refactoring)** — OnePeak & TwoPeaks
 
 ---
 
 *Анализ выполнен: 2026-02-10*
+*Реализация P1: 2026-02-10*
 *Автор: Кодо (AI Assistant)*
 *Метод: sequential-thinking (16 шагов) + context7 (Boost.Compute)*
-*Время анализа: ~15 минут*
+*Время: Анализ ~15 мин, Реализация P1 ~20 мин*

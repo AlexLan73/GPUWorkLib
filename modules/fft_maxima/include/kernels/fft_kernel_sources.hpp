@@ -48,7 +48,7 @@ namespace kernels {
 //   - Требуется отладка промежуточных результатов
 //
 // ════════════════════════════════════════════════════════════════════════════
-inline const char* GetPaddingKernelSource() {
+inline const char* GetPaddingKernelSource_opencl() {
     return R"CL(
 __kernel void padding_kernel(
     __global const float2* input,    // Входные данные: ПОЛНЫЙ буфер (все лучи)
@@ -77,7 +77,7 @@ __kernel void padding_kernel(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// GetPostKernelSource() - Post Kernel с поиском максимума в краевых диапазонах
+// GetPostKernelSource_TwoPeaks_opencl() - Post Kernel с поиском ДВУХ максимумов
 // ════════════════════════════════════════════════════════════════════════════
 //
 // НАЗНАЧЕНИЕ:
@@ -186,7 +186,7 @@ __kernel void padding_kernel(
 //   Найден максимум в индексе 1802 → выводим точки 1801, 1802, 1803 + параболу правого диапазона
 //
 // ════════════════════════════════════════════════════════════════════════════
-inline const char*  GetPostKernelSource(){
+inline const char* GetPostKernelSource_TwoPeaks_opencl() {
     return R"CL(
 // Структура результата (должна совпадать с C++ MaxValue)
 typedef struct {
@@ -409,7 +409,7 @@ __kernel void post_kernel(
 //   antenna_fft_release.cpp:225 → CreateFFTPlanWithCallbacks()
 //
 // ════════════════════════════════════════════════════════════════════════════
-inline const char* GetPreCallbackSource32() {
+inline const char* GetPreCallbackSource32_opencl() {
     return
         "typedef struct { "
         "    uint beam_count; "
@@ -514,8 +514,183 @@ inline const char* GetPreCallbackSource32() {
 //      выведем 4 структуры MaxValue для луча
 //
 // ════════════════════════════════════════════════════════════════════════════
+inline const char* GetPostKernelSource_OnePeak_opencl() {
+    return R"CL(
+// Структура результата (должна совпадать с C++ MaxValue)
+typedef struct {
+    uint index;
+    float real;
+    float imag;
+    float magnitude;
+    float phase;
+    float freq_offset;
+    float refined_frequency;
+    uint pad;
+} MaxValue;
 
+__kernel void post_kernel_one_peak(
+    __global const float2* fft_output,     // FFT результат: beam_count * nFFT
+    __global MaxValue* maxima_output,      // Результат: beam_count * 4 структуры
+    uint beam_count,
+    uint nFFT,
+    uint search_range,                     // Ширина диапазона (делим пополам)
+    float sample_rate                      // Частота дискретизации (Гц)
+) {
+    uint beam_idx = get_group_id(0);
+    uint lid = get_local_id(0);
+    uint local_size = get_local_size(0);
 
+    if (beam_idx >= beam_count) return;
+
+    // ШАГ 1: Вычисляем half_range
+    uint half_range = search_range / 2;
+
+    // Local memory для параллельной редукции
+    __local float local_left_mag[256];
+    __local uint local_left_idx[256];
+    __local float local_right_mag[256];
+    __local uint local_right_idx[256];
+
+    float my_left_mag = -1.0f;
+    uint my_left_idx = 0;
+    uint range2_start = nFFT - half_range;
+    uint my_right_idx = range2_start;
+
+    // Поиск в левом диапазоне [0, half_range]
+    for (uint i = lid; i < half_range; i += local_size) {
+        uint fft_idx = beam_idx * nFFT + i;
+        float2 val = fft_output[fft_idx];
+        float mag = sqrt(val.x * val.x + val.y * val.y);
+        if (mag > my_left_mag) {
+            my_left_mag = mag;
+            my_left_idx = i;
+        }
+    }
+
+    // Поиск в правом диапазоне [nFFT - half_range, nFFT - 1]
+    float my_right_mag = -1.0f;
+    for (uint i = range2_start + lid; i < nFFT; i += local_size) {
+        uint fft_idx = beam_idx * nFFT + i;
+        float2 val = fft_output[fft_idx];
+        float mag = sqrt(val.x * val.x + val.y * val.y);
+        if (mag > my_right_mag) {
+            my_right_mag = mag;
+            my_right_idx = i;
+        }
+    }
+
+    local_left_mag[lid] = my_left_mag;
+    local_left_idx[lid] = my_left_idx;
+    local_right_mag[lid] = my_right_mag;
+    local_right_idx[lid] = my_right_idx;
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    // ШАГ 3: Редукция и выбор БОЛЬШЕГО максимума
+    if (lid == 0) {
+        float global_left_mag = -1.0f;
+        uint global_left_idx = 0;
+        float global_right_mag = -1.0f;
+        uint global_right_idx = range2_start;
+
+        for (uint j = 0; j < local_size; ++j) {
+            if (local_left_mag[j] > global_left_mag) {
+                global_left_mag = local_left_mag[j];
+                global_left_idx = local_left_idx[j];
+            }
+            if (local_right_mag[j] > global_right_mag) {
+                global_right_mag = local_right_mag[j];
+                global_right_idx = local_right_idx[j];
+            }
+        }
+
+        // АЛГОРИТМ ALEX: Выбираем БОЛЬШИЙ из двух максимумов
+        uint center_idx;
+        bool is_right_side;
+        if (global_right_mag > global_left_mag) {
+            center_idx = global_right_idx;
+            is_right_side = true;
+        } else {
+            center_idx = global_left_idx;
+            is_right_side = false;
+        }
+
+        uint base_fft_idx = beam_idx * nFFT;
+        float bin_width = sample_rate / (float)nFFT;
+        uint out_base = beam_idx * 4;  // 4 структуры на луч!
+
+        // Читаем центральную точку и соседние
+        float2 cv = fft_output[base_fft_idx + center_idx];
+        float y_c = sqrt(cv.x * cv.x + cv.y * cv.y);
+
+        float2 lv = (float2)(0.0f, 0.0f);
+        float2 rv = (float2)(0.0f, 0.0f);
+        float y_l = 0.0f, y_r = 0.0f;
+        bool hl = (center_idx > 0);
+        bool hr = (center_idx < nFFT - 1);
+        if (hl) { lv = fft_output[base_fft_idx + center_idx - 1]; y_l = sqrt(lv.x*lv.x + lv.y*lv.y); }
+        if (hr) { rv = fft_output[base_fft_idx + center_idx + 1]; y_r = sqrt(rv.x*rv.x + rv.y*rv.y); }
+
+        // Параболическая интерполяция
+        float fo = 0.0f;
+        float rf = (float)center_idx * bin_width;
+        if (hl && hr) {
+            float denom = y_l - 2.0f*y_c + y_r;
+            if (fabs(denom) > 1e-10f) {
+                fo = clamp(0.5f*(y_l-y_r)/denom, -0.5f, 0.5f);
+                rf = ((float)center_idx + fo) * bin_width;
+            }
+        }
+        if (is_right_side) { rf = sample_rate - rf; }
+
+        // [0] Параболическая интерполяция
+        maxima_output[out_base + 0].index = center_idx;
+        maxima_output[out_base + 0].real = cv.x;
+        maxima_output[out_base + 0].imag = cv.y;
+        maxima_output[out_base + 0].magnitude = y_c;
+        maxima_output[out_base + 0].phase = atan2(cv.y, cv.x) * 57.29577951f;
+        maxima_output[out_base + 0].freq_offset = fo;
+        maxima_output[out_base + 0].refined_frequency = rf;
+        maxima_output[out_base + 0].pad = 0;
+
+        // [1] Левая точка
+        float rf_l = hl ? (float)(center_idx-1)*bin_width : 0.0f;
+        if (is_right_side && hl) rf_l = sample_rate - rf_l;
+        maxima_output[out_base + 1].index = hl ? center_idx-1 : 0;
+        maxima_output[out_base + 1].real = lv.x;
+        maxima_output[out_base + 1].imag = lv.y;
+        maxima_output[out_base + 1].magnitude = y_l;
+        maxima_output[out_base + 1].phase = hl ? atan2(lv.y, lv.x)*57.29577951f : 0.0f;
+        maxima_output[out_base + 1].freq_offset = 0.0f;
+        maxima_output[out_base + 1].refined_frequency = rf_l;
+        maxima_output[out_base + 1].pad = 0;
+
+        // [2] Центральная точка
+        float rf_c = (float)center_idx * bin_width;
+        if (is_right_side) rf_c = sample_rate - rf_c;
+        maxima_output[out_base + 2].index = center_idx;
+        maxima_output[out_base + 2].real = cv.x;
+        maxima_output[out_base + 2].imag = cv.y;
+        maxima_output[out_base + 2].magnitude = y_c;
+        maxima_output[out_base + 2].phase = atan2(cv.y, cv.x) * 57.29577951f;
+        maxima_output[out_base + 2].freq_offset = 0.0f;
+        maxima_output[out_base + 2].refined_frequency = rf_c;
+        maxima_output[out_base + 2].pad = 0;
+
+        // [3] Правая точка
+        float rf_r = hr ? (float)(center_idx+1)*bin_width : 0.0f;
+        if (is_right_side && hr) rf_r = sample_rate - rf_r;
+        maxima_output[out_base + 3].index = hr ? center_idx+1 : 0;
+        maxima_output[out_base + 3].real = rv.x;
+        maxima_output[out_base + 3].imag = rv.y;
+        maxima_output[out_base + 3].magnitude = y_r;
+        maxima_output[out_base + 3].phase = hr ? atan2(rv.y, rv.x)*57.29577951f : 0.0f;
+        maxima_output[out_base + 3].freq_offset = 0.0f;
+        maxima_output[out_base + 3].refined_frequency = rf_r;
+        maxima_output[out_base + 3].pad = 0;
+    }
+}
+)CL";
+}
 
 } // namespace kernels
 } // namespace antenna_fft

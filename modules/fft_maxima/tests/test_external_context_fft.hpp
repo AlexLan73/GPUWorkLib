@@ -15,7 +15,7 @@
  *   ┌──────────────────────────────────────────────────────────────────┐
  *   │ Вариант A: cl_context + cl_mem                                 │
  *   │   Внешний код создаёт cl_mem буфер → передаёт в DrvGPU         │
- *   │   OpenCLBackendExternal::InitializeFromExternalContext()        │
+ *   │   OpenCLBackend::InitializeFromExternalContext()        │
  *   │                                                                  │
  *   │ Вариант B: cl_context + ExternalCLBufferAdapter                │
  *   │   Обёртка ExternalCLBufferAdapter<complex<float>> над cl_mem   │
@@ -44,7 +44,7 @@
  *   Внешний код продолжает работать после уничтожения DrvGPU backend.
  *
  * ЗАВИСИМОСТИ:
- *   - DrvGPU/backends/opencl/opencl_backend_external.hpp
+ *   - DrvGPU/backends/opencl/opencl_backend.hpp
  *   - DrvGPU/memory/external_cl_buffer_adapter.hpp
  *   - DrvGPU/memory/svm_buffer.hpp
  *   - modules/fft_maxima/include/antenna_fft_release.h
@@ -58,7 +58,7 @@
  * @date 2026-02-07
  */
 
-#include "DrvGPU/backends/opencl/opencl_backend_external.hpp"
+#include "DrvGPU/backends/opencl/opencl_backend.hpp"
 #include "DrvGPU/memory/external_cl_buffer_adapter.hpp"
 #include "DrvGPU/memory/svm_buffer.hpp"
 #include "DrvGPU/services/service_manager.hpp"
@@ -300,7 +300,7 @@ static bool VerifyExternalResults(
  *
  * Самый простой сценарий интеграции:
  * 1. Внешний код создаёт cl_mem с данными
- * 2. DrvGPU (OpenCLBackendExternal) обрабатывает через FFT
+ * 2. DrvGPU (OpenCLBackend) обрабатывает через FFT
  * 3. Результаты возвращаются на CPU как AntennaFFTResult
  */
 static bool TestA_ClMemInput_CpuOutput(ExternalOpenCLContext& ext_ctx) {
@@ -308,7 +308,7 @@ static bool TestA_ClMemInput_CpuOutput(ExternalOpenCLContext& ext_ctx) {
 
     try {
         // 1. Создаём DrvGPU backend с внешним контекстом
-        auto backend = std::make_unique<drv_gpu_lib::OpenCLBackendExternal>();
+        auto backend = std::make_unique<drv_gpu_lib::OpenCLBackend>();
         backend->InitializeFromExternalContext(
             ext_ctx.GetContext(),
             ext_ctx.GetDevice(),
@@ -381,7 +381,7 @@ static bool TestB_AdapterInput_CpuOutput(ExternalOpenCLContext& ext_ctx) {
 
     try {
         // 1. Backend с внешним контекстом
-        auto backend = std::make_unique<drv_gpu_lib::OpenCLBackendExternal>();
+        auto backend = std::make_unique<drv_gpu_lib::OpenCLBackend>();
         backend->InitializeFromExternalContext(
             ext_ctx.GetContext(), ext_ctx.GetDevice(), ext_ctx.GetQueue()
         );
@@ -464,7 +464,7 @@ static bool TestC_SvmToClMem(ExternalOpenCLContext& ext_ctx) {
 
     try {
         // 1. Backend с внешним контекстом
-        auto backend = std::make_unique<drv_gpu_lib::OpenCLBackendExternal>();
+        auto backend = std::make_unique<drv_gpu_lib::OpenCLBackend>();
         backend->InitializeFromExternalContext(
             ext_ctx.GetContext(), ext_ctx.GetDevice(), ext_ctx.GetQueue()
         );

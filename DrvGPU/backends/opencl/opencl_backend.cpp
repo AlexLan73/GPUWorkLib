@@ -170,6 +170,81 @@ void OpenCLBackend::Initialize(int device_index) {
         " (" + core_->GetDeviceName() + ")");
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// Инициализация из внешнего OpenCL контекста
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * @brief Инициализация из внешнего OpenCL контекста
+ *
+ * Позволяет использовать OpenCLBackend с уже созданными OpenCL ресурсами
+ * (например, из другой библиотеки или приложения).
+ *
+ * @note НЕ создаёт OpenCLCore, так как ресурсы пришли извне
+ * @note Автоматически устанавливает owns_resources_ = false
+ * @note Backend НЕ будет освобождать эти ресурсы при Cleanup()
+ */
+void OpenCLBackend::InitializeFromExternalContext(
+    cl_context external_context,
+    cl_device_id external_device,
+    cl_command_queue external_queue
+) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (initialized_) {
+        throw std::runtime_error(
+            "OpenCLBackend::InitializeFromExternalContext - "
+            "Backend is already initialized! Call Cleanup() first."
+        );
+    }
+
+    if (!external_context || !external_device || !external_queue) {
+        throw std::invalid_argument(
+            "OpenCLBackend::InitializeFromExternalContext - "
+            "All parameters (context, device, queue) must be non-null!"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // EXTERNAL MODE: Используем внешние ресурсы
+    // ═══════════════════════════════════════════════════════════════════════
+
+    context_ = external_context;
+    device_ = external_device;
+    queue_ = external_queue;
+    device_index_ = -1;  // Неизвестен индекс при внешнем контексте
+    owns_resources_ = false;  // ❌ НЕ освобождаем внешние ресурсы!
+
+    DRVGPU_LOG_INFO_GPU(device_index_, "OpenCLBackend",
+        "Initializing from external OpenCL context (owns_resources = false)");
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // НЕ создаём OpenCLCore — ресурсы пришли извне!
+    // ═══════════════════════════════════════════════════════════════════════
+    core_.reset();  // Убеждаемся что core_ пустой
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SVM capabilities и MemoryManager инициализируем как обычно
+    // ═══════════════════════════════════════════════════════════════════════
+
+    svm_capabilities_ = std::make_unique<SVMCapabilities>(
+        SVMCapabilities::Query(device_)
+    );
+
+    memory_manager_ = std::make_unique<MemoryManager>(this);
+
+    initialized_ = true;
+
+    // Получаем имя устройства для лога (без OpenCLCore)
+    char device_name[256] = {};
+    cl_int err = clGetDeviceInfo(device_, CL_DEVICE_NAME,
+                                 sizeof(device_name), device_name, nullptr);
+    std::string device_name_str = (err == CL_SUCCESS) ? device_name : "Unknown Device";
+
+    DRVGPU_LOG_INFO_GPU(device_index_, "OpenCLBackend",
+        "Initialized from external context (" + device_name_str + ")");
+}
+
 /**
  * @brief Очистить все ресурсы бэкенда
  *

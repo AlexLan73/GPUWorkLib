@@ -101,6 +101,38 @@ public:
     // ═══════════════════════════════════════════════════════════════
     
     void Initialize(int device_index) override;
+
+    /**
+     * @brief Инициализация из внешнего OpenCL контекста
+     *
+     * Позволяет использовать OpenCLBackend с уже созданными OpenCL ресурсами
+     * (например, из другой библиотеки или приложения).
+     *
+     * @param external_context  Внешний cl_context
+     * @param external_device   Внешний cl_device_id
+     * @param external_queue    Внешний cl_command_queue
+     *
+     * @note Автоматически устанавливает owns_resources_ = false
+     * @note Backend НЕ будет освобождать эти ресурсы при Cleanup()
+     * @throws std::runtime_error если уже инициализирован
+     *
+     * @code
+     * // Использование с внешним контекстом:
+     * cl_context ctx = ...; // из другой библиотеки
+     * cl_device_id dev = ...;
+     * cl_command_queue queue = ...;
+     *
+     * OpenCLBackend backend;
+     * backend.InitializeFromExternalContext(ctx, dev, queue);
+     * // backend НЕ освободит ctx/dev/queue при уничтожении
+     * @endcode
+     */
+    void InitializeFromExternalContext(
+        cl_context external_context,
+        cl_device_id external_device,
+        cl_command_queue external_queue
+    );
+
     bool IsInitialized() const override { return initialized_; }
     void Cleanup() override;
     
@@ -259,9 +291,6 @@ private:
     void InitializeSVMCapabilities();
     
     GPUDeviceInfo QueryDeviceInfo() const;
-    
-    // Дружественный класс для работы с внешним контекстом
-    friend class OpenCLBackendExternal;
 };
 
 } // namespace drv_gpu_lib

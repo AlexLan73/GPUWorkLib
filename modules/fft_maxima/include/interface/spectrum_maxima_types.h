@@ -15,6 +15,15 @@
 namespace antenna_fft {
 
 /**
+ * @enum PeakSearchMode
+ * @brief Режим поиска пиков в спектре
+ */
+enum class PeakSearchMode {
+    ONE_PEAK,   ///< Поиск ОДНОГО пика (сравнение левого и правого, выбор большего) → 4 MaxValue
+    TWO_PEAKS   ///< Поиск ДВУХ пиков (независимо левый и правый) → 8 MaxValue
+};
+
+/**
  * @struct SpectrumParams
  * @brief Параметры для поиска максимума спектра
  */
@@ -24,6 +33,7 @@ struct SpectrumParams {
     uint32_t repeat_count = 2;          ///< Множитель размера FFT (2^n: 1,2,4,8...)
     float sample_rate = 1000.0f;        ///< Частота дискретизации (Гц)
     uint32_t search_range = 0;          ///< Диапазон поиска максимума (0 = авто = nFFT/4)
+    PeakSearchMode peak_mode = PeakSearchMode::TWO_PEAKS; ///< Режим поиска (1 или 2 пика)
 
     // Вычисляемые параметры (заполняются в Initialize)
     uint32_t nFFT = 0;                  ///< Размер FFT = nextPow2(n_point) * repeat_count

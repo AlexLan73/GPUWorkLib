@@ -260,7 +260,7 @@ void AntennaFFTProcMax::CreateFFTPlanWithCallbacks(size_t num_beams) {
     }
 
     // Register pre-callback (32-byte struct version)
-    const char* pre_callback_source = kernels::GetPreCallbackSource32();
+    const char* pre_callback_source = kernels::GetPreCallbackSource32_opencl();
     clfftStatus status = clfftSetPlanCallback(plan_handle_, "prepareDataPre", pre_callback_source, 0,
                                   PRECALLBACK, &pre_callback_userdata_, 1);
     if (status != CLFFT_SUCCESS) {
@@ -269,7 +269,7 @@ void AntennaFFTProcMax::CreateFFTPlanWithCallbacks(size_t num_beams) {
     }
 
     // Register post-callback
-    const char* post_callback_source = kernels::GetPaddingKernelSource();
+    const char* post_callback_source = kernels::GetPaddingKernelSource_opencl();
 
     status = clfftSetPlanCallback(plan_handle_, "processFFTPost", post_callback_source, 0,
                                   POSTCALLBACK, &post_callback_userdata_, 1);

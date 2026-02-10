@@ -312,8 +312,11 @@ void SpectrumMaximaFinder::AllocateBuffers() {
         throw std::runtime_error("Failed to create fft_output buffer: " + std::to_string(err));
     }
 
-    // 3. Maxima output: antenna_count * 8 * sizeof(MaxValue) (4 left + 4 right)
-    size_t maxima_size = params_.antenna_count * 8 * sizeof(MaxValue);
+    // 3. Maxima output: размер зависит от режима поиска пиков
+    //    ONE_PEAK: 4 MaxValue на луч
+    //    TWO_PEAKS: 8 MaxValue на луч
+    size_t max_values_per_beam = (params_.peak_mode == PeakSearchMode::ONE_PEAK) ? 4 : 8;
+    size_t maxima_size = params_.antenna_count * max_values_per_beam * sizeof(MaxValue);
     static_assert(sizeof(MaxValue) == 32, "MaxValue must be 32 bytes");
 
     maxima_output_ = clCreateBuffer(context_, CL_MEM_READ_WRITE,
@@ -357,7 +360,7 @@ void SpectrumMaximaFinder::CreateFFTPlanWithCallback() {
     clfftSetPlanDistance(plan_handle_, dist, dist);
 
     // Регистрировать pre-callback
-    const char* pre_callback_source = kernels::GetPreCallbackSource32();
+    const char* pre_callback_source = kernels::GetPreCallbackSource32_opencl();
     status = clfftSetPlanCallback(plan_handle_, "prepareDataPre", pre_callback_source, 0,
                                    PRECALLBACK, &pre_callback_userdata_, 1);
     if (status != CLFFT_SUCCESS) {
@@ -378,8 +381,20 @@ void SpectrumMaximaFinder::CreateFFTPlanWithCallback() {
 void SpectrumMaximaFinder::CompilePostKernel() {
     cl_int err;
 
-    // Получить исходный код kernel
-    const char* source = kernels::GetPostKernelSource();
+    // Выбор кернела в зависимости от режима поиска пиков
+    const char* source;
+    const char* kernel_name;
+
+    if (params_.peak_mode == PeakSearchMode::ONE_PEAK) {
+        source = kernels::GetPostKernelSource_OnePeak_opencl();
+        kernel_name = "post_kernel_one_peak";
+        std::cout << "  📊 Peak mode: ONE_PEAK (4 MaxValue per beam)\n";
+    } else {
+        source = kernels::GetPostKernelSource_TwoPeaks_opencl();
+        kernel_name = "post_kernel";
+        std::cout << "  📊 Peak mode: TWO_PEAKS (8 MaxValue per beam)\n";
+    }
+
     size_t source_len = strlen(source);
 
     // Создать программу
@@ -403,7 +418,7 @@ void SpectrumMaximaFinder::CompilePostKernel() {
     }
 
     // Создать kernel
-    post_kernel_ = clCreateKernel(post_program_, "post_kernel", &err);
+    post_kernel_ = clCreateKernel(post_program_, kernel_name, &err);
     if (err != CL_SUCCESS) {
         clReleaseProgram(post_program_);
         post_program_ = nullptr;
@@ -495,8 +510,9 @@ cl_event SpectrumMaximaFinder::ExecutePostKernel(cl_event wait_event) {
 }
 
 std::vector<SpectrumResult> SpectrumMaximaFinder::ReadResults(cl_event wait_event, bool send_to_profiler) {
-    // Читаем 8 MaxValue на луч
-    size_t num_results = params_.antenna_count * 8;
+    // Количество MaxValue зависит от режима: ONE_PEAK=4, TWO_PEAKS=8
+    size_t max_values_per_beam = (params_.peak_mode == PeakSearchMode::ONE_PEAK) ? 4 : 8;
+    size_t num_results = params_.antenna_count * max_values_per_beam;
     std::vector<MaxValue> raw_results(num_results);
 
     cl_event read_event = nullptr;
@@ -527,28 +543,47 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ReadResults(cl_event wait_even
     }
     clReleaseEvent(read_event);
 
-    // Преобразуем в vector<SpectrumResult>: [left0, right0, left1, right1, ...]
+    // Преобразуем в vector<SpectrumResult>
     std::vector<SpectrumResult> results;
-    results.reserve(params_.antenna_count * 2);
 
-    for (uint32_t i = 0; i < params_.antenna_count; ++i) {
-        size_t base = i * 8;
+    if (params_.peak_mode == PeakSearchMode::ONE_PEAK) {
+        // ONE_PEAK: 1 результат на луч (4 MaxValue)
+        results.reserve(params_.antenna_count);
 
-        SpectrumResult left{};
-        left.antenna_id = i;
-        left.interpolated = raw_results[base + 0];
-        left.left_point = raw_results[base + 1];
-        left.center_point = raw_results[base + 2];
-        left.right_point = raw_results[base + 3];
-        results.push_back(left);
+        for (uint32_t i = 0; i < params_.antenna_count; ++i) {
+            size_t base = i * 4;
 
-        SpectrumResult right{};
-        right.antenna_id = i;
-        right.interpolated = raw_results[base + 4];
-        right.left_point = raw_results[base + 5];
-        right.center_point = raw_results[base + 6];
-        right.right_point = raw_results[base + 7];
-        results.push_back(right);
+            SpectrumResult result{};
+            result.antenna_id = i;
+            result.interpolated = raw_results[base + 0];
+            result.left_point = raw_results[base + 1];
+            result.center_point = raw_results[base + 2];
+            result.right_point = raw_results[base + 3];
+            results.push_back(result);
+        }
+    } else {
+        // TWO_PEAKS: 2 результата на луч (8 MaxValue) — [left, right]
+        results.reserve(params_.antenna_count * 2);
+
+        for (uint32_t i = 0; i < params_.antenna_count; ++i) {
+            size_t base = i * 8;
+
+            SpectrumResult left{};
+            left.antenna_id = i;
+            left.interpolated = raw_results[base + 0];
+            left.left_point = raw_results[base + 1];
+            left.center_point = raw_results[base + 2];
+            left.right_point = raw_results[base + 3];
+            results.push_back(left);
+
+            SpectrumResult right{};
+            right.antenna_id = i;
+            right.interpolated = raw_results[base + 4];
+            right.left_point = raw_results[base + 5];
+            right.center_point = raw_results[base + 6];
+            right.right_point = raw_results[base + 7];
+            results.push_back(right);
+        }
     }
 
     return results;
