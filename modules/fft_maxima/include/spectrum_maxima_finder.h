@@ -10,6 +10,18 @@
  * - Профилирование средствами GPU
  * - Работа через DrvGPU с SVM
  *
+ * АРХИТЕКТУРА (ПЛАНИРУЕТСЯ):
+ * Текущая версия использует OpenCL напрямую (cl_context, clFFT).
+ * Будущая версия будет использовать Strategy Pattern:
+ *
+ *   SpectrumMaximaFinder (фасад)
+ *          │
+ *          └── ISpectrumProcessor (интерфейс)
+ *                  ├── SpectrumProcessorOpenCL (clFFT)
+ *                  └── SpectrumProcessorROCm   (hipFFT)
+ *
+ * См. MemoryBank/specs/dual_backend_architecture.md
+ *
  * @author Кодо (AI Assistant)
  * @date 2026-02-06
  */
@@ -215,6 +227,7 @@ private:
     cl_mem fft_output_ = nullptr;               ///< Выходной буфер FFT
     cl_mem maxima_output_ = nullptr;            ///< Результаты post-kernel
     cl_mem fft_temp_buffer_ = nullptr;          ///< Временный буфер для clFFT (если требуется)
+    cl_mem pinned_staging_buffer_ = nullptr;    ///< Pinned buffer для быстрого upload (DMA)
 
     // Post-kernel
     cl_program post_program_ = nullptr;
@@ -224,13 +237,33 @@ private:
     ProfilingData profiling_;
 
     // Batch processing
-    size_t current_batch_size_ = 0;      ///< Текущий размер batch (для перевыделения буферов)
+    size_t current_batch_size_ = 0;      ///< Размер выделенных буферов (для переиспользования)
+    size_t actual_batch_size_ = 0;       ///< Реальный размер текущего batch (для ReadResults)
+    size_t plan_batch_size_ = 0;         ///< Размер batch, для которого создан план (для reuse)
     size_t fft_temp_buffer_size_ = 0;    ///< Размер текущего temp buffer (для reuse)
-    bool clfft_initialized_ = false;      ///< clFFT инициализирован для этого экземпляра
+    size_t pinned_buffer_size_ = 0;      ///< Размер текущего pinned buffer (для reuse)
+    bool clfft_initialized_ = false;     ///< clFFT инициализирован для этого экземпляра
 
     // Константы
     static constexpr size_t PRE_CALLBACK_HEADER_SIZE = 32;  ///< Размер заголовка userdata
     static constexpr size_t LOCAL_SIZE = 256;               ///< Размер work-group для post-kernel
+
+    /// Структура заголовка для pre-callback userdata
+    /// Должна быть 32 байта для выравнивания GPU
+    struct PreCallbackHeader {
+        uint32_t beam_count;      ///< Количество антенн/лучей в batch
+        uint32_t count_points;    ///< Количество точек на антенну (n_point)
+        uint32_t nFFT;            ///< Размер FFT
+        uint32_t padding1;
+        uint32_t padding2;
+        uint32_t padding3;
+        uint32_t padding4;
+        uint32_t padding5;
+    };
+    static_assert(sizeof(PreCallbackHeader) == 32, "PreCallbackHeader должен быть 32 байта");
+
+    /// Записать заголовок в pre_callback_userdata_
+    void WritePreCallbackHeader(size_t batch_count);
 };
 
 } // namespace antenna_fft

@@ -1,3 +1,51 @@
+/**
+ * @file spectrum_maxima_finder.cpp
+ * @brief Реализация SpectrumMaximaFinder — поиск максимумов спектра FFT на GPU
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ОГЛАВЛЕНИЕ (Line numbers may change after edits)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * ЧАСТЬ 1: КОНСТРУКТОРЫ И ДЕСТРУКТОРЫ
+ *   - SpectrumMaximaFinder()       — конструктор
+ *   - ~SpectrumMaximaFinder()      — деструктор
+ *   - Move constructor/operator    — перемещение
+ *
+ * ЧАСТЬ 2: ПУБЛИЧНЫЙ API
+ *   - Initialize()                 — инициализация GPU ресурсов
+ *   - Process()                    — обработка (single batch или multi-batch)
+ *   - PrintInfo()                  — вывод информации о конфигурации
+ *
+ * ЧАСТЬ 3: BATCH PROCESSING
+ *   - ProcessBatch()               — обработка одного batch антенн
+ *   - ReallocateBuffersForBatch()  — выделение/переиспользование буферов и FFT плана
+ *
+ * ЧАСТЬ 4: УТИЛИТЫ И НАСТРОЙКИ
+ *   - CalculateFFTSize()           — вычисление nFFT (степень двойки)
+ *   - NextPowerOf2()               — вспомогательная функция
+ *   - CalculateBytesPerAntenna()   — память на одну антенну
+ *
+ * ЧАСТЬ 5: GPU БУФЕРЫ (single-batch режим)
+ *   - AllocateBuffers()            — создание буферов
+ *   - CreateFFTPlanWithCallback()  — создание FFT плана с pre-callback
+ *   - CompilePostKernel()          — компиляция post-kernel
+ *
+ * ЧАСТЬ 6: GPU ОПЕРАЦИИ
+ *   - UploadData()                 — загрузка данных на GPU (Pinned Memory)
+ *   - ExecuteFFT()                 — выполнение FFT
+ *   - ExecutePostKernel()          — поиск максимумов + интерполяция
+ *   - ReadResults()                — чтение результатов
+ *
+ * ЧАСТЬ 7: ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
+ *   - WritePreCallbackHeader()     — запись заголовка в pre-callback userdata
+ *   - ReleaseResources()           — освобождение GPU ресурсов
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * @author Кодо (AI Assistant)
+ * @date 2026-02-06
+ */
+
 #include "spectrum_maxima_finder.h"
 #include "backends/opencl/opencl_profiling.hpp"
 #include "services/gpu_profiler.hpp"
@@ -10,7 +58,7 @@
 namespace antenna_fft {
 
 // ════════════════════════════════════════════════════════════════════════════
-// Конструктор / Деструктор
+// ЧАСТЬ 1: КОНСТРУКТОРЫ И ДЕСТРУКТОРЫ
 // ════════════════════════════════════════════════════════════════════════════
 
 SpectrumMaximaFinder::SpectrumMaximaFinder(
@@ -55,11 +103,15 @@ SpectrumMaximaFinder::SpectrumMaximaFinder(SpectrumMaximaFinder&& other) noexcep
     , fft_output_(other.fft_output_)
     , maxima_output_(other.maxima_output_)
     , fft_temp_buffer_(other.fft_temp_buffer_)
+    , pinned_staging_buffer_(other.pinned_staging_buffer_)
     , post_program_(other.post_program_)
     , post_kernel_(other.post_kernel_)
     , profiling_(other.profiling_)
     , current_batch_size_(other.current_batch_size_)
+    , actual_batch_size_(other.actual_batch_size_)
+    , plan_batch_size_(other.plan_batch_size_)
     , fft_temp_buffer_size_(other.fft_temp_buffer_size_)
+    , pinned_buffer_size_(other.pinned_buffer_size_)
     , clfft_initialized_(other.clfft_initialized_) {
 
     // Invalidate source
@@ -71,10 +123,14 @@ SpectrumMaximaFinder::SpectrumMaximaFinder(SpectrumMaximaFinder&& other) noexcep
     other.fft_output_ = nullptr;
     other.maxima_output_ = nullptr;
     other.fft_temp_buffer_ = nullptr;
+    other.pinned_staging_buffer_ = nullptr;
     other.post_program_ = nullptr;
     other.post_kernel_ = nullptr;
     other.current_batch_size_ = 0;
+    other.actual_batch_size_ = 0;
+    other.plan_batch_size_ = 0;
     other.fft_temp_buffer_size_ = 0;
+    other.pinned_buffer_size_ = 0;
     other.clfft_initialized_ = false;
 }
 
@@ -95,11 +151,15 @@ SpectrumMaximaFinder& SpectrumMaximaFinder::operator=(SpectrumMaximaFinder&& oth
         fft_output_ = other.fft_output_;
         maxima_output_ = other.maxima_output_;
         fft_temp_buffer_ = other.fft_temp_buffer_;
+        pinned_staging_buffer_ = other.pinned_staging_buffer_;
         post_program_ = other.post_program_;
         post_kernel_ = other.post_kernel_;
         profiling_ = other.profiling_;
         current_batch_size_ = other.current_batch_size_;
+        actual_batch_size_ = other.actual_batch_size_;
+        plan_batch_size_ = other.plan_batch_size_;
         fft_temp_buffer_size_ = other.fft_temp_buffer_size_;
+        pinned_buffer_size_ = other.pinned_buffer_size_;
         clfft_initialized_ = other.clfft_initialized_;
 
         other.initialized_ = false;
@@ -110,17 +170,21 @@ SpectrumMaximaFinder& SpectrumMaximaFinder::operator=(SpectrumMaximaFinder&& oth
         other.fft_output_ = nullptr;
         other.maxima_output_ = nullptr;
         other.fft_temp_buffer_ = nullptr;
+        other.pinned_staging_buffer_ = nullptr;
         other.post_program_ = nullptr;
         other.post_kernel_ = nullptr;
         other.current_batch_size_ = 0;
+        other.actual_batch_size_ = 0;
+        other.plan_batch_size_ = 0;
         other.fft_temp_buffer_size_ = 0;
+        other.pinned_buffer_size_ = 0;
         other.clfft_initialized_ = false;
     }
     return *this;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Публичные методы
+// ЧАСТЬ 2: ПУБЛИЧНЫЙ API — Initialize(), Process(), PrintInfo()
 // ════════════════════════════════════════════════════════════════════════════
 
 void SpectrumMaximaFinder::Initialize() {
@@ -151,11 +215,20 @@ void SpectrumMaximaFinder::Initialize() {
         backend_, params_.antenna_count, bytes_per_antenna, params_.memory_limit);
 
     if (need_batch) {
-        // Для больших данных — НЕ выделяем буферы здесь!
-        // Буферы будут созданы лениво в ProcessBatch() → ReallocateBuffersForBatch()
-        std::cout << "  [Batch mode] Буферы будут созданы при обработке\n";
+        // ═══════════════════════════════════════════════════════════════════
+        // Оптимизация: сразу резервируем буферы под максимальный batch
+        // Это экономит время на перевыделение буферов между batch-ами
+        // ═══════════════════════════════════════════════════════════════════
+        size_t max_batch_size = drv_gpu_lib::BatchManager::CalculateOptimalBatchSize(
+            backend_, params_.antenna_count, bytes_per_antenna, params_.memory_limit);
 
-        // Но компилируем post-kernel сразу (он не зависит от размера batch)
+        std::cout << "  [Batch mode] Резервируем буферы под max batch = " << max_batch_size << "\n";
+
+        // Создаём буферы под максимальный batch size
+        ReallocateBuffersForBatch(max_batch_size);
+        std::cout << "  Буферы созданы (max batch = " << max_batch_size << ")\n";
+
+        // Компилируем post-kernel сразу (он не зависит от размера batch)
         CompilePostKernel();
         std::cout << "  Post-kernel скомпилирован\n";
     } else {
@@ -169,8 +242,9 @@ void SpectrumMaximaFinder::Initialize() {
         CompilePostKernel();
         std::cout << "  Post-kernel скомпилирован\n";
 
-        // Устанавливаем current_batch_size_ для не-batch режима
+        // Устанавливаем размеры batch для не-batch режима
         current_batch_size_ = params_.antenna_count;
+        actual_batch_size_ = params_.antenna_count;
     }
 
     initialized_ = true;
@@ -244,7 +318,7 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::Process(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Batch Processing — вспомогательные методы
+// ЧАСТЬ 3: BATCH PROCESSING — ProcessBatch(), ReallocateBuffersForBatch()
 // ════════════════════════════════════════════════════════════════════════════
 
 std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatch(
@@ -253,9 +327,11 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatch(
     size_t batch_antenna_count) {
 
     // Перевыделить буферы под текущий batch (если нужно)
-    if (batch_antenna_count != current_batch_size_) {
+    // current_batch_size_ — размер буферов, actual_batch_size_ — реальный batch
+    if (batch_antenna_count > current_batch_size_ || !plan_created_) {
         ReallocateBuffersForBatch(batch_antenna_count);
     }
+    actual_batch_size_ = batch_antenna_count;  // Запоминаем реальный размер batch
 
     const int gpu_id = 0;
     auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
@@ -329,129 +405,140 @@ void SpectrumMaximaFinder::ReallocateBuffersForBatch(size_t batch_antenna_count)
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 1. Освободить старые буферы (кроме temp buffer — его переиспользуем!)
+    // Оптимизация: переиспользование FFT плана и буферов
+    // Буферы можно переиспользовать если current_batch_size_ >= batch_antenna_count
+    // План можно переиспользовать ТОЛЬКО если batch size точно совпадает
     // ═══════════════════════════════════════════════════════════════════════
-    if (pre_callback_userdata_) {
-        clReleaseMemObject(pre_callback_userdata_);
-        pre_callback_userdata_ = nullptr;
-    }
-    if (fft_input_) {
-        clReleaseMemObject(fft_input_);
-        fft_input_ = nullptr;
-    }
-    if (fft_output_) {
-        clReleaseMemObject(fft_output_);
-        fft_output_ = nullptr;
-    }
-    if (maxima_output_) {
-        clReleaseMemObject(maxima_output_);
-        maxima_output_ = nullptr;
-    }
-    // fft_temp_buffer_ НЕ освобождаем — переиспользуем если размер достаточен
+    bool need_new_plan = (plan_batch_size_ != batch_antenna_count) || !plan_created_;
+    bool need_new_buffers = (current_batch_size_ < batch_antenna_count) || !pre_callback_userdata_;
 
-    // Уничтожить старый FFT план
-    if (plan_created_ && plan_handle_) {
+    // ═══════════════════════════════════════════════════════════════════════
+    // FAST PATH: буферы достаточно большие, план совпадает — только заголовок
+    // ═══════════════════════════════════════════════════════════════════════
+    if (!need_new_buffers && !need_new_plan) {
+        try {
+            WritePreCallbackHeader(batch_antenna_count);
+            return;  // Fast path success!
+        } catch (...) {
+            // Если failed — идём в полное перевыделение
+            need_new_buffers = true;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 1. Освободить и создать буферы только если нужны новые
+    // ═══════════════════════════════════════════════════════════════════════
+    if (need_new_buffers) {
+        // Освобождаем старые буферы
+        if (pre_callback_userdata_) {
+            clReleaseMemObject(pre_callback_userdata_);
+            pre_callback_userdata_ = nullptr;
+        }
+        if (fft_input_) {
+            clReleaseMemObject(fft_input_);
+            fft_input_ = nullptr;
+        }
+        if (fft_output_) {
+            clReleaseMemObject(fft_output_);
+            fft_output_ = nullptr;
+        }
+        if (maxima_output_) {
+            clReleaseMemObject(maxima_output_);
+            maxima_output_ = nullptr;
+        }
+        // fft_temp_buffer_, pinned_staging_buffer_ НЕ освобождаем — переиспользуем
+
+        // ═══════════════════════════════════════════════════════════════════
+        // 2. Создать новые буферы под batch_antenna_count антенн
+        // ═══════════════════════════════════════════════════════════════════
+
+        // 2.1 Pre-callback userdata
+        size_t input_data_size = batch_antenna_count * params_.n_point * sizeof(std::complex<float>);
+        size_t userdata_size = PRE_CALLBACK_HEADER_SIZE + input_data_size;
+
+        pre_callback_userdata_ = clCreateBuffer(context_, CL_MEM_READ_WRITE,
+                                                 userdata_size, nullptr, &err);
+        if (err != CL_SUCCESS) {
+            throw std::runtime_error("ReallocateBuffersForBatch: pre_callback_userdata failed: " + std::to_string(err));
+        }
+
+        // Записать заголовок (beam_count = batch_antenna_count!)
+        WritePreCallbackHeader(batch_antenna_count);
+
+        // 2.2 FFT буферы
+        size_t fft_buffer_size = batch_antenna_count * params_.nFFT * sizeof(std::complex<float>);
+
+        fft_input_ = clCreateBuffer(context_, CL_MEM_READ_WRITE, fft_buffer_size, nullptr, &err);
+        if (err != CL_SUCCESS) {
+            throw std::runtime_error("ReallocateBuffersForBatch: fft_input failed: " + std::to_string(err));
+        }
+
+        fft_output_ = clCreateBuffer(context_, CL_MEM_READ_WRITE, fft_buffer_size, nullptr, &err);
+        if (err != CL_SUCCESS) {
+            throw std::runtime_error("ReallocateBuffersForBatch: fft_output failed: " + std::to_string(err));
+        }
+
+        // 2.3 Maxima output
+        size_t max_values_per_beam = (params_.peak_mode == PeakSearchMode::ONE_PEAK) ? 4 : 8;
+        size_t maxima_size = batch_antenna_count * max_values_per_beam * sizeof(MaxValue);
+
+        maxima_output_ = clCreateBuffer(context_, CL_MEM_READ_WRITE, maxima_size, nullptr, &err);
+        if (err != CL_SUCCESS) {
+            throw std::runtime_error("ReallocateBuffersForBatch: maxima_output failed: " + std::to_string(err));
+        }
+
+        current_batch_size_ = batch_antenna_count;
+    }
+
+    // Уничтожить старый FFT план только если нужен новый
+    if (need_new_plan && plan_created_ && plan_handle_) {
         clfftDestroyPlan(&plan_handle_);
         plan_handle_ = 0;
         plan_created_ = false;
+        plan_batch_size_ = 0;
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // 2. Создать новые буферы под batch_antenna_count антенн
+    // 3. Создать новый FFT план под batch_antenna_count (если нужен)
+    //    Экономим ~50-200ms на bake когда batch size не меняется!
     // ═══════════════════════════════════════════════════════════════════════
+    if (need_new_plan) {
+        size_t dim = params_.nFFT;
 
-    // 2.1 Pre-callback userdata
-    size_t input_data_size = batch_antenna_count * params_.n_point * sizeof(std::complex<float>);
-    size_t userdata_size = PRE_CALLBACK_HEADER_SIZE + input_data_size;
+        clfftStatus status = clfftCreateDefaultPlan(&plan_handle_, context_, CLFFT_1D, &dim);
+        if (status != CLFFT_SUCCESS) {
+            throw std::runtime_error("ReallocateBuffersForBatch: clfftCreateDefaultPlan failed: " + std::to_string(status));
+        }
 
-    pre_callback_userdata_ = clCreateBuffer(context_, CL_MEM_READ_WRITE,
-                                             userdata_size, nullptr, &err);
-    if (err != CL_SUCCESS) {
-        throw std::runtime_error("ReallocateBuffersForBatch: pre_callback_userdata failed: " + std::to_string(err));
-    }
+        clfftSetPlanPrecision(plan_handle_, CLFFT_SINGLE);
+        clfftSetLayout(plan_handle_, CLFFT_COMPLEX_INTERLEAVED, CLFFT_COMPLEX_INTERLEAVED);
+        clfftSetResultLocation(plan_handle_, CLFFT_OUTOFPLACE);
+        clfftSetPlanBatchSize(plan_handle_, batch_antenna_count);  // ← batch size!
 
-    // Записать заголовок (beam_count = batch_antenna_count!)
-    struct PreCallbackHeader {
-        uint32_t beam_count;
-        uint32_t count_points;
-        uint32_t nFFT;
-        uint32_t padding1;
-        uint32_t padding2;
-        uint32_t padding3;
-        uint32_t padding4;
-        uint32_t padding5;
-    };
+        size_t strides[1] = {1};
+        size_t dist = params_.nFFT;
+        clfftSetPlanInStride(plan_handle_, CLFFT_1D, strides);
+        clfftSetPlanOutStride(plan_handle_, CLFFT_1D, strides);
+        clfftSetPlanDistance(plan_handle_, dist, dist);
 
-    PreCallbackHeader header = {
-        static_cast<uint32_t>(batch_antenna_count),  // ← batch size, не params_.antenna_count!
-        params_.n_point,
-        params_.nFFT,
-        0, 0, 0, 0, 0
-    };
+        // Регистрировать pre-callback
+        const char* pre_callback_source = kernels::GetPreCallbackSource32_opencl();
+        status = clfftSetPlanCallback(plan_handle_, "prepareDataPre", pre_callback_source, 0,
+                                       PRECALLBACK, &pre_callback_userdata_, 1);
+        if (status != CLFFT_SUCCESS) {
+            clfftDestroyPlan(&plan_handle_);
+            throw std::runtime_error("ReallocateBuffersForBatch: clfftSetPlanCallback failed: " + std::to_string(status));
+        }
 
-    err = clEnqueueWriteBuffer(queue_, pre_callback_userdata_, CL_TRUE,
-                               0, sizeof(header), &header, 0, nullptr, nullptr);
-    if (err != CL_SUCCESS) {
-        throw std::runtime_error("ReallocateBuffersForBatch: write header failed: " + std::to_string(err));
-    }
+        // Bake план
+        status = clfftBakePlan(plan_handle_, 1, &queue_, nullptr, nullptr);
+        if (status != CLFFT_SUCCESS) {
+            clfftDestroyPlan(&plan_handle_);
+            throw std::runtime_error("ReallocateBuffersForBatch: clfftBakePlan failed: " + std::to_string(status));
+        }
 
-    // 2.2 FFT буферы
-    size_t fft_buffer_size = batch_antenna_count * params_.nFFT * sizeof(std::complex<float>);
-
-    fft_input_ = clCreateBuffer(context_, CL_MEM_READ_WRITE, fft_buffer_size, nullptr, &err);
-    if (err != CL_SUCCESS) {
-        throw std::runtime_error("ReallocateBuffersForBatch: fft_input failed: " + std::to_string(err));
-    }
-
-    fft_output_ = clCreateBuffer(context_, CL_MEM_READ_WRITE, fft_buffer_size, nullptr, &err);
-    if (err != CL_SUCCESS) {
-        throw std::runtime_error("ReallocateBuffersForBatch: fft_output failed: " + std::to_string(err));
-    }
-
-    // 2.3 Maxima output
-    size_t max_values_per_beam = (params_.peak_mode == PeakSearchMode::ONE_PEAK) ? 4 : 8;
-    size_t maxima_size = batch_antenna_count * max_values_per_beam * sizeof(MaxValue);
-
-    maxima_output_ = clCreateBuffer(context_, CL_MEM_READ_WRITE, maxima_size, nullptr, &err);
-    if (err != CL_SUCCESS) {
-        throw std::runtime_error("ReallocateBuffersForBatch: maxima_output failed: " + std::to_string(err));
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 3. Создать новый FFT план под batch_antenna_count
-    // ═══════════════════════════════════════════════════════════════════════
-    size_t dim = params_.nFFT;
-
-    clfftStatus status = clfftCreateDefaultPlan(&plan_handle_, context_, CLFFT_1D, &dim);
-    if (status != CLFFT_SUCCESS) {
-        throw std::runtime_error("ReallocateBuffersForBatch: clfftCreateDefaultPlan failed: " + std::to_string(status));
-    }
-
-    clfftSetPlanPrecision(plan_handle_, CLFFT_SINGLE);
-    clfftSetLayout(plan_handle_, CLFFT_COMPLEX_INTERLEAVED, CLFFT_COMPLEX_INTERLEAVED);
-    clfftSetResultLocation(plan_handle_, CLFFT_OUTOFPLACE);
-    clfftSetPlanBatchSize(plan_handle_, batch_antenna_count);  // ← batch size!
-
-    size_t strides[1] = {1};
-    size_t dist = params_.nFFT;
-    clfftSetPlanInStride(plan_handle_, CLFFT_1D, strides);
-    clfftSetPlanOutStride(plan_handle_, CLFFT_1D, strides);
-    clfftSetPlanDistance(plan_handle_, dist, dist);
-
-    // Регистрировать pre-callback
-    const char* pre_callback_source = kernels::GetPreCallbackSource32_opencl();
-    status = clfftSetPlanCallback(plan_handle_, "prepareDataPre", pre_callback_source, 0,
-                                   PRECALLBACK, &pre_callback_userdata_, 1);
-    if (status != CLFFT_SUCCESS) {
-        clfftDestroyPlan(&plan_handle_);
-        throw std::runtime_error("ReallocateBuffersForBatch: clfftSetPlanCallback failed: " + std::to_string(status));
-    }
-
-    // Bake план
-    status = clfftBakePlan(plan_handle_, 1, &queue_, nullptr, nullptr);
-    if (status != CLFFT_SUCCESS) {
-        clfftDestroyPlan(&plan_handle_);
-        throw std::runtime_error("ReallocateBuffersForBatch: clfftBakePlan failed: " + std::to_string(status));
+        plan_batch_size_ = batch_antenna_count;
+        plan_created_ = true;
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -459,8 +546,8 @@ void SpectrumMaximaFinder::ReallocateBuffersForBatch(size_t batch_antenna_count)
     //    Переиспользуем существующий буфер если он достаточного размера!
     // ═══════════════════════════════════════════════════════════════════════
     size_t tmp_buf_size = 0;
-    status = clfftGetTmpBufSize(plan_handle_, &tmp_buf_size);
-    if (status == CLFFT_SUCCESS && tmp_buf_size > 0) {
+    clfftStatus tmp_status = clfftGetTmpBufSize(plan_handle_, &tmp_buf_size);
+    if (tmp_status == CLFFT_SUCCESS && tmp_buf_size > 0) {
         // Нужен ли новый буфер? Только если старый меньше требуемого
         if (tmp_buf_size > fft_temp_buffer_size_) {
             // Освобождаем старый если есть
@@ -479,8 +566,38 @@ void SpectrumMaximaFinder::ReallocateBuffersForBatch(size_t batch_antenna_count)
         // Иначе переиспользуем существующий fft_temp_buffer_
     }
 
-    plan_created_ = true;
-    current_batch_size_ = batch_antenna_count;
+    // ═══════════════════════════════════════════════════════════════════════
+    // 5. Создать/переиспользовать Pinned Buffer для быстрого upload (DMA)
+    //    CL_MEM_ALLOC_HOST_PTR создаёт page-locked память на хосте
+    // ═══════════════════════════════════════════════════════════════════════
+    size_t required_pinned_size = batch_antenna_count * params_.n_point * sizeof(std::complex<float>);
+    if (required_pinned_size > pinned_buffer_size_) {
+        // Освобождаем старый если есть
+        if (pinned_staging_buffer_) {
+            clReleaseMemObject(pinned_staging_buffer_);
+            pinned_staging_buffer_ = nullptr;
+        }
+        // Создаём новый pinned buffer
+        pinned_staging_buffer_ = clCreateBuffer(
+            context_,
+            CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,  // Pinned memory на хосте
+            required_pinned_size,
+            nullptr,
+            &err
+        );
+        if (err != CL_SUCCESS) {
+            // Pinned memory не критична — продолжаем без неё
+            std::cerr << "[SpectrumMaximaFinder] WARNING: Failed to create pinned buffer: "
+                      << err << ", using regular upload\n";
+            pinned_staging_buffer_ = nullptr;
+            pinned_buffer_size_ = 0;
+        } else {
+            pinned_buffer_size_ = required_pinned_size;
+        }
+    }
+
+    // current_batch_size_ уже обновлён внутри if (need_new_buffers)
+    // Не обновляем здесь, чтобы сохранить реальный размер выделенных буферов
 }
 
 void SpectrumMaximaFinder::PrintInfo() const {
@@ -501,7 +618,7 @@ void SpectrumMaximaFinder::PrintInfo() const {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Приватные методы
+// ЧАСТЬ 4: УТИЛИТЫ — CalculateFFTSize(), NextPowerOf2(), CalculateBytesPerAntenna()
 // ════════════════════════════════════════════════════════════════════════════
 
 void SpectrumMaximaFinder::CalculateFFTSize() {
@@ -544,6 +661,11 @@ size_t SpectrumMaximaFinder::CalculateBytesPerAntenna() const {
     return input_bytes + fft_bytes + maxima_bytes;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// ЧАСТЬ 5: GPU БУФЕРЫ (single-batch режим)
+// AllocateBuffers(), CreateFFTPlanWithCallback(), CompilePostKernel()
+// ════════════════════════════════════════════════════════════════════════════
+
 void SpectrumMaximaFinder::AllocateBuffers() {
     cl_int err;
 
@@ -558,32 +680,8 @@ void SpectrumMaximaFinder::AllocateBuffers() {
         throw std::runtime_error("Failed to create pre_callback_userdata buffer: " + std::to_string(err));
     }
 
-    // Записать заголовок (32 bytes)
-    struct PreCallbackHeader {
-        uint32_t beam_count;
-        uint32_t count_points;
-        uint32_t nFFT;
-        uint32_t padding1;
-        uint32_t padding2;
-        uint32_t padding3;
-        uint32_t padding4;
-        uint32_t padding5;
-    };
-    static_assert(sizeof(PreCallbackHeader) == 32, "PreCallbackHeader must be 32 bytes");
-
-    PreCallbackHeader header = {
-        params_.antenna_count,
-        params_.n_point,
-        params_.nFFT,
-        0, 0, 0, 0, 0
-    };
-
-    err = clEnqueueWriteBuffer(queue_, pre_callback_userdata_, CL_TRUE,
-                               0, sizeof(header), &header,
-                               0, nullptr, nullptr);
-    if (err != CL_SUCCESS) {
-        throw std::runtime_error("Failed to write pre_callback header: " + std::to_string(err));
-    }
+    // Записать заголовок с параметрами для GPU
+    WritePreCallbackHeader(params_.antenna_count);
 
     // 2. FFT буферы
     size_t fft_buffer_size = params_.antenna_count * params_.nFFT * sizeof(std::complex<float>);
@@ -615,17 +713,15 @@ void SpectrumMaximaFinder::AllocateBuffers() {
 }
 
 void SpectrumMaximaFinder::CreateFFTPlanWithCallback() {
-    // Инициализация clFFT (если ещё не сделано)
-    static bool clfft_initialized = false;
-    if (!clfft_initialized) {
+    // Инициализация clFFT (один раз на экземпляр, НЕ static для multi-GPU!)
+    if (!clfft_initialized_) {
         clfftSetupData setup;
-        // Ручная инициализация (системный clFFT.h не имеет inline clfftInitSetupData)
         setup.major = clfftVersionMajor;
         setup.minor = clfftVersionMinor;
         setup.patch = clfftVersionPatch;
         setup.debugFlags = 0;
         clfftSetup(&setup);
-        clfft_initialized = true;
+        clfft_initialized_ = true;
     }
 
     // Создать план
@@ -714,12 +810,64 @@ void SpectrumMaximaFinder::CompilePostKernel() {
     }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// ЧАСТЬ 6: GPU ОПЕРАЦИИ — UploadData(), ExecuteFFT(), ExecutePostKernel(), ReadResults()
+// ════════════════════════════════════════════════════════════════════════════
+
 cl_event SpectrumMaximaFinder::UploadData(const std::vector<std::complex<float>>& input_data) {
     cl_event event = nullptr;
     size_t data_size = input_data.size() * sizeof(std::complex<float>);
+    cl_int err;
 
-    // Записать данные в userdata после заголовка (offset = 32)
-    cl_int err = clEnqueueWriteBuffer(
+    // ═══════════════════════════════════════════════════════════════════════
+    // Оптимизация: Pinned Memory для быстрого DMA transfer
+    // 1. Map pinned buffer → получаем page-locked указатель
+    // 2. memcpy данные туда (быстрее чем pageable)
+    // 3. Unmap → запускает DMA transfer
+    // 4. Copy из pinned staging в целевой буфер
+    // ═══════════════════════════════════════════════════════════════════════
+    if (pinned_staging_buffer_ && data_size <= pinned_buffer_size_) {
+        // Используем pinned memory для DMA
+        void* mapped_ptr = clEnqueueMapBuffer(
+            queue_,
+            pinned_staging_buffer_,
+            CL_TRUE,  // Blocking map
+            CL_MAP_WRITE_INVALIDATE_REGION,
+            0,
+            data_size,
+            0, nullptr, nullptr,
+            &err
+        );
+
+        if (err == CL_SUCCESS && mapped_ptr) {
+            // Копируем данные в pinned память (быстрее чем в pageable)
+            std::memcpy(mapped_ptr, input_data.data(), data_size);
+
+            // Unmap → это НЕ запускает transfer, просто разблокирует буфер
+            clEnqueueUnmapMemObject(queue_, pinned_staging_buffer_, mapped_ptr, 0, nullptr, nullptr);
+
+            // Копируем из pinned staging в целевой буфер (DMA transfer)
+            err = clEnqueueCopyBuffer(
+                queue_,
+                pinned_staging_buffer_,
+                pre_callback_userdata_,
+                0,                              // src offset
+                PRE_CALLBACK_HEADER_SIZE,       // dst offset (после заголовка)
+                data_size,
+                0, nullptr,
+                &event
+            );
+
+            if (err == CL_SUCCESS) {
+                return event;  // Успех с pinned memory
+            }
+            // Fallback: если copy failed, используем обычный путь
+        }
+        // Fallback: если map failed, используем обычный WriteBuffer
+    }
+
+    // Обычный путь: clEnqueueWriteBuffer (без pinned memory)
+    err = clEnqueueWriteBuffer(
         queue_,
         pre_callback_userdata_,
         CL_FALSE,  // Non-blocking
@@ -764,9 +912,9 @@ cl_event SpectrumMaximaFinder::ExecutePostKernel(cl_event wait_event) {
     cl_int err;
     cl_event event = nullptr;
 
-    // Используем current_batch_size_ (может отличаться при batch processing)
-    uint32_t antenna_count_for_kernel = (current_batch_size_ > 0)
-        ? static_cast<uint32_t>(current_batch_size_)
+    // Используем actual_batch_size_ — реальный размер текущего batch
+    uint32_t antenna_count_for_kernel = (actual_batch_size_ > 0)
+        ? static_cast<uint32_t>(actual_batch_size_)
         : params_.antenna_count;
 
     // Установить аргументы kernel
@@ -805,8 +953,8 @@ cl_event SpectrumMaximaFinder::ExecutePostKernel(cl_event wait_event) {
 
 std::vector<SpectrumResult> SpectrumMaximaFinder::ReadResults(cl_event wait_event, bool send_to_profiler) {
     // Количество MaxValue зависит от режима: ONE_PEAK=4, TWO_PEAKS=8
-    // Используем current_batch_size_ (может отличаться от params_.antenna_count при batch processing)
-    size_t antenna_count_to_read = (current_batch_size_ > 0) ? current_batch_size_ : params_.antenna_count;
+    // Используем actual_batch_size_ — реальный размер текущего batch (не размер буферов!)
+    size_t antenna_count_to_read = (actual_batch_size_ > 0) ? actual_batch_size_ : params_.antenna_count;
     size_t max_values_per_beam = (params_.peak_mode == PeakSearchMode::ONE_PEAK) ? 4 : 8;
     size_t num_results = antenna_count_to_read * max_values_per_beam;
     std::vector<MaxValue> raw_results(num_results);
@@ -906,6 +1054,26 @@ double SpectrumMaximaFinder::ProfileEvent(cl_event event, const char* name) {
     return time_ms;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// ЧАСТЬ 7: ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ — WritePreCallbackHeader(), ReleaseResources()
+// ════════════════════════════════════════════════════════════════════════════
+
+void SpectrumMaximaFinder::WritePreCallbackHeader(size_t batch_count) {
+    // Записать заголовок pre-callback с параметрами для GPU
+    PreCallbackHeader header = {
+        static_cast<uint32_t>(batch_count),
+        params_.n_point,
+        params_.nFFT,
+        0, 0, 0, 0, 0
+    };
+
+    cl_int err = clEnqueueWriteBuffer(queue_, pre_callback_userdata_, CL_TRUE,
+                                       0, sizeof(header), &header, 0, nullptr, nullptr);
+    if (err != CL_SUCCESS) {
+        throw std::runtime_error("WritePreCallbackHeader failed: " + std::to_string(err));
+    }
+}
+
 void SpectrumMaximaFinder::ReleaseResources() {
     // Post-kernel
     if (post_kernel_) {
@@ -944,6 +1112,10 @@ void SpectrumMaximaFinder::ReleaseResources() {
     if (fft_temp_buffer_) {
         clReleaseMemObject(fft_temp_buffer_);
         fft_temp_buffer_ = nullptr;
+    }
+    if (pinned_staging_buffer_) {
+        clReleaseMemObject(pinned_staging_buffer_);
+        pinned_staging_buffer_ = nullptr;
     }
 
     initialized_ = false;

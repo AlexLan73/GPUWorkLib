@@ -1,7 +1,7 @@
 # 📋 BACKLOG — Очередь задач
 
 > **Обновлено**: 2026-02-11
-> **Всего тем**: 4 (рефакторинг)
+> **Всего тем**: 5 (рефакторинг)
 
 ---
 
@@ -32,6 +32,28 @@
 ---
 
 ## 🔥 ПРИОРИТЕТ: Высокий
+
+### 🎯 ТЕМА 5: Рефакторинг DrvGPU — Google C++ Style, отступы 2
+
+**Цель**: Привести код DrvGPU к единому стилю (Google C++ Style) и 2-пробельной табуляции
+
+**Статус**: 📋 Planned
+**Приоритет**: Среданий
+
+**Сфера**: `DrvGPU/` (backends, common, config, logger, memory, services, src, tests)
+
+**Правила**:
+- Отступы: 2 пробела (не табы)
+- Длина строки: 80 символов (по возможности)
+- Скобки: `{` на той же строке для функций/классов
+- Именование: `CamelCase` типы, `lower_case` переменные/функции
+- Убрать trailing whitespace
+
+**Файлы** (основные): opencl_backend.cpp/hpp, opencl_core.cpp/hpp, gpu_profiler.hpp, gpu_manager.hpp, batch_manager, svm_buffer, memory_manager, logger, config, и др.
+
+**План**: Cursor plan `drvgpu_refactoring_1a0e08cd`
+
+---
 
 ### 🎯 ТЕМА 3: Kernel Refactoring — OnePeak & TwoPeaks
 
@@ -360,13 +382,15 @@ T-BATCH-019 (рефакторинг) — ПОСЛЕ всех тестов
 **Согласовано с Alex (2026-02-10)**:
 
 ```
-1️⃣ ТЕМА 4 (DrvGPU Optimization) — ПЕРВАЯ! Анализ без кода
+1️⃣ ТЕМА 4 (DrvGPU Optimization) — ПЕРВАЯ! Анализ без кода ✅
     ↓
 2️⃣ ТЕМА 3 (Kernel Refactoring) — OnePeak & TwoPeaks кернелы
     ↓
 3️⃣ ТЕМА 2 (Batch Large Data) — Тестирование больших данных
     ↓
 4️⃣ ТЕМА 1 (API Refactoring) — Универсальный API (самая большая)
+    ↓
+5️⃣ ТЕМА 5 (DrvGPU Code Style) — Google C++ Style, отступы 2
 ```
 
 **Подход**: Последовательно (Вариант А) — по одной теме, обсуждаем, делаем, завершаем

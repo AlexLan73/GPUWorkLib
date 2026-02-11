@@ -204,12 +204,29 @@ inline int run() {
         std::cout << "    Память GPU: " << (total_mem / 1024 / 1024) << " MB\n\n";
 
         // ═══════════════════════════════════════════════════════════════════
-        // 2. Запуск GPUProfiler
+        // 2. Запуск GPUProfiler + передача информации о GPU
         // ═══════════════════════════════════════════════════════════════════
         auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
         const bool is_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(0);
         if (is_prof) {
             std::cout << "[2] GPUProfiler включен — запускаем...\n\n";
+
+            // Передаём информацию о GPU в профайлер для отчёта
+            auto device_info = gpu.GetDeviceInfo();
+            drv_gpu_lib::GPUReportInfo gpu_info;
+            gpu_info.gpu_name = device_info.name;
+            gpu_info.backend_type = BackendType::OPENCL;
+            gpu_info.global_mem_mb = device_info.global_memory_size / (1024 * 1024);
+
+            // Информация о драйвере OpenCL
+            std::map<std::string, std::string> opencl_driver;
+            opencl_driver["driver_type"] = "OpenCL";
+            opencl_driver["version"] = device_info.opencl_version;
+            opencl_driver["driver_version"] = device_info.driver_version;
+            opencl_driver["vendor"] = device_info.vendor;
+            gpu_info.drivers.push_back(opencl_driver);
+
+            profiler.SetGPUInfo(0, gpu_info);
             profiler.Start();
         } else {
             std::cout << "[2] GPUProfiler выключен (можно включить в configGPU.json)\n\n";
@@ -225,7 +242,7 @@ inline int run() {
         params.repeat_count = TEST_REPEAT_COUNT;
         params.sample_rate = TEST_SAMPLE_RATE;
         params.peak_mode = PeakSearchMode::ONE_PEAK;  // ВЕЗДЕ ищем ОДИН пик!
-        params.memory_limit = 0.60f;  // 60% от СВОБОДНОЙ памяти GPU
+        params.memory_limit = 0.80f;  // 80% от СВОБОДНОЙ памяти GPU (оптимизировано)
 
         std::cout << "    antenna_count: " << params.antenna_count << "\n";
         std::cout << "    n_point: " << params.n_point << "\n";
