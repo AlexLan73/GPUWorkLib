@@ -44,7 +44,8 @@ size_t BatchManager::CalculateOptimalBatchSize(
     IBackend* backend,
     size_t total_items,
     size_t item_memory_bytes,
-    double memory_limit)
+    double memory_limit,
+    size_t external_memory_bytes)
 {
     if (!backend || total_items == 0 || item_memory_bytes == 0) {
         return total_items;
@@ -61,6 +62,20 @@ size_t BatchManager::CalculateOptimalBatchSize(
         std::cerr << "[BatchManager] WARNING: Cannot query GPU memory, "
                   << "using fallback batch size: " << fallback << "\n";
         return fallback;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Вычитаем память уже занятую внешними данными (напр., буфер от генератора)
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (external_memory_bytes > 0) {
+        if (external_memory_bytes >= available) {
+            // Внешние данные занимают почти всю память — используем минимальный batch
+            std::cerr << "[BatchManager] WARNING: External memory ("
+                      << (external_memory_bytes / 1024 / 1024) << " MB) >= available ("
+                      << (available / 1024 / 1024) << " MB), using batch=1\n";
+            return 1;
+        }
+        available -= external_memory_bytes;
     }
 
     // Расчёт через inline-вспомогательную функцию

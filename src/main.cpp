@@ -7,6 +7,7 @@
 //#include "modules/fft_maxima/tests/test_fft_maxima.hpp"
 //#include "modules/fft_maxima/tests/test_spectrum_maxima.hpp"
 #include "modules/fft_maxima/tests/test_large_batch.hpp"
+#include "modules/fft_maxima/tests/test_gpu_generator_integration.hpp"
 //#include "DrvGPU/tests/test_services.hpp"
 //#include "DrvGPU/tests/test_gpu_profiler.hpp"
 
@@ -26,7 +27,8 @@ int main() {
 //  test_find_3_max::run();
 //  test_fft_max::run();
 //  test_spectrum_maxima::run();
-  test_large_batch::run();
+  test_large_batch::run();  // Старый API (CPU upload)
+  test_gpu_generator_integration::run();  // Новый API (GPU→GPU)
 
   // Services multithreaded tests (без теста профилирования — он отдельно)
 //  test_services::run();

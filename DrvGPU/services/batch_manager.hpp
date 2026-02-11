@@ -102,12 +102,14 @@ public:
      *        Пример: nFFT * sizeof(complex<float>) * 2 + maxima_buffer
      * @param memory_limit Доля доступной памяти (0.0 — 1.0)
      *        По умолчанию: 0.7 (70% доступной памяти GPU)
+     * @param external_memory_bytes Память уже занятая внешними данными (напр., буфер от генератора)
+     *        По умолчанию: 0 (нет внешних данных)
      * @return Оптимальное число элементов в пакете
      *
      * АЛГОРИТМ:
-     * 1. Запрос общей памяти GPU (GetGlobalMemorySize)
-     * 2. Оценка занятой памяти (эвристика: 10% накладных)
-     * 3. available = total * memory_limit
+     * 1. Запрос свободной памяти GPU (GetFreeMemorySize)
+     * 2. Вычитание external_memory_bytes (уже занятая память)
+     * 3. available = (free - external) * memory_limit
      * 4. batch_size = available / item_memory_bytes
      * 5. Ограничение диапазоном [1, total_items]
      *
@@ -117,7 +119,8 @@ public:
         IBackend* backend,
         size_t total_items,
         size_t item_memory_bytes,
-        double memory_limit = 0.7);
+        double memory_limit = 0.7,
+        size_t external_memory_bytes = 0);
 
     /**
      * @brief Рассчитать размер пакета по известной доступной памяти

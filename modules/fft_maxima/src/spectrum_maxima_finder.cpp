@@ -1180,7 +1180,8 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromCPU(
 }
 
 std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromGPU(
-    cl_mem gpu_data, size_t antenna_count, size_t n_point)
+    cl_mem gpu_data, size_t antenna_count, size_t n_point,
+    size_t gpu_memory_bytes)
 {
     if (!gpu_data) {
         throw std::invalid_argument("ProcessFromGPU: gpu_data cannot be null");
@@ -1191,12 +1192,43 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromGPU(
     std::cout << "  antenna_count: " << antenna_count << "\n";
     std::cout << "  n_point: " << n_point << "\n";
 
-    // Вычислить сколько памяти нужно на одну антенну
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Lazy initialization: вычисляем размеры FFT если ещё не вычислены
+    // (Initialize() не вызывается для cl_mem входа!)
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (params_.nFFT == 0) {
+        CalculateFFTSize();
+        std::cout << "  nFFT: " << params_.nFFT << "\n";
+        std::cout << "  search_range: " << params_.search_range << "\n";
+    }
+
+    // Lazy initialization: компилируем post-kernel если ещё не скомпилирован
+    if (!post_kernel_) {
+        std::cout << "  Компиляция post-kernel...\n";
+        CompilePostKernel();
+    }
+
+    // Вычислить сколько памяти нужно на одну антенну (для FFT буферов)
     size_t bytes_per_antenna = CalculateBytesPerAntenna();
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Размер внешних данных на GPU (переданный пользователем или расчётный)
+    // ═══════════════════════════════════════════════════════════════════════════
+    size_t external_memory = (gpu_memory_bytes > 0)
+        ? gpu_memory_bytes
+        : antenna_count * n_point * sizeof(std::complex<float>);
+
+    std::cout << "  Внешние данные занимают: " << (external_memory / 1024.0 / 1024.0) << " MB на GPU\n";
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Расчёт batch size с учётом уже занятой памяти
+    // ═══════════════════════════════════════════════════════════════════════════
+    size_t optimal_batch = drv_gpu_lib::BatchManager::CalculateOptimalBatchSize(
+        backend_, antenna_count, bytes_per_antenna,
+        params_.memory_limit, external_memory);
+
     // Проверяем, нужен ли batch processing
-    bool need_batch = !drv_gpu_lib::BatchManager::AllItemsFit(
-        backend_, antenna_count, bytes_per_antenna, params_.memory_limit);
+    bool need_batch = (optimal_batch < antenna_count);
 
     if (!need_batch) {
         // Все данные помещаются — один batch
@@ -1234,9 +1266,6 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromGPU(
 
     // Batch processing
     std::cout << "  [Batch mode] Требуется batch processing\n";
-
-    size_t optimal_batch = drv_gpu_lib::BatchManager::CalculateOptimalBatchSize(
-        backend_, antenna_count, bytes_per_antenna, params_.memory_limit);
 
     auto batches = drv_gpu_lib::BatchManager::CreateBatches(antenna_count, optimal_batch);
 
@@ -1283,6 +1312,11 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatchFromGPU(
     // Обновить заголовок pre-callback
     WritePreCallbackHeader(batch_antenna_count);
 
+    // Профилирование
+    const int gpu_id = 0;
+    auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
+    const bool do_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(gpu_id);
+
     // Копируем данные GPU→GPU (из внешнего буфера в наш pre_callback_userdata_)
     size_t data_size = batch_antenna_count * params_.n_point * sizeof(std::complex<float>);
     cl_event copy_event = nullptr;
@@ -1296,10 +1330,37 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatchFromGPU(
         throw std::runtime_error("ProcessBatchFromGPU: clEnqueueCopyBuffer failed: " + std::to_string(err));
     }
 
-    // FFT + PostKernel + ReadResults
+    // Профилирование GPU→GPU Copy (аналог Upload для CPU данных)
+    profiling_.upload_time_ms += ProfileEvent(copy_event, "GPU→GPU Copy");
+    if (do_prof) {
+        drv_gpu_lib::OpenCLProfilingData data{};
+        if (drv_gpu_lib::FillOpenCLProfilingData(copy_event, data)) {
+            profiler.Record(gpu_id, "SpectrumMaxima", "GPU→GPU Copy", data);
+        }
+    }
+
+    // FFT
     cl_event fft_event = ExecuteFFT(copy_event);
+    profiling_.fft_time_ms += ProfileEvent(fft_event, "FFT");
+    if (do_prof) {
+        drv_gpu_lib::OpenCLProfilingData data{};
+        if (drv_gpu_lib::FillOpenCLProfilingData(fft_event, data)) {
+            profiler.Record(gpu_id, "SpectrumMaxima", "FFT", data);
+        }
+    }
+
+    // PostKernel
     cl_event post_event = ExecutePostKernel(fft_event);
-    auto results = ReadResults(post_event, true);
+    profiling_.post_kernel_time_ms += ProfileEvent(post_event, "PostKernel");
+    if (do_prof) {
+        drv_gpu_lib::OpenCLProfilingData data{};
+        if (drv_gpu_lib::FillOpenCLProfilingData(post_event, data)) {
+            profiler.Record(gpu_id, "SpectrumMaxima", "PostKernel", data);
+        }
+    }
+
+    // ReadResults (Download профилируется внутри)
+    auto results = ReadResults(post_event, do_prof);
 
     // Устанавливаем правильные antenna_id
     for (size_t i = 0; i < results.size(); ++i) {

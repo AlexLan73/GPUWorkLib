@@ -213,8 +213,10 @@ private:
         const std::vector<std::complex<float>>& data);
 
     /// Обработка GPU данных (cl_mem) — БЕЗ upload, только GPU→GPU копирование!
+    /// @param gpu_memory_bytes Реальный размер буфера на GPU (для расчёта batch size)
     std::vector<SpectrumResult> ProcessFromGPU(
-        cl_mem gpu_data, size_t antenna_count, size_t n_point);
+        cl_mem gpu_data, size_t antenna_count, size_t n_point,
+        size_t gpu_memory_bytes = 0);
 
     /// Обработка одного batch из GPU буфера
     std::vector<SpectrumResult> ProcessBatchFromGPU(
@@ -354,19 +356,20 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::Process(
     // 1. Подготовить параметры
     PrepareParams(input.antenna_count, input.n_point, proc_params, mode);
 
-    // 2. Инициализация (lazy — если ещё не инициализирован)
-    if (!initialized_) {
-        Initialize();
-    }
-
-    // 3. Диспетчеризация по типу данных
+    // 2. Диспетчеризация по типу данных
     if constexpr (is_cpu_vector_v<T>) {
-        // CPU данные — используем стандартный upload
+        // CPU данные — вызываем Initialize() и затем стандартный upload
+        if (!initialized_) {
+            Initialize();
+        }
         return ProcessFromCPU(input.data);
     }
     else if constexpr (std::is_same_v<T, cl_mem>) {
-        // GPU данные (cl_mem) — БЕЗ upload, GPU→GPU копирование
-        return ProcessFromGPU(input.data, input.antenna_count, input.n_point);
+        // GPU данные (cl_mem) — НЕ вызываем Initialize()!
+        // ProcessFromGPU() сам управляет буферами с учётом уже занятой памяти.
+        // Это позволяет правильно рассчитать batch size когда данные УЖЕ на GPU.
+        return ProcessFromGPU(input.data, input.antenna_count, input.n_point,
+                              input.ActualGpuMemory());
     }
     else if constexpr (is_svm_pointer_v<T>) {
         // SVM данные — TODO: реализовать позже

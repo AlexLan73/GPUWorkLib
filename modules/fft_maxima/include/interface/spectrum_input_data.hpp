@@ -57,12 +57,22 @@ struct InputData {
     uint32_t antenna_count = 0;     ///< Количество антенн (лучей)
     uint32_t n_point = 0;           ///< Точек на антенну (комплексных float)
     T data{};                       ///< Данные в любом формате
+    size_t gpu_memory_bytes = 0;    ///< Реальный размер буфера на GPU (для cl_mem)
+                                    ///< Может быть больше SizeBytes() из-за выравнивания/padding
+                                    ///< 0 = использовать SizeBytes() как fallback
 
     /// Общее количество точек
     size_t TotalPoints() const { return static_cast<size_t>(antenna_count) * n_point; }
 
-    /// Размер данных в байтах (для complex<float> = 8 bytes per point)
+    /// Расчётный размер данных в байтах (для complex<float> = 8 bytes per point)
+    /// @note Реальный размер буфера может быть больше — см. gpu_memory_bytes
     size_t SizeBytes() const { return TotalPoints() * sizeof(std::complex<float>); }
+
+    /// Реальный размер занятой GPU памяти
+    /// @return gpu_memory_bytes если указан, иначе SizeBytes()
+    size_t ActualGpuMemory() const {
+        return (gpu_memory_bytes > 0) ? gpu_memory_bytes : SizeBytes();
+    }
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
