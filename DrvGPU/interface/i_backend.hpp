@@ -256,7 +256,16 @@ public:
      * @brief Глобальная память (bytes)
      */
     virtual size_t GetGlobalMemorySize() const = 0;
-    
+
+    /**
+     * @brief Свободная память GPU (bytes)
+     *
+     * Для NVIDIA: использует CL_DEVICE_MEMORY_FREE_NV (расширение)
+     * Для AMD: использует расширение AMD или эвристику
+     * Fallback: GetGlobalMemorySize() * 0.9
+     */
+    virtual size_t GetFreeMemorySize() const = 0;
+
     /**
      * @brief Локальная память (bytes)
      */

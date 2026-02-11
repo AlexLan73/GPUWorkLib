@@ -124,6 +124,7 @@ public:
     std::string GetDriverVersion() const;
     std::string GetPlatformName() const;
     size_t GetGlobalMemorySize() const;
+    size_t GetFreeMemorySize() const;
     size_t GetLocalMemorySize() const;
     cl_uint GetComputeUnits() const;
     size_t GetMaxWorkGroupSize() const;

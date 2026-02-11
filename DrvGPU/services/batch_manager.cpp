@@ -31,16 +31,13 @@ size_t BatchManager::GetAvailableMemory(IBackend* backend) {
         return 0;
     }
 
-    // Получить общий объём глобальной памяти устройства
-    size_t total_memory = backend->GetGlobalMemorySize();
-
-    // Оценка: считаем, что 10% занято ОС/драйвером/другими аллокациями
-    // Эвристика. Для точного контроля модули должны отслеживать
-    // свои аллокации через MemoryManager.
-    size_t estimated_available = static_cast<size_t>(
-        static_cast<double>(total_memory) * 0.9);
-
-    return estimated_available;
+    // ═══════════════════════════════════════════════════════════════════════
+    // Получить РЕАЛЬНО СВОБОДНУЮ память GPU (через расширения вендоров)
+    // NVIDIA: CL_DEVICE_GLOBAL_FREE_MEMORY_NV
+    // AMD: CL_DEVICE_GLOBAL_FREE_MEMORY_AMD
+    // Fallback: GetGlobalMemorySize() * 0.9
+    // ═══════════════════════════════════════════════════════════════════════
+    return backend->GetFreeMemorySize();
 }
 
 size_t BatchManager::CalculateOptimalBatchSize(

@@ -17,6 +17,7 @@
 #include "interface/i_backend.hpp"
 #include "interface/spectrum_maxima_types.h"
 #include "kernels/fft_kernel_sources.hpp"
+#include "services/batch_manager.hpp"
 
 #include <CL/cl.h>
 #include <clFFT.h>
@@ -144,6 +145,9 @@ private:
     /// Следующая степень двойки
     static uint32_t NextPowerOf2(uint32_t n);
 
+    /// Рассчитать память на одну антенну (для BatchManager)
+    size_t CalculateBytesPerAntenna() const;
+
     /// Создать GPU буферы
     void AllocateBuffers();
 
@@ -173,6 +177,19 @@ private:
     void ReleaseResources();
 
     // ═══════════════════════════════════════════════════════════════════════
+    // Batch Processing (для больших данных)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Обработать один batch антенн
+    std::vector<SpectrumResult> ProcessBatch(
+        const std::vector<std::complex<float>>& input_data,
+        size_t start_antenna,
+        size_t batch_antenna_count);
+
+    /// Перевыделить буферы под новый размер batch
+    void ReallocateBuffersForBatch(size_t batch_antenna_count);
+
+    // ═══════════════════════════════════════════════════════════════════════
     // Приватные поля
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -197,6 +214,7 @@ private:
     cl_mem fft_input_ = nullptr;                ///< Входной буфер FFT
     cl_mem fft_output_ = nullptr;               ///< Выходной буфер FFT
     cl_mem maxima_output_ = nullptr;            ///< Результаты post-kernel
+    cl_mem fft_temp_buffer_ = nullptr;          ///< Временный буфер для clFFT (если требуется)
 
     // Post-kernel
     cl_program post_program_ = nullptr;
@@ -204,6 +222,11 @@ private:
 
     // Профилирование
     ProfilingData profiling_;
+
+    // Batch processing
+    size_t current_batch_size_ = 0;      ///< Текущий размер batch (для перевыделения буферов)
+    size_t fft_temp_buffer_size_ = 0;    ///< Размер текущего temp buffer (для reuse)
+    bool clfft_initialized_ = false;      ///< clFFT инициализирован для этого экземпляра
 
     // Константы
     static constexpr size_t PRE_CALLBACK_HEADER_SIZE = 32;  ///< Размер заголовка userdata

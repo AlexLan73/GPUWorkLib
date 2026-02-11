@@ -379,6 +379,45 @@ size_t OpenCLCore::GetGlobalMemorySize() const {
     return GetDeviceInfoValue<cl_ulong>(CL_DEVICE_GLOBAL_MEM_SIZE);
 }
 
+size_t OpenCLCore::GetFreeMemorySize() const {
+    if (!initialized_ || !device_) {
+        return 0;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Попытка получить реальную свободную память через расширения вендоров
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // NVIDIA: CL_DEVICE_GLOBAL_FREE_MEMORY_NV (расширение cl_nv_device_attribute_query)
+    // Значение: 0x4006
+    constexpr cl_device_info CL_DEVICE_GLOBAL_FREE_MEMORY_NV = 0x4006;
+
+    cl_ulong free_mem = 0;
+    cl_int err = clGetDeviceInfo(device_, CL_DEVICE_GLOBAL_FREE_MEMORY_NV,
+                                  sizeof(free_mem), &free_mem, nullptr);
+
+    if (err == CL_SUCCESS && free_mem > 0) {
+        // NVIDIA возвращает значение в KB, конвертируем в bytes
+        return static_cast<size_t>(free_mem) * 1024;
+    }
+
+    // AMD: CL_DEVICE_GLOBAL_FREE_MEMORY_AMD (расширение cl_amd_device_attribute_query)
+    // Значение: 0x4039
+    constexpr cl_device_info CL_DEVICE_GLOBAL_FREE_MEMORY_AMD = 0x4039;
+
+    err = clGetDeviceInfo(device_, CL_DEVICE_GLOBAL_FREE_MEMORY_AMD,
+                          sizeof(free_mem), &free_mem, nullptr);
+
+    if (err == CL_SUCCESS && free_mem > 0) {
+        // AMD возвращает в KB
+        return static_cast<size_t>(free_mem) * 1024;
+    }
+
+    // Fallback: эвристика — 90% от общей памяти
+    size_t total = GetGlobalMemorySize();
+    return static_cast<size_t>(static_cast<double>(total) * 0.9);
+}
+
 size_t OpenCLCore::GetLocalMemorySize() const {
     return GetDeviceInfoValue<cl_ulong>(CL_DEVICE_LOCAL_MEM_SIZE);
 }

@@ -89,6 +89,9 @@ std::vector<SpectrumResult> Process(
     const InputData<T>& input,
     const ProcessingParams& params,
     PeakSearchMode mode = PeakSearchMode::ONE_PEAK  // ← ПО УМОЛЧАНИЮ 1 ВЕРШИНА!
+-- доработай - добавил  typedriver)`  - typedriver работа с разными драверами + разная реализация под OpenCl & ROCm 
+  поставь по умолчанию ROCm
+    
 );
 ```
 

@@ -209,6 +209,7 @@ public:
     bool SupportsDoublePrecision() const override;
     size_t GetMaxWorkGroupSize() const override;
     size_t GetGlobalMemorySize() const override;
+    size_t GetFreeMemorySize() const override;
     size_t GetLocalMemorySize() const override;
     
     // ═══════════════════════════════════════════════════════════════

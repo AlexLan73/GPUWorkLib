@@ -33,7 +33,13 @@ struct SpectrumParams {
     uint32_t repeat_count = 2;          ///< Множитель размера FFT (2^n: 1,2,4,8...)
     float sample_rate = 1000.0f;        ///< Частота дискретизации (Гц)
     uint32_t search_range = 0;          ///< Диапазон поиска максимума (0 = авто = nFFT/4)
-    PeakSearchMode peak_mode = PeakSearchMode::TWO_PEAKS; ///< Режим поиска (1 или 2 пика)
+    PeakSearchMode peak_mode = PeakSearchMode::ONE_PEAK; ///< Режим поиска (ВЕЗДЕ ищем ОДИН пик!)
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Batch Processing (для больших данных, использует BatchManager)
+    // ═══════════════════════════════════════════════════════════════════════
+    float memory_limit = 0.60f;         ///< Доля СВОБОДНОЙ памяти GPU (0.0-1.0, по умолчанию 60%)
+                                        ///< Теперь берётся от GetFreeMemorySize()!
 
     // Вычисляемые параметры (заполняются в Initialize)
     uint32_t nFFT = 0;                  ///< Размер FFT = nextPow2(n_point) * repeat_count

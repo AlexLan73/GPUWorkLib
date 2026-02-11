@@ -476,6 +476,13 @@ size_t OpenCLBackend::GetGlobalMemorySize() const {
     return core_->GetGlobalMemorySize();
 }
 
+size_t OpenCLBackend::GetFreeMemorySize() const {
+    if (!core_ || !core_->IsInitialized()) {
+        return 0;
+    }
+    return core_->GetFreeMemorySize();
+}
+
 size_t OpenCLBackend::GetLocalMemorySize() const {
     if (!core_ || !core_->IsInitialized()) {
         return 0;
