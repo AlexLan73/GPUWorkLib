@@ -331,5 +331,185 @@ void SelectPostKernel(PeakSearchMode mode) {
 
 ---
 
-*Последнее обновление: 2026-02-10*
+*Последнее обновление: 2026-02-11*
 *Автор: Кодо (AI Assistant)*
+
+---
+
+# 📋 ПЛАН РЕАЛИЗАЦИИ (обновлено 2026-02-11)
+
+## Архитектура теста с GPU-генератором
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  ExternalOpenCLContext (владеет cl_context/queue/device)       │
+│       │                                                         │
+│       ├── DrvGPU Backend (InitializeFromExternalContext)       │
+│       │       └── SpectrumMaximaFinder                         │
+│       │                                                         │
+│       └── TestSignalGenerator (тот же контекст!)               │
+│               └── GenerateSinusoids() → cl_mem                 │
+└─────────────────────────────────────────────────────────────────┘
+
+Ключевое: Генератор и обработчик используют ОДИН контекст!
+→ cl_mem передаётся напрямую БЕЗ копирования CPU↔GPU!
+```
+
+---
+
+## 🔧 ЭТАП 1: API Refactoring (4-6 часов)
+
+| # | Задача | Файл |
+|---|--------|------|
+| 1.1 | Создать InputData<T>, ProcessingParams | `interface/spectrum_input_data.hpp` |
+| 1.2 | Новый конструктор SpectrumMaximaFinder(IBackend*) | `spectrum_maxima_finder.h` |
+| 1.3 | Шаблонный Process<T>() | `spectrum_maxima_finder.h/cpp` |
+| 1.4 | ProcessFromCPU (обёртка над текущим кодом) | `spectrum_maxima_finder.cpp` |
+| 1.5 | **ProcessFromGPU** (cl_mem, clEnqueueCopyBuffer) | `spectrum_maxima_finder.cpp` |
+| 1.6 | Обновить тесты | `test_*.hpp` |
+
+---
+
+## 🎵 ЭТАП 2: Генератор сигналов (2-3 часа)
+
+**Файл**: `tests/test_signal_generator.hpp`
+
+> ⚠️ ВРЕМЕННО в tests/! Потом переедет в библиотеку синтезаторов сигналов
+
+```cpp
+class TestSignalGenerator {
+public:
+    // Инициализация с OpenCL контекстом (НЕ владеет!)
+    TestSignalGenerator(cl_context ctx, cl_command_queue queue, cl_device_id device);
+
+    // Генерация синусоид на GPU (весь размер 256 × 1.3M!)
+    cl_mem GenerateSinusoids(
+        size_t antenna_count,      // 256
+        size_t n_point,            // 1,300,000
+        float sample_rate,         // 1000 Hz
+        float base_freq,           // 2.5 Hz
+        float freq_step = 0.25f    // шаг частоты между антеннами
+    );
+
+    void ReleaseBuffer(cl_mem buffer);
+
+private:
+    cl_context ctx_;
+    cl_command_queue queue_;
+    cl_device_id device_;
+    cl_program program_ = nullptr;
+    cl_kernel kernel_ = nullptr;
+};
+```
+
+**OpenCL Kernel** (332M work items — ~0.3ms):
+```cpp
+__kernel void generate_sinusoid(
+    __global float2* output,      // [antenna_count × n_point]
+    const uint antenna_count,
+    const uint n_point,
+    const float sample_rate,
+    const float base_freq,
+    const float freq_step
+) {
+    const size_t gid = get_global_id(0);
+    const size_t antenna_id = gid / n_point;
+    const size_t sample_id = gid % n_point;
+
+    if (antenna_id >= antenna_count) return;
+
+    // Частота для этой антенны
+    const float freq = base_freq + antenna_id * freq_step;
+
+    // Время
+    const float t = (float)sample_id / sample_rate;
+
+    // Фаза
+    const float phase = 2.0f * M_PI_F * freq * t;
+
+    // Синусоида: cos + i*sin
+    output[gid] = (float2)(cos(phase), sin(phase));
+}
+```
+
+---
+
+## 🧪 ЭТАП 3: Интеграционный тест (2-3 часа)
+
+**Файл**: `tests/test_gpu_generator_integration.hpp`
+
+```cpp
+void run() {
+    // 1. Контекст (как в test_external_context_fft.hpp)
+    ExternalOpenCLContext ext_ctx;
+
+    // 2. Backend с внешним контекстом
+    auto backend = std::make_unique<OpenCLBackend>();
+    backend->InitializeFromExternalContext(
+        ext_ctx.GetContext(), ext_ctx.GetDevice(), ext_ctx.GetQueue());
+
+    // 3. Генератор (тот же контекст!)
+    TestSignalGenerator generator(
+        ext_ctx.GetContext(), ext_ctx.GetQueue(), ext_ctx.GetDevice());
+
+    // 4. Генерируем данные на GPU (весь размер!)
+    const size_t antenna_count = 256;
+    const size_t n_point = 1'300'000;
+    cl_mem gpu_data = generator.GenerateSinusoids(
+        antenna_count, n_point, 1000.0f, 2.5f, 0.25f);
+
+    // 5. НОВЫЙ API!
+    SpectrumMaximaFinder finder(backend.get());
+
+    InputData<cl_mem> input{
+        .antenna_count = antenna_count,
+        .n_point = n_point,
+        .data = gpu_data
+    };
+
+    ProcessingParams params{
+        .repeat_count = 2,       // TEST_REPEAT_COUNT!
+        .sample_rate = 1000.0f
+    };
+
+    // 6. Обработка! (данные уже на GPU — без upload!)
+    auto results = finder.Process(input, params, PeakSearchMode::ONE_PEAK);
+
+    // 7. Валидация (частоты: 2.5, 2.75, 3.0, ... Hz)
+    ValidateResults(results, 2.5f, 0.25f);
+
+    // 8. Benchmark: сравнить с Process(vector)
+
+    // 9. Cleanup
+    generator.ReleaseBuffer(gpu_data);
+}
+```
+
+---
+
+## 📊 Ожидаемый выигрыш
+
+| Метрика | CPU→GPU (текущий) | GPU→GPU (новый) |
+|---------|-------------------|-----------------|
+| Upload данных | 2.4ms × 7 = ~17ms | ~0.3ms (генерация) |
+| Копирование batch | clEnqueueWriteBuffer | clEnqueueCopyBuffer |
+| **Экономия** | — | **~15ms (10%)** |
+
+---
+
+## 📝 Порядок выполнения
+
+1. **ЭТАП 1** (API Refactoring) — СНАЧАЛА!
+2. **ЭТАП 2** (Генератор) — после API
+3. **ЭТАП 3** (Интеграция) — финальный тест
+
+---
+
+## ✅ Критерии готовности
+
+- [ ] API Refactoring завершён
+- [ ] ProcessFromGPU работает с cl_mem
+- [ ] TestSignalGenerator генерирует данные на GPU
+- [ ] Интеграционный тест проходит
+- [ ] Benchmark показывает выигрыш
+- [ ] Валидация результатов корректна

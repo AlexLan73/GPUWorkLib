@@ -61,6 +61,7 @@ namespace antenna_fft {
 // ЧАСТЬ 1: КОНСТРУКТОРЫ И ДЕСТРУКТОРЫ
 // ════════════════════════════════════════════════════════════════════════════
 
+// Старый конструктор (deprecated)
 SpectrumMaximaFinder::SpectrumMaximaFinder(
     const SpectrumParams& params,
     drv_gpu_lib::IBackend* backend)
@@ -83,6 +84,30 @@ SpectrumMaximaFinder::SpectrumMaximaFinder(
     if (!context_ || !queue_ || !device_) {
         throw std::runtime_error("SpectrumMaximaFinder: failed to get OpenCL resources from backend");
     }
+}
+
+// Новый конструктор (НОВЫЙ API)
+SpectrumMaximaFinder::SpectrumMaximaFinder(drv_gpu_lib::IBackend* backend)
+    : backend_(backend) {
+
+    if (!backend_) {
+        throw std::invalid_argument("SpectrumMaximaFinder: backend cannot be null");
+    }
+
+    if (!backend_->IsInitialized()) {
+        throw std::runtime_error("SpectrumMaximaFinder: backend is not initialized");
+    }
+
+    // Получаем OpenCL ресурсы из backend
+    context_ = static_cast<cl_context>(backend_->GetNativeContext());
+    queue_ = static_cast<cl_command_queue>(backend_->GetNativeQueue());
+    device_ = static_cast<cl_device_id>(backend_->GetNativeDevice());
+
+    if (!context_ || !queue_ || !device_) {
+        throw std::runtime_error("SpectrumMaximaFinder: failed to get OpenCL resources from backend");
+    }
+
+    // params_ будет заполнен в PrepareParams() при вызове Process()
 }
 
 SpectrumMaximaFinder::~SpectrumMaximaFinder() {
@@ -1119,6 +1144,174 @@ void SpectrumMaximaFinder::ReleaseResources() {
     }
 
     initialized_ = false;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ЧАСТЬ 8: НОВЫЙ API — методы для шаблонного Process<T>
+// ════════════════════════════════════════════════════════════════════════════
+
+void SpectrumMaximaFinder::PrepareParams(
+    uint32_t antenna_count, uint32_t n_point,
+    const ProcessingParams& proc_params, PeakSearchMode mode)
+{
+    // Заполняем params_ из входных данных
+    params_.antenna_count = antenna_count;
+    params_.n_point = n_point;
+    params_.repeat_count = proc_params.repeat_count;
+    params_.sample_rate = proc_params.sample_rate;
+    params_.search_range = proc_params.search_range;
+    params_.memory_limit = proc_params.memory_limit;
+    params_.peak_mode = mode;
+
+    // Вычисляем nFFT и base_fft
+    params_.base_fft = NextPowerOf2(n_point);
+    params_.nFFT = params_.base_fft * params_.repeat_count;
+
+    if (params_.search_range == 0) {
+        params_.search_range = params_.nFFT / 4;
+    }
+}
+
+std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromCPU(
+    const std::vector<std::complex<float>>& data)
+{
+    // Просто вызываем старый Process — он уже поддерживает batch
+    return Process(data);
+}
+
+std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromGPU(
+    cl_mem gpu_data, size_t antenna_count, size_t n_point)
+{
+    if (!gpu_data) {
+        throw std::invalid_argument("ProcessFromGPU: gpu_data cannot be null");
+    }
+
+    std::cout << "\n[SpectrumMaximaFinder::ProcessFromGPU]\n";
+    std::cout << "  Входные данные уже на GPU (cl_mem)\n";
+    std::cout << "  antenna_count: " << antenna_count << "\n";
+    std::cout << "  n_point: " << n_point << "\n";
+
+    // Вычислить сколько памяти нужно на одну антенну
+    size_t bytes_per_antenna = CalculateBytesPerAntenna();
+
+    // Проверяем, нужен ли batch processing
+    bool need_batch = !drv_gpu_lib::BatchManager::AllItemsFit(
+        backend_, antenna_count, bytes_per_antenna, params_.memory_limit);
+
+    if (!need_batch) {
+        // Все данные помещаются — один batch
+        std::cout << "  [Single batch mode] Все данные помещаются в GPU память\n";
+
+        // Выделяем буферы под все антенны
+        ReallocateBuffersForBatch(antenna_count);
+        actual_batch_size_ = antenna_count;
+
+        // Копируем данные GPU→GPU
+        size_t data_size = antenna_count * n_point * sizeof(std::complex<float>);
+        cl_event copy_event = nullptr;
+        cl_int err = clEnqueueCopyBuffer(queue_,
+            gpu_data, pre_callback_userdata_,
+            0, PRE_CALLBACK_HEADER_SIZE,  // src_offset=0, dst_offset=32 (skip header)
+            data_size,
+            0, nullptr, &copy_event);
+
+        if (err != CL_SUCCESS) {
+            throw std::runtime_error("ProcessFromGPU: clEnqueueCopyBuffer failed: " + std::to_string(err));
+        }
+
+        // FFT + PostKernel + ReadResults
+        cl_event fft_event = ExecuteFFT(copy_event);
+        cl_event post_event = ExecutePostKernel(fft_event);
+        auto results = ReadResults(post_event, true);
+
+        // Cleanup events
+        clReleaseEvent(copy_event);
+        clReleaseEvent(fft_event);
+        clReleaseEvent(post_event);
+
+        return results;
+    }
+
+    // Batch processing
+    std::cout << "  [Batch mode] Требуется batch processing\n";
+
+    size_t optimal_batch = drv_gpu_lib::BatchManager::CalculateOptimalBatchSize(
+        backend_, antenna_count, bytes_per_antenna, params_.memory_limit);
+
+    auto batches = drv_gpu_lib::BatchManager::CreateBatches(antenna_count, optimal_batch);
+
+    std::cout << "  Оптимальный batch size: " << optimal_batch << "\n";
+    std::cout << "  Количество batch'ей: " << batches.size() << "\n";
+
+    drv_gpu_lib::BatchManager::PrintBatchInfo(batches, antenna_count);
+
+    // Резервируем буферы под max batch сразу
+    ReallocateBuffersForBatch(optimal_batch);
+
+    // Обработка batch'ей
+    std::vector<SpectrumResult> all_results;
+    all_results.reserve(antenna_count);
+
+    for (const auto& batch : batches) {
+        std::cout << "  🔄 Processing batch: antennas [" << batch.start
+                  << ".." << (batch.start + batch.count - 1) << "]\n";
+
+        size_t src_offset = batch.start * n_point * sizeof(std::complex<float>);
+        auto batch_results = ProcessBatchFromGPU(gpu_data, src_offset,
+                                                  batch.start, batch.count);
+
+        // Добавляем результаты
+        for (auto& r : batch_results) {
+            all_results.push_back(std::move(r));
+        }
+    }
+
+    std::cout << "  ✅ GPU Batch processing completed: " << all_results.size() << " results\n\n";
+    return all_results;
+}
+
+std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatchFromGPU(
+    cl_mem gpu_data, size_t src_offset_bytes,
+    size_t start_antenna, size_t batch_antenna_count)
+{
+    // Перевыделить буферы если нужно (с переиспользованием FFT плана)
+    if (batch_antenna_count > current_batch_size_ || !plan_created_) {
+        ReallocateBuffersForBatch(batch_antenna_count);
+    }
+    actual_batch_size_ = batch_antenna_count;
+
+    // Обновить заголовок pre-callback
+    WritePreCallbackHeader(batch_antenna_count);
+
+    // Копируем данные GPU→GPU (из внешнего буфера в наш pre_callback_userdata_)
+    size_t data_size = batch_antenna_count * params_.n_point * sizeof(std::complex<float>);
+    cl_event copy_event = nullptr;
+    cl_int err = clEnqueueCopyBuffer(queue_,
+        gpu_data, pre_callback_userdata_,
+        src_offset_bytes, PRE_CALLBACK_HEADER_SIZE,
+        data_size,
+        0, nullptr, &copy_event);
+
+    if (err != CL_SUCCESS) {
+        throw std::runtime_error("ProcessBatchFromGPU: clEnqueueCopyBuffer failed: " + std::to_string(err));
+    }
+
+    // FFT + PostKernel + ReadResults
+    cl_event fft_event = ExecuteFFT(copy_event);
+    cl_event post_event = ExecutePostKernel(fft_event);
+    auto results = ReadResults(post_event, true);
+
+    // Устанавливаем правильные antenna_id
+    for (size_t i = 0; i < results.size(); ++i) {
+        results[i].antenna_id = static_cast<uint32_t>(start_antenna + i);
+    }
+
+    // Cleanup events
+    clReleaseEvent(copy_event);
+    clReleaseEvent(fft_event);
+    clReleaseEvent(post_event);
+
+    return results;
 }
 
 } // namespace antenna_fft

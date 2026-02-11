@@ -28,10 +28,12 @@
 
 #include "interface/i_backend.hpp"
 #include "interface/spectrum_maxima_types.h"
+#include "interface/spectrum_input_data.hpp"
 #include "kernels/fft_kernel_sources.hpp"
 #include "services/batch_manager.hpp"
 
 #include <CL/cl.h>
+#include <type_traits>
 #include <clFFT.h>
 #include <complex>
 #include <vector>
@@ -81,12 +83,23 @@ public:
     // ═══════════════════════════════════════════════════════════════════════
 
     /**
-     * @brief Конструктор
+     * @brief Конструктор (СТАРЫЙ API — deprecated)
      * @param params Параметры обработки
      * @param backend Указатель на DrvGPU backend (не владеет)
+     * @deprecated Используйте SpectrumMaximaFinder(IBackend*) + Process(InputData<T>, ProcessingParams)
      */
+    [[deprecated("Use SpectrumMaximaFinder(IBackend*) + Process(InputData<T>, ProcessingParams)")]]
     explicit SpectrumMaximaFinder(const SpectrumParams& params,
                                    drv_gpu_lib::IBackend* backend);
+
+    /**
+     * @brief Конструктор (НОВЫЙ API)
+     * @param backend Указатель на DrvGPU backend (не владеет)
+     *
+     * Параметры обработки передаются в Process() вместе с данными.
+     * Это позволяет обрабатывать данные с разными параметрами.
+     */
+    explicit SpectrumMaximaFinder(drv_gpu_lib::IBackend* backend);
 
     /**
      * @brief Деструктор (освобождает GPU ресурсы)
@@ -118,13 +131,53 @@ public:
     void Initialize();
 
     /**
-     * @brief Обработка данных
+     * @brief Обработка данных (СТАРЫЙ API)
      * @param input_data Входные данные [antenna_count × n_point] complex<float>
-     * @return Вектор результатов: 2*antenna_count SpectrumResult [left0, right0, left1, right1, ...]
+     * @return Вектор результатов: antenna_count SpectrumResult
      * @throws std::runtime_error при ошибке обработки
+     * @deprecated Используйте Process(InputData<T>, ProcessingParams)
      */
     std::vector<SpectrumResult> Process(
         const std::vector<std::complex<float>>& input_data);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // НОВЫЙ API — шаблонный Process
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * @brief Универсальный метод обработки (НОВЫЙ API)
+     *
+     * @tparam T Тип данных:
+     *   - std::vector<std::complex<float>> — CPU вектор
+     *   - cl_mem — OpenCL буфер (от заказчика или генератора)
+     *   - void* — SVM указатель
+     *
+     * @param input Входные данные с параметрами (antenna_count, n_point, data)
+     * @param proc_params Параметры обработки (repeat_count, sample_rate, ...)
+     * @param mode Режим поиска пиков (ONE_PEAK по умолчанию)
+     * @param driver Тип драйвера (AUTO по умолчанию — используется ROCm если доступен)
+     * @return Вектор результатов: antenna_count SpectrumResult
+     *
+     * Пример использования:
+     * @code
+     * SpectrumMaximaFinder finder(&backend);
+     *
+     * // CPU данные
+     * InputData<std::vector<std::complex<float>>> input{256, 1300000, my_data};
+     * ProcessingParams params{.repeat_count = 2, .sample_rate = 1000.0f};
+     * auto results = finder.Process(input, params);
+     *
+     * // GPU данные (cl_mem)
+     * InputData<cl_mem> gpu_input{256, 1300000, my_cl_mem};
+     * auto results2 = finder.Process(gpu_input, params);
+     * @endcode
+     */
+    template<typename T>
+    std::vector<SpectrumResult> Process(
+        const InputData<T>& input,
+        const ProcessingParams& proc_params,
+        PeakSearchMode mode = PeakSearchMode::ONE_PEAK,
+        DriverType driver = DriverType::AUTO);
 
     /**
      * @brief Получить данные профилирования последнего вызова
@@ -147,6 +200,26 @@ public:
     void PrintInfo() const;
 
 private:
+    // ═══════════════════════════════════════════════════════════════════════
+    // Внутренние методы для нового API
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Подготовить параметры из InputData + ProcessingParams
+    void PrepareParams(uint32_t antenna_count, uint32_t n_point,
+                       const ProcessingParams& proc_params, PeakSearchMode mode);
+
+    /// Обработка CPU данных (vector)
+    std::vector<SpectrumResult> ProcessFromCPU(
+        const std::vector<std::complex<float>>& data);
+
+    /// Обработка GPU данных (cl_mem) — БЕЗ upload, только GPU→GPU копирование!
+    std::vector<SpectrumResult> ProcessFromGPU(
+        cl_mem gpu_data, size_t antenna_count, size_t n_point);
+
+    /// Обработка одного batch из GPU буфера
+    std::vector<SpectrumResult> ProcessBatchFromGPU(
+        cl_mem gpu_data, size_t src_offset_bytes,
+        size_t start_antenna, size_t batch_antenna_count);
     // ═══════════════════════════════════════════════════════════════════════
     // Приватные методы
     // ═══════════════════════════════════════════════════════════════════════
@@ -265,5 +338,48 @@ private:
     /// Записать заголовок в pre_callback_userdata_
     void WritePreCallbackHeader(size_t batch_count);
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// Реализация шаблонного метода Process<T>
+// (должна быть в header из-за шаблона)
+// ════════════════════════════════════════════════════════════════════════════
+
+template<typename T>
+std::vector<SpectrumResult> SpectrumMaximaFinder::Process(
+    const InputData<T>& input,
+    const ProcessingParams& proc_params,
+    PeakSearchMode mode,
+    DriverType driver)
+{
+    // 1. Подготовить параметры
+    PrepareParams(input.antenna_count, input.n_point, proc_params, mode);
+
+    // 2. Инициализация (lazy — если ещё не инициализирован)
+    if (!initialized_) {
+        Initialize();
+    }
+
+    // 3. Диспетчеризация по типу данных
+    if constexpr (is_cpu_vector_v<T>) {
+        // CPU данные — используем стандартный upload
+        return ProcessFromCPU(input.data);
+    }
+    else if constexpr (std::is_same_v<T, cl_mem>) {
+        // GPU данные (cl_mem) — БЕЗ upload, GPU→GPU копирование
+        return ProcessFromGPU(input.data, input.antenna_count, input.n_point);
+    }
+    else if constexpr (is_svm_pointer_v<T>) {
+        // SVM данные — TODO: реализовать позже
+        throw std::runtime_error("SVM input not implemented yet");
+    }
+    else {
+        // Неизвестный тип
+        static_assert(is_cpu_vector_v<T> || std::is_same_v<T, cl_mem> || is_svm_pointer_v<T>,
+                      "Unsupported input data type. Use vector<complex<float>>, cl_mem, or void*");
+    }
+
+    // driver пока не используется (будет для ROCm)
+    (void)driver;
+}
 
 } // namespace antenna_fft

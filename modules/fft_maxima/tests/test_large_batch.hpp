@@ -47,7 +47,7 @@ using namespace drv_gpu_lib;
 
 constexpr uint32_t TEST_ANTENNA_COUNT = 256;
 constexpr uint32_t TEST_N_POINT = 1300000;
-constexpr uint32_t TEST_REPEAT_COUNT = 4;
+constexpr uint32_t TEST_REPEAT_COUNT = 2;
 constexpr float TEST_SAMPLE_RATE = 1000.0f;
 constexpr uint32_t VALIDATION_ANTENNAS = 10;  // Первые 10 лучей для валидации
 
