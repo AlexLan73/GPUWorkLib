@@ -61,31 +61,6 @@ namespace antenna_fft {
 // ЧАСТЬ 1: КОНСТРУКТОРЫ И ДЕСТРУКТОРЫ
 // ════════════════════════════════════════════════════════════════════════════
 
-// Старый конструктор (deprecated)
-SpectrumMaximaFinder::SpectrumMaximaFinder(
-    const SpectrumParams& params,
-    drv_gpu_lib::IBackend* backend)
-    : params_(params)
-    , backend_(backend) {
-
-    if (!backend_) {
-        throw std::invalid_argument("SpectrumMaximaFinder: backend cannot be null");
-    }
-
-    if (!backend_->IsInitialized()) {
-        throw std::runtime_error("SpectrumMaximaFinder: backend is not initialized");
-    }
-
-    // Получаем OpenCL ресурсы из backend
-    context_ = static_cast<cl_context>(backend_->GetNativeContext());
-    queue_ = static_cast<cl_command_queue>(backend_->GetNativeQueue());
-    device_ = static_cast<cl_device_id>(backend_->GetNativeDevice());
-
-    if (!context_ || !queue_ || !device_) {
-        throw std::runtime_error("SpectrumMaximaFinder: failed to get OpenCL resources from backend");
-    }
-}
-
 // Новый конструктор (НОВЫЙ API)
 SpectrumMaximaFinder::SpectrumMaximaFinder(drv_gpu_lib::IBackend* backend)
     : backend_(backend) {
@@ -106,8 +81,6 @@ SpectrumMaximaFinder::SpectrumMaximaFinder(drv_gpu_lib::IBackend* backend)
     if (!context_ || !queue_ || !device_) {
         throw std::runtime_error("SpectrumMaximaFinder: failed to get OpenCL resources from backend");
     }
-
-    // params_ будет заполнен в PrepareParams() при вызове Process()
 }
 
 SpectrumMaximaFinder::~SpectrumMaximaFinder() {
@@ -274,72 +247,6 @@ void SpectrumMaximaFinder::Initialize() {
 
     initialized_ = true;
     std::cout << "[SpectrumMaximaFinder] Инициализация завершена!\n\n";
-}
-
-std::vector<SpectrumResult> SpectrumMaximaFinder::Process(
-    const std::vector<std::complex<float>>& input_data) {
-
-    if (!initialized_) {
-        throw std::runtime_error("SpectrumMaximaFinder::Process: not initialized");
-    }
-
-    size_t expected_size = params_.antenna_count * params_.n_point;
-    if (input_data.size() != expected_size) {
-        throw std::invalid_argument(
-            "SpectrumMaximaFinder::Process: input size mismatch. "
-            "Expected " + std::to_string(expected_size) +
-            ", got " + std::to_string(input_data.size()));
-    }
-
-    // Сбросить профилирование
-    profiling_ = ProfilingData{};
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // BATCH PROCESSING (использует BatchManager)
-    // ═══════════════════════════════════════════════════════════════════════
-
-    // Рассчитать память на одну антенну
-    size_t bytes_per_antenna = CalculateBytesPerAntenna();
-
-    // Проверить, помещаются ли все данные в память
-    if (drv_gpu_lib::BatchManager::AllItemsFit(backend_, params_.antenna_count,
-                                                bytes_per_antenna, params_.memory_limit)) {
-        // Все помещаются — обработать за один раз (без batch)
-        std::cout << "[SpectrumMaximaFinder] Все " << params_.antenna_count
-                  << " антенн помещаются в память — batch не нужен\n";
-        return ProcessBatch(input_data, 0, params_.antenna_count);
-    }
-
-    // Рассчитать оптимальный размер batch
-    size_t batch_size = drv_gpu_lib::BatchManager::CalculateOptimalBatchSize(
-        backend_, params_.antenna_count, bytes_per_antenna, params_.memory_limit);
-
-    // Создать список батчей с умным слиянием хвоста [1..3]
-    auto batches = drv_gpu_lib::BatchManager::CreateBatches(
-        params_.antenna_count, batch_size, 3, true);
-
-    // Вывести информацию о батчах
-    std::cout << "\n[SpectrumMaximaFinder] Batch Processing:\n";
-    std::cout << "  📊 Память на антенну: " << (bytes_per_antenna / 1024 / 1024) << " MB\n";
-    std::cout << "  📊 memory_limit: " << (params_.memory_limit * 100) << "%\n";
-    drv_gpu_lib::BatchManager::PrintBatchInfo(batches, params_.antenna_count);
-
-    // Обработать каждый batch
-    std::vector<SpectrumResult> all_results;
-    all_results.reserve(params_.antenna_count);  // ONE_PEAK: 1 результат на антенну
-
-    for (const auto& batch : batches) {
-        std::cout << "  🔄 Processing batch " << batch.batch_idx
-                  << ": antennas [" << batch.start << ".."
-                  << (batch.start + batch.count - 1) << "]\n";
-
-        auto batch_results = ProcessBatch(input_data, batch.start, batch.count);
-        all_results.insert(all_results.end(), batch_results.begin(), batch_results.end());
-    }
-
-    std::cout << "  ✅ Batch processing completed: " << all_results.size() << " results\n\n";
-
-    return all_results;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1175,8 +1082,69 @@ void SpectrumMaximaFinder::PrepareParams(
 std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromCPU(
     const std::vector<std::complex<float>>& data)
 {
-    // Просто вызываем старый Process — он уже поддерживает batch
-    return Process(data);
+    // Проверка: инициализирован ли объект
+    if (!initialized_) {
+        throw std::runtime_error("SpectrumMaximaFinder::ProcessFromCPU: not initialized");
+    }
+
+    // Проверка размера входных данных
+    size_t expected_size = params_.antenna_count * params_.n_point;
+    if (data.size() != expected_size) {
+        throw std::invalid_argument(
+            "SpectrumMaximaFinder::ProcessFromCPU: input size mismatch. "
+            "Expected " + std::to_string(expected_size) +
+            ", got " + std::to_string(data.size()));
+    }
+
+    // Сбросить профилирование
+    profiling_ = ProfilingData{};
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // BATCH PROCESSING (использует BatchManager)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Рассчитать память на одну антенну
+    size_t bytes_per_antenna = CalculateBytesPerAntenna();
+
+    // Проверить, помещаются ли все данные в память
+    if (drv_gpu_lib::BatchManager::AllItemsFit(backend_, params_.antenna_count,
+                                                bytes_per_antenna, params_.memory_limit)) {
+        // Все помещаются — обработать за один раз (без batch)
+        std::cout << "[SpectrumMaximaFinder] Все " << params_.antenna_count
+                  << " антенн помещаются в память — batch не нужен\n";
+        return ProcessBatch(data, 0, params_.antenna_count);
+    }
+
+    // Рассчитать оптимальный размер batch
+    size_t batch_size = drv_gpu_lib::BatchManager::CalculateOptimalBatchSize(
+        backend_, params_.antenna_count, bytes_per_antenna, params_.memory_limit);
+
+    // Создать список батчей с умным слиянием хвоста [1..3]
+    auto batches = drv_gpu_lib::BatchManager::CreateBatches(
+        params_.antenna_count, batch_size, 3, true);
+
+    // Вывести информацию о батчах
+    std::cout << "\n[SpectrumMaximaFinder] Batch Processing:\n";
+    std::cout << "  📊 Память на антенну: " << (bytes_per_antenna / 1024 / 1024) << " MB\n";
+    std::cout << "  📊 memory_limit: " << (params_.memory_limit * 100) << "%\n";
+    drv_gpu_lib::BatchManager::PrintBatchInfo(batches, params_.antenna_count);
+
+    // Обработать каждый batch
+    std::vector<SpectrumResult> all_results;
+    all_results.reserve(params_.antenna_count);  // ONE_PEAK: 1 результат на антенну
+
+    for (const auto& batch : batches) {
+        std::cout << "  🔄 Processing batch " << batch.batch_idx
+                  << ": antennas [" << batch.start << ".."
+                  << (batch.start + batch.count - 1) << "]\n";
+
+        auto batch_results = ProcessBatch(data, batch.start, batch.count);
+        all_results.insert(all_results.end(), batch_results.begin(), batch_results.end());
+    }
+
+    std::cout << "  ✅ Batch processing completed: " << all_results.size() << " results\n\n";
+
+    return all_results;
 }
 
 std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromGPU(

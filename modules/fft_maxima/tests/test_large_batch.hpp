@@ -233,39 +233,28 @@ inline int run() {
         }
 
         // ═══════════════════════════════════════════════════════════════════
-        // 3. Настройка параметров
+        // 3. Настройка параметров (НОВЫЙ API!)
         // ═══════════════════════════════════════════════════════════════════
-        std::cout << "[3] Настройка параметров:\n";
-        SpectrumParams params;
-        params.antenna_count = TEST_ANTENNA_COUNT;
-        params.n_point = TEST_N_POINT;
-        params.repeat_count = TEST_REPEAT_COUNT;
-        params.sample_rate = TEST_SAMPLE_RATE;
-        params.peak_mode = PeakSearchMode::ONE_PEAK;  // ВЕЗДЕ ищем ОДИН пик!
-        params.memory_limit = 0.80f;  // 80% от СВОБОДНОЙ памяти GPU (оптимизировано)
-
-        std::cout << "    antenna_count: " << params.antenna_count << "\n";
-        std::cout << "    n_point: " << params.n_point << "\n";
-        std::cout << "    repeat_count: " << params.repeat_count << "\n";
-        std::cout << "    sample_rate: " << params.sample_rate << " Hz\n";
+        std::cout << "[3] Настройка параметров (новый API):\n";
+        std::cout << "    antenna_count: " << TEST_ANTENNA_COUNT << "\n";
+        std::cout << "    n_point: " << TEST_N_POINT << "\n";
+        std::cout << "    repeat_count: " << TEST_REPEAT_COUNT << "\n";
+        std::cout << "    sample_rate: " << TEST_SAMPLE_RATE << " Hz\n";
         std::cout << "    peak_mode: ONE_PEAK\n";
-        std::cout << "    memory_limit: " << static_cast<int>(params.memory_limit * 100) << "%\n\n";
+        std::cout << "    memory_limit: 80%\n\n";
 
         // ═══════════════════════════════════════════════════════════════════
-        // 4. Создать и инициализировать SpectrumMaximaFinder
+        // 4. Создать SpectrumMaximaFinder (НОВЫЙ API — только backend!)
         // ═══════════════════════════════════════════════════════════════════
-        std::cout << "[4] Создание SpectrumMaximaFinder...\n";
-        SpectrumMaximaFinder finder(params, &gpu.GetBackend());
-        finder.Initialize();
+        std::cout << "[4] Создание SpectrumMaximaFinder (новый API)...\n";
+        SpectrumMaximaFinder finder(&gpu.GetBackend());
 
-        // Получить обновлённые параметры (с вычисленным nFFT)
-        params = finder.GetParams();
-        std::cout << "    nFFT: " << params.nFFT << "\n";
-        std::cout << "    search_range: " << params.search_range << "\n";
-
-        // Показать оценку памяти
-        size_t bytes_per_antenna = params.n_point * 8 + 2 * params.nFFT * 8 + 128;
-        size_t total_required = static_cast<size_t>(params.antenna_count) * bytes_per_antenna;
+        // Показать оценку памяти (приблизительно)
+        uint32_t nFFT_estimate = 1;
+        while (nFFT_estimate < TEST_N_POINT * TEST_REPEAT_COUNT) nFFT_estimate *= 2;
+        size_t bytes_per_antenna = TEST_N_POINT * 8 + 2 * nFFT_estimate * 8 + 128;
+        size_t total_required = static_cast<size_t>(TEST_ANTENNA_COUNT) * bytes_per_antenna;
+        std::cout << "    nFFT (оценка): " << nFFT_estimate << "\n";
         std::cout << "    Память на антенну: " << (bytes_per_antenna / 1024 / 1024) << " MB\n";
         std::cout << "    Требуется всего: " << (total_required / 1024 / 1024 / 1024) << " GB\n";
         std::cout << "    Batch processing: ОБЯЗАТЕЛЕН!\n\n";
@@ -274,18 +263,32 @@ inline int run() {
         // 5. Генерация тестовых данных
         // ═══════════════════════════════════════════════════════════════════
         std::cout << "[5] Генерация тестовых данных...\n";
-        auto input_data = GenerateLargeTestData(
-            params.antenna_count,
-            params.n_point,
-            params.sample_rate);
+        auto raw_data = GenerateLargeTestData(
+            TEST_ANTENNA_COUNT,
+            TEST_N_POINT,
+            TEST_SAMPLE_RATE);
 
         // ═══════════════════════════════════════════════════════════════════
-        // 6. Обработка данных (с автоматическим batch processing!)
+        // 6. Обработка данных (НОВЫЙ API с InputData!)
         // ═══════════════════════════════════════════════════════════════════
-        std::cout << "[6] Запуск обработки (batch processing)...\n";
+        std::cout << "[6] Запуск обработки (новый API, batch processing)...\n";
+
+        // Создаём InputData с данными + параметрами
+        InputData<std::vector<std::complex<float>>> input{
+            .antenna_count = TEST_ANTENNA_COUNT,
+            .n_point = TEST_N_POINT,
+            .data = std::move(raw_data),
+            .gpu_memory_bytes = 0,
+            .repeat_count = TEST_REPEAT_COUNT,
+            .sample_rate = TEST_SAMPLE_RATE,
+            .search_range = 0,
+            .memory_limit = 0.80f
+        };
+
         auto start_time = std::chrono::high_resolution_clock::now();
 
-        auto gpu_results = finder.Process(input_data);
+        // НОВЫЙ API: Process(InputData, PeakSearchMode, DriverType)
+        auto gpu_results = finder.Process(input, PeakSearchMode::ONE_PEAK, DriverType::OPENCL);
 
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
@@ -315,8 +318,15 @@ inline int run() {
         // 8. Валидация (первые 10 антенн)
         // ═══════════════════════════════════════════════════════════════════
         std::cout << "[8] Валидация результатов:\n";
+        // Создаём временный SpectrumParams для валидации
+        SpectrumParams validation_params;
+        validation_params.antenna_count = input.antenna_count;
+        validation_params.n_point = input.n_point;
+        validation_params.repeat_count = input.repeat_count;
+        validation_params.sample_rate = input.sample_rate;
+        validation_params.nFFT = finder.GetParams().nFFT;  // Получить вычисленный nFFT
         bool validation_passed = ValidateFirstAntennas(
-            gpu_results, input_data, params, VALIDATION_ANTENNAS);
+            gpu_results, input.data, validation_params, VALIDATION_ANTENNAS);
 
         // ═══════════════════════════════════════════════════════════════════
         // 9. Проверка корректности antenna_id

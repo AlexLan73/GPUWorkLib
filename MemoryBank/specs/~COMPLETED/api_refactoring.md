@@ -60,17 +60,22 @@ struct InputData {
     int antenna_count;      // Количество антенн (лучей)
     int n_point;           // Точек на антенну (комплексных float)
     T data;                // Данные в любом формате!
+--    Добавить размер памяти используемой под буффер
+    int repeat_count = 4;        // Для nFFT = NextPowerOf2(n_point * repeat)
+    float sample_rate = 1000.0f; // Частота дискретизации (Hz)
+    int search_range = 0;        // Диапазон поиска (0 = auto = nFFT/2 
+
 };
 
 // ═══════════════════════════════════════════════════════════════════
 // 3. ПАРАМЕТРЫ ОБРАБОТКИ
 // Хранится в: modules/fft_maxima/include/interface/
 // ═══════════════════════════════════════════════════════════════════
-struct ProcessingParams {
-    int repeat_count = 4;        // Для nFFT = NextPowerOf2(n_point * repeat)
-    float sample_rate = 1000.0f; // Частота дискретизации (Hz)
-    int search_range = 0;        // Диапазон поиска (0 = auto = nFFT/2)
-};
+//struct ProcessingParams {
+//    int repeat_count = 4;        // Для nFFT = NextPowerOf2(n_point * repeat)
+//    float sample_rate = 1000.0f; // Частота дискретизации (Hz)
+//    int search_range = 0;        // Диапазон поиска (0 = auto = nFFT/2)
+//};
 
 // ═══════════════════════════════════════════════════════════════════
 // 4. РЕЖИМ ПОИСКА ПИКОВ (управление алгоритмом!)
@@ -82,16 +87,23 @@ enum class PeakSearchMode {
 };
 
 // ═══════════════════════════════════════════════════════════════════
-// 5. УНИВЕРСАЛЬНЫЙ МЕТОД Process
+// 4a. ТИП ДРАЙВЕРА (OpenCL / ROCm)
+// Хранится в: modules/fft_maxima/include/interface/
+// ═══════════════════════════════════════════════════════════════════
+enum class DriverType {
+    AUTO,       // Автоматический выбор
+    OPENCL,     // OpenCL (clFFT)
+    ROCM        // ROCm/HIP (hipFFT) — в разработке
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// 5. УНИВЕРСАЛЬНЫЙ МЕТОД Process (ФИНАЛЬНАЯ ВЕРСИЯ!)
 // ═══════════════════════════════════════════════════════════════════
 template<typename T>
 std::vector<SpectrumResult> Process(
-    const InputData<T>& input,
-    const ProcessingParams& params,
-    PeakSearchMode mode = PeakSearchMode::ONE_PEAK  // ← ПО УМОЛЧАНИЮ 1 ВЕРШИНА!
--- доработай - добавил  typedriver)`  - typedriver работа с разными драверами + разная реализация под OpenCl & ROCm 
-  поставь по умолчанию ROCm
-    
+    const InputData<T>& input,                       // Данные + параметры обработки
+    PeakSearchMode mode = PeakSearchMode::ONE_PEAK,  // Сколько пиков (по умолчанию 1)
+    DriverType driver = DriverType::ROCM             // Драйвер (по умолчанию ROCM)
 );
 ```
 
@@ -513,3 +525,9 @@ void run() {
 - [ ] Интеграционный тест проходит
 - [ ] Benchmark показывает выигрыш
 - [ ] Валидация результатов корректна
+
+---
+
+## 📋 Задачи по доработке (code review)
+
+→ **[api_refactoring_code_review_tasks.md](api_refactoring_code_review_tasks.md)**

@@ -364,36 +364,71 @@ inline int run(TestMode mode = TestMode::TWO_PEAKS) {
         auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
         const bool is_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(0);
         if (is_prof) {
+            // Передаём информацию о GPU в профайлер для отчёта
+            auto device_info = gpu.GetDeviceInfo();
+            drv_gpu_lib::GPUReportInfo gpu_info;
+            gpu_info.gpu_name = device_info.name;
+            gpu_info.backend_type = BackendType::OPENCL;
+            gpu_info.global_mem_mb = device_info.global_memory_size / (1024 * 1024);
+
+            // Информация о драйвере OpenCL
+            std::map<std::string, std::string> opencl_driver;
+            opencl_driver["driver_type"] = "OpenCL";
+            opencl_driver["version"] = device_info.opencl_version;
+            opencl_driver["driver_version"] = device_info.driver_version;
+            opencl_driver["vendor"] = device_info.vendor;
+            gpu_info.drivers.push_back(opencl_driver);
+
+            profiler.SetGPUInfo(0, gpu_info);
             profiler.Start();
         }
 
         // 2. Параметры теста (по плану Pl1.md)
-        SpectrumParams params;
-        params.antenna_count = 5;
-        params.n_point = 100000;
-        params.repeat_count = 4;
-        params.sample_rate = 1000.0f;
+        constexpr uint32_t TEST_ANTENNA_COUNT = 5;
+        constexpr uint32_t TEST_N_POINT = 100000;
+        constexpr uint32_t TEST_REPEAT_COUNT = 4;
+        constexpr float TEST_SAMPLE_RATE = 1000.0f;
 
-        // Установка режима поиска пиков
-        params.peak_mode = (mode == TestMode::ONE_PEAK)
+        // Режим поиска пиков
+        PeakSearchMode peak_mode = (mode == TestMode::ONE_PEAK)
             ? PeakSearchMode::ONE_PEAK
             : PeakSearchMode::TWO_PEAKS;
 
-        // 3. Создать и инициализировать SpectrumMaximaFinder
-        SpectrumMaximaFinder finder(params, &gpu.GetBackend());
-        finder.Initialize();
-        finder.PrintInfo();
+        // 3. Создать SpectrumMaximaFinder (НОВЫЙ API — только backend!)
+        SpectrumMaximaFinder finder(&gpu.GetBackend());
 
-        // Получить обновлённые параметры (с вычисленным nFFT)
-        params = finder.GetParams();
+        // Для GenerateTestData нужен старый params
+        SpectrumParams params;
+        params.antenna_count = TEST_ANTENNA_COUNT;
+        params.n_point = TEST_N_POINT;
+        params.repeat_count = TEST_REPEAT_COUNT;
+        params.sample_rate = TEST_SAMPLE_RATE;
 
         // 4. Сгенерировать тестовые данные
-        auto input_data = GenerateTestData(params);
+        auto raw_data = GenerateTestData(params);
 
-        // 5. Обработка данных (GPU)
-        std::cout << "🚀 Запуск обработки...\n";
-        auto gpu_vector = finder.Process(input_data);
+        // 5. Обработка данных (НОВЫЙ API!)
+        std::cout << "🚀 Запуск обработки (новый API)...\n";
+
+        // Создаём InputData с данными + параметрами
+        InputData<std::vector<std::complex<float>>> input{
+            .antenna_count = TEST_ANTENNA_COUNT,
+            .n_point = TEST_N_POINT,
+            .data = std::move(raw_data),
+            .gpu_memory_bytes = 0,
+            .repeat_count = TEST_REPEAT_COUNT,
+            .sample_rate = TEST_SAMPLE_RATE,
+            .search_range = 0,
+            .memory_limit = 0.80f
+        };
+
+        // НОВЫЙ API: Process(InputData, PeakSearchMode, DriverType)
+        auto gpu_vector = finder.Process(input, peak_mode, DriverType::OPENCL);
         std::cout << "  ✅ Обработка завершена!\n\n";
+
+        // Получить вычисленные параметры (с nFFT) для валидации
+        params = finder.GetParams();
+        finder.PrintInfo();
 
         // 6. Вывод профилирования
         if (is_prof) {
@@ -413,7 +448,7 @@ inline int run(TestMode mode = TestMode::TWO_PEAKS) {
             passed = ValidateOnePeakResults(gpu_map, expected);
         } else {
             // TWO_PEAKS: CPU референс + сравнение
-            auto cpu_results = cpu_reference::NewProcessAllBeams_CPU(input_data, params);
+            auto cpu_results = cpu_reference::NewProcessAllBeams_CPU(input.data, params);
             auto gpu_map = VectorToMapForValidation(gpu_vector);
             passed = ValidateResultsCPUvsGPU(gpu_map, cpu_results);
         }

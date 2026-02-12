@@ -315,6 +315,13 @@ public:
      */
     bool ExportJSON(const std::string& file_path) const {
         std::lock_guard<std::mutex> lock(stats_mutex_);
+        std::lock_guard<std::mutex> lock2(gpu_info_mutex_);
+
+        auto fmtD = [](double val) -> std::string {
+            std::ostringstream oss;
+            oss << std::fixed << std::setprecision(3) << val;
+            return oss.str();
+        };
 
         try {
             std::ofstream file(file_path);
@@ -323,62 +330,89 @@ public:
                 return false;
             }
 
-            // Ручная сборка JSON-строки
             file << "{\n";
+            file << "  \"timestamp\": \"" << GetCurrentDateTimeString() << "\",\n";
 
-            // Временная метка
-            auto now = std::chrono::system_clock::now();
-            auto time_t = std::chrono::system_clock::to_time_t(now);
-            std::tm tm_buf;
-#ifdef _WIN32
-            localtime_s(&tm_buf, &time_t);
-#else
-            localtime_r(&time_t, &tm_buf);
-#endif
-            file << "  \"timestamp\": \""
-                 << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%S") << "\",\n";
-
-            // GPU
-            file << "  \"gpus\": {\n";
+            // GPU array
+            file << "  \"gpus\": [\n";
             bool first_gpu = true;
             for (const auto& [gpu_id, modules] : stats_) {
                 if (!first_gpu) file << ",\n";
                 first_gpu = false;
 
-                file << "    \"" << gpu_id << "\": {\n";
+                file << "    {\n";
+                file << "      \"gpu_id\": " << gpu_id << ",\n";
 
+                // GPU info
+                GPUReportInfo info;
+                auto it = gpu_info_.find(gpu_id);
+                if (it != gpu_info_.end()) {
+                    info = it->second;
+                }
+                file << "      \"gpu_name\": \"" << (info.gpu_name.empty() ? "Unknown" : info.gpu_name) << "\",\n";
+                file << "      \"memory_mb\": " << info.global_mem_mb << ",\n";
+
+                // Drivers array
+                file << "      \"drivers\": [\n";
+                bool first_drv = true;
+                for (const auto& drv : info.drivers) {
+                    if (!first_drv) file << ",\n";
+                    first_drv = false;
+                    file << "        {";
+                    bool first_field = true;
+                    for (const auto& [key, val] : drv) {
+                        if (!first_field) file << ", ";
+                        first_field = false;
+                        file << "\"" << key << "\": \"" << val << "\"";
+                    }
+                    file << "}";
+                }
+                file << "\n      ],\n";
+
+                // Modules
+                file << "      \"modules\": [\n";
                 bool first_module = true;
                 for (const auto& [mod_name, mod_stats] : modules) {
                     if (!first_module) file << ",\n";
                     first_module = false;
 
-                    file << "      \"" << mod_name << "\": {\n";
+                    file << "        {\n";
+                    file << "          \"name\": \"" << mod_name << "\",\n";
+                    file << "          \"total_calls\": " << mod_stats.GetTotalCalls() << ",\n";
+                    file << "          \"total_time_ms\": " << fmtD(mod_stats.GetTotalTimeMs()) << ",\n";
 
+                    // Events
+                    file << "          \"events\": [\n";
                     bool first_event = true;
                     for (const auto& [evt_name, evt_stats] : mod_stats.events) {
                         if (!first_event) file << ",\n";
                         first_event = false;
 
-                        file << "        \"" << evt_name << "\": {\n";
-                        file << "          \"calls\": " << evt_stats.total_calls << ",\n";
-                        file << "          \"total_ms\": " << std::fixed << std::setprecision(3)
-                             << evt_stats.total_time_ms << ",\n";
-                        file << "          \"avg_ms\": " << evt_stats.GetAvgTimeMs() << ",\n";
-                        file << "          \"min_ms\": "
-                             << (evt_stats.min_time_ms == std::numeric_limits<double>::max()
-                                 ? 0.0 : evt_stats.min_time_ms) << ",\n";
-                        file << "          \"max_ms\": " << evt_stats.max_time_ms << "\n";
-                        file << "        }";
+                        file << "            {\n";
+                        file << "              \"name\": \"" << evt_name << "\",\n";
+                        file << "              \"calls\": " << evt_stats.total_calls << ",\n";
+                        file << "              \"total_ms\": " << fmtD(evt_stats.total_time_ms) << ",\n";
+                        file << "              \"avg_ms\": " << fmtD(evt_stats.GetAvgTimeMs()) << ",\n";
+                        file << "              \"min_ms\": " << fmtD(evt_stats.min_time_ms == std::numeric_limits<double>::max() ? 0.0 : evt_stats.min_time_ms) << ",\n";
+                        file << "              \"max_ms\": " << fmtD(evt_stats.max_time_ms) << ",\n";
+                        // Детальные тайминги
+                        file << "              \"queue_delay_avg_ms\": " << fmtD(evt_stats.queue_delay.GetAvgMs()) << ",\n";
+                        file << "              \"submit_delay_avg_ms\": " << fmtD(evt_stats.submit_delay.GetAvgMs()) << ",\n";
+                        file << "              \"exec_time_avg_ms\": " << fmtD(evt_stats.exec_time.GetAvgMs()) << ",\n";
+                        file << "              \"complete_delay_avg_ms\": " << fmtD(evt_stats.complete_delay.GetAvgMs()) << "\n";
+                        file << "            }";
                     }
-                    file << "\n      }";
+                    file << "\n          ]\n";
+                    file << "        }";
                 }
-                file << "\n    }";
+                file << "\n      ]\n";
+                file << "    }";
             }
-            file << "\n  }\n";
+            file << "\n  ]\n";
             file << "}\n";
 
             file.close();
-            std::cout << "[GPUProfiler] Exported to: " << file_path << "\n";
+            std::cout << "[GPUProfiler] Exported JSON to: " << file_path << "\n";
             return true;
 
         } catch (const std::exception& e) {

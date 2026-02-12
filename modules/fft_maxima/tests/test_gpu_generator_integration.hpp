@@ -19,6 +19,7 @@
 #include "spectrum_maxima_finder.h"
 #include "DrvGPU/backends/opencl/opencl_backend.hpp"
 #include "DrvGPU/services/gpu_profiler.hpp"
+#include "DrvGPU/logger/logger.hpp"
 
 #include <CL/cl.h>
 #include <iostream>
@@ -26,6 +27,8 @@
 #include <chrono>
 #include <cmath>
 #include <thread>
+#include <sstream>
+#include <filesystem>
 
 namespace test_gpu_generator_integration {
 
@@ -272,6 +275,7 @@ inline int run() {
             drv_gpu_lib::GPUReportInfo gpu_info;
             gpu_info.gpu_name = ext_ctx.GetDeviceName();
             gpu_info.global_mem_mb = backend->GetGlobalMemorySize() / (1024 * 1024);
+            gpu_info.backend_type = drv_gpu_lib::BackendType::OPENCL;
 
             // Информация о драйвере OpenCL (как в test_large_batch)
             std::map<std::string, std::string> opencl_driver;
@@ -301,26 +305,35 @@ inline int run() {
         // Вычисляем реальный размер буфера генератора
         size_t gpu_buffer_size = TEST_ANTENNA_COUNT * TEST_N_POINT * sizeof(std::complex<float>);
 
+        // НОВЫЙ API: InputData содержит данные + параметры обработки
         antenna_fft::InputData<cl_mem> input{
-            static_cast<uint32_t>(TEST_ANTENNA_COUNT),
-            static_cast<uint32_t>(TEST_N_POINT),
-            gpu_data,
-            gpu_buffer_size  // Передаём размер внешней GPU памяти
-        };
-
-        antenna_fft::ProcessingParams params{
-            TEST_REPEAT_COUNT,
-            TEST_SAMPLE_RATE,
-            0,      // search_range = auto
-            0.80f   // memory_limit
+            .antenna_count = static_cast<uint32_t>(TEST_ANTENNA_COUNT),
+            .n_point = static_cast<uint32_t>(TEST_N_POINT),
+            .data = gpu_data,
+            .gpu_memory_bytes = gpu_buffer_size,  // Передаём размер внешней GPU памяти
+            .repeat_count = TEST_REPEAT_COUNT,
+            .sample_rate = TEST_SAMPLE_RATE,
+            .search_range = 0,      // auto
+            .memory_limit = 0.80f
         };
 
         auto proc_start = std::chrono::high_resolution_clock::now();
 
-        auto results = finder.Process(input, params, antenna_fft::PeakSearchMode::ONE_PEAK);
+        // Логирование перед обработкой
+        DRVGPU_LOG_INFO("SpectrumMaxima", ">>> Starting Process(): " +
+            std::to_string(TEST_ANTENNA_COUNT) + " antennas x " +
+            std::to_string(TEST_N_POINT) + " points, mode=ONE_PEAK");
+
+        // НОВЫЙ API: Process(InputData, PeakSearchMode, DriverType)
+        auto results = finder.Process(input, antenna_fft::PeakSearchMode::ONE_PEAK, antenna_fft::DriverType::OPENCL);
 
         auto proc_end = std::chrono::high_resolution_clock::now();
         double proc_time_ms = std::chrono::duration<double, std::milli>(proc_end - proc_start).count();
+
+        // Логирование после обработки
+        DRVGPU_LOG_INFO("SpectrumMaxima", "<<< Process() completed: " +
+            std::to_string(results.size()) + " results in " +
+            std::to_string(static_cast<int>(proc_time_ms)) + " ms");
 
         std::cout << "\n  Processing completed!\n";
         std::cout << "  Results: " << results.size() << "\n";
@@ -333,6 +346,22 @@ inline int run() {
         if (is_prof) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             profiler.PrintReport();
+
+            // Экспорт в файлы: Results/Profiler/GPU_XX_Profiler/short_name_HH-MM-SS
+            auto now = std::chrono::system_clock::now();
+            auto time_t = std::chrono::system_clock::to_time_t(now);
+            std::tm tm_buf;
+            localtime_r(&time_t, &tm_buf);
+            std::ostringstream time_str;
+            time_str << std::put_time(&tm_buf, "%H-%M-%S");
+
+            // Создать директорию GPU_00_Profiler (gpu_id = 0)
+            std::string profiler_dir = "Results/Profiler/GPU_00_Profiler";
+            std::filesystem::create_directories(profiler_dir);
+
+            std::string base_path = profiler_dir + "/gpu_generator_" + time_str.str();
+            profiler.ExportMarkdown(base_path + ".md");
+            profiler.ExportJSON(base_path + ".json");
         } else {
             std::cout << "  GPUProfiler выключен\n";
         }

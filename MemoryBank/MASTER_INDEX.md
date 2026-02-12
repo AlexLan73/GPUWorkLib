@@ -1,101 +1,72 @@
-# 🗂️ GPUWorkLib — Master Index
+# GPUWorkLib — Master Index
 
 > **Проект**: Библиотеки GPU-вычислений (OpenCL, ROCm, HIP)
 > **Автор**: Alex
 > **AI-ассистент**: Кодо
-> **Создано**: 2026-02-09
+> **Обновлено**: 2026-02-12
 
 ---
 
-## 📦 Модули проекта
+## Модули проекта
 
-| Модуль | Статус | Спецификация | Описание |
-|--------|--------|--------------|----------|
-| **DrvGPU** | 🟢 Active | [specs/drvgpu.md](specs/drvgpu.md) | Базовый драйвер GPU |
-| **FFT/IFFT** | 🟡 WIP | [specs/fft_module.md](specs/fft_module.md) | Быстрое преобразование Фурье |
-| **Filters** | ⚪ Planned | [specs/filters_module.md](specs/filters_module.md) | ЦОС фильтры (FIR, IIR, адаптивные) |
-| **Statistics** | ⚪ Planned | [specs/statistics_module.md](specs/statistics_module.md) | Статистическая обработка |
-| **Heterodyne** | ⚪ Planned | [specs/heterodyne_module.md](specs/heterodyne_module.md) | Гетеродин (перенос частоты) |
-| **SignalSynth** | ⚪ Planned | [specs/signal_synth_module.md](specs/signal_synth_module.md) | Синтезатор сигналов |
-
-**Легенда**: 🟢 Active | 🟡 WIP | 🔴 Blocked | ⚪ Planned
+| Модуль | Статус | Описание |
+|--------|--------|----------|
+| **DrvGPU** | Active | Базовый драйвер GPU (OpenCL backend) |
+| **SpectrumMaximaFinder** | Active | Поиск максимума спектра FFT |
+| **Filters** | Planned | ЦОС фильтры (FIR, IIR) |
+| **Statistics** | Planned | Статистическая обработка |
+| **Heterodyne** | Planned | Гетеродин (перенос частоты) |
+| **SignalSynth** | Planned | Синтезатор сигналов |
 
 ---
 
-## 📋 Задачи
+## Завершённые темы (2026-02)
+
+| Тема | Дата | Описание |
+|------|------|----------|
+| **ТЕМА 4: DrvGPU Optimization** | 02-10 | Анализ, объединение OpenCLBackend |
+| **ТЕМА 3: Kernel Refactoring** | 02-10 | OnePeak/TwoPeaks кернелы, PeakSearchMode |
+| **ТЕМА 2: Batch Processing** | 02-11 | BatchManager, 256×1.3M точек |
+| **ТЕМА 1: API Refactoring** | 02-12 | Новый API: Process(InputData, Mode, Driver) |
+
+---
+
+## Текущий статус
+
+### API v2.0 (2026-02-12)
+```cpp
+// Новый API
+InputData<T> input{.antenna_count, .n_point, .data, .repeat_count, .sample_rate};
+auto results = finder.Process(input, PeakSearchMode::ONE_PEAK, DriverType::OPENCL);
+```
+
+### Документация
+- Полная: `Doc/spectrum_maxima_api_guide.md`
+- Краткая: `Doc/spectrum_maxima_api_quick.md`
+
+### Пути
+- Логи: `Logs/DRVGPU_XX/YYYY-MM-DD/HH-MM-SS.log`
+- Профайлер: `Results/Profiler/GPU_XX_Profiler/*.md|json`
+
+---
+
+## Задачи
 
 | Файл | Описание |
 |------|----------|
-| [tasks/BACKLOG.md](tasks/BACKLOG.md) | Очередь задач (TODO) |
-| [tasks/IN_PROGRESS.md](tasks/IN_PROGRESS.md) | Текущие задачи |
+| [tasks/BACKLOG.md](tasks/BACKLOG.md) | Очередь задач |
 | [tasks/COMPLETED.md](tasks/COMPLETED.md) | Завершённые задачи |
 
 ---
 
-## 📊 Changelog & Releases
+## Перспективные задачи
 
-| Файл | Описание |
-|------|----------|
-| [changelog/RELEASES.md](changelog/RELEASES.md) | Список релизов |
-| [changelog/2026-02.md](changelog/2026-02.md) | Изменения за февраль 2026 |
-
----
-
-## 🔬 Тесты & Бенчмарки
-
-| Папка | Описание |
-|-------|----------|
-| [tests/benchmarks/](tests/benchmarks/) | Результаты производительности |
-| [tests/validation/](tests/validation/) | Результаты валидации |
+| Задача | Приоритет | Описание |
+|--------|-----------|----------|
+| ROCm backend | Средний | Добавить hipFFT для AMD GPU |
+| Оконные функции | Низкий | Hann, Hamming, Blackman |
+| Real-to-Complex FFT | Низкий | R2C оптимизация |
 
 ---
 
-## 📚 Исследования & Документация
-
-| Файл | Тема | Дата |
-|------|------|------|
-| [research/AMD_GPU_OpenCL_ROCm_ZeroCopy.md](research/AMD_GPU_OpenCL_ROCm_ZeroCopy.md) | ZeroCopy память AMD | 2026-02-06 |
-
-> 💡 Сюда добавляются найденные материалы, исследования API, примеры кода
-
----
-
-## 🎯 Текущие рефакторинг-темы (2026-02-10)
-
-| Тема | Приоритет | Спецификация | Статус |
-|------|-----------|--------------|--------|
-| **DrvGPU Optimization** | 🔵 Аналитика | [specs/drvgpu_optimization.md](specs/drvgpu_optimization.md) | ✅ **ЗАВЕРШЕНО!** |
-| **Kernel Refactoring** | 🔥 Высокий | [specs/kernel_refactoring.md](specs/kernel_refactoring.md) | ⏳ Следующая |
-| **Batch Large Data** | 🔥 Высокий | [specs/batch_large_data.md](specs/batch_large_data.md) | ⚪ Planned |
-| **API Refactoring** | 🔥 Критический | [specs/api_refactoring.md](specs/api_refactoring.md) | ⚪ Planned |
-
-**Порядок работы**: ~~ТЕМА 4~~ ✅ → ТЕМА 3 (Kernels) → ТЕМА 2 (Batch) → ТЕМА 1 (API)
-
-### 📝 Результаты ТЕМЫ 4:
-- **Отчёт**: [research/drvgpu_optimization_analysis.md](research/drvgpu_optimization_analysis.md)
-- **P1**: ✅ OpenCLBackend объединён с OpenCLBackendExternal
-- **Презентация**: [presentations/2026-02-10_P1_backends.md](presentations/2026-02-10_P1_backends.md)
-
----
-
-## 💬 Сессии с AI
-
-| Файл | Описание |
-|------|----------|
-| [sessions/](sessions/) | История сессий с Кодо |
-
----
-
-## 🔧 Быстрые команды для Кодо
-
-```
-"Покажи статус проекта"     → Этот файл + tasks/IN_PROGRESS.md
-"Добавь задачу: ..."        → tasks/BACKLOG.md
-"Запиши в спеку FFT: ..."   → specs/fft_module.md
-"Сохрани исследование: ..." → research/
-"Что мы сделали сегодня?"   → Создать sessions/YYYY-MM-DD.md
-```
-
----
-
-*Последнее обновление: 2026-02-10*
+*Последнее обновление: 2026-02-12*

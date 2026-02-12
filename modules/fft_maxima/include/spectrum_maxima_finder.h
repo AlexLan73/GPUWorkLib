@@ -4,11 +4,48 @@
  * @file spectrum_maxima_finder.h
  * @brief Класс для поиска максимума спектра FFT с параболической интерполяцией
  *
- * Реализует:
- * - Pre-callback для padding и repeat_count
- * - Post-kernel для поиска максимума и параболической интерполяции
- * - Профилирование средствами GPU
- * - Работа через DrvGPU с SVM
+ * @section beginner 📚 ДЛЯ НАЧИНАЮЩИХ (простое объяснение)
+ *
+ * **Что делает этот класс?**
+ *
+ * SpectrumMaximaFinder — это "умный искатель частот". Представьте, что у вас
+ * есть сигнал (например, звук или радиоволна), и вы хотите узнать какая
+ * частота в нём самая сильная.
+ *
+ * **Аналогия:** Как эквалайзер в музыкальном плеере показывает какие частоты
+ * громче — низкие (басы) или высокие. Этот класс находит САМУЮ громкую частоту.
+ *
+ * **Как использовать (3 шага):**
+ * 1. Создать finder: `SpectrumMaximaFinder finder(&backend);`
+ * 2. Подготовить данные в структуре InputData
+ * 3. Вызвать: `auto results = finder.Process(input);`
+ *
+ * **Что получите:** Для каждой антенны — частоту (Гц) и амплитуду максимума.
+ *
+ * @section expert 🔬 ДЛЯ СПЕЦИАЛИСТОВ (техническое описание)
+ *
+ * **Алгоритм обработки:**
+ * 1. **Pre-callback** (на GPU): zero-padding n_point → nFFT, repeat_count копий
+ * 2. **clFFT** (batched): Complex-to-Complex FFT размером nFFT
+ * 3. **Post-kernel** (reduction): поиск max(|FFT[i]|²) + параболическая интерполяция
+ *
+ * **Параболическая интерполяция** уточняет частоту до долей бина:
+ * ```
+ * δ = 0.5 * (L - R) / (L - 2*C + R)
+ * freq = (bin + δ) * sample_rate / nFFT
+ * ```
+ * где L, C, R — амплитуды соседних бинов.
+ *
+ * **Batch processing:** При нехватке GPU памяти автоматически разбивает
+ * обработку на батчи через BatchManager (memory_limit по умолчанию 80%).
+ *
+ * **Профилирование:** Интеграция с GPUProfiler — записывает Upload, FFT,
+ * PostKernel, Download с детализацией по 5 стадиям OpenCL event.
+ *
+ * **Поддерживаемые типы данных:**
+ * - `std::vector<std::complex<float>>` — CPU данные (upload на GPU)
+ * - `cl_mem` — OpenCL буфер (zero-copy, GPU→GPU)
+ * - `void*` — SVM указатель (zero-copy)
  *
  * АРХИТЕКТУРА (ПЛАНИРУЕТСЯ):
  * Текущая версия использует OpenCL напрямую (cl_context, clFFT).
@@ -130,18 +167,8 @@ public:
      */
     void Initialize();
 
-    /**
-     * @brief Обработка данных (СТАРЫЙ API)
-     * @param input_data Входные данные [antenna_count × n_point] complex<float>
-     * @return Вектор результатов: antenna_count SpectrumResult
-     * @throws std::runtime_error при ошибке обработки
-     * @deprecated Используйте Process(InputData<T>, ProcessingParams)
-     */
-    std::vector<SpectrumResult> Process(
-        const std::vector<std::complex<float>>& input_data);
-
     // ═══════════════════════════════════════════════════════════════════════
-    // НОВЫЙ API — шаблонный Process
+    // НОВЫЙ API — шаблонный Process (единственный публичный метод обработки)
     // ═══════════════════════════════════════════════════════════════════════
 
     /**
@@ -152,10 +179,10 @@ public:
      *   - cl_mem — OpenCL буфер (от заказчика или генератора)
      *   - void* — SVM указатель
      *
-     * @param input Входные данные с параметрами (antenna_count, n_point, data)
-     * @param proc_params Параметры обработки (repeat_count, sample_rate, ...)
+     * @param input Входные данные + параметры обработки (antenna_count, n_point, data,
+     *              repeat_count, sample_rate, search_range, memory_limit)
      * @param mode Режим поиска пиков (ONE_PEAK по умолчанию)
-     * @param driver Тип драйвера (AUTO по умолчанию — используется ROCm если доступен)
+     * @param driver Тип драйвера (ROCM по умолчанию)
      * @return Вектор результатов: antenna_count SpectrumResult
      *
      * Пример использования:
@@ -163,21 +190,32 @@ public:
      * SpectrumMaximaFinder finder(&backend);
      *
      * // CPU данные
-     * InputData<std::vector<std::complex<float>>> input{256, 1300000, my_data};
-     * ProcessingParams params{.repeat_count = 2, .sample_rate = 1000.0f};
-     * auto results = finder.Process(input, params);
+     * InputData<std::vector<std::complex<float>>> input{
+     *     .antenna_count = 256,
+     *     .n_point = 1300000,
+     *     .data = my_data,
+     *     .repeat_count = 2,
+     *     .sample_rate = 1000.0f
+     * };
+     * auto results = finder.Process(input, PeakSearchMode::ONE_PEAK, DriverType::OPENCL);
      *
      * // GPU данные (cl_mem)
-     * InputData<cl_mem> gpu_input{256, 1300000, my_cl_mem};
-     * auto results2 = finder.Process(gpu_input, params);
+     * InputData<cl_mem> gpu_input{
+     *     .antenna_count = 256,
+     *     .n_point = 1300000,
+     *     .data = my_cl_mem,
+     *     .gpu_memory_bytes = buffer_size,
+     *     .repeat_count = 2,
+     *     .sample_rate = 1000.0f
+     * };
+     * auto results2 = finder.Process(gpu_input, PeakSearchMode::ONE_PEAK, DriverType::OPENCL);
      * @endcode
      */
     template<typename T>
     std::vector<SpectrumResult> Process(
         const InputData<T>& input,
-        const ProcessingParams& proc_params,
         PeakSearchMode mode = PeakSearchMode::ONE_PEAK,
-        DriverType driver = DriverType::AUTO);
+        DriverType driver = DriverType::ROCM);
 
     /**
      * @brief Получить данные профилирования последнего вызова
@@ -349,14 +387,21 @@ private:
 template<typename T>
 std::vector<SpectrumResult> SpectrumMaximaFinder::Process(
     const InputData<T>& input,
-    const ProcessingParams& proc_params,
     PeakSearchMode mode,
     DriverType driver)
 {
-    // 1. Подготовить параметры
+    // 1. Создать временный ProcessingParams из полей InputData
+    ProcessingParams proc_params{
+        input.repeat_count,
+        input.sample_rate,
+        input.search_range,
+        input.memory_limit
+    };
+
+    // 2. Подготовить параметры
     PrepareParams(input.antenna_count, input.n_point, proc_params, mode);
 
-    // 2. Диспетчеризация по типу данных
+    // 3. Диспетчеризация по типу данных
     if constexpr (is_cpu_vector_v<T>) {
         // CPU данные — вызываем Initialize() и затем стандартный upload
         if (!initialized_) {
