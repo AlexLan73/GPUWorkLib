@@ -1,0 +1,178 @@
+Да, это **отличная идея**! Это даже **лучше для производительности**, чем предыдущий вариант с массивами.
+
+Почему это круто:
+1.  **Скорость**: GPU считает математику (`a + b * i`) намного быстрее, чем читает данные из памяти. Вычисляя параметры "на лету" прямо в ядре, вы снижаете нагрузку на шину памяти.
+2.  **Гибкость**: Вы меняете формулу распределения частот в текстовом файле, и вам не нужно переписывать C++ код заполнения массивов.
+
+### Новый формат `config.txt`
+
+Теперь мы разделим конфиг на секцию определений переменных (`[Defs]`) и саму формулу сигнала (`[Signal]`).
+
+В формулах нам доступны две "магические" переменные:
+*   `ID` — индекс текущей антенны (0, 1, 2... 255).
+*   `T` — индекс текущей точки во времени (0, 1... 99999).
+
+```ini
+[Params]
+ANTENNAS = 256
+POINTS = 10000
+
+[Defs]
+// Здесь мы описываем, как параметры зависят от номера антенны (ID)
+// Например, линейный сдвиг частоты и параболическая амплитуда
+var_A = 1.0 + (float)ID * 0.01
+var_W = 0.1 + (float)ID * 0.0005
+var_P = (float)ID * 3.14 / 180.0
+
+[Signal]
+// А здесь используем вычисленные выше var_A, var_W, var_P
+// T - это время
+res = var_A * sin(var_W * (float)T + var_P);
+```
+
+### Обновленный генератор кода (C++)
+
+Теперь нам не нужны массивы `std::vector` для параметров. Мы просто генерируем OpenCL код, который сначала считает переменные, а потом результат.
+
+```cpp
+#define CL_HPP_TARGET_OPENCL_VERSION 200
+#define CL_HPP_ENABLE_EXCEPTIONS
+#include <CL/cl.hpp>
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <regex>
+
+struct Config {
+    std::string definitions; // Код вычисления параметров
+    std::string signal;      // Код сигнала
+    int antennas = 256;
+    int points = 10000;
+};
+
+Config parseConfig(const std::string& filename) {
+    Config cfg;
+    std::ifstream file(filename);
+    std::string line;
+    int mode = 0; // 0: none, 1: defs, 2: signal
+
+    while (std::getline(file, line)) {
+        if (line.empty() || line.rfind("//", 0) == 0) continue; // Пропуск комментов
+
+        if (line.find("[Params]") != std::string::npos) mode = 0;
+        else if (line.find("[Defs]") != std::string::npos) mode = 1;
+        else if (line.find("[Signal]") != std::string::npos) mode = 2;
+        else if (mode == 0) {
+            if (line.find("ANTENNAS") != std::string::npos) 
+                cfg.antennas = std::stoi(line.substr(line.find("=") + 1));
+            if (line.find("POINTS") != std::string::npos) 
+                cfg.points = std::stoi(line.substr(line.find("=") + 1));
+        }
+        else if (mode == 1) {
+            // Превращаем "var_A = ..." в "float var_A = ...;"
+            cfg.definitions += "float " + line + ";\n";
+        }
+        else if (mode == 2) {
+            // Просто копируем формулу сигнала
+            cfg.signal += line + "\n";
+        }
+    }
+    return cfg;
+}
+
+std::string generateKernel(const Config& cfg) {
+    std::stringstream ss;
+    
+    ss << "__kernel void signal_gen(__global float* output) {\n";
+    ss << "    int gid = get_global_id(0);\n";
+    ss << "    int ID = gid / " << cfg.points << "; // Номер антенны\n";
+    ss << "    int T = gid % " << cfg.points << ";  // Время\n\n";
+
+    ss << "    // --- User Definitions ---\n";
+    ss << cfg.definitions << "\n";
+
+    ss << "    // --- User Signal Formula ---\n";
+    ss << "    float res = 0.0f;\n";
+    ss << "    " << cfg.signal << "\n";
+    
+    ss << "    output[gid] = res;\n";
+    ss << "}\n";
+
+    return ss.str();
+}
+
+int main() {
+    try {
+        Config cfg = parseConfig("config.txt");
+        size_t total_size = cfg.antennas * cfg.points;
+
+        // Стандартная инициализация OpenCL
+        std::vector<cl::Platform> platforms; cl::Platform::get(&platforms);
+        cl::Device device; platforms[0].getDevices(CL_DEVICE_TYPE_GPU, &device);
+        cl::Context context(device);
+        cl::CommandQueue queue(context, device);
+
+        // Генерируем и компилируем
+        std::string source = generateKernel(cfg);
+        std::cout << "--- Generated Kernel ---\n" << source << "\n------------------------\n";
+        
+        cl::Program program(context, source);
+        if(program.build({device}) != CL_SUCCESS) {
+            std::cerr << program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(device) << std::endl;
+            return -1;
+        }
+
+        // Память только под выходные данные!
+        cl::Buffer dev_output(context, CL_MEM_WRITE_ONLY, sizeof(float) * total_size);
+
+        cl::Kernel kernel(program, "signal_gen");
+        kernel.setArg(0, dev_output);
+
+        queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(total_size));
+        
+        // Читаем результат
+        std::vector<float> result(total_size);
+        queue.enqueueReadBuffer(dev_output, CL_TRUE, 0, sizeof(float) * total_size, result.data());
+
+        std::cout << "Done! Val[0]: " << result[0] << ", Val[Points+1]: " << result[cfg.points+1] << std::endl;
+
+    } catch (cl::Error& err) {
+        std::cerr << "ERROR: " << err.what() << "(" << err.err() << ")" << std::endl;
+    }
+    return 0;
+}
+```
+
+### Что происходит внутри?
+
+Программа сама сформирует вот такой валидный код OpenCL ядра (можно увидеть в выводе консоли):
+
+```c
+__kernel void signal_gen(__global float* output) {
+    int gid = get_global_id(0);
+    int ID = gid / 10000; // Номер антенны
+    int T = gid % 10000;  // Время
+
+    // --- User Definitions ---
+    float var_A = 1.0 + (float)ID * 0.01;
+    float var_W = 0.1 + (float)ID * 0.0005;
+    float var_P = (float)ID * 3.14 / 180.0;
+
+    // --- User Signal Formula ---
+    float res = 0.0f;
+    res = var_A * sin(var_W * (float)T + var_P);
+    
+    output[gid] = res;
+}
+```
+
+### Преимущества этого метода
+1.  **Чистота**: В C++ коде нет логики формирования сигнала вообще. Всё вынесено в `config.txt`.
+2.  **Мощность**: Вы можете использовать в `[Defs]` сложные условия. OpenCL поддерживает C-синтаксис, поэтому в конфиге можно писать даже тернарные операторы:
+    ```ini
+    [Defs]
+    // Если антенна четная - одна частота, нечетная - другая
+    var_W = (ID % 2 == 0) ? 0.1 : 0.5
+    ```
+3.  **Нет лишней памяти**: Мы не гоняем гигабайты массивов параметров (`amps`, `freqs`) через PCI-E шину. Всё считается внутри чипа GPU.

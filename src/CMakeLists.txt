@@ -66,6 +66,18 @@ if(TARGET GPUWorkLib::fft_maxima)
     message(STATUS "✅ Linked: GPUWorkLib::fft_maxima")
 endif()
 
+# Signal Generators module (для test_signal_generators)
+if(TARGET GPUWorkLib::signal_generators)
+    target_link_libraries(GPUWorkLib PRIVATE GPUWorkLib::signal_generators)
+    message(STATUS "Linked: GPUWorkLib::signal_generators")
+endif()
+
+# FFT Processor module (для test_fft_processor)
+if(TARGET GPUWorkLib::fft_processor)
+    target_link_libraries(GPUWorkLib PRIVATE GPUWorkLib::fft_processor)
+    message(STATUS "✅ Linked: GPUWorkLib::fft_processor")
+endif()
+
 # Spectrum Maxima module (для test_spectrum_maxima)
 # Используем -Wl,--start-group / --end-group для разрешения циклических зависимостей
 if(TARGET GPUWorkLib::spectrum_maxima)
@@ -137,6 +149,8 @@ target_include_directories(GPUWorkLib PRIVATE
     ${CMAKE_SOURCE_DIR}/modules/example/include
     ${CMAKE_SOURCE_DIR}/modules/search_maxim/include
     ${CMAKE_SOURCE_DIR}/modules/fft_maxima/include
+    ${CMAKE_SOURCE_DIR}/modules/signal_generators/include
+    ${CMAKE_SOURCE_DIR}/modules/fft_processor/include
 )
 #    ${CMAKE_SOURCE_DIR}/include/ManagerOpenCL
 #    ${CMAKE_SOURCE_DIR}/include/GPU
@@ -185,7 +199,7 @@ endif()
 
 set_target_properties(GPUWorkLib PROPERTIES
     VERSION 1.0.0
-    CXX_STANDARD 17
+    CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )

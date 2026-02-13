@@ -1,0 +1,252 @@
+/**
+ * @file cw_generator.cpp
+ * @brief Реализация CW генератора (синусоида на GPU/CPU)
+ *
+ * @author Кодо (AI Assistant)
+ * @date 2026-02-13
+ */
+
+#include "generators/cw_generator.hpp"
+#include <stdexcept>
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+namespace signal_gen {
+
+// ════════════════════════════════════════════════════════════════════════════
+// OpenCL Kernel Source (inline — не зависит от .cl файла при сборке)
+// ════════════════════════════════════════════════════════════════════════════
+
+static const char* CW_KERNEL_SOURCE = R"CL(
+__kernel void generate_cw(
+    __global float2* output,
+    const uint beam_count,
+    const uint n_point,
+    const float sample_rate,
+    const float base_freq,
+    const float freq_step,
+    const float amplitude,
+    const float initial_phase)
+{
+    const size_t gid = get_global_id(0);
+    const size_t beam_id = gid / n_point;
+    const size_t sample_id = gid % n_point;
+    if (beam_id >= beam_count) return;
+
+    const float freq = base_freq + (float)beam_id * freq_step;
+    const float t = (float)sample_id / sample_rate;
+    const float phase = 2.0f * M_PI_F * freq * t + initial_phase;
+
+    output[gid] = (float2)(amplitude * cos(phase), amplitude * sin(phase));
+}
+
+__kernel void generate_cw_real(
+    __global float2* output,
+    const uint beam_count,
+    const uint n_point,
+    const float sample_rate,
+    const float base_freq,
+    const float freq_step,
+    const float amplitude,
+    const float initial_phase)
+{
+    const size_t gid = get_global_id(0);
+    const size_t beam_id = gid / n_point;
+    const size_t sample_id = gid % n_point;
+    if (beam_id >= beam_count) return;
+
+    const float freq = base_freq + (float)beam_id * freq_step;
+    const float t = (float)sample_id / sample_rate;
+    const float phase = 2.0f * M_PI_F * freq * t + initial_phase;
+
+    output[gid] = (float2)(amplitude * cos(phase), 0.0f);
+}
+)CL";
+
+// ════════════════════════════════════════════════════════════════════════════
+// Конструктор / Деструктор
+// ════════════════════════════════════════════════════════════════════════════
+
+CwGenerator::CwGenerator(drv_gpu_lib::IBackend* backend, const CwParams& params)
+    : backend_(backend), params_(params) {
+
+    if (!backend_ || !backend_->IsInitialized()) {
+        throw std::runtime_error("CwGenerator: backend is null or not initialized");
+    }
+
+    context_ = static_cast<cl_context>(backend_->GetNativeContext());
+    queue_   = static_cast<cl_command_queue>(backend_->GetNativeQueue());
+    device_  = static_cast<cl_device_id>(backend_->GetNativeDevice());
+
+    CompileKernel();
+}
+
+CwGenerator::~CwGenerator() {
+    ReleaseGpuResources();
+}
+
+CwGenerator::CwGenerator(CwGenerator&& other) noexcept
+    : backend_(other.backend_)
+    , params_(other.params_)
+    , context_(other.context_)
+    , queue_(other.queue_)
+    , device_(other.device_)
+    , program_(other.program_)
+    , kernel_(other.kernel_) {
+    other.program_ = nullptr;
+    other.kernel_ = nullptr;
+}
+
+CwGenerator& CwGenerator::operator=(CwGenerator&& other) noexcept {
+    if (this != &other) {
+        ReleaseGpuResources();
+        backend_ = other.backend_;
+        params_ = other.params_;
+        context_ = other.context_;
+        queue_ = other.queue_;
+        device_ = other.device_;
+        program_ = other.program_;
+        kernel_ = other.kernel_;
+        other.program_ = nullptr;
+        other.kernel_ = nullptr;
+    }
+    return *this;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CPU генерация (reference)
+// ════════════════════════════════════════════════════════════════════════════
+
+void CwGenerator::GenerateToCpu(
+    const SystemSampling& system,
+    std::complex<float>* out,
+    size_t out_size)
+{
+    if (out_size < system.length) {
+        throw std::invalid_argument("CwGenerator::GenerateToCpu: out_size < length");
+    }
+
+    float amp = static_cast<float>(params_.amplitude);
+    float f0 = static_cast<float>(params_.f0);
+    float fs = static_cast<float>(system.fs);
+    float init_phase = static_cast<float>(params_.phase);
+
+    for (size_t i = 0; i < system.length; ++i) {
+        float t = static_cast<float>(i) / fs;
+        float phase = 2.0f * static_cast<float>(M_PI) * f0 * t + init_phase;
+
+        if (params_.complex_iq) {
+            out[i] = std::complex<float>(amp * std::cos(phase), amp * std::sin(phase));
+        } else {
+            out[i] = std::complex<float>(amp * std::cos(phase), 0.0f);
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// GPU генерация
+// ════════════════════════════════════════════════════════════════════════════
+
+cl_mem CwGenerator::GenerateToGpu(const SystemSampling& system, size_t beam_count) {
+    size_t total_points = beam_count * system.length;
+    size_t buffer_size = total_points * sizeof(std::complex<float>);
+
+    cl_int err;
+    cl_mem output = clCreateBuffer(context_, CL_MEM_READ_WRITE, buffer_size, nullptr, &err);
+    if (err != CL_SUCCESS) {
+        throw std::runtime_error("CwGenerator::GenerateToGpu: clCreateBuffer failed: " + std::to_string(err));
+    }
+
+    // Выбираем kernel (complex или real)
+    const char* kernel_name = params_.complex_iq ? "generate_cw" : "generate_cw_real";
+
+    cl_kernel k = clCreateKernel(program_, kernel_name, &err);
+    if (err != CL_SUCCESS) {
+        clReleaseMemObject(output);
+        throw std::runtime_error("CwGenerator::GenerateToGpu: clCreateKernel failed: " + std::to_string(err));
+    }
+
+    uint32_t bc = static_cast<uint32_t>(beam_count);
+    uint32_t np = static_cast<uint32_t>(system.length);
+    float fs = static_cast<float>(system.fs);
+    float f0 = static_cast<float>(params_.f0);
+    float fstep = static_cast<float>(params_.freq_step);
+    float amp = static_cast<float>(params_.amplitude);
+    float phase = static_cast<float>(params_.phase);
+
+    err  = clSetKernelArg(k, 0, sizeof(cl_mem), &output);
+    err |= clSetKernelArg(k, 1, sizeof(uint32_t), &bc);
+    err |= clSetKernelArg(k, 2, sizeof(uint32_t), &np);
+    err |= clSetKernelArg(k, 3, sizeof(float), &fs);
+    err |= clSetKernelArg(k, 4, sizeof(float), &f0);
+    err |= clSetKernelArg(k, 5, sizeof(float), &fstep);
+    err |= clSetKernelArg(k, 6, sizeof(float), &amp);
+    err |= clSetKernelArg(k, 7, sizeof(float), &phase);
+
+    if (err != CL_SUCCESS) {
+        clReleaseKernel(k);
+        clReleaseMemObject(output);
+        throw std::runtime_error("CwGenerator::GenerateToGpu: clSetKernelArg failed");
+    }
+
+    size_t local_size = 256;
+    size_t global_size = ((total_points + local_size - 1) / local_size) * local_size;
+
+    err = clEnqueueNDRangeKernel(queue_, k, 1, nullptr,
+                                  &global_size, &local_size,
+                                  0, nullptr, nullptr);
+    clReleaseKernel(k);
+
+    if (err != CL_SUCCESS) {
+        clReleaseMemObject(output);
+        throw std::runtime_error("CwGenerator::GenerateToGpu: clEnqueueNDRangeKernel failed: " + std::to_string(err));
+    }
+
+    clFinish(queue_);
+    return output;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// GPU internals
+// ════════════════════════════════════════════════════════════════════════════
+
+void CwGenerator::CompileKernel() {
+    cl_int err;
+    size_t source_len = strlen(CW_KERNEL_SOURCE);
+
+    program_ = clCreateProgramWithSource(context_, 1, &CW_KERNEL_SOURCE, &source_len, &err);
+    if (err != CL_SUCCESS) {
+        throw std::runtime_error("CwGenerator::CompileKernel: clCreateProgramWithSource failed");
+    }
+
+    err = clBuildProgram(program_, 1, &device_, "-cl-fast-relaxed-math", nullptr, nullptr);
+    if (err != CL_SUCCESS) {
+        size_t log_size;
+        clGetProgramBuildInfo(program_, device_, CL_PROGRAM_BUILD_LOG, 0, nullptr, &log_size);
+        std::vector<char> log(log_size);
+        clGetProgramBuildInfo(program_, device_, CL_PROGRAM_BUILD_LOG, log_size, log.data(), nullptr);
+        clReleaseProgram(program_);
+        program_ = nullptr;
+        throw std::runtime_error("CwGenerator kernel build failed:\n" + std::string(log.data()));
+    }
+
+    // Проверяем что оба kernel существуют
+    kernel_ = clCreateKernel(program_, "generate_cw", &err);
+    if (err != CL_SUCCESS) {
+        clReleaseProgram(program_);
+        program_ = nullptr;
+        throw std::runtime_error("CwGenerator::CompileKernel: clCreateKernel failed");
+    }
+    // kernel_ хранится для быстрого доступа, но в GenerateToGpu создаём отдельный
+    // (чтобы не гонять SetKernelArg на shared kernel)
+}
+
+void CwGenerator::ReleaseGpuResources() {
+    if (kernel_) { clReleaseKernel(kernel_); kernel_ = nullptr; }
+    if (program_) { clReleaseProgram(program_); program_ = nullptr; }
+}
+
+} // namespace signal_gen

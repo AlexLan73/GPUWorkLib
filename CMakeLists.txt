@@ -24,8 +24,20 @@ add_subdirectory(DrvGPU)
 # FFT Maxima module
 add_subdirectory(modules/fft_maxima)
 
+# Signal Generators module
+add_subdirectory(modules/signal_generators)
+
+# FFT Processor module
+add_subdirectory(modules/fft_processor)
+
 # Main executable (src/)
 add_subdirectory(src)
+
+# Python bindings (optional)
+option(BUILD_PYTHON "Build Python bindings (pybind11)" OFF)
+if(BUILD_PYTHON)
+    add_subdirectory(python)
+endif()
 
 message(STATUS "✅ GPUWorkLib configured successfully!")
 message(STATUS "")

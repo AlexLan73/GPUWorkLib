@@ -8,6 +8,9 @@
 #include "modules/fft_maxima/tests/test_spectrum_maxima.hpp"
 #include "modules/fft_maxima/tests/test_large_batch.hpp"
 #include "modules/fft_maxima/tests/test_gpu_generator_integration.hpp"
+#include "modules/signal_generators/tests/test_signal_generators.hpp"
+#include "modules/fft_processor/tests/test_fft_processor.hpp"
+#include "modules/fft_processor/tests/test_fft_vs_cpu.hpp"
 //#include "DrvGPU/tests/test_services.hpp"
 //#include "DrvGPU/tests/test_gpu_profiler.hpp"
 
@@ -29,6 +32,10 @@ int main() {
 //  test_spectrum_maxima::run();
 //  test_large_batch::run();  // НОВЫЙ API с batch processing
   test_gpu_generator_integration::run();  // Новый API (GPU→GPU)
+
+  test_signal_generators::run();  // Signal Generators: CW, LFM, Noise
+  test_fft_processor::run();  // FFTProcessor: FFT с разными режимами вывода
+  test_fft_vs_cpu::run();     // FFTProcessor vs CPU reference (pocketfft)
 
   // Services multithreaded tests (без теста профилирования — он отдельно)
 //  test_services::run();

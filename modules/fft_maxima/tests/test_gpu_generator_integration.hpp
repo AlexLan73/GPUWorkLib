@@ -25,6 +25,7 @@
 #include <iostream>
 #include <iomanip>
 #include <chrono>
+#include <ctime>
 #include <cmath>
 #include <thread>
 #include <sstream>
@@ -349,9 +350,13 @@ inline int run() {
 
             // Экспорт в файлы: Results/Profiler/GPU_XX_Profiler/short_name_HH-MM-SS
             auto now = std::chrono::system_clock::now();
-            auto time_t = std::chrono::system_clock::to_time_t(now);
+            auto time_t_val = std::chrono::system_clock::to_time_t(now);
             std::tm tm_buf;
-            localtime_r(&time_t, &tm_buf);
+#ifdef _WIN32
+            localtime_s(&tm_buf, &time_t_val);
+#else
+            localtime_r(&time_t_val, &tm_buf);
+#endif
             std::ostringstream time_str;
             time_str << std::put_time(&tm_buf, "%H-%M-%S");
 
