@@ -57,58 +57,89 @@ DrvGPU — модульная библиотека для работы с GPU, �
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### Модули, использующие DrvGPU
+
+Все модули библиотеки GPUWorkLib работают через `IBackend*` из DrvGPU:
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                     Modules Layer                              │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────┐   │
+│  │  Signal       │ │ FFT          │ │ FFT Maxima           │   │
+│  │  Generators   │ │ Processor    │ │ (SpectrumMaxima      │   │
+│  │  (signal_gen) │ │(fft_processor│ │  Finder)             │   │
+│  └──────┬───────┘ └──────┬───────┘ └──────────┬───────────┘   │
+│         │                │                     │               │
+│         └────────────────┼─────────────────────┘               │
+│                          │  IBackend*                          │
+│                    ┌─────▼─────┐                               │
+│                    │  DrvGPU   │                               │
+│                    └───────────┘                               │
+└────────────────────────────────────────────────────────────────┘
+```
+
+Подробнее о модулях: [`../Module/README.md`](../Module/README.md)
+
 ---
 
 ## Структура директорий
 
 ```
 GPUWorkLib/
-├── include/DrvGPU/
-│   ├── CMakeLists.txt
-│   ├── drv_gpu.cpp/hpp           # Главный класс
-│   ├── gpu_manager.hpp           # Менеджер нескольких GPU
-│   ├── module_registry.cpp/hpp   # Регистр модулей
+├── DrvGPU/                       # Ядро библиотеки
+│   ├── include/DrvGPU/
+│   │   ├── drv_gpu.cpp/hpp           # Главный класс
+│   │   ├── gpu_manager.hpp           # Менеджер нескольких GPU
+│   │   ├── module_registry.cpp/hpp   # Регистр модулей
+│   │   │
+│   │   ├── common/                   # Общие интерфейсы и утилиты
+│   │   │   ├── backend_type.hpp      # Типы бэкендов
+│   │   │   ├── i_backend.hpp         # Интерфейс бэкенда
+│   │   │   ├── i_compute_module.hpp  # Интерфейс модуля
+│   │   │   ├── gpu_device_info.hpp   # Инфо о GPU
+│   │   │   ├── load_balancing.hpp    # Балансировка
+│   │   │   ├── logger*.hpp/cpp       # Логирование
+│   │   │   └── config_logger*.hpp/cpp# Конфиг логирования
+│   │   │
+│   │   ├── backends/                 # Бэкенды (см. OpenCL.md)
+│   │   │   └── opencl/
+│   │   │       ├── opencl_core.cpp/hpp
+│   │   │       ├── opencl_backend.cpp/hpp
+│   │   │       ├── opencl_backend_external.cpp/hpp
+│   │   │       └── command_queue_pool.cpp/hpp
+│   │   │
+│   │   └── memory/                   # Управление памятью (см. Memory.md)
+│   │       ├── memory_type.hpp
+│   │       ├── i_memory_buffer.hpp
+│   │       ├── gpu_buffer.hpp
+│   │       ├── memory_manager.hpp
+│   │       ├── svm_buffer.hpp
+│   │       ├── svm_capabilities.hpp
+│   │       └── external_cl_buffer_adapter.hpp
 │   │
-│   ├── common/                   # Общие интерфейсы и утилиты
-│   │   ├── backend_type.hpp      # Типы бэкендов
-│   │   ├── i_backend.hpp         # Интерфейс бэкенда
-│   │   ├── i_compute_module.hpp  # Интерфейс модуля
-│   │   ├── gpu_device_info.hpp   # Инфо о GPU
-│   │   ├── load_balancing.hpp    # Балансировка
-│   │   ├── logger*.hpp/cpp       # Логирование
-│   │   └── config_logger*.hpp/cpp# Конфиг логирования
-│   │
-│   ├── backends/                 # Бэкенды (см. OpenCL.md)
-│   │   └── opencl/
-│   │       ├── opencl_core.cpp/hpp
-│   │       ├── opencl_backend.cpp/hpp
-│   │       ├── opencl_backend_external.cpp/hpp
-│   │       └── command_queue_pool.cpp/hpp
-│   │
-│   └── memory/                   # Управление памятью (см. Memory.md)
-│       ├── memory_type.hpp
-│       ├── i_memory_buffer.hpp
-│       ├── gpu_buffer.hpp
-│       ├── memory_manager.hpp
-│       ├── svm_buffer.hpp
-│       ├── svm_capabilities.hpp
-│       └── external_cl_buffer_adapter.hpp
+│   └── services/
+│       └── batch_manager.hpp         # BatchManager для batch processing
 │
-├── src/
-│   ├── main.cpp
-│   └── CMakeLists.txt
+├── modules/                      # Модули обработки (см. Doc/Module/)
+│   ├── signal_generators/            # CW, LFM, Noise, Script генераторы
+│   ├── fft_processor/                # GPU FFT (clFFT wrapper)
+│   └── fft_maxima/                   # Поиск максимумов спектра
 │
-├── tests/
-│   ├── single_gpu.hpp
-│   ├── multi_gpu.hpp
-│   └── example_external_context_usage.hpp
+├── python/                       # Python bindings
+│   └── gpu_worklib_bindings.cpp      # pybind11 модуль gpuworklib
 │
-└── Doc/DrvGPU/
-    ├── Architecture.md           # Этот файл
-    ├── Memory.md                 # Система памяти
-    ├── OpenCL.md                 # OpenCL бэкенд
-    ├── Command.md                # Command Queue
-    └── Classes.md                # Все классы по категориям
+└── Doc/
+    ├── DrvGPU/                       # Документация ядра
+    │   ├── Architecture.md           # Этот файл
+    │   ├── Memory.md                 # Система памяти
+    │   ├── OpenCL.md                 # OpenCL бэкенд
+    │   ├── Command.md                # Command Queue
+    │   └── Classes.md                # Все классы по категориям
+    └── Module/                       # Документация модулей
+        ├── signal_generators/        # Signal Generators docs
+        ├── fft_processor/            # FFT Processor docs
+        ├── fft_maxima/               # FFT Maxima docs
+        └── python_bindings/          # Python bindings docs
 ```
 
 ---
@@ -218,21 +249,24 @@ GPUWorkLib/
 
 ## Документация по разделам
 
+### DrvGPU (ядро)
+
 | Раздел | Файл | Описание |
 |--------|------|----------|
-| **Общая архитектура** | Architecture.md | Этот файл |
-| **Система памяти** | Memory.md | IMemoryBuffer, GPUBuffer, SVMBuffer, MemoryManager |
-| **OpenCL бэкенд** | OpenCL.md | OpenCLBackend, OpenCLCore, OpenCLBackendExternal |
-| **Command Queue** | Command.md | CommandQueuePool, управление очередями |
-| **Все классы** | Classes.md | Полный справочник классов |
+| **Общая архитектура** | [Architecture.md](Architecture.md) | Этот файл |
+| **Система памяти** | [Memory.md](Memory.md) | IMemoryBuffer, GPUBuffer, SVMBuffer, MemoryManager |
+| **OpenCL бэкенд** | [OpenCL.md](OpenCL.md) | OpenCLBackend, OpenCLCore, OpenCLBackendExternal |
+| **Command Queue** | [Command.md](Command.md) | CommandQueuePool, управление очередями |
+| **Все классы** | [Classes.md](Classes.md) | Полный справочник классов |
 
-### Как редактировать документацию
+### Модули
 
-1. **Memory** — редактируйте `Memory.md` для изменений в системе памяти
-2. **OpenCL** — редактируйте `OpenCL.md` для изменений в бэкенде
-3. **Command** — редактируйте `Command.md` для изменений в очередях команд
-4. **Классы** — `Classes.md` автоматически генерируется из исходников
-5. **Архитектура** — `Architecture.md` для общих изменений структуры
+| Модуль | Документация | Описание |
+|--------|-------------|----------|
+| **Signal Generators** | [../Module/signal_generators/](../Module/signal_generators/) | CW, LFM, Noise, Script генераторы |
+| **FFT Processor** | [../Module/fft_processor/](../Module/fft_processor/) | GPU FFT (clFFT wrapper) |
+| **FFT Maxima** | [../Module/fft_maxima/](../Module/fft_maxima/) | Поиск максимумов спектра |
+| **Python Bindings** | [../Module/python_bindings/](../Module/python_bindings/) | pybind11 модуль gpuworklib |
 
 ---
 
@@ -245,4 +279,6 @@ GPUWorkLib/
 - **LID-Utils**: `Logger`, `GPUDeviceInfo`, `LoadBalancing`
 - **LID-Memory**: `IMemoryBuffer`, `GPUBuffer`, `MemoryManager`
 
-См. также: [`../../Архитекура/LID-Architecture.md`](../../Архитекура/LID-Architecture.md)
+---
+
+*Последнее обновление: 2026-02-13*

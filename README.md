@@ -130,6 +130,16 @@ cmake --build . --parallel
 ctest
 ```
 
+### Git / Windows
+
+Для подавления предупреждений CRLF при `git add` на Windows:
+
+```bash
+git config core.safecrlf false
+```
+
+Пустые папки отслеживаются через файлы `.gitkeep`.
+
 ### CMake Опции
 
 | Опция | По умолчанию | Описание |

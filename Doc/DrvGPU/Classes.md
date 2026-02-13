@@ -177,11 +177,12 @@
 | Категория | Методы |
 |-----------|--------|
 | Lifecycle | `Initialize`, `Cleanup`, `IsInitialized` |
+| Ownership | `SetOwnsResources`, `OwnsResources` |
 | Device Info | `GetType`, `GetDeviceInfo`, `GetDeviceIndex`, `GetDeviceName` |
 | Native Handles | `GetNativeContext`, `GetNativeDevice`, `GetNativeQueue` |
-| Memory | `Allocate`, `Free`, `MemcpyHostToDevice`, `MemcpyDeviceToHost`, `MemcpyDeviceToDevice` |
+| Memory | `Allocate`, `Free`, `MemcpyHostToDevice`, `MemcpyDeviceToHost`, `MemcpyDeviceToDevice`, `GetMemoryManager` |
 | Sync | `Synchronize`, `Flush` |
-| Capabilities | `SupportsSVM`, `SupportsDoublePrecision`, `GetMaxWorkGroupSize`, `GetGlobalMemorySize`, `GetLocalMemorySize` |
+| Capabilities | `SupportsSVM`, `SupportsDoublePrecision`, `GetMaxWorkGroupSize`, `GetGlobalMemorySize`, `GetFreeMemorySize`, `GetLocalMemorySize` |
 
 **Паттерн**: Bridge, Template Method
 
@@ -205,6 +206,16 @@
 | `initialized_` | `bool` | Флаг инициализации |
 
 **Ключевые методы**: см. [OpenCL.md](OpenCL.md)
+
+**Дополнительные методы (v2.0)**:
+
+| Метод | Описание |
+|-------|----------|
+| `InitializeFromExternalContext(context, device, queue)` | Инициализация из внешнего OpenCL контекста |
+| `GetFreeMemorySize()` | Получить свободную память GPU |
+| `GetCore()` | Доступ к OpenCLCore |
+| `GetSVMCapabilities()` | Возможности SVM |
+| `InitializeCommandQueuePool(num_queues)` | Инициализация пула очередей |
 
 ---
 
@@ -299,24 +310,47 @@
 
 ---
 
-### GPUBuffer
+### GPUBuffer (IMemoryBuffer)
 
 **Файл**: [`memory/gpu_buffer.hpp`](../../include/DrvGPU/memory/gpu_buffer.hpp)
 
-**Назначение**: Стандартный буфер памяти GPU.
+**Назначение**: Стандартный буфер памяти GPU (реализация IMemoryBuffer).
 
 **Иерархия**: `IMemoryBuffer` → `GPUBuffer`
 
-**Члены класса**:
+**См. также**: [Memory.md](Memory.md)
 
-| Член | Тип | Описание |
-|------|-----|----------|
-| `backend_` | `IBackend*` | Бэкенд |
-| `size_` | `size_t` | Размер |
-| `type_` | `MemoryType` | Тип памяти |
-| `device_ptr_` | `void*` | Указатель GPU |
-| `host_ptr_` | `void*` | Указатель хоста |
-| `mapped_` | `bool` | Флаг отображения |
+---
+
+### GPUBuffer\<T\> (Template, RAII)
+
+**Файл**: [`memory/gpu_buffer.hpp`](../../include/DrvGPU/memory/gpu_buffer.hpp)
+
+**Назначение**: Типобезопасный GPU буфер с RAII. Используется модулями для работы с данными на GPU.
+
+**Ключевые методы**:
+
+| Метод | Описание |
+|-------|----------|
+| `GPUBuffer(ptr, num_elements, backend)` | Конструктор |
+| `Write(host_data, size_bytes)` | Запись на GPU |
+| `Write(vector<T>)` | Запись из вектора |
+| `Read(host_data, size_bytes)` | Чтение с GPU |
+| `Read() → vector<T>` | Чтение в вектор |
+| `CopyFrom(other)` | Копирование GPU→GPU |
+| `GetPtr()` | Указатель на GPU память |
+| `GetNumElements()` | Количество элементов |
+| `GetSizeBytes()` | Размер в байтах |
+| `IsValid()` | Проверка валидности |
+
+**Паттерн**: RAII, Move Semantics (копирование запрещено)
+
+**Создание через MemoryManager**:
+```cpp
+auto buffer = memory_manager.CreateBuffer<float>(1024);
+buffer->Write(host_data);
+auto result = buffer->Read();
+```
 
 **См. также**: [Memory.md](Memory.md)
 
@@ -659,6 +693,19 @@ ILogger
 
 ---
 
+## Модули, использующие DrvGPU
+
+Все модули получают `IBackend*` через Dependency Injection и работают через интерфейс бэкенда.
+
+| Модуль | Namespace | Ключевые классы | Документация |
+|--------|-----------|-----------------|--------------|
+| **Signal Generators** | `signal_gen` | ISignalGenerator, CwGenerator, LfmGenerator, NoiseGenerator, ScriptGenerator, SignalService, Factory | [../Module/signal_generators/](../Module/signal_generators/) |
+| **FFT Processor** | `fft_processor` | FFTProcessor, FFTOutputMode | [../Module/fft_processor/](../Module/fft_processor/) |
+| **FFT Maxima** | `antenna_fft` | SpectrumMaximaFinder, AntennaFFTCore, FFTPlanCache | [../Module/fft_maxima/](../Module/fft_maxima/) |
+| **Python Bindings** | — | GPUContext, SignalGenerator, FFTProcessor, ScriptGenerator | [../Module/python_bindings/](../Module/python_bindings/) |
+
+---
+
 ## Ссылки на документацию
 
 | Раздел | Файл | Описание |
@@ -667,3 +714,8 @@ ILogger
 | OpenCL бэкенд | [OpenCL.md](OpenCL.md) | OpenCLBackend, OpenCLCore, External Context |
 | Command Queue | [Command.md](Command.md) | CommandQueuePool |
 | Система памяти | [Memory.md](Memory.md) | IMemoryBuffer, GPUBuffer, SVMBuffer |
+| Модули | [../Module/README.md](../Module/README.md) | Все модули библиотеки |
+
+---
+
+*Последнее обновление: 2026-02-13*

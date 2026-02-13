@@ -77,3 +77,9 @@ Logs/
 .DS_Store
 Thumbs.db
 
+# Windows reserved names (nul, con, prn, aux, etc.)
+nul
+con
+prn
+aux
+
