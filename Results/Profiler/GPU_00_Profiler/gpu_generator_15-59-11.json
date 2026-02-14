@@ -1,0 +1,70 @@
+{
+  "timestamp": "2026-02-14 15:59:11",
+  "gpus": [
+    {
+      "gpu_id": 0,
+      "gpu_name": "NVIDIA GeForce RTX 2080 Ti",
+      "memory_mb": 11263,
+      "drivers": [
+        {"driver_type": "OpenCL", "driver_version": "581.42", "vendor": "NVIDIA Corporation", "version": "3.0"}
+      ],
+      "modules": [
+        {
+          "name": "SpectrumMaxima",
+          "total_calls": 20,
+          "total_time_ms": 71.250,
+          "events": [
+            {
+              "name": "Download",
+              "calls": 5,
+              "total_ms": 0.006,
+              "avg_ms": 0.001,
+              "min_ms": 0.001,
+              "max_ms": 0.002,
+              "queue_delay_avg_ms": 0.008,
+              "submit_delay_avg_ms": 0.012,
+              "exec_time_avg_ms": 0.001,
+              "complete_delay_avg_ms": 0.000
+            },
+            {
+              "name": "FFT",
+              "calls": 5,
+              "total_ms": 52.087,
+              "avg_ms": 10.417,
+              "min_ms": 8.569,
+              "max_ms": 11.557,
+              "queue_delay_avg_ms": 0.001,
+              "submit_delay_avg_ms": 107.678,
+              "exec_time_avg_ms": 10.417,
+              "complete_delay_avg_ms": 0.000
+            },
+            {
+              "name": "GPU→GPU Copy",
+              "calls": 5,
+              "total_ms": 12.373,
+              "avg_ms": 2.475,
+              "min_ms": 1.114,
+              "max_ms": 3.948,
+              "queue_delay_avg_ms": 0.001,
+              "submit_delay_avg_ms": 0.008,
+              "exec_time_avg_ms": 2.475,
+              "complete_delay_avg_ms": 0.000
+            },
+            {
+              "name": "PostKernel",
+              "calls": 5,
+              "total_ms": 6.784,
+              "avg_ms": 1.357,
+              "min_ms": 1.315,
+              "max_ms": 1.372,
+              "queue_delay_avg_ms": 0.004,
+              "submit_delay_avg_ms": 0.018,
+              "exec_time_avg_ms": 1.357,
+              "complete_delay_avg_ms": 0.000
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

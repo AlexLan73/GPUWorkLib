@@ -21,49 +21,11 @@
 | **Statistics** | Planned | Статистическая обработка |
 | **Heterodyne** | Planned | Гетеродин (перенос частоты) |
 
----
-
-## Завершённые темы (2026-02)
-
-| Тема | Дата | Описание |
-|------|------|----------|
-| **ТЕМА 4: DrvGPU Optimization** | 02-10 | Анализ, объединение OpenCLBackend |
-| **ТЕМА 3: Kernel Refactoring** | 02-10 | OnePeak/TwoPeaks кернелы, PeakSearchMode |
-| **ТЕМА 2: Batch Processing** | 02-11 | BatchManager, 256x1.3M точек |
-| **ТЕМА 1: API Refactoring** | 02-12 | Новый API: Process(InputData, Mode, Driver) |
-| **Signal Generators** | 02-13 | CW/LFM/Noise на GPU, Strategy+Factory+DI |
-| **FFT Processor** | 02-13 | clFFT wrapper, Complex/MagPhase/MagPhaseFreq |
-| **Python Bindings** | 02-13 | pybind11 модуль, 7 тестов + графики |
-| **ScriptGenerator** | 02-13 | Text DSL -> OpenCL, [Params]/[Defs]/[Signal] |
-
----
 
 ## Текущий статус
 
-### API v2.0 (2026-02-12)
-```cpp
-// Новый API
-InputData<T> input{.antenna_count, .n_point, .data, .repeat_count, .sample_rate};
-auto results = finder.Process(input, PeakSearchMode::ONE_PEAK, DriverType::OPENCL);
-```
-
-### Документация
-- Полная: `Doc/spectrum_maxima_api_guide.md`
-- Краткая: `Doc/spectrum_maxima_api_quick.md`
-
-### Пути
-- Логи: `Logs/DRVGPU_XX/YYYY-MM-DD/HH-MM-SS.log`
-- Профайлер: `Results/Profiler/GPU_XX_Profiler/*.md|json`
-
----
 
 ## Задачи
-
-| Файл | Описание |
-|------|----------|
-| [tasks/BACKLOG.md](tasks/BACKLOG.md) | Очередь задач |
-| [tasks/COMPLETED.md](tasks/COMPLETED.md) | Завершённые задачи |
-
 ---
 
 ## Python модуль (gpuworklib)

@@ -59,6 +59,7 @@ target_link_libraries(gpuworklib PRIVATE
     drvgpu
     signal_generators
     fft_processor
+    spectrum_maxima
     ${_opencl_lib}
 )
 

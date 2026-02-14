@@ -1,0 +1,40 @@
+GPU Variance Research — Documentation Overview
+==============================================
+
+📁 Structure:
+├── README.md (5.3 KB) — Summary & Quick Start
+├── GPU_Variance_Research.md (45 KB) — Full Research Document
+└── Quick_Reference.md (6.6 KB) — Code Snippets & Formulas
+
+📊 Content Coverage:
+✅ 7 variance algorithms analyzed (Two-pass, One-pass, Welford, Compensated, Pairwise, Shifted, Kahan)
+✅ Mathematical foundations & formulas
+✅ Numerical stability analysis (catastrophic cancellation, precision issues)
+✅ GPU parallelization strategies (reduction patterns, memory coalescing)
+✅ OpenCL kernel examples (Welford, Pairwise, Batched)
+✅ ROCm/HIP implementation examples
+✅ Library solutions (rocPRIM, Thrust, CuPy, PyTorch)
+✅ Performance analysis (float32 vs float64, bandwidth vs compute)
+✅ Memory layout recommendations (AoS vs SoA)
+✅ Workgroup optimization (NVIDIA/AMD specifics)
+✅ 256 rays × 4M points architecture
+✅ API design recommendations
+✅ Testing strategies
+✅ 30+ references & sources
+
+🎯 Key Recommendations:
+Primary: Welford's Algorithm (numerical stability + single pass)
+Alternative: Pairwise Algorithm (excellent parallelization)
+Avoid: One-pass naïve (catastrophic cancellation), Kahan compensated (poor GPU parallelization)
+
+📈 Performance Estimates (256×4M):
+Expected: ~10-15 ms on AMD RX 6800 XT
+Speedup: 15-30× vs single-threaded CPU
+
+🔗 For Implementation:
+See: MemoryBank/specs/statistics_module.md (to be created)
+Integration: DrvGPU (context, logger, profiler, batch manager)
+Python API: Doc/Python/statistics_api.md (to be created)
+
+Date: 2026-02-14
+Author: Кодо (AI Assistant)

@@ -46,6 +46,8 @@ set(RELEASE_SOURCES
 
 set(SPECTRUM_MAXIMA_SOURCES
     src/spectrum_maxima_finder.cpp
+    src/spectrum_maxima_finder_process.cpp
+    src/spectrum_maxima_finder_all_maxima.cpp
 )
 
 # Note: antenna_fft_debug.cpp removed - file does not exist
@@ -64,6 +66,7 @@ set(HEADERS
     include/interface/antenna_fft_params.h
     include/interface/spectrum_maxima_types.h
     include/kernels/fft_kernel_sources.hpp
+    include/kernels/all_maxima_kernel_sources.hpp
 )
 
 # ════════════════════════════════════════════════════════════════════════════

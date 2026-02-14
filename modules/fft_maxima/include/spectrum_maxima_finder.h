@@ -67,6 +67,7 @@
 #include "interface/spectrum_maxima_types.h"
 #include "interface/spectrum_input_data.hpp"
 #include "kernels/fft_kernel_sources.hpp"
+#include "kernels/all_maxima_kernel_sources.hpp"
 #include "services/batch_manager.hpp"
 
 #include <CL/cl.h>
@@ -216,6 +217,108 @@ public:
         const InputData<T>& input,
         PeakSearchMode mode = PeakSearchMode::ONE_PEAK,
         DriverType driver = DriverType::ROCM);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FindAllMaxima — поиск ВСЕХ локальных максимумов
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * @brief Полный pipeline: Input → FFT → Detect → Scan → Compact (НОВЫЙ API)
+     *
+     * Аналог Process(), но вместо одного пика находит ВСЕ локальные максимумы.
+     * Все лучи обрабатываются параллельно одним вызовом!
+     *
+     * Pipeline: Zero-Pad → clFFT(pre+post callback) → Detect → Scan → Compact
+     *
+     * @tparam T Тип данных (vector<complex<float>>, cl_mem, void*)
+     * @param input Входные данные (сырой сигнал, НЕ FFT!)
+     * @param dest Куда вывести результат (CPU/GPU/ALL)
+     * @param driver Тип backend (OPENCL, ROCM)
+     * @param search_start Начало диапазона поиска (0 = default = 1, пропуск DC)
+     * @param search_end Конец диапазона поиска (0 = default = nFFT/2)
+     * @return AllMaximaResult с позициями и амплитудами всех максимумов
+     *
+     * @code
+     * InputData<cl_mem> input{
+     *     .antenna_count = 256,
+     *     .n_point = 1024,
+     *     .data = gpu_signal,             // Сырой сигнал (НЕ FFT!)
+     *     .gpu_memory_bytes = 256 * 1024 * sizeof(complex<float>),
+     *     .sample_rate = 1000.0f
+     * };
+     * auto result = finder.FindAllMaxima(input, OutputDestination::CPU, DriverType::OPENCL);
+     * @endcode
+     */
+    template<typename T>
+    AllMaximaResult FindAllMaxima(
+        const InputData<T>& input,
+        OutputDestination dest = OutputDestination::CPU,
+        DriverType driver = DriverType::OPENCL,
+        uint32_t search_start = 0,
+        uint32_t search_end = 0);
+
+    /**
+     * @brief Поиск ВСЕХ максимумов в готовых FFT данных (без FFT)
+     *
+     * Принимает уже посчитанный FFT спектр (complex float2) и находит
+     * все локальные максимумы. FFT НЕ выполняется!
+     *
+     * Pipeline: ComputeMagnitudes → Detect → Scan → Compact
+     *
+     * @tparam T Тип данных:
+     *   - std::vector<std::complex<float>> — FFT результат на CPU (будет upload)
+     *   - cl_mem — FFT результат уже на GPU (zero-copy)
+     *
+     * @param input Входные данные. ВАЖНО: input.n_point = размер FFT (nFFT),
+     *              input.data = комплексный спектр (beam_count * nFFT float2)
+     * @param dest Куда вывести результат (CPU/GPU/ALL)
+     * @param driver Тип backend (OPENCL, ROCM)
+     * @param search_start Начало диапазона поиска (0 = default = 1)
+     * @param search_end Конец диапазона поиска (0 = default = nFFT/2)
+     * @return AllMaximaResult с позициями и амплитудами всех максимумов
+     *
+     * @code
+     * // Пример: FFT уже посчитан, нужно найти максимумы
+     * InputData<cl_mem> fft_input{
+     *     .antenna_count = 5,
+     *     .n_point = 1024,           // = nFFT (размер FFT!)
+     *     .data = gpu_fft_result,    // Уже FFT (complex float2)
+     *     .sample_rate = 1000.0f
+     * };
+     * auto result = finder.AllMaxima(fft_input, OutputDestination::CPU, DriverType::OPENCL);
+     * @endcode
+     */
+    template<typename T>
+    AllMaximaResult AllMaxima(
+        const InputData<T>& input,
+        OutputDestination dest = OutputDestination::CPU,
+        DriverType driver = DriverType::OPENCL,
+        uint32_t search_start = 0,
+        uint32_t search_end = 0);
+
+    /**
+     * @brief Найти все максимумы в уже готовом FFT спектре на GPU
+     *
+     * Pipeline: Detection → Prefix Sum (Scan) → Compaction
+     * Все лучи сканируются параллельно (beam-aware parallel scan).
+     *
+     * @param fft_data cl_mem буфер с результатом FFT (beam_count * nFFT float2)
+     * @param beam_count Количество лучей
+     * @param nFFT Размер FFT
+     * @param sample_rate Частота дискретизации (Гц)
+     * @param dest Куда вывести результат (CPU/GPU/ALL)
+     * @param search_start Начало диапазона поиска (0 = default = 1, пропуск DC)
+     * @param search_end Конец диапазона поиска (0 = default = nFFT/2)
+     * @return AllMaximaResult с позициями и амплитудами всех максимумов
+     */
+    AllMaximaResult FindAllMaxima(
+        cl_mem fft_data,
+        uint32_t beam_count,
+        uint32_t nFFT,
+        float sample_rate,
+        OutputDestination dest = OutputDestination::CPU,
+        uint32_t search_start = 0,
+        uint32_t search_end = 0);
 
     /**
      * @brief Получить данные профилирования последнего вызова
@@ -377,6 +480,86 @@ private:
 
     /// Записать заголовок в pre_callback_userdata_
     void WritePreCallbackHeader(size_t batch_count);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // AllMaxima — приватные методы и поля
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Скомпилировать kernel'ы для AllMaxima pipeline
+    void CompileAllMaximaKernels();
+
+    /// Выполнить beam-aware prefix sum (параллельно по всем лучам!)
+    /// @param input Входной массив [beam_count * n_per_beam] uint
+    /// @param output Выходной массив [beam_count * n_per_beam] uint
+    /// @param n_per_beam Элементов на луч (nFFT)
+    /// @param beam_count Количество лучей
+    /// @param wait_event Событие для ожидания
+    /// @return cl_event завершения scan
+    cl_event ExecutePrefixSum(cl_mem input, cl_mem output,
+                              size_t n_per_beam, size_t beam_count,
+                              cl_event wait_event);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Full Pipeline FindAllMaxima — приватные методы
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Полный pipeline из CPU данных: Upload → FFT → Detect → Scan → Compact
+    AllMaximaResult FindAllMaximaFromCPU(
+        const std::vector<std::complex<float>>& data,
+        OutputDestination dest, uint32_t search_start, uint32_t search_end);
+
+    /// Полный pipeline из GPU данных: Copy → FFT → Detect → Scan → Compact
+    AllMaximaResult FindAllMaximaFromGPUPipeline(
+        cl_mem gpu_data, size_t antenna_count, size_t n_point,
+        size_t gpu_memory_bytes,
+        OutputDestination dest, uint32_t search_start, uint32_t search_end);
+
+    /// AllMaxima из CPU FFT данных: Upload → ComputeMag → Detect → Scan → Compact
+    AllMaximaResult AllMaximaFromCPU(
+        const std::vector<std::complex<float>>& fft_data,
+        uint32_t beam_count, uint32_t nFFT, float sample_rate,
+        OutputDestination dest, uint32_t search_start, uint32_t search_end);
+
+    /// Освободить AllMaxima ресурсы
+    void ReleaseAllMaximaResources();
+
+    // AllMaxima kernel'ы
+    cl_program all_maxima_program_ = nullptr;
+    cl_kernel detect_kernel_ = nullptr;
+    cl_kernel compute_magnitudes_kernel_ = nullptr;  ///< Для старого API (FFT на GPU)
+
+    cl_program prefix_sum_program_ = nullptr;
+    cl_kernel block_scan_kernel_ = nullptr;
+    cl_kernel block_add_kernel_ = nullptr;
+
+    cl_program compact_program_ = nullptr;
+    cl_kernel compact_kernel_ = nullptr;
+
+    bool all_maxima_kernels_compiled_ = false;
+
+    // AllMaxima FFT план (с pre + post callbacks)
+    clfftPlanHandle allmax_plan_handle_ = 0;     ///< FFT план с pre+post callback
+    bool allmax_plan_created_ = false;
+    size_t allmax_plan_batch_size_ = 0;          ///< batch size для текущего allmax плана
+    cl_mem magnitudes_buffer_ = nullptr;         ///< Pre-computed |FFT[i]| (beam_count * nFFT float)
+    size_t magnitudes_buffer_size_ = 0;          ///< Размер magnitudes_buffer_ в элементах
+
+    /// Создать FFT план с pre-callback + post-callback (для AllMaxima pipeline)
+    void CreateAllMaximaFFTPlan(size_t batch_count);
+
+    /// Выполнить FFT с AllMaxima планом (pre+post callbacks)
+    cl_event ExecuteAllMaximaFFT(cl_event wait_event);
+
+    /// Выделить/переиспользовать magnitudes_buffer_
+    void EnsureMagnitudesBuffer(size_t total_elements);
+
+    /// Размер блока для prefix sum (2 * local_size)
+    static constexpr size_t SCAN_LOCAL_SIZE = 256;
+    static constexpr size_t SCAN_BLOCK_SIZE = SCAN_LOCAL_SIZE * 2;  // 512
+
+    /// Максимальное число максимумов на луч (для выделения буферов compaction)
+    /// Для nFFT=4M и типичного спектра ожидается ~1-10% максимумов
+    static constexpr size_t MAX_MAXIMA_PER_BEAM = 1024 * 1024;  // 1M (safety limit)
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -428,6 +611,92 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::Process(
 
     // driver пока не используется (будет для ROCm)
     (void)driver;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Реализация шаблонного метода FindAllMaxima<T>
+// (должна быть в header из-за шаблона)
+// ════════════════════════════════════════════════════════════════════════════
+
+template<typename T>
+AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
+    const InputData<T>& input,
+    OutputDestination dest,
+    DriverType driver,
+    uint32_t search_start,
+    uint32_t search_end)
+{
+    (void)driver;  // TODO: ROCm backend
+
+    // 1. Подготовить параметры (как в Process)
+    ProcessingParams proc_params{
+        input.repeat_count,
+        input.sample_rate,
+        input.search_range,
+        input.memory_limit
+    };
+
+    PrepareParams(input.antenna_count, input.n_point, proc_params, PeakSearchMode::ALL_MAXIMA);
+
+    // 2. Диспетчеризация по типу данных
+    if constexpr (is_cpu_vector_v<T>) {
+        // CPU данные — upload → FFT → AllMaxima
+        if (!initialized_) {
+            Initialize();
+        }
+        return FindAllMaximaFromCPU(input.data, dest, search_start, search_end);
+    }
+    else if constexpr (std::is_same_v<T, cl_mem>) {
+        // GPU данные (cl_mem) — copy → FFT → AllMaxima
+        return FindAllMaximaFromGPUPipeline(input.data, input.antenna_count, input.n_point,
+                                             input.ActualGpuMemory(), dest, search_start, search_end);
+    }
+    else if constexpr (is_svm_pointer_v<T>) {
+        throw std::runtime_error("SVM input not implemented yet for FindAllMaxima");
+    }
+    else {
+        static_assert(is_cpu_vector_v<T> || std::is_same_v<T, cl_mem> || is_svm_pointer_v<T>,
+                      "Unsupported input data type");
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Реализация шаблонного метода AllMaxima<T>
+// (FFT данные → Detect → Scan → Compact, БЕЗ FFT!)
+// ════════════════════════════════════════════════════════════════════════════
+
+template<typename T>
+AllMaximaResult SpectrumMaximaFinder::AllMaxima(
+    const InputData<T>& input,
+    OutputDestination dest,
+    DriverType driver,
+    uint32_t search_start,
+    uint32_t search_end)
+{
+    (void)driver;  // TODO: ROCm backend
+
+    // input.n_point = nFFT (данные уже FFT, padding не нужен!)
+    const uint32_t nFFT = input.n_point;
+    const uint32_t beam_count = input.antenna_count;
+    const float sample_rate = input.sample_rate;
+
+    if constexpr (is_cpu_vector_v<T>) {
+        // CPU FFT данные — upload → ComputeMag → Detect → Scan → Compact
+        return AllMaximaFromCPU(input.data, beam_count, nFFT,
+                                sample_rate, dest, search_start, search_end);
+    }
+    else if constexpr (std::is_same_v<T, cl_mem>) {
+        // GPU FFT данные — прямой вызов (данные уже на GPU)
+        return FindAllMaxima(input.data, beam_count, nFFT,
+                             sample_rate, dest, search_start, search_end);
+    }
+    else if constexpr (is_svm_pointer_v<T>) {
+        throw std::runtime_error("SVM input not implemented yet for AllMaxima");
+    }
+    else {
+        static_assert(is_cpu_vector_v<T> || std::is_same_v<T, cl_mem> || is_svm_pointer_v<T>,
+                      "Unsupported input data type");
+    }
 }
 
 } // namespace antenna_fft

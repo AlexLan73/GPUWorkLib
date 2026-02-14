@@ -77,18 +77,143 @@ MemoryBank/
 
 ---
 
+## 🐍 Python Bindings Policy
+
+### Документирование интерфейсов
+При разработке значимых модулей C++ обязательно:
+
+1. **Планировать Python API** — продумать интерфейс до реализации
+2. **Документировать** — в `Doc/Python/{module}_api.md`
+3. **Создавать биндинги** — использовать pybind11
+4. **Писать тесты** — минимум базовые unit-тесты на Python
+
+### Что требует Python-интерфейса
+✅ Генераторы сигналов (CW, LFM, Noise, Script)
+✅ FFT/IFFT процессоры
+✅ Фильтры (FIR, IIR)
+✅ Статистические функции (mean, std, variance)
+✅ Гетеродин (NCO, MixDown/MixUp)
+✅ Утилиты (поиск максимума, оконные функции)
+
+❌ Внутренние helper-функции
+❌ OpenCL kernel-код
+❌ Low-level драйвер DrvGPU (только через высокоуровневые классы)
+
+### Документация Python API
+**Место**: `Doc/Python/{module}_api.md`
+
+**Формат**:
+```python
+# Constructor
+obj = Module(context, param1, param2)
+
+# Methods
+result = obj.process(input_data)
+obj.set_parameter(name, value)
+
+# Properties
+obj.sample_rate = 1e6
+```
+
+### Тестирование
+- Тесты размещать в `[наш проект]/Python_test/test_*.py`
+- Использовать pytest-формат
+- Проверять корректность через сравнение с NumPy/SciPy
+
+---
+
+## 🔄 Workflow & Development Style
+
+### Итеративный подход
+1. **Быстрые прототипы** — сначала заставить работать
+2. **Тестирование на реальных данных** — Python + GPU
+3. **Рефакторинг** — улучшение после проверки концепции
+4. **Документирование** — после стабилизации API
+5. **Очистка** — после реализации, тестов и документации удалять промежуточную информацию (черновики, старые заметки)
+
+### Специфика задач
+- **GPU-оптимизация**: Профилирование (GPUProfiler) → Kernel tuning → Benchmark
+  - ⚠️ **ТОЛЬКО НА GPU!** Все вычисления выполняются на GPU
+  - 📊 Профилирование только через механизм DrvGPU (GPUProfiler)
+  - 🖥️ Вывод на консоль только через `console_output` из DrvGPU (у нас 10 GPU — без порядка будет бардак)
+- **Исследования**: Пробовать → Сравнивать с эталоном → Записывать в `research/` → После внедрения удалять черновики
+- **Debugging**: Логи (plog, per-GPU) → Python визуализация → Анализ
+
+### Когда использовать помощников (синьоров)
+- 🧮 **sequential-thinking**: Сложная математика (FFT алгоритмы, фильтры), рефакторинг, оптимизация, сложная архитектура
+- 🔍 **Explore agent**: Поиск по большой кодовой базе
+- 📐 **Plan mode**: Рефакторинг архитектуры (Ref01, Ref02...)
+
+### Принятие решений
+- **Быстрые решения**: Прототипировать и тестировать
+- **Архитектурные решения**: Сначала обсудить с Alex
+- **API изменения**: Проверить влияние на Python-код
+
+### Приоритеты
+1. ✅ **Работоспособность** — главное, чтобы работало
+2. 🎯 **Корректность** — сравнение с эталоном (SciPy/MATLAB)
+3. ⚡ **Производительность** — GPU должен быть быстрее CPU
+4. 📝 **Документация** — когда API стабилизировался
+5. 🧹 **Очистка** — удаление промежуточной информации после завершения задачи
+
+---
+
+## 🏗️ Architecture & Code Organization
+
+### DrvGPU — единая точка управления GPU
+⚠️ **Все модули используют контекст DrvGPU** — не плодим новые сущности!
+
+- **Работа с памятью**: Через DrvGPU (кеширование, переиспользование буферов)
+- **Очереди и планы**: Управление через DrvGPU CommandQueue
+- **Batch Manager**: Для больших данных используем BatchManager из DrvGPU
+- **Логирование**: `plog` через DrvGPU (per-GPU логи в `Logs/DRVGPU_XX/`)
+- **Консольный вывод**: Только через `console_output` из DrvGPU (мультиGPU-безопасный)
+- **Профилирование**: Только через `GPUProfiler` из DrvGPU
+
+### Структура файлов
+- **Новые классы и структуры** — создавать в отдельных файлах
+- **Исключение**: Интерфейсы могут объединяться в один файл по смысловым/логическим признакам
+- **Заголовки**: Каждый класс — отдельный `.h` + `.cpp` (если есть имплементация)
+- **Тесты**: Файлы с расширением `*.hpp` в каталогах `/tests/` внутри каждого модуля
+- **Документация тестов**: В каждом `/tests/` должен находиться `README.md` с описанием примеров
+
+### OpenCL / ROCm Backend
+🔑 **Некоторые функции API имеют ключ выбора backend**:
+- Методы с параметром `backend_type` или флагами выбора реализации
+- OpenCL (clFFT) — основной backend
+- ROCm (hipFFT) — планируется для AMD GPU
+- Проверяй код на наличие `USE_ROCM`, `BACKEND_*` флагов
+
+### Naming & Style
+- **Google C++ Style Guide** + 2-пробельная табуляция
+- **CamelCase** для классов: `SignalGenerator`, `FFTProcessor`
+- **snake_case** для методов: `generate_signal()`, `process_fft()`
+- **Константы**: `kMaxBufferSize`, `kDefaultSampleRate`
+
+---
+
 ## 📋 Key Settings
 
 ### Project Structure
-- **MemoryBank**: Центр управления проектом (specs, tasks, changelog)
-- **Doc/PLAN**: Планы рефакторинга (Ref01, Ref02, ...)
-- **Doc/Info_***: Исследования и документация API
+- **MemoryBank**: Центр управления проектом (specs, tasks, changelog, research, sessions)
+  - Хранит цели, задачи, таски, идеи **до реализации**
+  - После завершения: документация → `Doc/`, промежуточная информация → удаляется
+- **Doc/**: Финальная документация
+  - `Doc/Python/` — Документация Python API (по модулям)
+- **Doc_Addition/**: Вся дополнительная документация не относящаяся к описанию проекта
+  - `Doc_Addition/Info_*` — Исследования и документация API
+  - `Doc_Addition/PLAN/` — Планы рефакторинга (Ref01, Ref02, ...)
+- **Python_test/**: Python тесты (`test_*.py`)
 - **Results/JSON**: Результаты тестов
-- **Results/Profiler**: Данные профилирования
+- **Results/Profiler**: Данные профилирования GPU
+- **Logs/DRVGPU_XX/**: Per-GPU логи (plog format)
 
 ### File Naming
 - Формат даты: `YYYY-MM-DD` или `YYYY-MM-DD_HH-MM-SS`
 - Логи: `Logs/DRVGPU_XX/YYYY-MM-DD/HH-MM-SS.log`
+- Python API docs: `Doc/Python/{module}_api.md`
+- Python тесты: `Python_test/test_*.py`
+- C++ тесты: `{module}/tests/*.hpp` + `{module}/tests/README.md`
 
 ### Communication Preferences
 - **Language**: Русский (Russian)
@@ -102,23 +227,28 @@ MemoryBank/
 ## 📊 Текущий статус
 
 ### Модули
-| Модуль | Статус |
-|--------|--------|
-| DrvGPU | 🟢 Active |
-| FFT | 🟡 WIP |
-| Filters | ⚪ Planned |
-| Statistics | ⚪ Planned |
-| Heterodyne | ⚪ Planned |
-| SignalSynth | ⚪ Planned |
+| Модуль | Статус | Python API | Описание |
+|--------|--------|------------|----------|
+| DrvGPU | 🟢 Active | ✅ GPUContext | Базовый драйвер (OpenCL backend) |
+| SignalGenerators | 🟢 Active | ✅ SignalGenerator | CW, LFM, Noise, Script генераторы |
+| ScriptGenerator | 🟢 Active | ✅ ScriptGenerator | Text DSL → OpenCL kernel compiler |
+| FFTProcessor | 🟢 Active | ✅ FFTProcessor | FFT с режимами Complex/MagPhase |
+| SpectrumMaximaFinder | 🟢 Active | 🔶 Partial | Поиск максимума спектра FFT |
+| **Statistics** | 🟡 **В разработке** | ⚪ Planned | mean, std, variance на GPU |
+| **Heterodyne** | 🟡 **В разработке** | ⚪ Planned | NCO, MixDown/MixUp |
+| Filters | ⚪ Planned | ⚪ Planned | FIR, IIR фильтры на GPU |
 
 ### Инфраструктура
 - ✅ MemoryBank структура
-- ✅ Logger (plog, per-GPU)
-- ✅ GPUProfiler
+- ✅ Logger (plog, per-GPU logs в `Logs/DRVGPU_XX/`)
+- ✅ GPUProfiler (профилирование через DrvGPU)
+- ✅ console_output (мультиGPU-безопасный вывод)
 - ✅ configGPU.json
-- ⏳ ROCm backend
+- ✅ Python Bindings (pybind11)
+- ✅ Python Test Suite (`Python_test/test_*.py`)
+- ⏳ ROCm backend (planned, требует AMD GPU)
 
 ---
 
-*Last updated: 2026-02-09*
+*Last updated: 2026-02-14*
 *Maintained by: Кодо (AI Assistant)*

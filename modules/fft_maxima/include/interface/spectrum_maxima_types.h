@@ -11,6 +11,7 @@
  */
 
 #include <cstdint>
+#include <vector>
 
 namespace antenna_fft {
 
@@ -19,8 +20,19 @@ namespace antenna_fft {
  * @brief Режим поиска пиков в спектре
  */
 enum class PeakSearchMode {
-    ONE_PEAK,   ///< Поиск ОДНОГО пика (сравнение левого и правого, выбор большего) → 4 MaxValue
-    TWO_PEAKS   ///< Поиск ДВУХ пиков (независимо левый и правый) → 8 MaxValue
+    ONE_PEAK,    ///< Поиск ОДНОГО пика (сравнение левого и правого, выбор большего) → 4 MaxValue
+    TWO_PEAKS,   ///< Поиск ДВУХ пиков (независимо левый и правый) → 8 MaxValue
+    ALL_MAXIMA   ///< Поиск ВСЕХ локальных максимумов → переменное число на луч
+};
+
+/**
+ * @enum OutputDestination
+ * @brief Куда выводить результат FindAllMaxima
+ */
+enum class OutputDestination {
+    CPU,   ///< clEnqueueReadBuffer → std::vector<T> на хосте
+    GPU,   ///< вернуть cl_mem буфер (не копировать на CPU)
+    ALL    ///< вернуть оба (CPU vector + GPU cl_mem)
 };
 
 /**
@@ -81,6 +93,37 @@ struct SpectrumResult {
 struct CPUSpectrumResult {
     SpectrumResult SpectrMax_left;   ///< Максимум левого диапазона [0, half_range]
     SpectrumResult SpectrMax_right;  ///< Максимум правого диапазона [nFFT-half_range, nFFT]
+};
+
+/**
+ * @struct AllMaximaBeamResult
+ * @brief Результат поиска ВСЕХ локальных максимумов для одного луча
+ */
+struct AllMaximaBeamResult {
+    uint32_t antenna_id;                ///< Номер антенны
+    uint32_t num_maxima;                ///< Количество найденных максимумов
+    std::vector<uint32_t> positions;    ///< Позиции максимумов (индексы в FFT спектре)
+    std::vector<float> magnitudes;      ///< Амплитуды |FFT[i]|
+    std::vector<float> frequencies;     ///< Частоты в Гц (position * sample_rate / nFFT)
+};
+
+/**
+ * @struct AllMaximaResult
+ * @brief Общий результат FindAllMaxima для всех лучей
+ */
+struct AllMaximaResult {
+    std::vector<AllMaximaBeamResult> beams;   ///< Результаты по лучам
+    OutputDestination destination;             ///< Куда был выведен результат
+
+    // GPU буферы (если destination == GPU или ALL)
+    // void* — backend-agnostic: cl_mem (OpenCL), void* (SVM), hipDeviceptr_t (ROCm)
+    void* gpu_positions = nullptr;   ///< Позиции всех максимумов (все лучи подряд)
+    void* gpu_magnitudes = nullptr;  ///< Амплитуды всех максимумов
+    void* gpu_counts = nullptr;      ///< Количество максимумов на луч (beam_count uint32_t)
+    size_t total_maxima = 0;         ///< Общее количество максимумов (все лучи)
+
+    /// Удобный доступ: общее количество максимумов по всем лучам
+    size_t TotalMaxima() const { return total_maxima; }
 };
 
 /**
