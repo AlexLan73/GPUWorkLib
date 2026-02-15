@@ -1,6 +1,6 @@
 #include <iostream>
 
-//#include "DrvGPU/tests/single_gpu.hpp"
+#include "DrvGPU/tests/single_gpu.hpp"
 //#include "DrvGPU/tests/example_external_context_usage.hpp"
 //#include "modules/example/tests/test_vector_ops.hpp"
 //#include "modules/search_maxim/tests/test_antenna_module.hpp"

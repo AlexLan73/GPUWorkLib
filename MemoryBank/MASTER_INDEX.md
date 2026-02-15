@@ -3,7 +3,7 @@
 > **Проект**: Библиотеки GPU-вычислений (OpenCL, ROCm, HIP)
 > **Автор**: Alex
 > **AI-ассистент**: Кодо
-> **Обновлено**: 2026-02-13
+> **Обновлено**: 2026-02-15
 
 ---
 
@@ -11,14 +11,14 @@
 
 | Модуль | Статус | Описание |
 |--------|--------|----------|
-| **DrvGPU** | Active | Базовый драйвер GPU (OpenCL backend) |
-| **SpectrumMaximaFinder** | Active | Поиск максимума спектра FFT |
+| **DrvGPU** | Active | Базовый драйвер GPU (OpenCL backend). См. `specs/drvgpu.md` |
+| **SpectrumMaximaFinder** (fft_maxima) | Active | Поиск максимума спектра FFT. См. `specs/fft_maxima.md` |
 | **SignalGenerators** | Active | CW, LFM, Noise, Script генераторы |
 | **FFTProcessor** | Active | FFT с режимами Complex/MagPhase |
 | **ScriptGenerator** | Active | Text DSL -> OpenCL kernel compiler |
 | **Python Bindings** | Active | pybind11 модуль gpuworklib |
 | **Filters** | Planned | ЦОС фильтры (FIR, IIR) |
-| **Statistics** | Planned | Статистическая обработка |
+| **Statistics** | Planned | Статистика. См. `specs/statistics_module.md` |
 | **Heterodyne** | Planned | Гетеродин (перенос частоты) |
 
 
