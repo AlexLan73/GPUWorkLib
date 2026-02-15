@@ -81,15 +81,26 @@ public:
 
 ```
 1. PrepareParams() с PeakSearchMode::ALL_MAXIMA
+   - max_maxima_per_beam (дефолт 1000) — лимит максимумов на луч
 2. Диспетчеризация:
    - CPU → FindAllMaximaFromCPU: Upload → FFT(pre+post callback) → Detect → Scan → Compact
    - GPU → FindAllMaximaFromGPUPipeline: Copy → FFT → Detect → Scan → Compact
-3. FFT с post-callback: |FFT[i]| → magnitudes_buffer_
-4. Detect: локальные максимумы (mag[i] > mag[i-1] && mag[i] > mag[i+1])
-5. Prefix Sum (Blelloch Scan): beam-aware параллельный scan
-6. Compact: stream compaction → позиции и амплитуды
-7. Output: CPU (clEnqueueReadBuffer) / GPU (cl_mem) / ALL
+3. Batch-обработка (автоматическая):
+   - BatchManager проверяет вместимость (CalculateOptimalBatchSize)
+   - Если не влезает → разбивка на batch с beam_offset
+   - При Dest=GPU: создаёт общие буферы positions/magnitudes/counts
+   - Каждый batch записывает с правильным beam_offset → корректные antenna_id
+4. FFT с post-callback: |FFT[i]| → magnitudes_buffer_
+5. Detect: локальные максимумы (mag[i] > mag[i-1] && mag[i] > mag[i+1])
+6. Prefix Sum (Blelloch Scan): beam-aware параллельный scan
+7. Compact: stream compaction → позиции и амплитуды (с beam_offset для batch)
+8. Output: CPU (clEnqueueReadBuffer) / GPU (cl_mem) / ALL
 ```
+
+**Особенности batch-обработки FindAllMaxima:**
+- При Dest=CPU: каждый batch возвращает результаты, которые мерджатся с коррекцией antenna_id
+- При Dest=GPU: все batch записывают в общие GPU-буферы с beam_offset — нет лишних копирований
+- Профилирование: GPUProfiler собирает метрики по всем batch, вывод через PrintReport()
 
 ### Внутренняя логика AllMaxima (без FFT)
 
@@ -117,6 +128,7 @@ struct InputData {
     float sample_rate = 1000.0f;    // Гц
     uint32_t search_range = 0;      // 0 = auto = nFFT/4
     float memory_limit = 0.80f;     // Доля GPU памяти для batch (0.0-1.0)
+    size_t max_maxima_per_beam = 1000;  // Макс. кол-во максимумов на луч (FindAllMaxima)
 
     size_t TotalPoints() const;
     size_t SizeBytes() const;

@@ -318,7 +318,11 @@ public:
         float sample_rate,
         OutputDestination dest = OutputDestination::CPU,
         uint32_t search_start = 0,
-        uint32_t search_end = 0);
+        uint32_t search_end = 0,
+        uint32_t beam_offset = 0,
+        cl_mem external_out_positions = nullptr,
+        cl_mem external_out_magnitudes = nullptr,
+        cl_mem external_out_counts = nullptr);
 
     /**
      * @brief Получить данные профилирования последнего вызова

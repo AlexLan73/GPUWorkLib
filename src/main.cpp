@@ -13,6 +13,7 @@
 #include "modules/fft_processor/tests/test_fft_vs_cpu.hpp"
 #include "modules/fft_maxima/tests/test_find_all_maxima.hpp"
 #include "modules/fft_maxima/tests/test_benchmark_all_maxima.hpp"
+#include "modules/fft_maxima/tests/test_batch_all_maxima.hpp"
 //#include "DrvGPU/tests/test_services.hpp"
 //#include "DrvGPU/tests/test_gpu_profiler.hpp"
 
@@ -44,6 +45,7 @@ int main() {
 //  test_fft_vs_cpu::run();     // FFTProcessor vs CPU reference (pocketfft)
 // !!! новые нужно разбераться !!!!!!
 // test_find_all_maxima::run();  // FindAllMaxima: поиск всех максимумов
+// test_batch_all_maxima::run();  // BATCH: тесты для batch-обработки
   test_benchmark_all_maxima::run();  // BENCHMARK: 10 лучей × 500k точек
 
 
