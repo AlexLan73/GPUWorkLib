@@ -12,8 +12,6 @@
 
 namespace antenna_fft {
 
-const ProfilingData SpectrumProcessorROCm::kEmptyProfiling{};
-
 SpectrumProcessorROCm::SpectrumProcessorROCm(drv_gpu_lib::IBackend* backend)
     : backend_(backend) {}
 
@@ -74,8 +72,8 @@ AllMaximaResult SpectrumProcessorROCm::FindAllMaxima(
     throw std::runtime_error("SpectrumProcessorROCm: not implemented");
 }
 
-const ProfilingData& SpectrumProcessorROCm::GetProfilingData() const {
-    return kEmptyProfiling;
+ProfilingData SpectrumProcessorROCm::GetProfilingData() const {
+    return {};
 }
 
 void SpectrumProcessorROCm::ReallocateBuffersForBatch(size_t) {

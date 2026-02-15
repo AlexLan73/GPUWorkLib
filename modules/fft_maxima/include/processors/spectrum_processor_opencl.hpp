@@ -78,7 +78,7 @@ public:
         uint32_t search_start = 0, uint32_t search_end = 0) override;
 
     DriverType GetDriverType() const override { return DriverType::OPENCL; }
-    const ProfilingData& GetProfilingData() const override { return profiling_; }
+    ProfilingData GetProfilingData() const override;
 
     void ReallocateBuffersForBatch(size_t batch_antenna_count) override;
     size_t CalculateBytesPerAntenna() const override;
@@ -94,8 +94,7 @@ private:
     cl_event UploadData(const std::vector<std::complex<float>>& input_data);
     cl_event ExecuteFFT(cl_event wait_event);
     cl_event ExecutePostKernel(cl_event wait_event);
-    std::vector<SpectrumResult> ReadResults(cl_event wait_event, bool send_to_profiler = false);
-    double ProfileEvent(cl_event event, const char* name);
+    std::vector<SpectrumResult> ReadResults(cl_event wait_event);
     void WritePreCallbackHeader(size_t batch_count);
     void ReleaseResources();
 
@@ -137,8 +136,6 @@ private:
 
     cl_program post_program_ = nullptr;
     cl_kernel post_kernel_ = nullptr;
-
-    ProfilingData profiling_;
 
     size_t current_batch_size_ = 0;
     size_t actual_batch_size_ = 0;

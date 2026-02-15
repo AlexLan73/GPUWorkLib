@@ -146,9 +146,7 @@ std::vector<SpectrumResult> SpectrumProcessorOpenCL::ProcessBatch(
     }
     actual_batch_size_ = batch_antenna_count;  // Запоминаем реальный размер batch
 
-    const int gpu_id = 0;
-    auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
-    const bool do_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(gpu_id);
+    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
 
     // Извлечь срез данных для текущего batch
     size_t offset = start_antenna * params_.n_point;
@@ -159,38 +157,20 @@ std::vector<SpectrumResult> SpectrumProcessorOpenCL::ProcessBatch(
 
     // 1. Загрузить данные batch на GPU
     cl_event upload_event = UploadData(batch_data);
-    profiling_.upload_time_ms += ProfileEvent(upload_event, "Upload");
-    if (do_prof) {
-        drv_gpu_lib::OpenCLProfilingData data{};
-        if (drv_gpu_lib::FillOpenCLProfilingData(upload_event, data)) {
-            profiler.Record(gpu_id, "SpectrumMaxima", "Upload", data);
-        }
-    }
+    drv_gpu_lib::RecordProfilingEvent(upload_event, gpu_id, "SpectrumMaxima", "Upload");
 
     // 2. Выполнить FFT
     cl_event fft_event = ExecuteFFT(upload_event);
     clReleaseEvent(upload_event);
-    profiling_.fft_time_ms += ProfileEvent(fft_event, "FFT");
-    if (do_prof) {
-        drv_gpu_lib::OpenCLProfilingData data{};
-        if (drv_gpu_lib::FillOpenCLProfilingData(fft_event, data)) {
-            profiler.Record(gpu_id, "SpectrumMaxima", "FFT", data);
-        }
-    }
+    drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "SpectrumMaxima", "FFT");
 
     // 3. Выполнить post-kernel
     cl_event post_event = ExecutePostKernel(fft_event);
     clReleaseEvent(fft_event);
-    profiling_.post_kernel_time_ms += ProfileEvent(post_event, "PostKernel");
-    if (do_prof) {
-        drv_gpu_lib::OpenCLProfilingData data{};
-        if (drv_gpu_lib::FillOpenCLProfilingData(post_event, data)) {
-            profiler.Record(gpu_id, "SpectrumMaxima", "PostKernel", data);
-        }
-    }
+    drv_gpu_lib::RecordProfilingEvent(post_event, gpu_id, "SpectrumMaxima", "PostKernel");
 
     // 4. Прочитать результаты batch
-    std::vector<SpectrumResult> batch_results = ReadResults(post_event, do_prof);
+    std::vector<SpectrumResult> batch_results = ReadResults(post_event);
     clReleaseEvent(post_event);
 
     // Скорректировать antenna_id для результатов (добавить start_antenna)
@@ -219,8 +199,6 @@ std::vector<SpectrumResult> SpectrumProcessorOpenCL::ProcessFromCPU(
             "Expected " + std::to_string(expected_size) +
             ", got " + std::to_string(data.size()));
     }
-
-    profiling_ = ProfilingData{};
 
     size_t bytes_per_antenna = CalculateBytesPerAntenna();
 
@@ -324,7 +302,7 @@ std::vector<SpectrumResult> SpectrumProcessorOpenCL::ProcessFromGPU(
 
         cl_event fft_event = ExecuteFFT(copy_event);
         cl_event post_event = ExecutePostKernel(fft_event);
-        auto results = ReadResults(post_event, true);
+        auto results = ReadResults(post_event);
 
         clReleaseEvent(copy_event);
         clReleaseEvent(fft_event);
@@ -377,9 +355,7 @@ std::vector<SpectrumResult> SpectrumProcessorOpenCL::ProcessBatchFromGPU(
 
     WritePreCallbackHeader(batch_antenna_count);
 
-    const int gpu_id = 0;
-    auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
-    const bool do_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(gpu_id);
+    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
 
     size_t data_size = batch_antenna_count * params_.n_point * sizeof(std::complex<float>);
     cl_event copy_event = nullptr;
@@ -393,41 +369,22 @@ std::vector<SpectrumResult> SpectrumProcessorOpenCL::ProcessBatchFromGPU(
         throw std::runtime_error("ProcessBatchFromGPU: clEnqueueCopyBuffer failed: " + std::to_string(err));
     }
 
-    profiling_.upload_time_ms += ProfileEvent(copy_event, "GPU→GPU Copy");
-    if (do_prof) {
-        drv_gpu_lib::OpenCLProfilingData data{};
-        if (drv_gpu_lib::FillOpenCLProfilingData(copy_event, data)) {
-            profiler.Record(gpu_id, "SpectrumMaxima", "GPU→GPU Copy", data);
-        }
-    }
+    drv_gpu_lib::RecordProfilingEvent(copy_event, gpu_id, "SpectrumMaxima", "GPU→GPU Copy");
 
     cl_event fft_event = ExecuteFFT(copy_event);
-    profiling_.fft_time_ms += ProfileEvent(fft_event, "FFT");
-    if (do_prof) {
-        drv_gpu_lib::OpenCLProfilingData data{};
-        if (drv_gpu_lib::FillOpenCLProfilingData(fft_event, data)) {
-            profiler.Record(gpu_id, "SpectrumMaxima", "FFT", data);
-        }
-    }
+    clReleaseEvent(copy_event);
+    drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "SpectrumMaxima", "FFT");
 
     cl_event post_event = ExecutePostKernel(fft_event);
-    profiling_.post_kernel_time_ms += ProfileEvent(post_event, "PostKernel");
-    if (do_prof) {
-        drv_gpu_lib::OpenCLProfilingData data{};
-        if (drv_gpu_lib::FillOpenCLProfilingData(post_event, data)) {
-            profiler.Record(gpu_id, "SpectrumMaxima", "PostKernel", data);
-        }
-    }
+    clReleaseEvent(fft_event);
+    drv_gpu_lib::RecordProfilingEvent(post_event, gpu_id, "SpectrumMaxima", "PostKernel");
 
-    auto results = ReadResults(post_event, do_prof);
+    auto results = ReadResults(post_event);
+    clReleaseEvent(post_event);
 
     for (size_t i = 0; i < results.size(); ++i) {
         results[i].antenna_id = static_cast<uint32_t>(start_antenna + i);
     }
-
-    clReleaseEvent(copy_event);
-    clReleaseEvent(fft_event);
-    clReleaseEvent(post_event);
 
     return results;
 }
@@ -978,7 +935,7 @@ cl_event SpectrumProcessorOpenCL::ExecutePostKernel(cl_event wait_event) {
     return event;
 }
 
-std::vector<SpectrumResult> SpectrumProcessorOpenCL::ReadResults(cl_event wait_event, bool send_to_profiler) {
+std::vector<SpectrumResult> SpectrumProcessorOpenCL::ReadResults(cl_event wait_event) {
     // Количество MaxValue зависит от режима: ONE_PEAK=4, TWO_PEAKS=8
     // Используем actual_batch_size_ — реальный размер текущего batch (не размер буферов!)
     size_t antenna_count_to_read = (actual_batch_size_ > 0) ? actual_batch_size_ : params_.antenna_count;
@@ -1002,16 +959,8 @@ std::vector<SpectrumResult> SpectrumProcessorOpenCL::ReadResults(cl_event wait_e
         throw std::runtime_error("ReadResults failed: " + std::to_string(err));
     }
 
-    // Ждём завершения
-    clWaitForEvents(1, &read_event);
-    profiling_.download_time_ms = ProfileEvent(read_event, "Download");
-    if (send_to_profiler) {
-        const int gpu_id = 0;
-        drv_gpu_lib::OpenCLProfilingData data{};
-        if (drv_gpu_lib::FillOpenCLProfilingData(read_event, data)) {
-            drv_gpu_lib::GPUProfiler::GetInstance().Record(gpu_id, "SpectrumMaxima", "Download", data);
-        }
-    }
+    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
+    drv_gpu_lib::RecordProfilingEvent(read_event, gpu_id, "SpectrumMaxima", "Download");
     clReleaseEvent(read_event);
 
     // Преобразуем в vector<SpectrumResult>
@@ -1060,26 +1009,24 @@ std::vector<SpectrumResult> SpectrumProcessorOpenCL::ReadResults(cl_event wait_e
     return results;
 }
 
-double SpectrumProcessorOpenCL::ProfileEvent(cl_event event, const char* name) {
-    if (!event) return 0.0;
+ProfilingData SpectrumProcessorOpenCL::GetProfilingData() const {
+    ProfilingData out{};
+    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
+    auto stats = drv_gpu_lib::GPUProfiler::GetInstance().GetStats(gpu_id);
+    auto it = stats.find("SpectrumMaxima");
+    if (it == stats.end()) return out;
 
-    // Ждём завершения события
-    clWaitForEvents(1, &event);
-
-    cl_ulong start = 0, end = 0;
-    cl_int err1 = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START,
-                                           sizeof(cl_ulong), &start, nullptr);
-    cl_int err2 = clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END,
-                                           sizeof(cl_ulong), &end, nullptr);
-
-    if (err1 != CL_SUCCESS || err2 != CL_SUCCESS) {
-        drv_gpu_lib::ConsoleOutput::GetInstance().PrintWarning(0, "SpectrumMaxima",
-            "ProfileEvent " + std::string(name) + " failed: " + std::to_string(err1) + "," + std::to_string(err2));
-        return 0.0;
-    }
-
-    double time_ms = (end - start) / 1e6;
-    return time_ms;
+    const auto& mod = it->second;
+    auto ev = [&mod](const char* name) -> double {
+        auto e = mod.events.find(name);
+        return (e != mod.events.end()) ? e->second.GetAvgTimeMs() : 0.0;
+    };
+    out.upload_time_ms = ev("Upload") + ev("GPU→GPU Copy");
+    out.fft_time_ms = ev("FFT");
+    out.post_kernel_time_ms = ev("PostKernel");
+    out.download_time_ms = ev("Download");
+    out.total_time_ms = mod.GetTotalTimeMs();
+    return out;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1467,7 +1414,7 @@ AllMaximaResult SpectrumProcessorOpenCL::FindAllMaxima(
         clReleaseEvent(mag_event);
     }
 
-    return pipeline_->Execute(magnitudes_buffer_, nullptr, beam_count, nFFT, sample_rate,
+    return pipeline_->Execute(magnitudes_buffer_, fft_mem, beam_count, nFFT, sample_rate,
                              dest, search_start, search_end);
 }
 

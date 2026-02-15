@@ -205,7 +205,7 @@ InputData<std::vector<std::complex<float>>> input{
 };
 
 auto result = finder.FindAllMaxima(input, OutputDestination::CPU);
-// result.beams[i].positions, .magnitudes, .frequencies
+// result.beams[i].maxima — vector<MaxValue> (index, real, imag, magnitude, phase, refined_frequency)
 ```
 
 #### 5. AllMaxima — FFT уже посчитан
@@ -221,6 +221,34 @@ InputData<cl_mem> fft_input{
 
 auto result = finder.AllMaxima(fft_input, OutputDestination::CPU);
 ```
+
+#### 6. FindAllMaxima — batch и Dest=GPU
+
+```cpp
+InputData<std::vector<std::complex<float>>> input{
+    .antenna_count = 64,
+    .n_point = 512,
+    .data = signal,
+    .memory_limit = 0.01f   // 1% — принудительно включить batch (для тестов)
+};
+
+auto result = finder.FindAllMaxima(input, OutputDestination::GPU);
+
+// Caller владеет GPU-буферами — обязан освободить после использования!
+if (result.gpu_maxima) clReleaseMemObject(static_cast<cl_mem>(result.gpu_maxima));
+if (result.gpu_counts) clReleaseMemObject(static_cast<cl_mem>(result.gpu_counts));
+
+// result.beams — метаданные (antenna_id, num_maxima) для всех лучей
+```
+
+**Batch API:**
+- `memory_limit` (0.0–1.0) — доля свободной GPU памяти для расчёта размера batch
+- При нехватке памяти: автоматическая разбивка через `BatchManager::CreateBatches`
+- При Dest=GPU: один раз аллоцируются `gpu_maxima` (MaxValue[]), `gpu_counts` на все лучи
+- Каждый batch пишет с `beam_offset` в правильный offset
+- **Владение:** Caller обязан вызвать `clReleaseMemObject` для возвращённых буферов
+
+**Подробное руководство:** [Doc/Modules/fft_maxima/FindAllMaxima_MaxValue_Guide.md](../../Doc/Modules/fft_maxima/FindAllMaxima_MaxValue_Guide.md)
 
 ---
 
@@ -336,6 +364,14 @@ modules/fft_maxima/
 ```
 
 Или выбор в runtime через `DriverType` (текущий подход).
+
+---
+
+## ⚠️ TODO: Вернуться к antenna_fft
+
+**Legacy:** Тесты `test_fft_maxima`, `test_fft_svm`, `test_external_context_fft` используют `AntennaFFTProcMax`.  
+**Решение:** Мигрировать на FFTProcessor + SpectrumMaximaFinder или оставить legacy-тесты — **вернуться отдельно**.  
+**Источник:** PROPOSAL_Refactor_fft_maxima_fft_processor.md (2026-02-15)
 
 ---
 

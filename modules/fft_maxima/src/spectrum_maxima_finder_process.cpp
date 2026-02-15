@@ -71,9 +71,6 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromCPU(
             ", got " + std::to_string(data.size()));
     }
 
-    // Сбросить профилирование
-    profiling_ = ProfilingData{};
-
     // ═══════════════════════════════════════════════════════════════════════
     // BATCH PROCESSING (использует BatchManager)
     // ═══════════════════════════════════════════════════════════════════════
@@ -185,14 +182,18 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromGPU(
             throw std::runtime_error("ProcessFromGPU: clEnqueueCopyBuffer failed: " + std::to_string(err));
         }
 
-        // FFT + PostKernel + ReadResults
-        cl_event fft_event = ExecuteFFT(copy_event);
-        cl_event post_event = ExecutePostKernel(fft_event);
-        auto results = ReadResults(post_event, true);
+        const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
+        drv_gpu_lib::RecordProfilingEvent(copy_event, gpu_id, "SpectrumMaxima", "GPU→GPU Copy");
 
-        // Cleanup events
+        cl_event fft_event = ExecuteFFT(copy_event);
         clReleaseEvent(copy_event);
+        drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "SpectrumMaxima", "FFT");
+
+        cl_event post_event = ExecutePostKernel(fft_event);
         clReleaseEvent(fft_event);
+        drv_gpu_lib::RecordProfilingEvent(post_event, gpu_id, "SpectrumMaxima", "PostKernel");
+
+        auto results = ReadResults(post_event);
         clReleaseEvent(post_event);
 
         return results;
@@ -242,10 +243,7 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatchFromGPU(
     // Обновить заголовок pre-callback
     WritePreCallbackHeader(batch_antenna_count);
 
-    // Профилирование
-    const int gpu_id = 0;
-    auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
-    const bool do_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(gpu_id);
+    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
 
     // Копируем данные GPU→GPU (из внешнего буфера в наш pre_callback_userdata_)
     size_t data_size = batch_antenna_count * params_.n_point * sizeof(std::complex<float>);
@@ -260,47 +258,22 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatchFromGPU(
         throw std::runtime_error("ProcessBatchFromGPU: clEnqueueCopyBuffer failed: " + std::to_string(err));
     }
 
-    // Профилирование GPU→GPU Copy (аналог Upload для CPU данных)
-    profiling_.upload_time_ms += ProfileEvent(copy_event, "GPU→GPU Copy");
-    if (do_prof) {
-        drv_gpu_lib::OpenCLProfilingData data{};
-        if (drv_gpu_lib::FillOpenCLProfilingData(copy_event, data)) {
-            profiler.Record(gpu_id, "SpectrumMaxima", "GPU→GPU Copy", data);
-        }
-    }
+    drv_gpu_lib::RecordProfilingEvent(copy_event, gpu_id, "SpectrumMaxima", "GPU→GPU Copy");
 
-    // FFT
     cl_event fft_event = ExecuteFFT(copy_event);
-    profiling_.fft_time_ms += ProfileEvent(fft_event, "FFT");
-    if (do_prof) {
-        drv_gpu_lib::OpenCLProfilingData data{};
-        if (drv_gpu_lib::FillOpenCLProfilingData(fft_event, data)) {
-            profiler.Record(gpu_id, "SpectrumMaxima", "FFT", data);
-        }
-    }
+    clReleaseEvent(copy_event);
+    drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "SpectrumMaxima", "FFT");
 
-    // PostKernel
     cl_event post_event = ExecutePostKernel(fft_event);
-    profiling_.post_kernel_time_ms += ProfileEvent(post_event, "PostKernel");
-    if (do_prof) {
-        drv_gpu_lib::OpenCLProfilingData data{};
-        if (drv_gpu_lib::FillOpenCLProfilingData(post_event, data)) {
-            profiler.Record(gpu_id, "SpectrumMaxima", "PostKernel", data);
-        }
-    }
+    clReleaseEvent(fft_event);
+    drv_gpu_lib::RecordProfilingEvent(post_event, gpu_id, "SpectrumMaxima", "PostKernel");
 
-    // ReadResults (Download профилируется внутри)
-    auto results = ReadResults(post_event, do_prof);
+    auto results = ReadResults(post_event);
+    clReleaseEvent(post_event);
 
-    // Устанавливаем правильные antenna_id
     for (size_t i = 0; i < results.size(); ++i) {
         results[i].antenna_id = static_cast<uint32_t>(start_antenna + i);
     }
-
-    // Cleanup events
-    clReleaseEvent(copy_event);
-    clReleaseEvent(fft_event);
-    clReleaseEvent(post_event);
 
     return results;
 }

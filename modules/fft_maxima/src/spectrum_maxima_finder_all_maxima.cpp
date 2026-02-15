@@ -210,27 +210,14 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromCPU(
         actual_batch_size_ = params_.antenna_count;
         CreateAllMaximaFFTPlan(params_.antenna_count);
 
-        const int gpu_id = 0;
-        auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
-        const bool do_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(gpu_id);
+        const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
 
         cl_event upload_event = UploadData(data);
-        if (do_prof && upload_event) {
-            clWaitForEvents(1, &upload_event);
-            drv_gpu_lib::OpenCLProfilingData pdata{};
-            if (drv_gpu_lib::FillOpenCLProfilingData(upload_event, pdata))
-                profiler.Record(gpu_id, "AllMaxima", "Upload", pdata);
-        }
+        drv_gpu_lib::RecordProfilingEvent(upload_event, gpu_id, "AllMaxima", "Upload");
 
         cl_event fft_event = ExecuteAllMaximaFFT(upload_event);
         clReleaseEvent(upload_event);
-
-        if (do_prof && fft_event) {
-            clWaitForEvents(1, &fft_event);
-            drv_gpu_lib::OpenCLProfilingData pdata{};
-            if (drv_gpu_lib::FillOpenCLProfilingData(fft_event, pdata))
-                profiler.Record(gpu_id, "AllMaxima", "FFT+PostCallback", pdata);
-        }
+        drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "AllMaxima", "FFT+PostCallback");
 
         AllMaximaResult result = FindAllMaxima(
             fft_output_, params_.antenna_count, params_.nFFT,
@@ -258,8 +245,7 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromCPU(
     combined.total_maxima = 0;
 
     // Аллоцируем выходные буферы на ВСЕ antenna_count (для dest=GPU)
-    cl_mem combined_out_positions = nullptr;
-    cl_mem combined_out_magnitudes = nullptr;
+    cl_mem combined_out_maxima = nullptr;
     cl_mem combined_out_counts = nullptr;
 
     if (dest == OutputDestination::GPU || dest == OutputDestination::ALL) {
@@ -269,30 +255,20 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromCPU(
             static_cast<uint32_t>(params_.max_maxima_per_beam)
         );
 
-        combined_out_positions = clCreateBuffer(context_, CL_MEM_READ_WRITE,
-            params_.antenna_count * max_output_per_beam * sizeof(uint32_t), nullptr, &err);
+        combined_out_maxima = clCreateBuffer(context_, CL_MEM_READ_WRITE,
+            params_.antenna_count * max_output_per_beam * sizeof(MaxValue), nullptr, &err);
         if (err != CL_SUCCESS)
-            throw std::runtime_error("FindAllMaximaFromCPU(batch): combined_out_positions alloc failed");
-
-        combined_out_magnitudes = clCreateBuffer(context_, CL_MEM_READ_WRITE,
-            params_.antenna_count * max_output_per_beam * sizeof(float), nullptr, &err);
-        if (err != CL_SUCCESS) {
-            clReleaseMemObject(combined_out_positions);
-            throw std::runtime_error("FindAllMaximaFromCPU(batch): combined_out_magnitudes alloc failed");
-        }
+            throw std::runtime_error("FindAllMaximaFromCPU(batch): combined_out_maxima alloc failed");
 
         combined_out_counts = clCreateBuffer(context_, CL_MEM_READ_WRITE,
             params_.antenna_count * sizeof(uint32_t), nullptr, &err);
         if (err != CL_SUCCESS) {
-            clReleaseMemObject(combined_out_positions);
-            clReleaseMemObject(combined_out_magnitudes);
+            clReleaseMemObject(combined_out_maxima);
             throw std::runtime_error("FindAllMaximaFromCPU(batch): combined_out_counts alloc failed");
         }
     }
 
-    const int gpu_id = 0;
-    auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
-    const bool do_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(gpu_id);
+    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
 
     // Обрабатываем каждый batch
     for (const auto& batch : batches) {
@@ -310,33 +286,19 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromCPU(
         actual_batch_size_ = batch.count;
         CreateAllMaximaFFTPlan(batch.count);
 
-        // Upload
         cl_event upload_event = UploadData(batch_data);
-        if (do_prof && upload_event) {
-            clWaitForEvents(1, &upload_event);
-            drv_gpu_lib::OpenCLProfilingData pdata{};
-            if (drv_gpu_lib::FillOpenCLProfilingData(upload_event, pdata))
-                profiler.Record(gpu_id, "AllMaxima", "Upload_Batch", pdata);
-        }
+        drv_gpu_lib::RecordProfilingEvent(upload_event, gpu_id, "AllMaxima", "Upload_Batch");
 
-        // FFT
         cl_event fft_event = ExecuteAllMaximaFFT(upload_event);
         clReleaseEvent(upload_event);
-
-        if (do_prof && fft_event) {
-            clWaitForEvents(1, &fft_event);
-            drv_gpu_lib::OpenCLProfilingData pdata{};
-            if (drv_gpu_lib::FillOpenCLProfilingData(fft_event, pdata))
-                profiler.Record(gpu_id, "AllMaxima", "FFT_Batch", pdata);
-        }
+        drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "AllMaxima", "FFT_Batch");
 
         // FindAllMaxima с beam_offset и внешними буферами (для Dest=GPU)
         AllMaximaResult batch_result = FindAllMaxima(
             fft_output_, batch.count, params_.nFFT,
             params_.sample_rate, dest, search_start, search_end,
             static_cast<uint32_t>(batch.start),  // beam_offset
-            combined_out_positions,               // external buffers (nullptr для CPU)
-            combined_out_magnitudes,
+            combined_out_maxima,                  // external buffers (nullptr для CPU)
             combined_out_counts);
 
         clReleaseEvent(fft_event);
@@ -351,10 +313,15 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromCPU(
         combined.total_maxima += batch_result.total_maxima;
     }
 
-    // Cleanup GPU буферов если были созданы
-    if (combined_out_positions) clReleaseMemObject(combined_out_positions);
-    if (combined_out_magnitudes) clReleaseMemObject(combined_out_magnitudes);
-    if (combined_out_counts) clReleaseMemObject(combined_out_counts);
+    // Передаём владение GPU-буферами caller'у (не освобождаем!)
+    if (dest == OutputDestination::GPU || dest == OutputDestination::ALL) {
+        combined.gpu_maxima = combined_out_maxima;
+        combined.gpu_counts = combined_out_counts;
+        uint32_t max_per_beam = std::min(
+            (search_end > search_start ? (search_end - search_start) / 2 : params_.nFFT / 4),
+            static_cast<uint32_t>(params_.max_maxima_per_beam));
+        combined.gpu_bytes = params_.antenna_count * max_per_beam * sizeof(MaxValue);
+    }
 
     return combined;
 }
@@ -400,9 +367,7 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline(
         actual_batch_size_ = antenna_count;
         CreateAllMaximaFFTPlan(antenna_count);
 
-        const int gpu_id = 0;
-        auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
-        const bool do_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(gpu_id);
+        const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
 
         size_t data_size = antenna_count * n_point * sizeof(std::complex<float>);
         cl_event copy_event = nullptr;
@@ -415,22 +380,11 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline(
             throw std::runtime_error("FindAllMaximaFromGPUPipeline: CopyBuffer failed");
         }
 
-        if (do_prof && copy_event) {
-            clWaitForEvents(1, &copy_event);
-            drv_gpu_lib::OpenCLProfilingData pdata{};
-            if (drv_gpu_lib::FillOpenCLProfilingData(copy_event, pdata))
-                profiler.Record(gpu_id, "AllMaxima", "GPU→GPU Copy", pdata);
-        }
+        drv_gpu_lib::RecordProfilingEvent(copy_event, gpu_id, "AllMaxima", "GPU→GPU Copy");
 
         cl_event fft_event = ExecuteAllMaximaFFT(copy_event);
         clReleaseEvent(copy_event);
-
-        if (do_prof && fft_event) {
-            clWaitForEvents(1, &fft_event);
-            drv_gpu_lib::OpenCLProfilingData pdata{};
-            if (drv_gpu_lib::FillOpenCLProfilingData(fft_event, pdata))
-                profiler.Record(gpu_id, "AllMaxima", "FFT+PostCallback", pdata);
-        }
+        drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "AllMaxima", "FFT+PostCallback");
 
         AllMaximaResult result = FindAllMaxima(
             fft_output_, static_cast<uint32_t>(antenna_count), params_.nFFT,
@@ -455,8 +409,7 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline(
     combined.total_maxima = 0;
 
     // Аллоцируем выходные буферы на ВСЕ antenna_count (для dest=GPU)
-    cl_mem combined_out_positions = nullptr;
-    cl_mem combined_out_magnitudes = nullptr;
+    cl_mem combined_out_maxima = nullptr;
     cl_mem combined_out_counts = nullptr;
 
     if (dest == OutputDestination::GPU || dest == OutputDestination::ALL) {
@@ -466,37 +419,26 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline(
             static_cast<uint32_t>(params_.max_maxima_per_beam)
         );
 
-        combined_out_positions = clCreateBuffer(context_, CL_MEM_READ_WRITE,
-            antenna_count * max_output_per_beam * sizeof(uint32_t), nullptr, &err);
+        combined_out_maxima = clCreateBuffer(context_, CL_MEM_READ_WRITE,
+            antenna_count * max_output_per_beam * sizeof(MaxValue), nullptr, &err);
         if (err != CL_SUCCESS)
-            throw std::runtime_error("FindAllMaximaFromGPUPipeline(batch): combined_out_positions alloc failed");
-
-        combined_out_magnitudes = clCreateBuffer(context_, CL_MEM_READ_WRITE,
-            antenna_count * max_output_per_beam * sizeof(float), nullptr, &err);
-        if (err != CL_SUCCESS) {
-            clReleaseMemObject(combined_out_positions);
-            throw std::runtime_error("FindAllMaximaFromGPUPipeline(batch): combined_out_magnitudes alloc failed");
-        }
+            throw std::runtime_error("FindAllMaximaFromGPUPipeline(batch): combined_out_maxima alloc failed");
 
         combined_out_counts = clCreateBuffer(context_, CL_MEM_READ_WRITE,
             antenna_count * sizeof(uint32_t), nullptr, &err);
         if (err != CL_SUCCESS) {
-            clReleaseMemObject(combined_out_positions);
-            clReleaseMemObject(combined_out_magnitudes);
+            clReleaseMemObject(combined_out_maxima);
             throw std::runtime_error("FindAllMaximaFromGPUPipeline(batch): combined_out_counts alloc failed");
         }
     }
 
-    const int gpu_id = 0;
-    auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
-    const bool do_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(gpu_id);
+    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
 
     // Обрабатываем каждый batch
     for (const auto& batch : batches) {
         con.Print(0, "AllMaxima", "  Processing batch: beams [" +
             std::to_string(batch.start) + ".." + std::to_string(batch.start + batch.count - 1) + "]");
 
-        // Переконфигурировать буферы и FFT план
         ReallocateBuffersForBatch(batch.count);
         actual_batch_size_ = batch.count;
         CreateAllMaximaFFTPlan(batch.count);
@@ -514,31 +456,18 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline(
             throw std::runtime_error("FindAllMaximaFromGPUPipeline(batch): CopyBuffer failed");
         }
 
-        if (do_prof && copy_event) {
-            clWaitForEvents(1, &copy_event);
-            drv_gpu_lib::OpenCLProfilingData pdata{};
-            if (drv_gpu_lib::FillOpenCLProfilingData(copy_event, pdata))
-                profiler.Record(gpu_id, "AllMaxima", "GPU→GPU Copy_Batch", pdata);
-        }
+        drv_gpu_lib::RecordProfilingEvent(copy_event, gpu_id, "AllMaxima", "GPU→GPU Copy_Batch");
 
-        // FFT
         cl_event fft_event = ExecuteAllMaximaFFT(copy_event);
         clReleaseEvent(copy_event);
-
-        if (do_prof && fft_event) {
-            clWaitForEvents(1, &fft_event);
-            drv_gpu_lib::OpenCLProfilingData pdata{};
-            if (drv_gpu_lib::FillOpenCLProfilingData(fft_event, pdata))
-                profiler.Record(gpu_id, "AllMaxima", "FFT_Batch", pdata);
-        }
+        drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "AllMaxima", "FFT_Batch");
 
         // Detect → Scan → Compact с beam_offset и внешними буферами
         AllMaximaResult batch_result = FindAllMaxima(
             fft_output_, static_cast<uint32_t>(batch.count), params_.nFFT,
             params_.sample_rate, dest, search_start, search_end,
             static_cast<uint32_t>(batch.start),  // beam_offset
-            combined_out_positions,               // external buffers (nullptr для CPU)
-            combined_out_magnitudes,
+            combined_out_maxima,                  // external buffers (nullptr для CPU)
             combined_out_counts);
 
         clReleaseEvent(fft_event);
@@ -553,10 +482,15 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline(
         combined.total_maxima += batch_result.total_maxima;
     }
 
-    // Cleanup GPU буферов если были созданы
-    if (combined_out_positions) clReleaseMemObject(combined_out_positions);
-    if (combined_out_magnitudes) clReleaseMemObject(combined_out_magnitudes);
-    if (combined_out_counts) clReleaseMemObject(combined_out_counts);
+    // Передаём владение GPU-буферами caller'у (не освобождаем!)
+    if (dest == OutputDestination::GPU || dest == OutputDestination::ALL) {
+        combined.gpu_maxima = combined_out_maxima;
+        combined.gpu_counts = combined_out_counts;
+        uint32_t max_per_beam = std::min(
+            (search_end > search_start ? (search_end - search_start) / 2 : params_.nFFT / 4),
+            static_cast<uint32_t>(params_.max_maxima_per_beam));
+        combined.gpu_bytes = antenna_count * max_per_beam * sizeof(MaxValue);
+    }
 
     return combined;
 }
@@ -860,8 +794,7 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
     uint32_t search_start,
     uint32_t search_end,
     uint32_t beam_offset,
-    cl_mem external_out_positions,
-    cl_mem external_out_magnitudes,
+    cl_mem external_out_maxima,
     cl_mem external_out_counts)
 {
     if (!fft_data)
@@ -884,9 +817,7 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
     cl_int err;
     const size_t total_elements = static_cast<size_t>(beam_count) * nFFT;
 
-    const int gpu_id = 0;
-    auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
-    const bool do_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(gpu_id);
+    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
 
     // ═══════════════════════════════════════════════════════════════════════
     // 0. Обеспечить magnitudes_buffer_ (pre-computed |FFT[i]|)
@@ -917,12 +848,7 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
         if (err != CL_SUCCESS)
             throw std::runtime_error("FindAllMaxima: compute_magnitudes NDRange failed: " + std::to_string(err));
 
-        double mag_ms = ProfileEvent(mag_event, "AllMaxima_ComputeMag");
-        if (do_prof) {
-            drv_gpu_lib::OpenCLProfilingData data{};
-            if (drv_gpu_lib::FillOpenCLProfilingData(mag_event, data))
-                profiler.Record(gpu_id, "AllMaxima", "ComputeMagnitudes", data);
-        }
+        drv_gpu_lib::RecordProfilingEvent(mag_event, gpu_id, "AllMaxima", "ComputeMagnitudes");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -946,28 +872,18 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
     );
 
     // Выходные буферы: используем внешние если переданы, иначе создаём свои
-    bool use_external_buffers = (external_out_positions != nullptr);
-    cl_mem out_positions = external_out_positions;
-    cl_mem out_magnitudes = external_out_magnitudes;
+    bool use_external_buffers = (external_out_maxima != nullptr);
+    cl_mem out_maxima = external_out_maxima;
     cl_mem out_beam_counts = external_out_counts;
 
     if (!use_external_buffers) {
         // Создаём локальные буферы на beam_count
-        out_positions = clCreateBuffer(context_, CL_MEM_READ_WRITE,
-            static_cast<size_t>(beam_count) * max_output_per_beam * sizeof(uint32_t), nullptr, &err);
+        out_maxima = clCreateBuffer(context_, CL_MEM_READ_WRITE,
+            static_cast<size_t>(beam_count) * max_output_per_beam * sizeof(MaxValue), nullptr, &err);
         if (err != CL_SUCCESS) {
             clReleaseMemObject(flags_buf);
             clReleaseMemObject(scan_buf);
-            throw std::runtime_error("FindAllMaxima: out_positions alloc failed: " + std::to_string(err));
-        }
-
-        out_magnitudes = clCreateBuffer(context_, CL_MEM_READ_WRITE,
-            static_cast<size_t>(beam_count) * max_output_per_beam * sizeof(float), nullptr, &err);
-        if (err != CL_SUCCESS) {
-            clReleaseMemObject(flags_buf);
-            clReleaseMemObject(scan_buf);
-            clReleaseMemObject(out_positions);
-            throw std::runtime_error("FindAllMaxima: out_magnitudes alloc failed: " + std::to_string(err));
+            throw std::runtime_error("FindAllMaxima: out_maxima alloc failed: " + std::to_string(err));
         }
 
         out_beam_counts = clCreateBuffer(context_, CL_MEM_READ_WRITE,
@@ -975,8 +891,7 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
         if (err != CL_SUCCESS) {
             clReleaseMemObject(flags_buf);
             clReleaseMemObject(scan_buf);
-            clReleaseMemObject(out_positions);
-            clReleaseMemObject(out_magnitudes);
+            clReleaseMemObject(out_maxima);
             throw std::runtime_error("FindAllMaxima: out_beam_counts alloc failed: " + std::to_string(err));
         }
     }
@@ -994,8 +909,7 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
         if (err != CL_SUCCESS) {
             clReleaseMemObject(flags_buf);
             clReleaseMemObject(scan_buf);
-            clReleaseMemObject(out_positions);
-            clReleaseMemObject(out_magnitudes);
+            clReleaseMemObject(out_maxima);
             clReleaseMemObject(out_beam_counts);
             throw std::runtime_error("FindAllMaxima: detect setKernelArg failed: " + std::to_string(err));
         }
@@ -1012,19 +926,13 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
             if (mag_event) clReleaseEvent(mag_event);
             clReleaseMemObject(flags_buf);
             clReleaseMemObject(scan_buf);
-            clReleaseMemObject(out_positions);
-            clReleaseMemObject(out_magnitudes);
+            clReleaseMemObject(out_maxima);
             clReleaseMemObject(out_beam_counts);
             throw std::runtime_error("FindAllMaxima: detect NDRange failed: " + std::to_string(err));
         }
         if (mag_event) clReleaseEvent(mag_event);
 
-        double detect_ms = ProfileEvent(detect_event, "AllMaxima_Detect");
-        if (do_prof) {
-            drv_gpu_lib::OpenCLProfilingData data{};
-            if (drv_gpu_lib::FillOpenCLProfilingData(detect_event, data))
-                profiler.Record(gpu_id, "AllMaxima", "Detect", data);
-        }
+        drv_gpu_lib::RecordProfilingEvent(detect_event, gpu_id, "AllMaxima", "Detect");
 
     // ═══════════════════════════════════════════════════════════════════════
     // 3. Beam-aware Parallel Prefix Sum
@@ -1032,23 +940,18 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
         cl_event scan_all_event = ExecutePrefixSum(
             flags_buf, scan_buf, nFFT, beam_count, detect_event);
 
-        double scan_ms = ProfileEvent(scan_all_event, "AllMaxima_Scan");
-        if (do_prof) {
-            drv_gpu_lib::OpenCLProfilingData data{};
-            if (drv_gpu_lib::FillOpenCLProfilingData(scan_all_event, data))
-                profiler.Record(gpu_id, "AllMaxima", "Scan", data);
-        }
+        drv_gpu_lib::RecordProfilingEvent(scan_all_event, gpu_id, "AllMaxima", "Scan");
 
     // ═══════════════════════════════════════════════════════════════════════
     // 4. Compaction kernel (reads float* magnitudes_buffer_)
     // ═══════════════════════════════════════════════════════════════════════
         // beam_offset передан как параметр функции
 
-        err = clSetKernelArg(compact_kernel_, 0, sizeof(cl_mem), &magnitudes_buffer_);
-        err |= clSetKernelArg(compact_kernel_, 1, sizeof(cl_mem), &flags_buf);
-        err |= clSetKernelArg(compact_kernel_, 2, sizeof(cl_mem), &scan_buf);
-        err |= clSetKernelArg(compact_kernel_, 3, sizeof(cl_mem), &out_positions);
-        err |= clSetKernelArg(compact_kernel_, 4, sizeof(cl_mem), &out_magnitudes);
+        err = clSetKernelArg(compact_kernel_, 0, sizeof(cl_mem), &fft_data);
+        err |= clSetKernelArg(compact_kernel_, 1, sizeof(cl_mem), &magnitudes_buffer_);
+        err |= clSetKernelArg(compact_kernel_, 2, sizeof(cl_mem), &flags_buf);
+        err |= clSetKernelArg(compact_kernel_, 3, sizeof(cl_mem), &scan_buf);
+        err |= clSetKernelArg(compact_kernel_, 4, sizeof(cl_mem), &out_maxima);
         err |= clSetKernelArg(compact_kernel_, 5, sizeof(cl_mem), &out_beam_counts);
         err |= clSetKernelArg(compact_kernel_, 6, sizeof(uint32_t), &beam_count);
         err |= clSetKernelArg(compact_kernel_, 7, sizeof(uint32_t), &nFFT);
@@ -1069,18 +972,12 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
         if (err != CL_SUCCESS) {
             clReleaseMemObject(flags_buf);
             clReleaseMemObject(scan_buf);
-            clReleaseMemObject(out_positions);
-            clReleaseMemObject(out_magnitudes);
+            clReleaseMemObject(out_maxima);
             clReleaseMemObject(out_beam_counts);
             throw std::runtime_error("FindAllMaxima: compact NDRange failed: " + std::to_string(err));
         }
 
-        double compact_ms = ProfileEvent(compact_event, "AllMaxima_Compact");
-        if (do_prof) {
-            drv_gpu_lib::OpenCLProfilingData data{};
-            if (drv_gpu_lib::FillOpenCLProfilingData(compact_event, data))
-                profiler.Record(gpu_id, "AllMaxima", "Compact", data);
-        }
+        drv_gpu_lib::RecordProfilingEvent(compact_event, gpu_id, "AllMaxima", "Compact");
 
     // ═══════════════════════════════════════════════════════════════════════
     // 5. Читаем beam_counts
@@ -1101,8 +998,6 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
         result.destination = dest;
         result.total_maxima = 0;
 
-        float bin_width = sample_rate / static_cast<float>(nFFT);
-
         if (dest == OutputDestination::CPU || dest == OutputDestination::ALL) {
             result.beams.resize(beam_count);
 
@@ -1121,49 +1016,38 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
                 result.total_maxima += count;
 
                 if (count > 0) {
-                    result.beams[b].positions.resize(count);
-                    result.beams[b].magnitudes.resize(count);
-                    result.beams[b].frequencies.resize(count);
+                    result.beams[b].maxima.resize(count);
 
                     size_t out_offset = static_cast<size_t>(b) * max_output_per_beam;
 
-                    clEnqueueReadBuffer(queue_, out_positions, CL_TRUE,
-                        out_offset * sizeof(uint32_t),
-                        count * sizeof(uint32_t),
-                        result.beams[b].positions.data(),
+                    clEnqueueReadBuffer(queue_, out_maxima, CL_TRUE,
+                        out_offset * sizeof(MaxValue),
+                        count * sizeof(MaxValue),
+                        result.beams[b].maxima.data(),
                         0, nullptr, nullptr);
-
-                    clEnqueueReadBuffer(queue_, out_magnitudes, CL_TRUE,
-                        out_offset * sizeof(float),
-                        count * sizeof(float),
-                        result.beams[b].magnitudes.data(),
-                        0, nullptr, nullptr);
-
-                    for (uint32_t m = 0; m < count; ++m) {
-                        result.beams[b].frequencies[m] =
-                            static_cast<float>(result.beams[b].positions[m]) * bin_width;
-                    }
                 }
             }
         } else {
+            // Dest=GPU: заполняем beams метаданными (antenna_id, num_maxima) для caller
+            result.beams.resize(beam_count);
             for (uint32_t b = 0; b < beam_count; ++b) {
-                result.total_maxima += beam_counts[b];
+                uint32_t count = beam_counts[b];
+                if (count > max_output_per_beam) count = max_output_per_beam;
+                result.beams[b].antenna_id = b;
+                result.beams[b].num_maxima = count;
+                result.total_maxima += count;
             }
         }
 
         if (dest == OutputDestination::GPU || dest == OutputDestination::ALL) {
-            result.gpu_positions = out_positions;
-            result.gpu_magnitudes = out_magnitudes;
+            result.gpu_maxima = out_maxima;
             result.gpu_counts = out_beam_counts;
-            out_positions = nullptr;
-            out_magnitudes = nullptr;
+            result.gpu_bytes = static_cast<size_t>(beam_count) * max_output_per_beam * sizeof(MaxValue);
+            out_maxima = nullptr;
             out_beam_counts = nullptr;
         }
 
-        con.Print(0, "AllMaxima", "Found " + std::to_string(result.total_maxima) + " maxima"
-            + " | detect=" + std::to_string(detect_ms) + "ms"
-            + " scan=" + std::to_string(scan_ms) + "ms"
-            + " compact=" + std::to_string(compact_ms) + "ms");
+        con.Print(0, "AllMaxima", "Found " + std::to_string(result.total_maxima) + " maxima");
 
         // Освобождаем временные буферы
         clReleaseMemObject(flags_buf);
@@ -1171,8 +1055,7 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
 
         // Освобождаем выходные буферы только если они НЕ внешние
         if (!use_external_buffers) {
-            if (out_positions) clReleaseMemObject(out_positions);
-            if (out_magnitudes) clReleaseMemObject(out_magnitudes);
+            if (out_maxima) clReleaseMemObject(out_maxima);
             if (out_beam_counts) clReleaseMemObject(out_beam_counts);
         }
 

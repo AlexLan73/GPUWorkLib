@@ -66,15 +66,14 @@ public:
         OutputDestination dest = OutputDestination::CPU,
         uint32_t search_start = 0, uint32_t search_end = 0) override;
 
-    DriverType GetDriverType() const override { return DriverType::ROCM; }
-    const ProfilingData& GetProfilingData() const override;
+    DriverType GetDriverType() const override { return DriverType::ROCm; }
+    ProfilingData GetProfilingData() const override;
     void ReallocateBuffersForBatch(size_t batch_antenna_count) override;
     size_t CalculateBytesPerAntenna() const override;
     void CompilePostKernel() override;
 
 private:
     drv_gpu_lib::IBackend* backend_ = nullptr;
-    static const ProfilingData kEmptyProfiling;
 };
 
 } // namespace antenna_fft

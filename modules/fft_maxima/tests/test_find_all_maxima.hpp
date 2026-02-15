@@ -138,8 +138,8 @@ inline bool TestThreePeaks(IBackend* backend) {
     auto& beam = result.beams[0];
     std::cout << "  GPU result: " << beam.num_maxima << " максимумов\n";
     for (uint32_t i = 0; i < beam.num_maxima && i < 10; ++i) {
-        std::cout << "    bin=" << beam.positions[i] << " freq=" << beam.frequencies[i]
-                  << " Hz, mag=" << beam.magnitudes[i] << "\n";
+        std::cout << "    bin=" << beam.maxima[i].index << " freq=" << beam.maxima[i].refined_frequency
+                  << " Hz, mag=" << beam.maxima[i].magnitude << "\n";
     }
 
     // Проверяем что GPU нашёл все CPU максимумы
@@ -147,7 +147,7 @@ inline bool TestThreePeaks(IBackend* backend) {
     for (auto cpu_pos : cpu_maxima) {
         bool found = false;
         for (uint32_t i = 0; i < beam.num_maxima; ++i) {
-            if (beam.positions[i] == cpu_pos) {
+            if (beam.maxima[i].index == cpu_pos) {
                 found = true;
                 break;
             }
@@ -164,7 +164,7 @@ inline bool TestThreePeaks(IBackend* backend) {
         uint32_t expected_bin = static_cast<uint32_t>(ef * nFFT / sample_rate + 0.5f);
         bool found = false;
         for (uint32_t i = 0; i < beam.num_maxima; ++i) {
-            if (std::abs(static_cast<int>(beam.positions[i]) - static_cast<int>(expected_bin)) <= 1) {
+            if (std::abs(static_cast<int>(beam.maxima[i].index) - static_cast<int>(expected_bin)) <= 1) {
                 found = true;
                 break;
             }
@@ -240,7 +240,7 @@ inline bool TestMultiBeam(IBackend* backend) {
 
         bool found = false;
         for (uint32_t i = 0; i < beam.num_maxima; ++i) {
-            if (std::abs(static_cast<int>(beam.positions[i]) - static_cast<int>(expected_bin)) <= 1) {
+            if (std::abs(static_cast<int>(beam.maxima[i].index) - static_cast<int>(expected_bin)) <= 1) {
                 found = true;
                 break;
             }
@@ -289,12 +289,11 @@ inline bool TestGpuOutput(IBackend* backend) {
 
     clReleaseMemObject(gpu_fft);
 
-    bool ok = (result.gpu_positions != nullptr) && (result.gpu_counts != nullptr) && (result.total_maxima > 0);
+    bool ok = (result.gpu_maxima != nullptr) && (result.gpu_counts != nullptr) && (result.total_maxima > 0);
 
     if (ok) {
         std::cout << "  total_maxima: " << result.total_maxima << "\n";
-        std::cout << "  gpu_positions: " << (result.gpu_positions ? "OK" : "NULL") << "\n";
-        std::cout << "  gpu_magnitudes: " << (result.gpu_magnitudes ? "OK" : "NULL") << "\n";
+        std::cout << "  gpu_maxima: " << (result.gpu_maxima ? "OK" : "NULL") << "\n";
         std::cout << "  gpu_counts: " << (result.gpu_counts ? "OK" : "NULL") << "\n";
         std::cout << "  PASS: GPU buffers returned\n";
     } else {
@@ -302,8 +301,7 @@ inline bool TestGpuOutput(IBackend* backend) {
     }
 
     // Освобождаем GPU буферы (наша ответственность)
-    if (result.gpu_positions) clReleaseMemObject(static_cast<cl_mem>(result.gpu_positions));
-    if (result.gpu_magnitudes) clReleaseMemObject(static_cast<cl_mem>(result.gpu_magnitudes));
+    if (result.gpu_maxima) clReleaseMemObject(static_cast<cl_mem>(result.gpu_maxima));
     if (result.gpu_counts) clReleaseMemObject(static_cast<cl_mem>(result.gpu_counts));
 
     return ok;
@@ -368,7 +366,7 @@ inline bool TestFullPipelineCPU(IBackend* backend) {
         uint32_t expected_bin = static_cast<uint32_t>(ef * nFFT / sample_rate + 0.5f);
         bool found = false;
         for (uint32_t i = 0; i < beam.num_maxima; ++i) {
-            if (std::abs(static_cast<int>(beam.positions[i]) - static_cast<int>(expected_bin)) <= 1) {
+            if (std::abs(static_cast<int>(beam.maxima[i].index) - static_cast<int>(expected_bin)) <= 1) {
                 found = true;
                 break;
             }
@@ -444,7 +442,7 @@ inline bool TestFullPipelineGPU(IBackend* backend) {
 
         bool found = false;
         for (uint32_t i = 0; i < beam.num_maxima; ++i) {
-            if (std::abs(static_cast<int>(beam.positions[i]) - static_cast<int>(expected_bin)) <= 1) {
+            if (std::abs(static_cast<int>(beam.maxima[i].index) - static_cast<int>(expected_bin)) <= 1) {
                 found = true;
                 break;
             }
@@ -522,7 +520,7 @@ inline bool TestAllMaximaCPU(IBackend* backend) {
         uint32_t expected_bin = static_cast<uint32_t>(ef * nFFT / sample_rate + 0.5f);
         bool found = false;
         for (uint32_t i = 0; i < beam.num_maxima; ++i) {
-            if (std::abs(static_cast<int>(beam.positions[i]) - static_cast<int>(expected_bin)) <= 1) {
+            if (std::abs(static_cast<int>(beam.maxima[i].index) - static_cast<int>(expected_bin)) <= 1) {
                 found = true;
                 break;
             }
@@ -595,7 +593,7 @@ inline bool TestAllMaximaGPU(IBackend* backend) {
 
         bool found = false;
         for (uint32_t i = 0; i < beam.num_maxima; ++i) {
-            if (std::abs(static_cast<int>(beam.positions[i]) - static_cast<int>(expected_bin)) <= 1) {
+            if (std::abs(static_cast<int>(beam.maxima[i].index) - static_cast<int>(expected_bin)) <= 1) {
                 found = true;
                 break;
             }

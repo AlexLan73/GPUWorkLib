@@ -493,7 +493,7 @@ public:
 
     // ── Profiling info ───────────────────────────────────────────────
     py::dict get_profiling() const {
-        auto& p = fft_.GetProfilingData();
+        auto p = fft_.GetProfilingData();
         py::dict d;
         d["upload_ms"] = p.upload_time_ms;
         d["fft_ms"] = p.fft_time_ms;
@@ -621,14 +621,22 @@ public:
 
         clReleaseMemObject(gpu_fft);
 
-        // Convert to Python
+        // Convert to Python (extract from MaxValue for backward compatibility)
         if (beam_count == 1 && result.beams.size() == 1) {
             // Single beam: return dict
             auto& b = result.beams[0];
             py::dict out;
-            out["positions"] = vector_to_numpy(std::move(b.positions));
-            out["magnitudes"] = vector_to_numpy(std::move(b.magnitudes));
-            out["frequencies"] = vector_to_numpy(std::move(b.frequencies));
+            std::vector<uint32_t> positions; positions.reserve(b.maxima.size());
+            std::vector<float> magnitudes; magnitudes.reserve(b.maxima.size());
+            std::vector<float> frequencies; frequencies.reserve(b.maxima.size());
+            for (const auto& m : b.maxima) {
+                positions.push_back(m.index);
+                magnitudes.push_back(m.magnitude);
+                frequencies.push_back(m.refined_frequency);
+            }
+            out["positions"] = vector_to_numpy(std::move(positions));
+            out["magnitudes"] = vector_to_numpy(std::move(magnitudes));
+            out["frequencies"] = vector_to_numpy(std::move(frequencies));
             out["num_maxima"] = b.num_maxima;
             return out;
         } else {
@@ -636,10 +644,18 @@ public:
             py::list beams;
             for (auto& b : result.beams) {
                 py::dict out;
+                std::vector<uint32_t> positions; positions.reserve(b.maxima.size());
+                std::vector<float> magnitudes; magnitudes.reserve(b.maxima.size());
+                std::vector<float> frequencies; frequencies.reserve(b.maxima.size());
+                for (const auto& m : b.maxima) {
+                    positions.push_back(m.index);
+                    magnitudes.push_back(m.magnitude);
+                    frequencies.push_back(m.refined_frequency);
+                }
                 out["antenna_id"] = b.antenna_id;
-                out["positions"] = vector_to_numpy(std::move(b.positions));
-                out["magnitudes"] = vector_to_numpy(std::move(b.magnitudes));
-                out["frequencies"] = vector_to_numpy(std::move(b.frequencies));
+                out["positions"] = vector_to_numpy(std::move(positions));
+                out["magnitudes"] = vector_to_numpy(std::move(magnitudes));
+                out["frequencies"] = vector_to_numpy(std::move(frequencies));
                 out["num_maxima"] = b.num_maxima;
                 beams.append(out);
             }

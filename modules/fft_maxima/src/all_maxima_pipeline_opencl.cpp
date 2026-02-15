@@ -288,9 +288,8 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
     uint32_t search_end,
     size_t max_maxima_per_beam)
 {
-    (void)fft_data_gpu;  // unused — frequencies from positions * bin_width
-
     cl_mem mag_mem = static_cast<cl_mem>(magnitudes_gpu);
+    cl_mem fft_mem = static_cast<cl_mem>(fft_data_gpu);
     if (!mag_mem)
         throw std::invalid_argument("AllMaximaPipeline::Execute: magnitudes_gpu cannot be null");
 
@@ -325,21 +324,12 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
         static_cast<uint32_t>(max_maxima_per_beam)
     );
 
-    cl_mem out_positions = clCreateBuffer(context_, CL_MEM_READ_WRITE,
-        static_cast<size_t>(beam_count) * max_output_per_beam * sizeof(uint32_t), nullptr, &err);
+    cl_mem out_maxima = clCreateBuffer(context_, CL_MEM_READ_WRITE,
+        static_cast<size_t>(beam_count) * max_output_per_beam * sizeof(MaxValue), nullptr, &err);
     if (err != CL_SUCCESS) {
         clReleaseMemObject(flags_buf);
         clReleaseMemObject(scan_buf);
-        throw std::runtime_error("AllMaximaPipeline: out_positions alloc failed: " + std::to_string(err));
-    }
-
-    cl_mem out_magnitudes = clCreateBuffer(context_, CL_MEM_READ_WRITE,
-        static_cast<size_t>(beam_count) * max_output_per_beam * sizeof(float), nullptr, &err);
-    if (err != CL_SUCCESS) {
-        clReleaseMemObject(flags_buf);
-        clReleaseMemObject(scan_buf);
-        clReleaseMemObject(out_positions);
-        throw std::runtime_error("AllMaximaPipeline: out_magnitudes alloc failed: " + std::to_string(err));
+        throw std::runtime_error("AllMaximaPipeline: out_maxima alloc failed: " + std::to_string(err));
     }
 
     cl_mem out_beam_counts = clCreateBuffer(context_, CL_MEM_READ_WRITE,
@@ -347,8 +337,7 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
     if (err != CL_SUCCESS) {
         clReleaseMemObject(flags_buf);
         clReleaseMemObject(scan_buf);
-        clReleaseMemObject(out_positions);
-        clReleaseMemObject(out_magnitudes);
+        clReleaseMemObject(out_maxima);
         throw std::runtime_error("AllMaximaPipeline: out_beam_counts alloc failed: " + std::to_string(err));
     }
 
@@ -361,8 +350,7 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
     if (err != CL_SUCCESS) {
         clReleaseMemObject(flags_buf);
         clReleaseMemObject(scan_buf);
-        clReleaseMemObject(out_positions);
-        clReleaseMemObject(out_magnitudes);
+        clReleaseMemObject(out_maxima);
         clReleaseMemObject(out_beam_counts);
         throw std::runtime_error("AllMaximaPipeline: detect setKernelArg failed: " + std::to_string(err));
     }
@@ -376,8 +364,7 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
     if (err != CL_SUCCESS) {
         clReleaseMemObject(flags_buf);
         clReleaseMemObject(scan_buf);
-        clReleaseMemObject(out_positions);
-        clReleaseMemObject(out_magnitudes);
+        clReleaseMemObject(out_maxima);
         clReleaseMemObject(out_beam_counts);
         throw std::runtime_error("AllMaximaPipeline: detect NDRange failed: " + std::to_string(err));
     }
@@ -401,11 +388,14 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
 
     uint32_t beam_offset = 0;  // Для single-batch режима offset = 0
 
-    err = clSetKernelArg(compact_kernel_, 0, sizeof(cl_mem), &mag_mem);
-    err |= clSetKernelArg(compact_kernel_, 1, sizeof(cl_mem), &flags_buf);
-    err |= clSetKernelArg(compact_kernel_, 2, sizeof(cl_mem), &scan_buf);
-    err |= clSetKernelArg(compact_kernel_, 3, sizeof(cl_mem), &out_positions);
-    err |= clSetKernelArg(compact_kernel_, 4, sizeof(cl_mem), &out_magnitudes);
+    if (!fft_mem)
+        throw std::invalid_argument("AllMaximaPipeline::Execute: fft_data_gpu required for MaxValue output");
+
+    err = clSetKernelArg(compact_kernel_, 0, sizeof(cl_mem), &fft_mem);
+    err |= clSetKernelArg(compact_kernel_, 1, sizeof(cl_mem), &mag_mem);
+    err |= clSetKernelArg(compact_kernel_, 2, sizeof(cl_mem), &flags_buf);
+    err |= clSetKernelArg(compact_kernel_, 3, sizeof(cl_mem), &scan_buf);
+    err |= clSetKernelArg(compact_kernel_, 4, sizeof(cl_mem), &out_maxima);
     err |= clSetKernelArg(compact_kernel_, 5, sizeof(cl_mem), &out_beam_counts);
     err |= clSetKernelArg(compact_kernel_, 6, sizeof(uint32_t), &beam_count);
     err |= clSetKernelArg(compact_kernel_, 7, sizeof(uint32_t), &nFFT);
@@ -425,8 +415,7 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
     if (err != CL_SUCCESS) {
         clReleaseMemObject(flags_buf);
         clReleaseMemObject(scan_buf);
-        clReleaseMemObject(out_positions);
-        clReleaseMemObject(out_magnitudes);
+        clReleaseMemObject(out_maxima);
         clReleaseMemObject(out_beam_counts);
         throw std::runtime_error("AllMaximaPipeline: compact NDRange failed: " + std::to_string(err));
     }
@@ -451,8 +440,6 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
     result.destination = dest;
     result.total_maxima = 0;
 
-    float bin_width = sample_rate / static_cast<float>(nFFT);
-
     if (dest == OutputDestination::CPU || dest == OutputDestination::ALL) {
         result.beams.resize(beam_count);
 
@@ -470,28 +457,15 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
             result.total_maxima += count;
 
             if (count > 0) {
-                result.beams[b].positions.resize(count);
-                result.beams[b].magnitudes.resize(count);
-                result.beams[b].frequencies.resize(count);
+                result.beams[b].maxima.resize(count);
 
                 size_t out_offset = static_cast<size_t>(b) * max_output_per_beam;
 
-                clEnqueueReadBuffer(queue_, out_positions, CL_TRUE,
-                    out_offset * sizeof(uint32_t),
-                    count * sizeof(uint32_t),
-                    result.beams[b].positions.data(),
+                clEnqueueReadBuffer(queue_, out_maxima, CL_TRUE,
+                    out_offset * sizeof(MaxValue),
+                    count * sizeof(MaxValue),
+                    result.beams[b].maxima.data(),
                     0, nullptr, nullptr);
-
-                clEnqueueReadBuffer(queue_, out_magnitudes, CL_TRUE,
-                    out_offset * sizeof(float),
-                    count * sizeof(float),
-                    result.beams[b].magnitudes.data(),
-                    0, nullptr, nullptr);
-
-                for (uint32_t m = 0; m < count; ++m) {
-                    result.beams[b].frequencies[m] =
-                        static_cast<float>(result.beams[b].positions[m]) * bin_width;
-                }
             }
         }
     } else {
@@ -501,11 +475,10 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
     }
 
     if (dest == OutputDestination::GPU || dest == OutputDestination::ALL) {
-        result.gpu_positions = out_positions;
-        result.gpu_magnitudes = out_magnitudes;
+        result.gpu_maxima = out_maxima;
         result.gpu_counts = out_beam_counts;
-        out_positions = nullptr;
-        out_magnitudes = nullptr;
+        result.gpu_bytes = static_cast<size_t>(beam_count) * max_output_per_beam * sizeof(MaxValue);
+        out_maxima = nullptr;
         out_beam_counts = nullptr;
     }
 
@@ -516,8 +489,7 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
 
     clReleaseMemObject(flags_buf);
     clReleaseMemObject(scan_buf);
-    if (out_positions) clReleaseMemObject(out_positions);
-    if (out_magnitudes) clReleaseMemObject(out_magnitudes);
+    if (out_maxima) clReleaseMemObject(out_maxima);
     if (out_beam_counts) clReleaseMemObject(out_beam_counts);
 
     return result;

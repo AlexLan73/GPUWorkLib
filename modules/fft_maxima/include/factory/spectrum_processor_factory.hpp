@@ -2,7 +2,7 @@
 
 /**
  * @file spectrum_processor_factory.hpp
- * @brief Factory for creating ISpectrumProcessor by DriverType
+ * @brief Factory for creating ISpectrumProcessor by BackendType
  *
  * GRASP: Creator — factory creates processor instances.
  * Part of SpectrumMaximaFinder refactoring (Phase 2).
@@ -21,23 +21,23 @@ namespace antenna_fft {
 
 /**
  * @class SpectrumProcessorFactory
- * @brief Creates ISpectrumProcessor by DriverType
+ * @brief Creates ISpectrumProcessor by BackendType
  *
  * Usage:
- *   auto proc = SpectrumProcessorFactory::Create(DriverType::OPENCL, backend);
- *   auto proc = SpectrumProcessorFactory::Create(DriverType::ROCM, backend);  // stub
+ *   auto proc = SpectrumProcessorFactory::Create(BackendType::OPENCL, backend);
+ *   auto proc = SpectrumProcessorFactory::Create(BackendType::ROCm, backend);  // stub
  */
 class SpectrumProcessorFactory {
 public:
-    /**
-     * @brief Create processor for given driver type
-     * @param driver OPENCL or ROCM (AUTO defaults to OPENCL)
-     * @param backend DrvGPU backend (non-owning)
-     * @return unique_ptr to processor, never null
-     * @throws std::runtime_error if ROCm requested (not implemented)
-     */
+/**
+ * @brief Create processor for given backend type
+ * @param backend_type OPENCL or ROCm (AUTO defaults to OPENCL)
+ * @param backend DrvGPU backend (non-owning)
+ * @return unique_ptr to processor, never null
+ * @throws std::runtime_error if ROCm requested (not implemented)
+ */
     static std::unique_ptr<ISpectrumProcessor> Create(
-        DriverType driver,
+        drv_gpu_lib::BackendType backend_type,
         drv_gpu_lib::IBackend* backend);
 };
 

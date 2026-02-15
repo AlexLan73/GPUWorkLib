@@ -114,9 +114,9 @@ public:
     virtual DriverType GetDriverType() const = 0;
 
     /**
-     * @brief Get profiling data from last operation
+     * @brief Get profiling data (aggregated from GPUProfiler for this module)
      */
-    virtual const ProfilingData& GetProfilingData() const = 0;
+    virtual ProfilingData GetProfilingData() const = 0;
 
     /**
      * @brief Reallocate buffers for batch processing

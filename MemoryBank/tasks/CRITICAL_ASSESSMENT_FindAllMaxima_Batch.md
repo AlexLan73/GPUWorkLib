@@ -74,22 +74,22 @@ auto result = finder.FindAllMaxima(input_gpu, OutputDestination::GPU);
 ## 4. Таски
 
 ### Критические баги (срочно)
-- [ ] **TASK-1:** Исправить Dest=GPU в FindAllMaximaFromCPU (строки 354-357)
-- [ ] **TASK-2:** Исправить Dest=GPU в FindAllMaximaFromGPUPipeline (строки 555-558)
-- [ ] **TASK-3:** Исправить memory_limit в test_batch_all_maxima.hpp (0.01f вместо 512*1024)
+- [x] **TASK-1:** Исправить Dest=GPU в FindAllMaximaFromCPU (строки 354-357) — DONE
+- [x] **TASK-2:** Исправить Dest=GPU в FindAllMaximaFromGPUPipeline (строки 555-558) — DONE
+- [x] **TASK-3:** Исправить memory_limit в test_batch_all_maxima.hpp (0.01f вместо 512*1024) — DONE
 
 ### Формат вывода MaxValue
-- [ ] **TASK-4:** Перейти на формат MaxValue — kernel compact_maxima пишет MaxValue[] вместо positions+magnitudes
-- [ ] **TASK-5:** CPU: `AllMaximaResult.beams` = `vector<vector<MaxValue>>` (beams[beam_idx][peak_idx])
-- [ ] **TASK-6:** GPU: один буфер `MaxValue[]` (ray0[...], ray1[...], ...) + gpu_counts; метаданные: beam_count, max_per_beam, total_maxima, gpu_bytes
-- [ ] **TASK-7:** Алгоритм: index, real, imag, magnitude, phase из FFT; freq_offset=0; refined_frequency=index*bin_width (без mirror)
+- [x] **TASK-4:** Перейти на формат MaxValue — kernel compact_maxima пишет MaxValue[] вместо positions+magnitudes — DONE
+- [x] **TASK-5:** CPU: `AllMaximaResult.beams` = `vector<vector<MaxValue>>` (beams[beam_idx][peak_idx]) — DONE
+- [x] **TASK-6:** GPU: один буфер `MaxValue[]` (ray0[...], ray1[...], ...) + gpu_counts; метаданные: beam_count, max_per_beam, total_maxima, gpu_bytes — DONE
+- [x] **TASK-7:** Алгоритм: index, real, imag, magnitude, phase из FFT; freq_offset=0; refined_frequency=index*bin_width (без mirror) — DONE
 
 ### Инфраструктура
-- [ ] **TASK-8:** Включить test_batch_all_maxima::run() в main.cpp
-- [ ] **TASK-9:** Обновить specs/fft_maxima.md с batch API и форматом MaxValue
+- [x] **TASK-8:** Включить test_batch_all_maxima::run() в main.cpp — DONE
+- [x] **TASK-9:** Обновить specs/fft_maxima.md с batch API и форматом MaxValue — DONE
 
 ### Обязательно
-- [ ] **TASK-10:** Тест формата MaxValue — CPU и GPU, проверка структуры, beam_count, counts
+- [x] **TASK-10:** Тест формата MaxValue — CPU и GPU, проверка структуры, beam_count, counts — DONE (через test_find_all_maxima + test_batch_all_maxima)
 - [ ] **TASK-11:** Тест с профилированием — FindAllMaxima + GPUProfiler, вывод времени (Upload, FFT, Detect, Scan, Compact) через console_output
 
 ---
@@ -186,3 +186,6 @@ typedef struct __attribute__((packed)) {
 ---
 
 *После прочтения — решим, добавлять ли в PLAN_FindAllMaxima_Batch_Processing.md.*
+4. ProfilingData
+В profiling_types.hpp добавлен ModuleProfilingData (upload_time_ms, fft_time_ms и т.д.)
+ProfilingData и FFTProfilingData — alias для ModuleProfilingData

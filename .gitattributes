@@ -15,6 +15,10 @@
 *.bat    text eol=lf
 *.ps1    text eol=lf
 
+# OpenCL, CMake, прочие исходники
+*.cl     text eol=lf
+*.tpp    text eol=lf
+
 *.cmake  text eol=lf
 CMakeLists.txt text eol=lf
 

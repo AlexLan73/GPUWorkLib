@@ -16,6 +16,7 @@
 #include "drv_gpu.hpp"
 #include "common/backend_type.hpp"
 #include "services/console_output.hpp"
+#include "services/gpu_profiler.hpp"
 
 #include <iostream>
 #include <iomanip>
@@ -81,7 +82,7 @@ inline bool TestBatchVectorInput_DestCPU(IBackend* backend) {
     input.data = all_data;
     input.repeat_count = 1;
     input.sample_rate = sample_rate;
-    input.memory_limit = 512 * 1024;  // 512 KB — маленький лимит для batch
+    input.memory_limit = 0.01f;  // 1% памяти — принудительно включить batch
 
     // FindAllMaxima с Dest=CPU
     AllMaximaResult result = finder.FindAllMaxima(input, OutputDestination::CPU);
@@ -99,7 +100,7 @@ inline bool TestBatchVectorInput_DestCPU(IBackend* backend) {
             std::cerr << "ERROR: Invalid antenna_id " << beam.antenna_id << std::endl;
             return false;
         }
-        if (beam.positions.empty()) {
+        if (beam.maxima.empty()) {
             std::cerr << "ERROR: Beam " << beam.antenna_id << " has no maxima!" << std::endl;
             return false;
         }
@@ -131,7 +132,7 @@ inline bool TestBatchVectorInput_DestGPU(IBackend* backend) {
     input.data = all_data;
     input.repeat_count = 1;
     input.sample_rate = sample_rate;
-    input.memory_limit = 512 * 1024;  // 512 KB — маленький лимит для batch
+    input.memory_limit = 0.01f;  // 1% памяти — принудительно включить batch
 
     // FindAllMaxima с Dest=GPU
     AllMaximaResult result = finder.FindAllMaxima(input, OutputDestination::GPU);
@@ -142,7 +143,7 @@ inline bool TestBatchVectorInput_DestGPU(IBackend* backend) {
         return false;
     }
 
-    if (!result.gpu_positions || !result.gpu_magnitudes || !result.gpu_counts) {
+    if (!result.gpu_maxima || !result.gpu_counts) {
         std::cerr << "ERROR: GPU buffers are null!" << std::endl;
         return false;
     }
@@ -161,9 +162,142 @@ inline bool TestBatchVectorInput_DestGPU(IBackend* backend) {
         }
     }
 
+    // Caller владеет буферами — освобождаем после проверки
+    if (result.gpu_maxima) clReleaseMemObject(static_cast<cl_mem>(result.gpu_maxima));
+    if (result.gpu_counts) clReleaseMemObject(static_cast<cl_mem>(result.gpu_counts));
+
     std::cout << "✅ Batch FindAllMaxima (Vector, Dest=GPU): PASSED ("
               << result.beams.size() << " beams, " << result.total_maxima << " maxima on GPU)\n";
     return true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Тест 3: Batch FindAllMaxima с GPU данными (InputData<cl_mem>) → Dest=CPU
+// ════════════════════════════════════════════════════════════════════════════
+inline bool TestBatchGPUInput_DestCPU(IBackend* backend) {
+    std::cout << "\n═══ Test Batch FindAllMaxima (GPU Input, Dest=CPU) ═══\n";
+
+    const uint32_t antenna_count = 32;
+    const uint32_t n_point = 512;
+    const float sample_rate = 1000.0f;
+    std::vector<float> freqs = {50.0f};
+    auto all_data = GenerateSignalWithPeaks(antenna_count, n_point, freqs, sample_rate);
+
+    // Загружаем RAW сигнал на GPU (данные с GPU!)
+    cl_context ctx = static_cast<cl_context>(backend->GetNativeContext());
+    cl_int err;
+    cl_mem gpu_signal = clCreateBuffer(ctx, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
+        all_data.size() * sizeof(std::complex<float>), all_data.data(), &err);
+    if (err != CL_SUCCESS) {
+        std::cerr << "ERROR: Failed to create GPU buffer\n";
+        return false;
+    }
+
+    SpectrumMaximaFinder finder(backend);
+    InputData<cl_mem> input;
+    input.antenna_count = antenna_count;
+    input.n_point = n_point;
+    input.data = gpu_signal;
+    input.gpu_memory_bytes = all_data.size() * sizeof(std::complex<float>);
+    input.repeat_count = 1;
+    input.sample_rate = sample_rate;
+    input.memory_limit = 0.01f;
+
+    AllMaximaResult result = finder.FindAllMaxima(input, OutputDestination::CPU);
+    clReleaseMemObject(gpu_signal);
+
+    bool ok = (result.beams.size() == antenna_count && result.total_maxima > 0);
+    for (const auto& beam : result.beams) {
+        if (beam.maxima.empty()) { ok = false; break; }
+    }
+
+    std::cout << (ok ? "✅" : "❌") << " Batch FindAllMaxima (GPU Input, Dest=CPU): "
+              << result.beams.size() << " beams, " << result.total_maxima << " maxima\n";
+    return ok;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Тест 4: Batch FindAllMaxima с GPU данными (InputData<cl_mem>) → Dest=GPU
+// ════════════════════════════════════════════════════════════════════════════
+inline bool TestBatchGPUInput_DestGPU(IBackend* backend) {
+    std::cout << "\n═══ Test Batch FindAllMaxima (GPU Input, Dest=GPU) ═══\n";
+
+    const uint32_t antenna_count = 32;
+    const uint32_t n_point = 512;
+    const float sample_rate = 1000.0f;
+    std::vector<float> freqs = {50.0f};
+    auto all_data = GenerateSignalWithPeaks(antenna_count, n_point, freqs, sample_rate);
+
+    cl_context ctx = static_cast<cl_context>(backend->GetNativeContext());
+    cl_int err;
+    cl_mem gpu_signal = clCreateBuffer(ctx, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
+        all_data.size() * sizeof(std::complex<float>), all_data.data(), &err);
+    if (err != CL_SUCCESS) {
+        std::cerr << "ERROR: Failed to create GPU buffer\n";
+        return false;
+    }
+
+    SpectrumMaximaFinder finder(backend);
+    InputData<cl_mem> input;
+    input.antenna_count = antenna_count;
+    input.n_point = n_point;
+    input.data = gpu_signal;
+    input.gpu_memory_bytes = all_data.size() * sizeof(std::complex<float>);
+    input.repeat_count = 1;
+    input.sample_rate = sample_rate;
+    input.memory_limit = 0.01f;
+
+    AllMaximaResult result = finder.FindAllMaxima(input, OutputDestination::GPU);
+    clReleaseMemObject(gpu_signal);
+
+    bool ok = (result.destination == OutputDestination::GPU &&
+               result.gpu_maxima && result.gpu_counts &&
+               result.beams.size() == antenna_count);
+
+    if (result.gpu_maxima) clReleaseMemObject(static_cast<cl_mem>(result.gpu_maxima));
+    if (result.gpu_counts) clReleaseMemObject(static_cast<cl_mem>(result.gpu_counts));
+
+    std::cout << (ok ? "✅" : "❌") << " Batch FindAllMaxima (GPU Input, Dest=GPU): "
+              << result.beams.size() << " beams, " << result.total_maxima << " maxima on GPU\n";
+    return ok;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Тест 5: FindAllMaxima с профилированием (GPUProfiler → console_output)
+// ════════════════════════════════════════════════════════════════════════════
+inline bool TestBatchWithProfiling(IBackend* backend) {
+    std::cout << "\n═══ Test Batch FindAllMaxima + GPUProfiler ═══\n";
+
+    auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
+    profiler.Reset();
+    profiler.SetEnabled(true);
+    profiler.SetGPUEnabled(0, true);
+
+    const uint32_t antenna_count = 32;
+    const uint32_t n_point = 1024;
+    const float sample_rate = 1000.0f;
+    std::vector<float> freqs = {50.0f};
+    auto all_data = GenerateSignalWithPeaks(antenna_count, n_point, freqs, sample_rate);
+
+    SpectrumMaximaFinder finder(backend);
+    InputData<std::vector<std::complex<float>>> input;
+    input.antenna_count = antenna_count;
+    input.n_point = n_point;
+    input.data = all_data;
+    input.repeat_count = 1;
+    input.sample_rate = sample_rate;
+    input.memory_limit = 0.01f;
+
+    profiler.Start();
+    AllMaximaResult result = finder.FindAllMaxima(input, OutputDestination::CPU);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    profiler.PrintReport();
+    profiler.Stop();
+
+    bool ok = (result.beams.size() == antenna_count && result.total_maxima > 0);
+    std::cout << (ok ? "✅" : "❌") << " Batch+Profiling: " << result.total_maxima << " maxima, "
+              << "beams=" << result.beams.size() << "\n";
+    return ok;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -176,8 +310,11 @@ inline bool RunAllTests(IBackend* backend) {
 
     bool all_passed = true;
 
-    all_passed &= TestBatchVectorInput_DestCPU(backend);
-    all_passed &= TestBatchVectorInput_DestGPU(backend);
+    all_passed &= TestBatchVectorInput_DestCPU(backend);   // CPU data → Dest=CPU
+    all_passed &= TestBatchVectorInput_DestGPU(backend);   // CPU data → Dest=GPU
+    all_passed &= TestBatchGPUInput_DestCPU(backend);      // GPU data → Dest=CPU
+    all_passed &= TestBatchGPUInput_DestGPU(backend);     // GPU data → Dest=GPU
+    all_passed &= TestBatchWithProfiling(backend);
 
     std::cout << "\n═══════════════════════════════════════════════════════════\n";
     if (all_passed) {

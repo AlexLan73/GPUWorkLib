@@ -15,24 +15,26 @@
 namespace antenna_fft {
 
 std::unique_ptr<ISpectrumProcessor> SpectrumProcessorFactory::Create(
-    DriverType driver,
+    drv_gpu_lib::BackendType backend_type,
     drv_gpu_lib::IBackend* backend)
 {
     if (!backend) {
         throw std::invalid_argument("SpectrumProcessorFactory: backend cannot be null");
     }
 
-    DriverType effective = (driver == DriverType::AUTO) ? DriverType::OPENCL : driver;
+    auto effective = (backend_type == drv_gpu_lib::BackendType::AUTO)
+        ? drv_gpu_lib::BackendType::OPENCL : backend_type;
 
     switch (effective) {
-    case DriverType::OPENCL:
+    case drv_gpu_lib::BackendType::OPENCL:
         return std::make_unique<SpectrumProcessorOpenCL>(backend);
-    case DriverType::ROCM:
+    case drv_gpu_lib::BackendType::ROCm:
         return std::make_unique<SpectrumProcessorROCm>(backend);
-    case DriverType::AUTO:
-        break;  // already handled
+    case drv_gpu_lib::BackendType::AUTO:
+    case drv_gpu_lib::BackendType::OPENCLandROCm:
+        return std::make_unique<SpectrumProcessorOpenCL>(backend);
     }
-    throw std::invalid_argument("SpectrumProcessorFactory: unknown DriverType");
+    throw std::invalid_argument("SpectrumProcessorFactory: unknown BackendType");
 }
 
 } // namespace antenna_fft

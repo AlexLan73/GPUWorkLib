@@ -177,6 +177,19 @@ obj.sample_rate = 1e6
 - **Тесты**: Файлы с расширением `*.hpp` в каталогах `/tests/` внутри каждого модуля
 - **Документация тестов**: В каждом `/tests/` должен находиться `README.md` с описанием примеров
 
+### Вызов тестов из main
+⚠️ **Главный main НЕ вызывает тесты напрямую** — вызывает файл `all_test.hpp` каждого модуля.
+
+```
+src/main.cpp
+  → DrvGPU/tests/all_test.hpp        // Перечень тестов DrvGPU
+  → modules/fft_maxima/tests/all_test.hpp
+  → modules/fft_processor/tests/all_test.hpp
+  → modules/signal_generators/tests/all_test.hpp
+```
+
+В каждом `all_test.hpp` — вызовы тестов модуля с комментариями (что включено/закомментировано). Потом подчистим и удалим ненужные.
+
 ### OpenCL / ROCm Backend
 🔑 **Некоторые функции API имеют ключ выбора backend**:
 - Методы с параметром `backend_type` или флагами выбора реализации
@@ -250,5 +263,5 @@ obj.sample_rate = 1e6
 
 ---
 
-*Last updated: 2026-02-14*
+*Last updated: 2026-02-15*
 *Maintained by: Кодо (AI Assistant)*

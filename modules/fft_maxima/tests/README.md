@@ -72,6 +72,22 @@
 - `CpuFindAllMaxima()` — CPU-эталон (аналог SciPy `find_peaks`)
 - `CpuDFT()` — наивный DFT для тестовых массивов
 
+### test_batch_all_maxima.hpp
+**Пространство имён**: `test_batch_all_maxima`
+**Дата**: 2026-02-15
+
+Тесты batch-обработки FindAllMaxima с **CPU и GPU данными**:
+
+| # | Тест | Вход | Dest | Описание |
+|---|------|------|------|----------|
+| 1 | `TestBatchVectorInput_DestCPU` | CPU (vector) | CPU | Данные с хоста → результат на CPU |
+| 2 | `TestBatchVectorInput_DestGPU` | CPU (vector) | GPU | Данные с хоста → результат на GPU |
+| 3 | `TestBatchGPUInput_DestCPU` | GPU (cl_mem) | CPU | Данные на GPU → результат на CPU |
+| 4 | `TestBatchGPUInput_DestGPU` | GPU (cl_mem) | GPU | Данные на GPU → результат на GPU |
+| 5 | `TestBatchWithProfiling` | CPU | CPU | Профилирование (Upload, FFT, Detect, Scan, Compact) |
+
+**Формат результата**: `beams[].maxima` — `vector<MaxValue>` (index, real, imag, magnitude, phase, refined_frequency).
+
 ### test_benchmark_all_maxima.hpp
 **Пространство имён**: `test_benchmark_all_maxima`
 **Дата**: 2026-02-14
@@ -183,10 +199,10 @@ struct AllMaximaResult {
 struct AllMaximaBeamResult {
     uint32_t antenna_id;
     uint32_t num_maxima;
-    std::vector<uint32_t> positions;
-    std::vector<float> magnitudes;
-    std::vector<float> frequencies;
+    std::vector<MaxValue> maxima;  // index, real, imag, magnitude, phase, refined_frequency
 };
+
+// GPU: gpu_maxima (MaxValue[]), gpu_counts (uint32_t[])
 ```
 
 ---
