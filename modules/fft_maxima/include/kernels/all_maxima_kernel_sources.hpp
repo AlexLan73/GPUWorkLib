@@ -276,26 +276,29 @@ __kernel void compact_maxima(
     __global const float* magnitudes,    // Pre-computed |FFT[i]| (beam_count * nFFT)
     __global const uint* flags,          // Flags: beam_count * nFFT
     __global const uint* scan_output,    // Scan: beam_count * nFFT (per-beam scan)
-    __global uint* out_positions,        // Out: beam_count * max_output_per_beam
-    __global float* out_magnitudes,      // Out: beam_count * max_output_per_beam
-    __global uint* out_beam_counts,      // Out: beam_count (кол-во максимумов на луч)
-    const uint beam_count,
+    __global uint* out_positions,        // Out: total_beams * max_output_per_beam
+    __global float* out_magnitudes,      // Out: total_beams * max_output_per_beam
+    __global uint* out_beam_counts,      // Out: total_beams (кол-во максимумов на луч)
+    const uint beam_count,               // Кол-во лучей в текущем batch
     const uint nFFT,
     const float sample_rate,
-    const uint max_output_per_beam       // Макс. кол-во максимумов на луч
+    const uint max_output_per_beam,      // Макс. кол-во максимумов на луч
+    const uint beam_offset               // Offset для batch-обработки (0 при single-batch)
 ) {
     const uint gid = get_global_id(0);
-    const uint beam_idx = gid / nFFT;
+    const uint beam_idx = gid / nFFT;     // Локальный индекс в batch (0..batch_count-1)
     const uint pos = gid % nFFT;
 
     if (beam_idx >= beam_count) return;
+
+    const uint global_beam_idx = beam_offset + beam_idx;  // Глобальный индекс луча
 
     // Если это последний элемент в луче — записываем count
     // count = scan[last_element] + flags[last_element]
     if (pos == nFFT - 1) {
         uint base = beam_idx * nFFT;
         uint count = scan_output[base + nFFT - 1] + flags[base + nFFT - 1];
-        out_beam_counts[beam_idx] = count;
+        out_beam_counts[global_beam_idx] = count;
     }
 
     // Если это максимум — записываем в компактный буфер
@@ -305,7 +308,7 @@ __kernel void compact_maxima(
 
         // Проверяем лимит
         if (compact_idx < max_output_per_beam) {
-            uint out_base = beam_idx * max_output_per_beam;
+            uint out_base = global_beam_idx * max_output_per_beam;  // Используем global_beam_idx
 
             // Записываем позицию
             out_positions[out_base + compact_idx] = pos;

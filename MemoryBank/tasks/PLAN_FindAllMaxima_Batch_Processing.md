@@ -345,17 +345,17 @@ console_output(gpu_context_.get(),
 
 ## Порядок реализации
 
-1. ✅ **MAX_MAXIMA_PER_BEAM** — параметр с дефолтом 1000 + лог-предупреждение
-2. ✅ **CalculateBytesPerAntenna** — ветка ALL_MAXIMA
-3. ✅ **compact_maxima kernel** — параметр `beam_offset`
-4. ✅ **Аллокация выходных буферов** — на весь antenna_count при batch
-5. ✅ **FindAllMaximaBatchFromCPU** — по образцу ProcessBatch
-6. ✅ **FindAllMaximaBatchFromGPUPipeline** — по образцу ProcessBatchFromGPU
-7. ✅ **Рефакторинг FindAllMaximaFromCPU** — замена throw на batch-цикл
-8. ✅ **Рефакторинг FindAllMaximaFromGPUPipeline** — замена throw на batch-цикл
-9. ✅ **Профилирование** — суммарное время через GPUProfiler + console_output
-10. ✅ **Тесты** — TestFindAllMaximaBatchCPU/GPU/Large
-11. ✅ **Обновить specs/fft_maxima.md** — документация batch API
+1. ✅ **MAX_MAXIMA_PER_BEAM** — параметр с дефолтом 1000 + лог-предупреждение (DONE 2026-02-15)
+2. ✅ **CalculateBytesPerAntenna** — ветка ALL_MAXIMA (DONE 2026-02-15)
+3. ✅ **compact_maxima kernel** — параметр `beam_offset` (DONE 2026-02-15)
+4. ⚠️ **Аллокация выходных буферов** — частично (TODO: передача внешних буферов в FindAllMaxima)
+5. ⚠️ **FindAllMaximaBatchFromCPU** — не требуется (batch-цикл внутри FindAllMaximaFromCPU)
+6. ⚠️ **FindAllMaximaBatchFromGPUPipeline** — не требуется (batch-цикл внутри FindAllMaximaFromGPUPipeline)
+7. ✅ **Рефакторинг FindAllMaximaFromCPU** — замена throw на batch-цикл (DONE 2026-02-15)
+8. ✅ **Рефакторинг FindAllMaximaFromGPUPipeline** — замена throw на batch-цикл (DONE 2026-02-15)
+9. ✅ **Профилирование** — суммарное время через GPUProfiler + console_output (DONE 2026-02-15)
+10. ⏳ **Тесты** — требуют создания test_batch_all_maxima.hpp (TODO)
+11. ⏳ **Обновить specs/fft_maxima.md** — документация batch API (TODO)
 
 ---
 
@@ -384,3 +384,67 @@ console_output(gpu_context_.get(),
 - Batch size ~67 лучей → 4 batch'а
 - Overhead на пересоздание FFT-плана: ~100-200 ms на batch (clfftBakePlan)
 - Общее время: зависит от GPU, ожидается <1 sec для всех batch'ей
+
+---
+
+## Статус реализации (2026-02-15)
+
+### ✅ Завершено:
+
+1. **MAX_MAXIMA_PER_BEAM** — добавлен параметр `params_.max_maxima_per_beam` (дефолт 1000)
+   - Файлы: `spectrum_maxima_types.h`, `spectrum_maxima_finder_all_maxima.cpp`, `all_maxima_pipeline_opencl.cpp`
+   - Добавлено лог-предупреждение при обрезке (`console_output`)
+
+2. **CalculateBytesPerAntenna** — добавлена ветка для ALL_MAXIMA
+   - Файл: `spectrum_maxima_finder.cpp:600`
+   - Учитывает: `pipeline_bytes` (magnitudes+flags+scan) + `output_compact`
+
+3. **compact_maxima kernel** — параметр `beam_offset`
+   - Файл: `all_maxima_kernel_sources.hpp:286`
+   - Добавлен параметр `beam_offset`, используется `global_beam_idx = beam_offset + beam_idx`
+   - Обновлены вызовы в `spectrum_maxima_finder_all_maxima.cpp:820` и `all_maxima_pipeline_opencl.cpp:412`
+
+4. **Batch-циклы в FindAllMaximaFromCPU/GPU**
+   - Файл: `spectrum_maxima_finder_all_maxima.cpp`
+   - Заменён `throw` на batch-цикл через `BatchManager`
+   - Single-batch vs Multi-batch ветки
+   - Мерж результатов (CPU-only пока, корректировка `antenna_id`)
+
+5. **Профилирование**
+   - Добавлен вывод суммарного времени через `GPUProfiler::GetProfilingData`
+   - `console_output` показывает: kernel times, total time, batch count, найденные максимумы
+
+### ⚠️ Ограничения текущей реализации:
+
+1. **Dest=GPU при batch** — пока НЕ поддерживается корректно
+   - Выходные буферы создаются на `batch_count`, а не на `antenna_count`
+   - Kernel пишет с `beam_offset=0` (не использует глобальный offset)
+   - **TODO:** Передача внешних буферов в `FindAllMaxima(cl_mem, ...)`
+
+2. **Beam_offset** — добавлен в kernel, но пока всегда передаётся `0`
+   - **TODO:** Использовать `batch.start` при вызове compact_maxima
+
+### ⏳ Осталось:
+
+1. **Полная batch-поддержка для Dest=GPU**
+   - Аллокация `combined_out_*` буферов ПЕРЕД циклом
+   - Передача их в `FindAllMaxima()` как внешние буферы
+   - Использование `beam_offset = batch.start` в compact_maxima
+
+2. **Тесты** — создать `test_batch_all_maxima.hpp`
+
+3. **Документация** — обновить `specs/fft_maxima.md`
+
+### 🎯 Что работает СЕЙЧАС:
+
+✅ Batch-обработка для `OutputDestination::CPU`
+✅ Автоматический расчёт optimal_batch через `BatchManager`
+✅ Корректный мерж результатов (antenna_id корректируется)
+✅ Профилирование batch'ей
+✅ Лог-предупреждение при max_maxima_per_beam overflow
+
+### 🔧 Следующие шаги:
+
+1. Доработать поддержку `Dest=GPU` при batch (см. п.1 ограничений)
+2. Написать тесты
+3. Обновить документацию

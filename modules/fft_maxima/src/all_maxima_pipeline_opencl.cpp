@@ -285,7 +285,8 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
     float sample_rate,
     OutputDestination dest,
     uint32_t search_start,
-    uint32_t search_end)
+    uint32_t search_end,
+    size_t max_maxima_per_beam)
 {
     (void)fft_data_gpu;  // unused — frequencies from positions * bin_width
 
@@ -319,9 +320,10 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
         throw std::runtime_error("AllMaximaPipeline: scan_buf alloc failed: " + std::to_string(err));
     }
 
-    uint32_t max_output_per_beam = (search_end - search_start) / 2;
-    if (max_output_per_beam > MAX_MAXIMA_PER_BEAM)
-        max_output_per_beam = static_cast<uint32_t>(MAX_MAXIMA_PER_BEAM);
+    uint32_t max_output_per_beam = std::min(
+        (search_end - search_start) / 2,
+        static_cast<uint32_t>(max_maxima_per_beam)
+    );
 
     cl_mem out_positions = clCreateBuffer(context_, CL_MEM_READ_WRITE,
         static_cast<size_t>(beam_count) * max_output_per_beam * sizeof(uint32_t), nullptr, &err);
@@ -397,6 +399,8 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
             profiler.Record(gpu_id, "AllMaxima", "Scan", data);
     }
 
+    uint32_t beam_offset = 0;  // Для single-batch режима offset = 0
+
     err = clSetKernelArg(compact_kernel_, 0, sizeof(cl_mem), &mag_mem);
     err |= clSetKernelArg(compact_kernel_, 1, sizeof(cl_mem), &flags_buf);
     err |= clSetKernelArg(compact_kernel_, 2, sizeof(cl_mem), &scan_buf);
@@ -407,6 +411,7 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
     err |= clSetKernelArg(compact_kernel_, 7, sizeof(uint32_t), &nFFT);
     err |= clSetKernelArg(compact_kernel_, 8, sizeof(float), &sample_rate);
     err |= clSetKernelArg(compact_kernel_, 9, sizeof(uint32_t), &max_output_per_beam);
+    err |= clSetKernelArg(compact_kernel_, 10, sizeof(uint32_t), &beam_offset);
 
     cl_event compact_event = nullptr;
     size_t compact_global = ((total_elements + 255) / 256) * 256;
@@ -453,7 +458,12 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
 
         for (uint32_t b = 0; b < beam_count; ++b) {
             uint32_t count = beam_counts[b];
-            if (count > max_output_per_beam) count = max_output_per_beam;
+            if (count > max_output_per_beam) {
+                con.Print(gpu_id,
+                    "WARNING: Beam {} reached max_maxima limit ({}/{}), results truncated",
+                    b, count, max_output_per_beam);
+                count = max_output_per_beam;
+            }
 
             result.beams[b].antenna_id = b;
             result.beams[b].num_maxima = count;

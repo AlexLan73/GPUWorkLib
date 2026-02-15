@@ -46,7 +46,8 @@ public:
         float sample_rate,
         OutputDestination dest = OutputDestination::CPU,
         uint32_t search_start = 1,
-        uint32_t search_end = 0) override;
+        uint32_t search_end = 0,
+        size_t max_maxima_per_beam = 1000) override;
 
 private:
     void CompileKernels();
@@ -72,7 +73,6 @@ private:
 
     static constexpr size_t SCAN_LOCAL_SIZE = 256;
     static constexpr size_t SCAN_BLOCK_SIZE = SCAN_LOCAL_SIZE * 2;
-    static constexpr size_t MAX_MAXIMA_PER_BEAM = 1024 * 1024;
 };
 
 } // namespace antenna_fft

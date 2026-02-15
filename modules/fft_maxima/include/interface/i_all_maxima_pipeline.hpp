@@ -32,6 +32,7 @@ public:
      * @brief Execute pipeline on pre-computed magnitudes
      * @param magnitudes_gpu GPU buffer with |FFT[i]| (float*, beam_count * nFFT elements)
      * @param fft_data_gpu GPU buffer with complex FFT (for frequency calculation)
+     * @param max_maxima_per_beam Maximum number of maxima per beam (default 1000)
      */
     virtual AllMaximaResult Execute(
         void* magnitudes_gpu,
@@ -41,7 +42,8 @@ public:
         float sample_rate,
         OutputDestination dest = OutputDestination::CPU,
         uint32_t search_start = 1,
-        uint32_t search_end = 0) = 0;
+        uint32_t search_end = 0,
+        size_t max_maxima_per_beam = 1000) = 0;
 };
 
 } // namespace antenna_fft

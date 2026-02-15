@@ -556,10 +556,6 @@ private:
     /// Размер блока для prefix sum (2 * local_size)
     static constexpr size_t SCAN_LOCAL_SIZE = 256;
     static constexpr size_t SCAN_BLOCK_SIZE = SCAN_LOCAL_SIZE * 2;  // 512
-
-    /// Максимальное число максимумов на луч (для выделения буферов compaction)
-    /// Для nFFT=4M и типичного спектра ожидается ~1-10% максимумов
-    static constexpr size_t MAX_MAXIMA_PER_BEAM = 1024 * 1024;  // 1M (safety limit)
 };
 
 // ════════════════════════════════════════════════════════════════════════════

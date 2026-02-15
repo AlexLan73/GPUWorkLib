@@ -606,7 +606,21 @@ size_t SpectrumMaximaFinder::CalculateBytesPerAntenna() const {
     //    clFFT требует temp buffer размером примерно batch * nFFT * 8!
     size_t fft_bytes = 3 * params_.nFFT * sizeof(std::complex<float>);  // 3 * nFFT * 8
 
-    // 3. Maxima output: (4 or 8) * sizeof(MaxValue)
+    // 3. Output buffers (зависит от режима поиска)
+    if (params_.peak_mode == PeakSearchMode::ALL_MAXIMA) {
+        // ALL_MAXIMA: временные буферы (magnitudes + flags + scan) + compact output
+        // Временные: magnitudes (float) + flags (uint32) + scan (uint32)
+        size_t pipeline_bytes = 3 * params_.nFFT * sizeof(uint32_t);  // 3 * nFFT * 4
+
+        // Выходные буферы: positions + magnitudes + counts (на max_maxima_per_beam максимумов)
+        size_t output_compact = params_.max_maxima_per_beam *
+                               (sizeof(uint32_t) + sizeof(float)) +  // positions + magnitudes
+                               sizeof(uint32_t);                     // counts
+
+        return input_bytes + fft_bytes + pipeline_bytes + output_compact;
+    }
+
+    // ONE_PEAK / TWO_PEAKS: Maxima output (4 or 8) * sizeof(MaxValue)
     size_t maxima_per_beam = (params_.peak_mode == PeakSearchMode::ONE_PEAK) ? 4 : 8;
     size_t maxima_bytes = maxima_per_beam * sizeof(MaxValue);  // 4*32=128 or 8*32=256
 
