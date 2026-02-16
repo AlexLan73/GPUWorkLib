@@ -7,6 +7,7 @@
 ## Следующие кандидаты
 
 См. [BACKLOG.md](BACKLOG.md):
+- **FormSignalGenerator** — [CHECKLIST_FormSignalGenerator.md](CHECKLIST_FormSignalGenerator.md)
 - ROCm Backend
 - Оконные функции
 - Code Style рефакторинг

@@ -169,6 +169,7 @@ obj.sample_rate = 1e6
 - **Логирование**: `plog` через DrvGPU (per-GPU логи в `Logs/DRVGPU_XX/`)
 - **Консольный вывод**: Только через `console_output` из DrvGPU (мультиGPU-безопасный)
 - **Профилирование**: Только через `GPUProfiler` из DrvGPU
+  - 📌 **ВАЖНО**: Перед `profiler.Start()` вызывать `SetGPUInfo()` — иначе в отчёте «Unknown» и «нет информации о драйверах». Пример: [`Examples/GPUProfiler_SetGPUInfo.md`](Examples/GPUProfiler_SetGPUInfo.md)
 
 ### Структура файлов
 - **Новые классы и структуры** — создавать в отдельных файлах
@@ -213,6 +214,8 @@ src/main.cpp
   - После завершения: документация → `Doc/`, промежуточная информация → удаляется
 - **Doc/**: Финальная документация
   - `Doc/Python/` — Документация Python API (по модулям)
+- **Examples/**: Примеры кода и паттерны (для AI-ассистентов и разработчиков)
+  - [`GPUProfiler_SetGPUInfo.md`](Examples/GPUProfiler_SetGPUInfo.md) — передача GPU/driver info в отчёт профилирования
 - **Doc_Addition/**: Вся дополнительная документация не относящаяся к описанию проекта
   - `Doc_Addition/Info_*` — Исследования и документация API
   - `Doc_Addition/PLAN/` — Планы рефакторинга (Ref01, Ref02, ...)

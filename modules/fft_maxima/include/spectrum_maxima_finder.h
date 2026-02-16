@@ -216,7 +216,7 @@ public:
     std::vector<SpectrumResult> Process(
         const InputData<T>& input,
         PeakSearchMode mode = PeakSearchMode::ONE_PEAK,
-        DriverType driver = DriverType::ROCM);
+        DriverType driver = DriverType::ROCm);
 
     // ═══════════════════════════════════════════════════════════════════════
     // FindAllMaxima — поиск ВСЕХ локальных максимумов

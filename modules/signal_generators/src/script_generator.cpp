@@ -15,6 +15,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 
 namespace signal_gen {
 

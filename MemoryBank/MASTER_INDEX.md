@@ -13,7 +13,7 @@
 |--------|--------|----------|
 | **DrvGPU** | Active | Базовый драйвер GPU (OpenCL backend). См. `specs/drvgpu.md` |
 | **SpectrumMaximaFinder** (fft_maxima) | Active | Поиск максимума спектра FFT. См. `specs/fft_maxima.md` |
-| **SignalGenerators** | Active | CW, LFM, Noise, Script генераторы |
+| **SignalGenerators** | Active | CW, LFM, Noise, Script. FormSignal: см. `specs/Form_signals.md` |
 | **FFTProcessor** | Active | FFT с режимами Complex/MagPhase |
 | **ScriptGenerator** | Active | Text DSL -> OpenCL kernel compiler |
 | **Python Bindings** | Active | pybind11 модуль gpuworklib |

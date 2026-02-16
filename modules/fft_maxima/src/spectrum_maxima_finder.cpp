@@ -28,8 +28,6 @@
 #include "backends/opencl/opencl_profiling.hpp"
 #include "services/gpu_profiler.hpp"
 #include "services/console_output.hpp"
-#include <iostream>
-#include <iomanip>
 #include <stdexcept>
 #include <cstring>
 #include <cmath>

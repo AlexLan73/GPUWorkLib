@@ -273,6 +273,25 @@ inline bool TestBatchWithProfiling(IBackend* backend) {
     profiler.SetEnabled(true);
     profiler.SetGPUEnabled(0, true);
 
+    // Передаём информацию о GPU в профайлер для отчёта
+    // gpu_id = backend->GetDeviceIndex() — Record() использует этот же id
+    int gpu_id = backend->GetDeviceIndex();
+    if (gpu_id < 0) gpu_id = 0;  // external context: -1 → 0
+
+    auto device_info = backend->GetDeviceInfo();
+    drv_gpu_lib::GPUReportInfo gpu_info;
+    gpu_info.gpu_name = device_info.name.empty() ? "Unknown" : device_info.name;
+    gpu_info.backend_type = BackendType::OPENCL;
+    gpu_info.global_mem_mb = device_info.global_memory_size / (1024 * 1024);
+    std::map<std::string, std::string> opencl_driver;
+    opencl_driver["driver_type"] = "OpenCL";
+    opencl_driver["version"] = device_info.opencl_version;
+    opencl_driver["driver_version"] = device_info.driver_version;
+    opencl_driver["vendor"] = device_info.vendor;
+    gpu_info.drivers.push_back(opencl_driver);
+    profiler.SetGPUInfo(gpu_id, gpu_info);
+    if (backend->GetDeviceIndex() < 0) profiler.SetGPUInfo(-1, gpu_info);
+
     const uint32_t antenna_count = 32;
     const uint32_t n_point = 1024;
     const float sample_rate = 1000.0f;
