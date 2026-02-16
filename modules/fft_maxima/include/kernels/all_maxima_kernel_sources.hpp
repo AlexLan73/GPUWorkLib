@@ -257,61 +257,91 @@ __kernel void block_add(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// 3. compact_maxima — Stream Compaction
+// 3. compact_maxima — Stream Compaction (вывод MaxValue[])
 // ════════════════════════════════════════════════════════════════════════════
 //
 // НАЗНАЧЕНИЕ:
-//   Для каждого flags[i] == 1 записывает позицию и амплитуду
-//   в компактный выходной массив.
+//   Для каждого flags[i] == 1 записывает MaxValue в компактный выходной массив.
 //   Используем scan_output[i] как индекс записи.
+//   MaxValue: index, real, imag, magnitude, phase, freq_offset=0, refined_frequency
 //
-// ОПТИМИЗАЦИЯ (vs старая версия):
-//   - Читает pre-computed float* magnitudes вместо float2* + sqrt
-//   - НЕ вычисляет sqrt
+// ВХОДЫ:
+//   fft_output — комплексный спектр FFT (float2*) для real/imag
+//   magnitudes — pre-computed |FFT[i]|
 //
 // ════════════════════════════════════════════════════════════════════════════
 inline const char* GetCompactMaximaKernelSource_opencl() {
   return R"CL(
+// Структура результата (должна совпадать с C++ MaxValue, 32 bytes)
+typedef struct {
+    uint index;
+    float real;
+    float imag;
+    float magnitude;
+    float phase;
+    float freq_offset;
+    float refined_frequency;
+    uint pad;
+} MaxValue;
+
+#define M_PI_F 3.14159265358979323846f
+
 __kernel void compact_maxima(
+    __global const float2* fft_output,   // FFT: beam_count * nFFT (complex)
     __global const float* magnitudes,    // Pre-computed |FFT[i]| (beam_count * nFFT)
     __global const uint* flags,          // Flags: beam_count * nFFT
     __global const uint* scan_output,    // Scan: beam_count * nFFT (per-beam scan)
-    __global uint* out_positions,        // Out: beam_count * max_output_per_beam
-    __global float* out_magnitudes,      // Out: beam_count * max_output_per_beam
-    __global uint* out_beam_counts,      // Out: beam_count (кол-во максимумов на луч)
-    const uint beam_count,
+    __global MaxValue* out_maxima,       // Out: total_beams * max_output_per_beam
+    __global uint* out_beam_counts,      // Out: total_beams (кол-во максимумов на луч)
+    const uint beam_count,               // Кол-во лучей в текущем batch
     const uint nFFT,
     const float sample_rate,
-    const uint max_output_per_beam       // Макс. кол-во максимумов на луч
+    const uint max_output_per_beam,      // Макс. кол-во максимумов на луч
+    const uint beam_offset               // Offset для batch-обработки (0 при single-batch)
 ) {
     const uint gid = get_global_id(0);
-    const uint beam_idx = gid / nFFT;
+    const uint beam_idx = gid / nFFT;     // Локальный индекс в batch (0..batch_count-1)
     const uint pos = gid % nFFT;
 
     if (beam_idx >= beam_count) return;
 
+    const uint global_beam_idx = beam_offset + beam_idx;  // Глобальный индекс луча
+
     // Если это последний элемент в луче — записываем count
-    // count = scan[last_element] + flags[last_element]
     if (pos == nFFT - 1) {
         uint base = beam_idx * nFFT;
         uint count = scan_output[base + nFFT - 1] + flags[base + nFFT - 1];
-        out_beam_counts[beam_idx] = count;
+        out_beam_counts[global_beam_idx] = count;
     }
 
-    // Если это максимум — записываем в компактный буфер
+    // Если это максимум — записываем MaxValue
     uint base = beam_idx * nFFT;
     if (flags[base + pos] == 1) {
-        uint compact_idx = scan_output[base + pos];  // Позиция в компактном массиве
+        uint compact_idx = scan_output[base + pos];
 
-        // Проверяем лимит
         if (compact_idx < max_output_per_beam) {
-            uint out_base = beam_idx * max_output_per_beam;
+            uint out_base = global_beam_idx * max_output_per_beam;
 
-            // Записываем позицию
-            out_positions[out_base + compact_idx] = pos;
+            float2 cv = fft_output[gid];
+            float re = cv.x;
+            float im = cv.y;
+            float mag = magnitudes[gid];
+            float phase_rad = atan2(im, re);
+            float phase_deg = phase_rad * 180.0f / M_PI_F;
+            float bin_width = sample_rate / (float)nFFT;
+            float refined_freq = (float)pos * bin_width;
 
-            // Амплитуда уже pre-computed — просто читаем
-            out_magnitudes[out_base + compact_idx] = magnitudes[gid];
+            MaxValue mv;
+            mv.index = pos;
+            mv.real = re;
+            mv.imag = im;
+            mv.magnitude = mag;
+            mv.phase = phase_deg;
+            mv.freq_offset = 0.0f;
+            mv.refined_frequency = refined_freq;
+            mv.pad = 0;
+
+            out_maxima[out_base + compact_idx] = mv;
         }
     }
 }

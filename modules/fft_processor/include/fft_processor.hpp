@@ -43,6 +43,7 @@
 #include "interface/i_backend.hpp"
 #include "kernels/fft_processor_kernels.hpp"
 #include "services/batch_manager.hpp"
+#include "services/gpu_profiler.hpp"
 
 #include <CL/cl.h>
 #include <clFFT.h>
@@ -130,7 +131,7 @@ public:
     // Информация
     // ═══════════════════════════════════════════════════════════════════════
 
-    const FFTProfilingData& GetProfilingData() const { return profiling_; }
+    FFTProfilingData GetProfilingData() const;
     uint32_t GetNFFT() const { return nFFT_; }
 
 private:
@@ -187,9 +188,6 @@ private:
         cl_event wait_event, size_t beam_count, size_t start_beam,
         float sample_rate, bool include_freq);
 
-    /// Профилирование OpenCL события
-    double ProfileEvent(cl_event event);
-
     // ═══════════════════════════════════════════════════════════════════════
     // Поля
     // ═══════════════════════════════════════════════════════════════════════
@@ -228,9 +226,6 @@ private:
     size_t plan_batch_size_ = 0;       ///< Batch size текущего FFT плана
     size_t fft_temp_buffer_size_ = 0;
     bool has_mag_phase_buffers_ = false;
-
-    // Профилирование
-    FFTProfilingData profiling_;
 
     // Константы
     static constexpr size_t PRE_CALLBACK_HEADER_SIZE = 32;

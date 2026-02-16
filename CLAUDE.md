@@ -169,6 +169,7 @@ obj.sample_rate = 1e6
 - **Логирование**: `plog` через DrvGPU (per-GPU логи в `Logs/DRVGPU_XX/`)
 - **Консольный вывод**: Только через `console_output` из DrvGPU (мультиGPU-безопасный)
 - **Профилирование**: Только через `GPUProfiler` из DrvGPU
+  - 📌 **ВАЖНО**: Перед `profiler.Start()` вызывать `SetGPUInfo()` — иначе в отчёте «Unknown» и «нет информации о драйверах». Пример: [`Examples/GPUProfiler_SetGPUInfo.md`](Examples/GPUProfiler_SetGPUInfo.md)
 
 ### Структура файлов
 - **Новые классы и структуры** — создавать в отдельных файлах
@@ -176,6 +177,19 @@ obj.sample_rate = 1e6
 - **Заголовки**: Каждый класс — отдельный `.h` + `.cpp` (если есть имплементация)
 - **Тесты**: Файлы с расширением `*.hpp` в каталогах `/tests/` внутри каждого модуля
 - **Документация тестов**: В каждом `/tests/` должен находиться `README.md` с описанием примеров
+
+### Вызов тестов из main
+⚠️ **Главный main НЕ вызывает тесты напрямую** — вызывает файл `all_test.hpp` каждого модуля.
+
+```
+src/main.cpp
+  → DrvGPU/tests/all_test.hpp        // Перечень тестов DrvGPU
+  → modules/fft_maxima/tests/all_test.hpp
+  → modules/fft_processor/tests/all_test.hpp
+  → modules/signal_generators/tests/all_test.hpp
+```
+
+В каждом `all_test.hpp` — вызовы тестов модуля с комментариями (что включено/закомментировано). Потом подчистим и удалим ненужные.
 
 ### OpenCL / ROCm Backend
 🔑 **Некоторые функции API имеют ключ выбора backend**:
@@ -200,6 +214,8 @@ obj.sample_rate = 1e6
   - После завершения: документация → `Doc/`, промежуточная информация → удаляется
 - **Doc/**: Финальная документация
   - `Doc/Python/` — Документация Python API (по модулям)
+- **Examples/**: Примеры кода и паттерны (для AI-ассистентов и разработчиков)
+  - [`GPUProfiler_SetGPUInfo.md`](Examples/GPUProfiler_SetGPUInfo.md) — передача GPU/driver info в отчёт профилирования
 - **Doc_Addition/**: Вся дополнительная документация не относящаяся к описанию проекта
   - `Doc_Addition/Info_*` — Исследования и документация API
   - `Doc_Addition/PLAN/` — Планы рефакторинга (Ref01, Ref02, ...)
@@ -250,5 +266,5 @@ obj.sample_rate = 1e6
 
 ---
 
-*Last updated: 2026-02-14*
+*Last updated: 2026-02-15*
 *Maintained by: Кодо (AI Assistant)*

@@ -1,10 +1,27 @@
 # BACKLOG — Очередь задач
 
-> **Обновлено**: 2026-02-12
+> **Обновлено**: 2026-02-11
 
 ---
 
 ## Перспективные задачи
+
+### FormSignalGenerator (Высокий приоритет)
+
+**Цель**: Мультиканальный генератор комплексных сигналов (формула getX) с задержкой, амплитудой, шумом.
+
+| Задача | Описание |
+|--------|----------|
+| FORM-001 | FormParams + FormSignalGenerator (OpenCL kernel) |
+| FORM-002 | FormScriptGenerator + DSL + on-disk кэш по имени |
+| FORM-003 | SignalService + Factory |
+| FORM-004 | Python bindings + example с графиками |
+| FORM-005 | ROCm заглушки |
+
+**Checklist**: [CHECKLIST_FormSignalGenerator.md](CHECKLIST_FormSignalGenerator.md)  
+**Спецификация**: [specs/Form_signals.md](../specs/Form_signals.md)
+
+---
 
 ### ROCm Backend (Средний приоритет)
 

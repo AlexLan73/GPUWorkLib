@@ -216,7 +216,7 @@ public:
     std::vector<SpectrumResult> Process(
         const InputData<T>& input,
         PeakSearchMode mode = PeakSearchMode::ONE_PEAK,
-        DriverType driver = DriverType::ROCM);
+        DriverType driver = DriverType::ROCm);
 
     // ═══════════════════════════════════════════════════════════════════════
     // FindAllMaxima — поиск ВСЕХ локальных максимумов
@@ -318,12 +318,15 @@ public:
         float sample_rate,
         OutputDestination dest = OutputDestination::CPU,
         uint32_t search_start = 0,
-        uint32_t search_end = 0);
+        uint32_t search_end = 0,
+        uint32_t beam_offset = 0,
+        cl_mem external_out_maxima = nullptr,
+        cl_mem external_out_counts = nullptr);
 
     /**
-     * @brief Получить данные профилирования последнего вызова
+     * @brief Получить данные профилирования (из GPUProfiler для модуля SpectrumMaxima)
      */
-    const ProfilingData& GetProfilingData() const { return profiling_; }
+    ProfilingData GetProfilingData() const;
 
     /**
      * @brief Получить параметры (с вычисленными nFFT и т.д.)
@@ -395,11 +398,7 @@ private:
     cl_event ExecutePostKernel(cl_event wait_event);
 
     /// Прочитать результаты (8 MaxValue на луч → vector<SpectrumResult>)
-    /// @param send_to_profiler при true — отправить событие read в GPUProfiler (все 5 полей OpenCL)
-    std::vector<SpectrumResult> ReadResults(cl_event wait_event, bool send_to_profiler = false);
-
-    /// Профилирование события
-    double ProfileEvent(cl_event event, const char* name);
+    std::vector<SpectrumResult> ReadResults(cl_event wait_event);
 
     /// Освободить ресурсы
     void ReleaseResources();
@@ -448,9 +447,6 @@ private:
     // Post-kernel
     cl_program post_program_ = nullptr;
     cl_kernel post_kernel_ = nullptr;
-
-    // Профилирование
-    ProfilingData profiling_;
 
     // Batch processing
     size_t current_batch_size_ = 0;      ///< Размер выделенных буферов (для переиспользования)
@@ -556,10 +552,6 @@ private:
     /// Размер блока для prefix sum (2 * local_size)
     static constexpr size_t SCAN_LOCAL_SIZE = 256;
     static constexpr size_t SCAN_BLOCK_SIZE = SCAN_LOCAL_SIZE * 2;  // 512
-
-    /// Максимальное число максимумов на луч (для выделения буферов compaction)
-    /// Для nFFT=4M и типичного спектра ожидается ~1-10% максимумов
-    static constexpr size_t MAX_MAXIMA_PER_BEAM = 1024 * 1024;  // 1M (safety limit)
 };
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -4,6 +4,7 @@
 
 #include <sstream>
 #include <iomanip>
+#include <vector>
 
 namespace drv_gpu_lib {
 
@@ -620,22 +621,62 @@ void OpenCLBackend::InitializeSVMCapabilities() {
 GPUDeviceInfo OpenCLBackend::QueryDeviceInfo() const {
     GPUDeviceInfo info;
 
-    if (!core_ || !core_->IsInitialized()) {
+    if (core_ && core_->IsInitialized()) {
+        info.name = core_->GetDeviceName();
+        info.vendor = core_->GetVendor();
+        info.driver_version = core_->GetDriverVersion();
+        info.opencl_version = std::to_string(core_->GetOpenCLVersionMajor()) + "." +
+                              std::to_string(core_->GetOpenCLVersionMinor());
+        info.device_index = device_index_;
+        info.global_memory_size = core_->GetGlobalMemorySize();
+        info.local_memory_size = core_->GetLocalMemorySize();
+        info.max_mem_alloc_size = core_->GetGlobalMemorySize();
+        info.max_compute_units = core_->GetComputeUnits();
+        info.max_work_group_size = core_->GetMaxWorkGroupSize();
+        info.supports_svm = core_->IsSVMSupported();
+        info.supports_double = SupportsDoublePrecision();
+        info.supports_half = false;
+        info.supports_unified_memory = SupportsSVM();
         return info;
     }
 
-    info.name = core_->GetDeviceName();
-    info.vendor = core_->GetVendor();
-    info.driver_version = core_->GetDriverVersion();
-    info.opencl_version = std::to_string(core_->GetOpenCLVersionMajor()) + "." +
-                          std::to_string(core_->GetOpenCLVersionMinor());
-    info.device_index = device_index_;
-    info.global_memory_size = core_->GetGlobalMemorySize();
-    info.local_memory_size = core_->GetLocalMemorySize();
-    info.max_mem_alloc_size = core_->GetGlobalMemorySize();
-    info.max_compute_units = core_->GetComputeUnits();
-    info.max_work_group_size = core_->GetMaxWorkGroupSize();
-    info.supports_svm = core_->IsSVMSupported();
+    // ═══════════════════════════════════════════════════════════════════════
+    // EXTERNAL CONTEXT: core_ = null, но device_ задан — запрашиваем напрямую
+    // ═══════════════════════════════════════════════════════════════════════
+    if (!device_) {
+        return info;
+    }
+
+    auto getStr = [this](cl_device_info param) -> std::string {
+        size_t size = 0;
+        if (clGetDeviceInfo(device_, param, 0, nullptr, &size) != CL_SUCCESS || size == 0)
+            return {};
+        std::vector<char> buf(size);
+        if (clGetDeviceInfo(device_, param, size, buf.data(), nullptr) != CL_SUCCESS)
+            return {};
+        return std::string(buf.data());
+    };
+
+    auto getUlong = [this](cl_device_info param) -> cl_ulong {
+        cl_ulong val = 0;
+        clGetDeviceInfo(device_, param, sizeof(val), &val, nullptr);
+        return val;
+    };
+
+    info.name = getStr(CL_DEVICE_NAME);
+    info.vendor = getStr(CL_DEVICE_VENDOR);
+    info.driver_version = getStr(CL_DRIVER_VERSION);
+    info.opencl_version = getStr(CL_DEVICE_VERSION);  // "OpenCL 3.0 ..." — можно парсить
+    info.device_index = device_index_ >= 0 ? device_index_ : 0;
+    info.global_memory_size = getUlong(CL_DEVICE_GLOBAL_MEM_SIZE);
+    info.local_memory_size = getUlong(CL_DEVICE_LOCAL_MEM_SIZE);
+    info.max_mem_alloc_size = getUlong(CL_DEVICE_MAX_MEM_ALLOC_SIZE);
+    info.max_compute_units = getUlong(CL_DEVICE_MAX_COMPUTE_UNITS);
+    info.max_work_group_size = 0;
+    size_t wgs = 0;
+    if (clGetDeviceInfo(device_, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(wgs), &wgs, nullptr) == CL_SUCCESS)
+        info.max_work_group_size = wgs;
+    info.supports_svm = SupportsSVM();
     info.supports_double = SupportsDoublePrecision();
     info.supports_half = false;
     info.supports_unified_memory = SupportsSVM();
