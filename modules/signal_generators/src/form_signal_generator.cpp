@@ -299,13 +299,13 @@ drv_gpu_lib::InputData<cl_mem> FormSignalGenerator::GenerateInputData() {
 
   clFinish(queue_);
 
-  return drv_gpu_lib::InputData<cl_mem>{
-      .antenna_count = params_.antennas,
-      .n_point = params_.points,
-      .data = output,
-      .gpu_memory_bytes = buffer_size,
-      .sample_rate = static_cast<float>(params_.fs)
-  };
+  drv_gpu_lib::InputData<cl_mem> result;
+  result.antenna_count = params_.antennas;
+  result.n_point       = params_.points;
+  result.data          = output;
+  result.gpu_memory_bytes = buffer_size;
+  result.sample_rate   = static_cast<float>(params_.fs);
+  return result;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

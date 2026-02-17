@@ -51,9 +51,31 @@
 
 ## Чеклист (заполнять по ходу)
 
-- [ ] Спека и API зафиксированы (InputData\<cl_mem\> или аналог FormSignalGenerator).
-- [ ] Параметры: delay_us (float), sample_rate (float), использование матрицы 48×5.
-- [ ] OpenCL kernel: целая задержка D + интерполяция по строке матрицы 48×5.
-- [ ] Тесты: эталон (NumPy/C++), сравнение GPU vs CPU.
-- [ ] Демо с графиками, данные из Python как переменные.
-- [ ] Ревью и заключение главного.
+- [x] Спека и API зафиксированы (InputData\<cl_mem\> — совпадает с FormSignalGenerator).
+- [x] Параметры: delay_us (float), sample_rate (float), использование матрицы 48×5.
+- [x] OpenCL kernel: целая задержка D + интерполяция по строке матрицы 48×5 (Philox+Box-Muller шум).
+- [x] Тесты: эталон NumPy (5 тестов Python) + C++ (4 теста), все проходят.
+- [x] Демо с графиками (4 графика: integer delay, fractional, multichannel waterfall, delay sweep).
+- [x] Ревью и заключение: **DONE** 2026-02-17 — все тесты PASS, код качественный.
+
+## Статус: ЗАВЕРШЕНО (2026-02-17)
+
+### Исправления сборки
+- `form_signal_generator.cpp`, `form_script_generator.cpp`, `delayed_form_signal_generator.cpp`:
+  designated initializers `{.field = value}` → обычное присвоение (MSVC не поддерживает без /std:c++20)
+- `form_script_generator.cpp`: `localtime_r` → `#ifdef _WIN32 localtime_s #else localtime_r #endif`
+- `modules/signal_generators/CMakeLists.txt`: `stdc++fs` только для non-MSVC
+
+### Исправление Python тестов
+- `apply_delay_numpy`: вычислять D/mu/row через `np.float32` (как GPU), иначе float64 даёт row=23 вместо row=24 при delay=7.5us
+- `test_multichannel_delay`: tolerance `1.0` → `1e-2` (после исправления float32)
+- `no_plot` логика: `'--plot'` → `'--no-plot'`
+
+### Результаты тестов
+```
+[Test 1] Integer delay (5 samples):   max_err = 1.35e-04 ✅
+[Test 2] Fractional delay (2.7 samp): max_err = 1.85e-03 ✅
+[Test 3] Multi-channel (8 antennas):  max_err = 6.57e-04 ✅
+[Test 4] Zero delay = FormSigGen:     max_err = 0.0      ✅
+[Test 5] Delay + noise SNR:           ratio = 0.997      ✅
+```

@@ -101,10 +101,16 @@ def apply_delay_numpy(signal, delay_samples, lagrange_matrix):
     """
     CPU reference — применение дробной задержки через Lagrange 48×5.
     delay_samples — задержка в сэмплах (float).
+
+    NOTE: GPU ядро работает в float32, поэтому delay_samples нужно передавать
+    как float32 для точного совпадения строки матрицы (row = int(mu*48) % 48).
+    Пример: delay_us=7.5, fs=1e6 → float64: 7.4999...→row=23, float32: 7.5→row=24.
     """
+    # Вычисляем D и mu в float32, как GPU
+    ds32 = np.float32(delay_samples)
     N = len(signal)
-    D = int(np.floor(delay_samples))
-    mu = delay_samples - D
+    D = int(np.floor(float(ds32)))
+    mu = float(ds32) - D
 
     # Ensure mu in [0, 1)
     if mu < 0:
@@ -116,7 +122,7 @@ def apply_delay_numpy(signal, delay_samples, lagrange_matrix):
 
     output = np.zeros(N, dtype=np.complex64)
     for n in range(N):
-        if n < delay_samples:
+        if n < float(ds32):
             continue  # выход = 0, пока читаем "до" начала сигнала
         center = n - D
         val = 0.0 + 0.0j
@@ -251,9 +257,8 @@ def test_multichannel_delay():
 
     max_err = max(max_errors)
     worst_ch = max_errors.index(max_err)
-    # Мультиканал: допуск ослаблен (1.0); при ошибке ~0.5 возможна разница эталона и GPU
-    # (один и тот же clean по каналам на GPU vs один clean в NumPy). TODO: выяснить причину.
-    assert max_err < 1.0, (
+    # Допуск: float32 GPU vs float64 NumPy reference (fast-relaxed-math ~1e-3..1e-2)
+    assert max_err < 1e-2, (
         f"Multi-channel error too large: {max_err} (worst channel: {worst_ch}, "
         f"delay={delays[worst_ch]:.1f} us)")
     print("  PASSED!")
@@ -566,9 +571,8 @@ def plot4_delay_sweep():
 
 if __name__ == '__main__':
     # Графики: по умолчанию ВКЛ. Выключить: --no-plot или env GPUWORKLIB_PLOT=0
-    # В PyCharm: Run → Edit Configurations → Environment variables → GPUWORKLIB_PLOT=1 (включить)
-    # no_plot = '--no-plot' in sys.argv
-    no_plot = '--plot' in sys.argv
+    # В PyCharm: Run → Edit Configurations → Environment variables → GPUWORKLIB_PLOT=0 (выключить)
+    no_plot = '--no-plot' in sys.argv
     if os.environ.get('GPUWORKLIB_PLOT', '').strip().lower() in ('0', 'false', 'no', 'off'):
         no_plot = True
     if os.environ.get('GPUWORKLIB_PLOT', '').strip().lower() in ('1', 'true', 'yes', 'on'):

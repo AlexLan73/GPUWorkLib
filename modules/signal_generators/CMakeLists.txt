@@ -48,9 +48,12 @@ target_link_libraries(${MODULE_NAME}
     PUBLIC
         drvgpu
         OpenCL::OpenCL
-    PRIVATE
-        stdc++fs
 )
+
+# stdc++fs нужна только на GCC < 9 (не MSVC, не Clang с libc++)
+if(NOT MSVC AND NOT APPLE)
+    target_link_libraries(${MODULE_NAME} PRIVATE stdc++fs)
+endif()
 
 target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
 

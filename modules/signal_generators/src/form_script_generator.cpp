@@ -419,13 +419,13 @@ drv_gpu_lib::InputData<cl_mem> FormScriptGenerator::GenerateInputData() {
 
   clFinish(queue_);
 
-  return drv_gpu_lib::InputData<cl_mem>{
-      .antenna_count = params_.antennas,
-      .n_point = params_.points,
-      .data = output,
-      .gpu_memory_bytes = buf_size,
-      .sample_rate = static_cast<float>(params_.fs)
-  };
+  drv_gpu_lib::InputData<cl_mem> result;
+  result.antenna_count = params_.antennas;
+  result.n_point       = params_.points;
+  result.data          = output;
+  result.gpu_memory_bytes = buf_size;
+  result.sample_rate   = static_cast<float>(params_.fs);
+  return result;
 }
 
 std::vector<std::vector<std::complex<float>>>
@@ -808,7 +808,11 @@ std::string FormScriptGenerator::GetTimestamp() {
   auto now = std::chrono::system_clock::now();
   auto t = std::chrono::system_clock::to_time_t(now);
   std::tm tm_buf;
+#ifdef _WIN32
+  localtime_s(&tm_buf, &t);
+#else
   localtime_r(&t, &tm_buf);
+#endif
 
   char buf[32];
   std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &tm_buf);
