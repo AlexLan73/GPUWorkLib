@@ -15,7 +15,7 @@ test_form_signal.py — Тесты FormSignalGenerator (GPU) vs NumPy (CPU) + г
   6. Парсинг из строки (set_params_from_string)
   7. Signal + Noise combined
 
-Графики (--plot):
+Графики (создаются по умолчанию, --no-plot чтобы отключить):
   1. CW: GPU vs NumPy overlay + error
   2. Chirp: spectrogram + instantaneous freq
   3. Window: signal с окном и задержкой
@@ -466,13 +466,13 @@ def make_plots(save_dir):
         data = gen.generate()
         t_win = np.arange(pts_win) / fs_win * 1000.0
 
-        ax.plot(t_win, data.real, color=color, lw=0.8, alpha=0.9)
+        ax.plot(t_win, data.real, color=color, lw=0.8, alpha=0.9, label='Re(X)')
         ax.fill_between(t_win, data.real, alpha=0.15, color=color)
 
         # Пометить зону нулей
         zero_mask = np.abs(data) < 1e-6
         if np.any(zero_mask):
-            zero_end = np.argmin(zero_mask)
+            zero_end = np.where(~zero_mask)[0][0] if np.any(~zero_mask) else pts_win
             ax.axvspan(0, t_win[min(zero_end, pts_win-1)],
                        alpha=0.1, color='white', label=f'Zeros: {zero_end} samples')
 
@@ -708,14 +708,12 @@ def main():
     print(f"  FormSig Python Results: {passed}/{total} tests passed")
     print("=" * 60)
 
-    # ── Графики ──
-    do_plot = '--plot' in sys.argv or '-p' in sys.argv or '--all' in sys.argv
+    # ── Графики (создаются по умолчанию) ──
+    do_plot = '--no-plot' not in sys.argv
     if do_plot:
         plot_dir = os.path.join(os.path.dirname(__file__), '..', 'Results',
                                 'Plots', 'FormSignal')
         make_plots(os.path.abspath(plot_dir))
-    else:
-        print("\n  (Run with --plot to generate plots)")
 
     return 0 if passed == total else 1
 

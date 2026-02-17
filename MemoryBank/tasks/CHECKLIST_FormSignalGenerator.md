@@ -111,7 +111,7 @@
 - [x] SignalKind::FORM_SIGNAL + FormParams в variant SignalRequest
 - [x] SignalGeneratorFactory::CreateForm(backend, FormParams) → FormSignalGenerator
 - [x] SignalGeneratorFactory::CreateFormScript(backend, FormParams) → FormScriptGenerator
-- [x] SignalService::GenerateFormGpu(FormParams) → cl_mem
+- [x] SignalService::GenerateFormGpu(FormParams) → InputData<cl_mem>
 - [x] SignalService::GenerateFormCpu(FormParams) → vector<vector<complex>>
 - [x] Create(FORM_SIGNAL) → бросает исключение с пояснением (standalone API)
 
@@ -129,7 +129,7 @@
 - [x] PyFormSignalGenerator: generate(), set_params(), set_params_from_string() ✅ Этап 1
 - [x] PyFormScriptGenerator: compile(), generate(), save/load_kernel(), list_kernels() ✅ Этап 2
 - [x] np.ndarray shape (n_channels, n_samples) complex64 ✅
-- [ ] Output: "cpu" | "gpu" (пока только CPU readback) — отложено
+- [x] Output: "cpu" | "gpu" — реализовано (GPUBuffer + .read())
 
 ---
 
@@ -164,7 +164,7 @@
 
 ## Output и метаданные
 
-- [ ] GPU: cl_mem + существующие BufferInfo (адрес, size, num_antennas, points) — отложено
+- [x] GPU: InputData<cl_mem> (data, antenna_count, n_point, gpu_memory_bytes) — реализовано
 - [ ] CPU: vector<vector<complex<float>>> ✅ реализовано
 
 ---

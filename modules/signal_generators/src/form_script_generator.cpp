@@ -368,7 +368,7 @@ void FormScriptGenerator::CompileSource(const std::string& source) {
 // Generate
 // ════════════════════════════════════════════════════════════════════════════
 
-cl_mem FormScriptGenerator::Generate() {
+drv_gpu_lib::InputData<cl_mem> FormScriptGenerator::GenerateInputData() {
   if (!program_) {
     throw std::runtime_error(
         "FormScriptGenerator::Generate: not compiled (call Compile() or LoadKernel())");
@@ -418,12 +418,20 @@ cl_mem FormScriptGenerator::Generate() {
   }
 
   clFinish(queue_);
-  return output;
+
+  return drv_gpu_lib::InputData<cl_mem>{
+      .antenna_count = params_.antennas,
+      .n_point = params_.points,
+      .data = output,
+      .gpu_memory_bytes = buf_size,
+      .sample_rate = static_cast<float>(params_.fs)
+  };
 }
 
 std::vector<std::vector<std::complex<float>>>
 FormScriptGenerator::GenerateToCpu() {
-  cl_mem gpu_buf = Generate();
+  auto input = GenerateInputData();
+  cl_mem gpu_buf = input.data;
 
   size_t total = GetTotalSamples();
   std::vector<std::complex<float>> flat(total);

@@ -14,6 +14,7 @@
 #include "test_signal_generators.hpp"
 #include "test_form_signal.hpp"
 #include "test_form_script.hpp"
+#include "test_delayed_form_signal.hpp"
 
 namespace signal_generators_all_test {
 
@@ -26,6 +27,9 @@ inline void run() {
 
     // FormScriptGenerator: DSL + on-disk kernel cache (Этап 2)
     test_form_script::run();
+
+    // DelayedFormSignalGenerator: Farrow 48×5 fractional delay
+    test_delayed_form_signal::run();
 }
 
 }  // namespace signal_generators_all_test

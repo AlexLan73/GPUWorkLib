@@ -13,6 +13,7 @@
 
 #include "../params/form_params.hpp"
 #include "interface/i_backend.hpp"
+#include "interface/input_data.hpp"
 
 #include <vector>
 #include <complex>
@@ -51,9 +52,10 @@ public:
    * @brief Генерация на GPU (ROCm) — NOT IMPLEMENTED
    * @throws std::runtime_error always
    */
-  void* Generate() {
+  drv_gpu_lib::InputData<void*> GenerateInputData() {
+    (void)params_;
     throw std::runtime_error(
-        "FormSignalGeneratorROCm::Generate(): ROCm backend not implemented. "
+        "FormSignalGeneratorROCm::GenerateInputData(): ROCm backend not implemented. "
         "Requires HIP kernels (kernels/rocm/form_signal.hip).");
   }
 

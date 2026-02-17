@@ -208,7 +208,7 @@ FormSignalGenerator& FormSignalGenerator::operator=(
 // GPU генерация
 // ════════════════════════════════════════════════════════════════════════════
 
-cl_mem FormSignalGenerator::Generate() {
+drv_gpu_lib::InputData<cl_mem> FormSignalGenerator::GenerateInputData() {
   size_t total_points = GetTotalSamples();
   size_t buffer_size = total_points * sizeof(std::complex<float>);
 
@@ -298,7 +298,14 @@ cl_mem FormSignalGenerator::Generate() {
   }
 
   clFinish(queue_);
-  return output;
+
+  return drv_gpu_lib::InputData<cl_mem>{
+      .antenna_count = params_.antennas,
+      .n_point = params_.points,
+      .data = output,
+      .gpu_memory_bytes = buffer_size,
+      .sample_rate = static_cast<float>(params_.fs)
+  };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -308,7 +315,8 @@ cl_mem FormSignalGenerator::Generate() {
 std::vector<std::vector<std::complex<float>>>
 FormSignalGenerator::GenerateToCpu() {
   // Генерация на GPU → read back → split по каналам
-  cl_mem gpu_buf = Generate();
+  auto input = GenerateInputData();
+  cl_mem gpu_buf = input.data;
 
   size_t total = GetTotalSamples();
   std::vector<std::complex<float>> flat(total);

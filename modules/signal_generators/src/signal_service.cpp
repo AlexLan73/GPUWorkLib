@@ -11,6 +11,7 @@
 #include "generators/lfm_generator.hpp"
 #include "generators/noise_generator.hpp"
 #include "generators/form_signal_generator.hpp"
+#include "generators/delayed_form_signal_generator.hpp"
 
 namespace signal_gen {
 
@@ -74,16 +75,36 @@ cl_mem SignalService::GenerateGpu(
 // FormSignal generation
 // ════════════════════════════════════════════════════════════════════════════
 
-cl_mem SignalService::GenerateFormGpu(const FormParams& params) {
+drv_gpu_lib::InputData<cl_mem> SignalService::GenerateFormGpu(const FormParams& params) {
     FormSignalGenerator gen(backend_);
     gen.SetParams(params);
-    return gen.Generate();
+    return gen.GenerateInputData();
 }
 
 std::vector<std::vector<std::complex<float>>> SignalService::GenerateFormCpu(
     const FormParams& params) {
     FormSignalGenerator gen(backend_);
     gen.SetParams(params);
+    return gen.GenerateToCpu();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// DelayedFormSignal generation (Farrow 48×5)
+// ════════════════════════════════════════════════════════════════════════════
+
+drv_gpu_lib::InputData<cl_mem> SignalService::GenerateDelayedFormGpu(
+    const FormParams& params, const std::vector<float>& delay_us) {
+    DelayedFormSignalGenerator gen(backend_);
+    gen.SetParams(params);
+    gen.SetDelays(delay_us);
+    return gen.GenerateInputData();
+}
+
+std::vector<std::vector<std::complex<float>>> SignalService::GenerateDelayedFormCpu(
+    const FormParams& params, const std::vector<float>& delay_us) {
+    DelayedFormSignalGenerator gen(backend_);
+    gen.SetParams(params);
+    gen.SetDelays(delay_us);
     return gen.GenerateToCpu();
 }
 

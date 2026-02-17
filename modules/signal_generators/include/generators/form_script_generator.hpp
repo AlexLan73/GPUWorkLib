@@ -17,6 +17,7 @@
 
 #include "../params/form_params.hpp"
 #include "interface/i_backend.hpp"
+#include "interface/input_data.hpp"
 
 #include <CL/cl.h>
 #include <vector>
@@ -54,12 +55,12 @@ struct KernelManifestEntry {
  * p.f0 = 1e6; p.antennas = 8; p.points = 4096;
  * gen.SetParams(p);
  * gen.Compile();
- * cl_mem buf = gen.Generate();
+ * auto input = gen.GenerateInputData();
  * gen.SaveKernel("my_signal", "CW 1MHz 8ch");
  *
  * // Режим 2: из кэша
  * gen.LoadKernel("my_signal");
- * cl_mem buf2 = gen.Generate();
+ * auto input2 = gen.GenerateInputData();
  *
  * // DSL текст (для просмотра)
  * std::cout << gen.GenerateScript() << std::endl;
@@ -129,11 +130,11 @@ public:
   // ══════════════════════════════════════════════════════════════════════
 
   /**
-   * @brief Генерация на GPU
-   * @return cl_mem [antennas * points * sizeof(complex<float>)]
-   * @note Вызывающий код должен освободить через clReleaseMemObject()
+   * @brief Генерация на GPU с метаданными (InputData — как в fft_maxima)
+   * @return InputData<cl_mem> с data, antenna_count, n_point, gpu_memory_bytes
+   * @note Вызывающий код должен освободить input.data через clReleaseMemObject()
    */
-  cl_mem Generate();
+  drv_gpu_lib::InputData<cl_mem> GenerateInputData();
 
   /**
    * @brief Генерация с возвратом на CPU (по каналам)

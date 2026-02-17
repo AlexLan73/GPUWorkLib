@@ -21,6 +21,7 @@
 
 #include "../params/form_params.hpp"
 #include "interface/i_backend.hpp"
+#include "interface/input_data.hpp"
 
 #include <CL/cl.h>
 #include <vector>
@@ -49,10 +50,11 @@ namespace signal_gen {
  * params.tau_step = 0.0001;
  * gen.SetParams(params);
  *
- * // GPU
- * cl_mem gpu_buf = gen.Generate();
- * // ... use gpu_buf [antennas * points * sizeof(complex<float>)] ...
- * clReleaseMemObject(gpu_buf);
+ * // GPU (InputData<cl_mem> — совместимо с fft_maxima)
+ * auto input = gen.GenerateInputData();
+ * // input.data, input.antenna_count, input.n_point, input.gpu_memory_bytes
+ * // ... передать в SpectrumMaximaFinder::Process(input) ...
+ * clReleaseMemObject(input.data);
  *
  * // CPU (vector per channel)
  * auto cpu_data = gen.GenerateToCpu();
@@ -81,11 +83,11 @@ public:
   }
 
   /**
-   * @brief Генерация на GPU
-   * @return cl_mem [antennas * points * sizeof(complex<float>)]
-   * @note Вызывающий код должен освободить через clReleaseMemObject()!
+   * @brief Генерация на GPU с метаданными (InputData — как в fft_maxima)
+   * @return InputData<cl_mem> с data, antenna_count, n_point, gpu_memory_bytes
+   * @note Вызывающий код должен освободить input.data через clReleaseMemObject()!
    */
-  cl_mem Generate();
+  drv_gpu_lib::InputData<cl_mem> GenerateInputData();
 
   /**
    * @brief Генерация с возвратом на CPU (по каналам)

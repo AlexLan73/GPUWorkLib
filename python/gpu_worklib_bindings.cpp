@@ -40,6 +40,7 @@
 #include "generators/script_generator.hpp"
 #include "generators/form_signal_generator.hpp"
 #include "generators/form_script_generator.hpp"
+#include "generators/delayed_form_signal_generator.hpp"
 #include "params/signal_request.hpp"
 #include "params/system_sampling.hpp"
 #include "params/form_params.hpp"
@@ -566,6 +567,102 @@ private:
 };
 
 // ============================================================================
+// PyGPUBuffer — GPU buffer handle for output="gpu"
+// ============================================================================
+
+class PyGPUBuffer {
+public:
+    PyGPUBuffer(cl_mem mem, cl_command_queue queue,
+                uint32_t antenna_count, uint32_t n_point)
+        : mem_(mem)
+        , antenna_count_(antenna_count)
+        , n_point_(n_point)
+    {
+        if (queue) {
+            clRetainCommandQueue(queue);
+            queue_ = queue;
+        } else {
+            queue_ = nullptr;
+        }
+    }
+
+    ~PyGPUBuffer() {
+        if (mem_) clReleaseMemObject(mem_);
+        mem_ = nullptr;
+        if (queue_) clReleaseCommandQueue(queue_);
+        queue_ = nullptr;
+    }
+
+    PyGPUBuffer(const PyGPUBuffer&) = delete;
+    PyGPUBuffer& operator=(const PyGPUBuffer&) = delete;
+
+    PyGPUBuffer(PyGPUBuffer&& other) noexcept
+        : mem_(other.mem_)
+        , queue_(other.queue_)
+        , antenna_count_(other.antenna_count_)
+        , n_point_(other.n_point_)
+    {
+        other.mem_ = nullptr;
+        other.queue_ = nullptr;
+    }
+
+    PyGPUBuffer& operator=(PyGPUBuffer&& other) noexcept {
+        if (this != &other) {
+            if (mem_) clReleaseMemObject(mem_);
+            if (queue_) clReleaseCommandQueue(queue_);
+            mem_ = other.mem_;
+            queue_ = other.queue_;
+            antenna_count_ = other.antenna_count_;
+            n_point_ = other.n_point_;
+            other.mem_ = nullptr;
+            other.queue_ = nullptr;
+        }
+        return *this;
+    }
+
+    py::array_t<std::complex<float>> read() {
+        if (!mem_ || !queue_)
+            throw std::runtime_error("PyGPUBuffer::read: buffer already released");
+        size_t total = static_cast<size_t>(antenna_count_) * n_point_;
+        std::vector<std::complex<float>> data(total);
+        cl_int err = clEnqueueReadBuffer(queue_, mem_, CL_TRUE, 0,
+                total * sizeof(std::complex<float>),
+                data.data(), 0, nullptr, nullptr);
+        if (err != CL_SUCCESS)
+            throw std::runtime_error("PyGPUBuffer::read: clEnqueueReadBuffer failed");
+        if (antenna_count_ <= 1)
+            return vector_to_numpy(std::move(data));
+        return vector_to_numpy_2d(std::move(data), antenna_count_, n_point_);
+    }
+
+    void release() {
+        if (mem_) {
+            clReleaseMemObject(mem_);
+            mem_ = nullptr;
+        }
+    }
+
+    uint32_t antenna_count() const { return antenna_count_; }
+    uint32_t n_point() const { return n_point_; }
+
+    py::tuple shape() const {
+        if (antenna_count_ <= 1)
+            return py::make_tuple(static_cast<py::ssize_t>(n_point_));
+        return py::make_tuple(
+            static_cast<py::ssize_t>(antenna_count_),
+            static_cast<py::ssize_t>(n_point_));
+    }
+
+    bool is_valid() const { return mem_ != nullptr; }
+
+private:
+    cl_mem mem_ = nullptr;
+    cl_command_queue queue_ = nullptr;
+    uint32_t antenna_count_ = 0;
+    uint32_t n_point_ = 0;
+};
+
+// ============================================================================
 // PyFormSignalGenerator — multi-channel getX formula on GPU
 // ============================================================================
 
@@ -605,23 +702,28 @@ public:
         gen_.SetParamsFromString(params_str);
     }
 
-    /// Generate signal on GPU → numpy array
-    py::array_t<std::complex<float>> generate() {
-        uint32_t antennas = gen_.GetAntennas();
-        uint32_t points = gen_.GetPoints();
-
-        cl_mem gpu_buf;
+    /// Generate signal: output="cpu" (default) → numpy, output="gpu" → GPUBuffer
+    py::object generate(const std::string& output = "cpu") {
+        drv_gpu_lib::InputData<cl_mem> input;
         {
             py::gil_scoped_release release;
-            gpu_buf = gen_.Generate();
+            input = gen_.GenerateInputData();
         }
 
+        if (output == "gpu") {
+            PyGPUBuffer buf(input.data, ctx_.queue(),
+                            input.antenna_count, input.n_point);
+            return py::cast(std::move(buf));
+        }
+
+        uint32_t antennas = input.antenna_count;
+        uint32_t points = input.n_point;
         size_t total = static_cast<size_t>(antennas) * points;
         std::vector<std::complex<float>> data(total);
-        clEnqueueReadBuffer(ctx_.queue(), gpu_buf, CL_TRUE, 0,
+        clEnqueueReadBuffer(ctx_.queue(), input.data, CL_TRUE, 0,
                             total * sizeof(std::complex<float>),
                             data.data(), 0, nullptr, nullptr);
-        clReleaseMemObject(gpu_buf);
+        clReleaseMemObject(input.data);
 
         if (antennas <= 1) {
             return vector_to_numpy(std::move(data));
@@ -709,23 +811,28 @@ public:
         return gen_.ListKernels();
     }
 
-    /// Generate signal on GPU → numpy array
-    py::array_t<std::complex<float>> generate() {
-        uint32_t antennas = gen_.GetAntennas();
-        uint32_t points = gen_.GetPoints();
-
-        cl_mem gpu_buf;
+    /// Generate signal: output="cpu" (default) → numpy, output="gpu" → GPUBuffer
+    py::object generate(const std::string& output = "cpu") {
+        drv_gpu_lib::InputData<cl_mem> input;
         {
             py::gil_scoped_release release;
-            gpu_buf = gen_.Generate();
+            input = gen_.GenerateInputData();
         }
 
+        if (output == "gpu") {
+            PyGPUBuffer buf(input.data, ctx_.queue(),
+                            input.antenna_count, input.n_point);
+            return py::cast(std::move(buf));
+        }
+
+        uint32_t antennas = input.antenna_count;
+        uint32_t points = input.n_point;
         size_t total = static_cast<size_t>(antennas) * points;
         std::vector<std::complex<float>> data(total);
-        clEnqueueReadBuffer(ctx_.queue(), gpu_buf, CL_TRUE, 0,
+        clEnqueueReadBuffer(ctx_.queue(), input.data, CL_TRUE, 0,
                             total * sizeof(std::complex<float>),
                             data.data(), 0, nullptr, nullptr);
-        clReleaseMemObject(gpu_buf);
+        clReleaseMemObject(input.data);
 
         if (antennas <= 1) {
             return vector_to_numpy(std::move(data));
@@ -750,6 +857,88 @@ public:
 private:
     GPUContext& ctx_;
     signal_gen::FormScriptGenerator gen_;
+};
+
+// ============================================================================
+// PyDelayedFormSignalGenerator — Farrow 48×5 fractional delay on GPU
+// ============================================================================
+
+class PyDelayedFormSignalGenerator {
+public:
+    explicit PyDelayedFormSignalGenerator(GPUContext& ctx)
+        : ctx_(ctx), gen_(ctx.backend()) {}
+
+    /// Set signal parameters (same as FormSignalGenerator)
+    void set_params(double fs, uint32_t antennas, uint32_t points,
+                    double f0, double amplitude, double noise_amplitude,
+                    double phase, double fdev, double norm,
+                    uint32_t noise_seed) {
+        signal_gen::FormParams p;
+        p.fs = fs;
+        p.antennas = antennas;
+        p.points = points;
+        p.f0 = f0;
+        p.amplitude = amplitude;
+        p.noise_amplitude = noise_amplitude;
+        p.phase = phase;
+        p.fdev = fdev;
+        p.norm = norm;
+        p.noise_seed = noise_seed;
+        gen_.SetParams(p);
+    }
+
+    /// Set per-antenna delays in microseconds
+    void set_delays(const std::vector<float>& delay_us) {
+        gen_.SetDelays(delay_us);
+    }
+
+    /// Load Lagrange matrix from JSON file (optional, built-in used by default)
+    void load_matrix(const std::string& json_path) {
+        gen_.LoadMatrix(json_path);
+    }
+
+    /// Generate signal: output="cpu" (default) → numpy, output="gpu" → GPUBuffer
+    py::object generate(const std::string& output = "cpu") {
+        drv_gpu_lib::InputData<cl_mem> input;
+        {
+            py::gil_scoped_release release;
+            input = gen_.GenerateInputData();
+        }
+
+        if (output == "gpu") {
+            PyGPUBuffer buf(input.data, ctx_.queue(),
+                            input.antenna_count, input.n_point);
+            return py::cast(std::move(buf));
+        }
+
+        uint32_t antennas = input.antenna_count;
+        uint32_t points = input.n_point;
+        size_t total = static_cast<size_t>(antennas) * points;
+        std::vector<std::complex<float>> data(total);
+        clEnqueueReadBuffer(ctx_.queue(), input.data, CL_TRUE, 0,
+                            total * sizeof(std::complex<float>),
+                            data.data(), 0, nullptr, nullptr);
+        clReleaseMemObject(input.data);
+
+        if (antennas <= 1) {
+            return vector_to_numpy(std::move(data));
+        } else {
+            return vector_to_numpy_2d(std::move(data), antennas, points);
+        }
+    }
+
+    uint32_t antennas() const { return gen_.GetAntennas(); }
+    uint32_t points() const { return gen_.GetPoints(); }
+    double fs() const { return gen_.GetParams().fs; }
+    py::list get_delays() const {
+        py::list result;
+        for (float d : gen_.GetDelays()) result.append(d);
+        return result;
+    }
+
+private:
+    GPUContext& ctx_;
+    signal_gen::DelayedFormSignalGenerator gen_;
 };
 
 // ============================================================================
@@ -869,6 +1058,7 @@ PYBIND11_MODULE(gpuworklib, m) {
               "  SignalGenerator         - CW, LFM, Noise generation\n"
               "  ScriptGenerator         - Text DSL -> GPU kernel compiler\n"
               "  FormSignalGenerator     - Multi-channel getX formula (signal+noise+delay)\n"
+              "  DelayedFormSignalGenerator - Farrow 48x5 fractional delay on GPU\n"
               "  FFTProcessor            - FFT with various output modes\n"
               "  SpectrumMaximaFinder    - Find all local maxima in FFT spectrum\n";
 
@@ -894,6 +1084,34 @@ PYBIND11_MODULE(gpuworklib, m) {
              py::return_value_policy::reference)
         .def("__exit__", [](GPUContext&, py::object, py::object, py::object) {
             return false;
+        });
+
+    // ════════════════════════════════════════════════════════════════
+    // GPUBuffer (for output="gpu" from FormSignalGenerator / FormScriptGenerator)
+    // ════════════════════════════════════════════════════════════════
+    py::class_<PyGPUBuffer>(m, "GPUBuffer",
+        "GPU buffer handle returned by generate(output='gpu').\n\n"
+        "Use read() to copy data to numpy array. Buffer is automatically\n"
+        "released when the object is garbage-collected.\n\n"
+        "Usage:\n"
+        "  buf = gen.generate(output='gpu')\n"
+        "  data = buf.read()  # numpy array\n"
+        "  print(buf.shape)   # (antennas, points)")
+        .def("read", &PyGPUBuffer::read,
+             "Copy GPU buffer to numpy array (complex64).\n\n"
+             "Returns:\n"
+             "  numpy.ndarray: (points,) or (antennas, points)")
+        .def("release", &PyGPUBuffer::release,
+             "Explicitly release GPU buffer (optional, auto-released on GC)")
+        .def_property_readonly("shape", &PyGPUBuffer::shape,
+             "Shape: (points,) or (antennas, points)")
+        .def_property_readonly("antenna_count", &PyGPUBuffer::antenna_count)
+        .def_property_readonly("n_point", &PyGPUBuffer::n_point)
+        .def("is_valid", &PyGPUBuffer::is_valid,
+             "True if buffer not yet released")
+        .def("__repr__", [](const PyGPUBuffer& self) {
+            return "<GPUBuffer antennas=" + std::to_string(self.antenna_count()) +
+                   " points=" + std::to_string(self.n_point()) + ">";
         });
 
     // ════════════════════════════════════════════════════════════════
@@ -1135,11 +1353,14 @@ PYBIND11_MODULE(gpuworklib, m) {
              "      tau_min, tau_max, tau_seed, noise_seed, antennas, points")
 
         .def("generate", &PyFormSignalGenerator::generate,
-             "Generate signal on GPU and return numpy array.\n\n"
+             py::arg("output") = "cpu",
+             "Generate signal on GPU.\n\n"
+             "Args:\n"
+             "  output: 'cpu' (default) — return numpy array\n"
+             "          'gpu' — return GPUBuffer (use .read() to get numpy)\n\n"
              "Returns:\n"
-             "  numpy.ndarray complex64:\n"
-             "    (points,) for 1 antenna\n"
-             "    (antennas, points) for multiple antennas")
+             "  output='cpu': numpy.ndarray complex64 (points,) or (antennas, points)\n"
+             "  output='gpu': GPUBuffer with .read(), .shape")
 
         .def_property_readonly("antennas", &PyFormSignalGenerator::antennas,
              "Number of antennas/channels")
@@ -1238,11 +1459,14 @@ PYBIND11_MODULE(gpuworklib, m) {
              "  list[str]: kernel names")
 
         .def("generate", &PyFormScriptGenerator::generate,
-             "Generate signal on GPU and return numpy array.\n\n"
+             py::arg("output") = "cpu",
+             "Generate signal on GPU.\n\n"
+             "Args:\n"
+             "  output: 'cpu' (default) — return numpy array\n"
+             "          'gpu' — return GPUBuffer (use .read() to get numpy)\n\n"
              "Returns:\n"
-             "  numpy.ndarray complex64:\n"
-             "    (points,) for 1 antenna\n"
-             "    (antennas, points) for multiple antennas")
+             "  output='cpu': numpy.ndarray complex64 (points,) or (antennas, points)\n"
+             "  output='gpu': GPUBuffer with .read(), .shape")
 
         .def_property_readonly("antennas", &PyFormScriptGenerator::antennas,
              "Number of antennas/channels")
@@ -1271,6 +1495,90 @@ PYBIND11_MODULE(gpuworklib, m) {
                        " points=" + std::to_string(self.points()) + " ready>";
             }
             return std::string("<FormScriptGenerator not compiled>");
+        });
+
+    // ════════════════════════════════════════════════════════════════
+    // DelayedFormSignalGenerator (Farrow 48×5 fractional delay)
+    // ════════════════════════════════════════════════════════════════
+    py::class_<PyDelayedFormSignalGenerator>(m, "DelayedFormSignalGenerator",
+        "Multi-channel signal generator with fractional delay (Farrow 48x5).\n\n"
+        "Pipeline:\n"
+        "  1. Generate clean signal (getX formula, no noise)\n"
+        "  2. Apply fractional delay: integer shift + 5-point Lagrange interpolation\n"
+        "  3. Add noise (Philox + Box-Muller)\n\n"
+        "Delay units: microseconds (float) per antenna.\n"
+        "Matrix: 48 rows (fractional delay bins) x 5 columns (interpolation taps).\n\n"
+        "Usage:\n"
+        "  gen = gpuworklib.DelayedFormSignalGenerator(ctx)\n"
+        "  gen.set_params(fs=12e6, f0=1e6, antennas=8, points=4096)\n"
+        "  gen.set_delays([0.0, 1.5, 3.0, 4.5, 6.0, 7.5, 9.0, 10.5])\n"
+        "  data = gen.generate()  # numpy (8, 4096) complex64\n")
+        .def(py::init<GPUContext&>(), py::arg("ctx"),
+             "Create DelayedFormSignalGenerator bound to GPU context")
+
+        .def("set_params", &PyDelayedFormSignalGenerator::set_params,
+             py::arg("fs") = 12e6,
+             py::arg("antennas") = 1,
+             py::arg("points") = 4096,
+             py::arg("f0") = 0.0,
+             py::arg("amplitude") = 1.0,
+             py::arg("noise_amplitude") = 0.0,
+             py::arg("phase") = 0.0,
+             py::arg("fdev") = 0.0,
+             py::arg("norm") = 0.7071067811865476,
+             py::arg("noise_seed") = 0,
+             "Set signal parameters.\n\n"
+             "Args:\n"
+             "  fs: sample rate (Hz, default 12 MHz)\n"
+             "  antennas: number of channels (default 1)\n"
+             "  points: samples per channel (default 4096)\n"
+             "  f0: center frequency (Hz)\n"
+             "  amplitude: signal amplitude 'a' (default 1.0)\n"
+             "  noise_amplitude: noise amplitude 'an' (added AFTER delay)\n"
+             "  phase: initial phase in radians (default 0)\n"
+             "  fdev: frequency deviation for chirp (default 0)\n"
+             "  norm: normalization factor (default 1/sqrt(2))\n"
+             "  noise_seed: seed for noise PRNG (0 = auto)\n")
+
+        .def("set_delays", &PyDelayedFormSignalGenerator::set_delays,
+             py::arg("delay_us"),
+             "Set per-antenna delays in microseconds.\n\n"
+             "Args:\n"
+             "  delay_us: list of floats, one per antenna\n\n"
+             "Example:\n"
+             "  gen.set_delays([0.0, 1.5, 3.0, 4.5])  # 4 antennas")
+
+        .def("load_matrix", &PyDelayedFormSignalGenerator::load_matrix,
+             py::arg("json_path"),
+             "Load Lagrange 48x5 matrix from JSON file.\n\n"
+             "Optional: built-in matrix used by default.\n"
+             "Format: { \"data\": [[row0], [row1], ...] }")
+
+        .def("generate", &PyDelayedFormSignalGenerator::generate,
+             py::arg("output") = "cpu",
+             "Generate signal with fractional delay on GPU.\n\n"
+             "Args:\n"
+             "  output: 'cpu' (default) — numpy, 'gpu' — GPUBuffer\n\n"
+             "Returns:\n"
+             "  output='cpu': numpy.ndarray complex64 (points,) or (antennas, points)\n"
+             "  output='gpu': GPUBuffer with .read(), .shape")
+
+        .def_property_readonly("antennas", &PyDelayedFormSignalGenerator::antennas,
+             "Number of antennas/channels")
+
+        .def_property_readonly("points", &PyDelayedFormSignalGenerator::points,
+             "Samples per channel")
+
+        .def_property_readonly("fs", &PyDelayedFormSignalGenerator::fs,
+             "Sample rate (Hz)")
+
+        .def_property_readonly("delays", &PyDelayedFormSignalGenerator::get_delays,
+             "Current delays (list of float, microseconds)")
+
+        .def("__repr__", [](const PyDelayedFormSignalGenerator& self) {
+            return "<DelayedFormSignalGenerator antennas=" + std::to_string(self.antennas()) +
+                   " points=" + std::to_string(self.points()) +
+                   " fs=" + std::to_string(static_cast<int>(self.fs())) + ">";
         });
 
     // ════════════════════════════════════════════════════════════════

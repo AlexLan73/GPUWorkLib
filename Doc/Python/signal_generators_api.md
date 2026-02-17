@@ -1,6 +1,6 @@
 # Signal Generators — Python API
 
-> **Модуль**: `gpuworklib.SignalGenerator`, `gpuworklib.FormSignalGenerator`, `gpuworklib.FormScriptGenerator`
+> **Модуль**: `gpuworklib.SignalGenerator`, `gpuworklib.FormSignalGenerator`, `gpuworklib.FormScriptGenerator`, `gpuworklib.DelayedFormSignalGenerator`
 > **C++ namespace**: `signal_gen`
 > **Обновлено**: 2026-02-17
 
@@ -14,6 +14,8 @@ GPU-ускоренные генераторы сигналов для антен
 | `ScriptGenerator` | DSL → OpenCL kernel (text скрипт → GPU) |
 | `FormSignalGenerator` | Мультиканальный генератор по формуле getX (Philox+Box-Muller) |
 | `FormScriptGenerator` | DSL + on-disk kernel cache для FormSignal |
+| `DelayedFormSignalGenerator` | Дробная задержка Farrow 48×5 (Lagrange interpolation) |
+| `GPUBuffer` | Handle GPU-буфера (при `generate(output='gpu')`) |
 
 ---
 
@@ -114,16 +116,26 @@ gen.set_params_from_string("f0=1e6,a=1.0,an=0.1,antennas=8,points=4096,fs=12e6")
 | `noise_seed` | noise seed | `antennas` | channels |
 | `points` | samples | | |
 
-#### generate()
+#### generate(output="cpu")
 
 ```python
-data = gen.generate()
+data = gen.generate()           # default: numpy
+buf = gen.generate(output='gpu')  # GPUBuffer
+data = buf.read()               # explicit readback
 ```
 
-| Возврат | Условие |
-|---------|---------|
+| Аргумент | По умолчанию | Описание |
+|----------|--------------|----------|
+| `output` | `"cpu"` | `"cpu"` — readback → numpy, `"gpu"` — возвращает `GPUBuffer` |
+
+| Возврат (output="cpu") | Условие |
+|------------------------|---------|
 | `np.ndarray (points,) complex64` | 1 антенна |
 | `np.ndarray (antennas, points) complex64` | N антенн |
+
+| Возврат (output="gpu") | Методы `GPUBuffer` |
+|------------------------|--------------------|
+| `GPUBuffer` | `.read()` → numpy, `.shape`, `.antenna_count`, `.n_point`, `.release()` |
 
 ### Свойства (read-only)
 
@@ -186,10 +198,12 @@ gen.compile()
 ```
 Генерирует OpenCL kernel source с `#define` параметрами и компилирует.
 
-#### generate()
+#### generate(output="cpu")
 
 ```python
-data = gen.generate()  # np.ndarray complex64
+data = gen.generate()            # np.ndarray complex64 (default)
+buf = gen.generate(output='gpu') # GPUBuffer — без readback
+data = buf.read()                # явный readback при необходимости
 ```
 Требует предварительного `compile()` или `load_kernel()`.
 
@@ -266,6 +280,155 @@ print(names)  # ['my_cw_500k', 'chirp_20k']
 ```python
 gpuworklib.FormScriptGenerator.get_kernels_dir()      # путь к .cl файлам
 gpuworklib.FormScriptGenerator.get_kernels_bin_dir()   # путь к бинарникам
+```
+
+---
+
+## DelayedFormSignalGenerator
+
+Мультиканальный генератор с **дробной задержкой** (Farrow 48×5 Lagrange interpolation).
+
+**Алгоритм:**
+1. Генерация чистого сигнала (getX, без шума) через FormSignalGenerator
+2. Применение дробной задержки: целый сдвиг D + 5-точечная Lagrange интерполяция
+3. Добавление шума (Philox + Box-Muller) — **после** задержки
+
+**Задержка:** в **микросекундах** (float) на каждую антенну.
+
+**Матрица:** 48 строк (дробные задержки 0/48..47/48) × 5 столбцов (коэффициенты интерполяции).
+
+### Быстрый старт
+
+```python
+import gpuworklib
+import numpy as np
+
+ctx = gpuworklib.GPUContext(0)
+gen = gpuworklib.DelayedFormSignalGenerator(ctx)
+
+# CW 50 kHz, 8 каналов, нарастающая задержка
+gen.set_params(
+    fs=1e6,          # 1 МГц
+    f0=50000.0,      # 50 кГц
+    antennas=8,
+    points=4096,
+    amplitude=1.0,
+    noise_amplitude=0.1  # шум добавляется ПОСЛЕ задержки
+)
+
+# Задержки: 0, 1.5, 3.0, ..., 10.5 мкс
+gen.set_delays([i * 1.5 for i in range(8)])
+
+data = gen.generate()
+print(f"Shape: {data.shape}")  # (8, 4096) complex64
+```
+
+### Конструктор
+
+```python
+gen = gpuworklib.DelayedFormSignalGenerator(ctx)
+```
+
+| Параметр | Тип | Описание |
+|----------|-----|----------|
+| `ctx` | `GPUContext` | GPU-контекст (обязательный) |
+
+### Методы
+
+#### set_params()
+
+```python
+gen.set_params(
+    fs=12e6,             # float — частота дискретизации, Гц
+    antennas=1,          # int — количество каналов
+    points=4096,         # int — отсчётов на канал
+    f0=0.0,              # float — несущая частота, Гц
+    amplitude=1.0,       # float — амплитуда сигнала
+    noise_amplitude=0.0, # float — шум (добавляется ПОСЛЕ задержки)
+    phase=0.0,           # float — начальная фаза, рад
+    fdev=0.0,            # float — девиация частоты (chirp), Гц
+    norm=0.7071,         # float — нормировка (1/sqrt(2))
+    noise_seed=0         # int — seed для Philox PRNG (0 = auto)
+)
+```
+
+> **Важно:** `noise_amplitude` добавляется **после** задержки (в отличие от FormSignalGenerator, где шум встроен в getX kernel).
+
+#### set_delays(delay_us)
+
+```python
+gen.set_delays([0.0, 1.5, 3.0, 4.5])  # 4 антенны
+```
+
+| Аргумент | Тип | Описание |
+|----------|-----|----------|
+| `delay_us` | `list[float]` | Задержки per-antenna в **микросекундах**. `len(delay_us) == antennas` |
+
+**Как работает:**
+- `delay_us → delay_samples = delay_us × 1e-6 × fs`
+- `D = floor(delay_samples)` — целый сдвиг
+- `μ = delay_samples - D` — дробная часть [0, 1)
+- `row = int(μ × 48) % 48` — строка матрицы Lagrange
+- Для каждого отсчёта: 5-точечная свёртка с коэффициентами из строки row
+
+#### load_matrix(json_path)
+
+```python
+gen.load_matrix("path/to/lagrange_matrix_48x5.json")
+```
+
+Опционально. Встроенная матрица 48×5 используется по умолчанию.
+
+**Формат JSON:**
+```json
+{
+  "data": [[0.0, 1.0, 0.0, 0.0, 0.0], ...]
+}
+```
+
+#### generate(output="cpu")
+
+```python
+data = gen.generate()             # numpy (default)
+buf = gen.generate(output='gpu')  # GPUBuffer
+```
+
+| Возврат (output="cpu") | Условие |
+|------------------------|---------|
+| `np.ndarray (points,) complex64` | 1 антенна |
+| `np.ndarray (antennas, points) complex64` | N антенн |
+
+### Свойства (read-only)
+
+| Свойство | Тип | Описание |
+|----------|-----|----------|
+| `antennas` | `int` | Количество каналов |
+| `points` | `int` | Отсчётов на канал |
+| `fs` | `float` | Частота дискретизации |
+| `delays` | `list[float]` | Текущие задержки (мкс) |
+
+### Пример: Multi-channel с визуализацией
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+import gpuworklib
+
+ctx = gpuworklib.GPUContext(0)
+gen = gpuworklib.DelayedFormSignalGenerator(ctx)
+
+gen.set_params(fs=1e6, f0=50000, antennas=8, points=4096, amplitude=1.0)
+gen.set_delays([i * 2.0 for i in range(8)])
+
+data = gen.generate()
+
+# Waterfall: видно нарастающую задержку
+fig, ax = plt.subplots(figsize=(12, 6))
+ax.imshow(np.abs(data[:, :300]), aspect='auto', cmap='inferno')
+ax.set_xlabel('Sample')
+ax.set_ylabel('Antenna')
+ax.set_title('Fractional Delay Waterfall')
+plt.savefig('delay_waterfall.png')
 ```
 
 ---
@@ -384,11 +547,15 @@ print(f"Error: {err:.2e}")  # < 1e-6
 | Файл | Описание |
 |------|----------|
 | `Python_test/test_form_signal.py` | FormSignalGenerator: 7 тестов + 6 графиков |
+| `Python_test/test_delayed_form_signal.py` | DelayedFormSignalGenerator: 5 тестов + 4 графика |
 | `Python_test/example_form_signal.py` | Демо: 5 сценариев + 5 презентационных графиков |
 
 ```bash
 python Python_test/test_form_signal.py
+python Python_test/test_delayed_form_signal.py
 python Python_test/example_form_signal.py
 ```
 
-Графики: `Results/Plots/FormSignal/`
+Графики:
+- `Results/Plots/FormSignal/` — FormSignalGenerator
+- `Results/Plots/DelayedFormSignal/` — DelayedFormSignalGenerator (Farrow 48×5)

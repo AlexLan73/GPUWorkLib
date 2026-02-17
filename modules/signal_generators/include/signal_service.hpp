@@ -13,6 +13,7 @@
 #include "signal_generator_factory.hpp"
 #include "params/signal_request.hpp"
 #include "interface/i_backend.hpp"
+#include "interface/input_data.hpp"
 
 #include <CL/cl.h>
 #include <vector>
@@ -84,10 +85,10 @@ public:
     /**
      * @brief Генерация FormSignal на GPU (мультиканальная)
      * @param params FormParams (fs, antennas, points уже внутри)
-     * @return cl_mem [antennas * points * sizeof(complex<float>)]
-     * @note Вызывающий код должен освободить через clReleaseMemObject()
+     * @return InputData<cl_mem> — совместимо с fft_maxima (data, antenna_count, n_point, gpu_memory_bytes)
+     * @note Вызывающий код должен освободить result.data через clReleaseMemObject()
      */
-    cl_mem GenerateFormGpu(const FormParams& params);
+    drv_gpu_lib::InputData<cl_mem> GenerateFormGpu(const FormParams& params);
 
     /**
      * @brief Генерация FormSignal на CPU (по каналам)
@@ -96,6 +97,29 @@ public:
      */
     std::vector<std::vector<std::complex<float>>> GenerateFormCpu(
         const FormParams& params);
+
+    // ═══════════════════════════════════════════════════════════════════
+    // DelayedFormSignal generation (Farrow 48×5)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * @brief Генерация сигнала с дробной задержкой (Farrow) на GPU
+     * @param params FormParams (fs, antennas, points, noise_amplitude)
+     * @param delay_us Задержки per-antenna в микросекундах
+     * @return InputData<cl_mem>
+     * @note Вызывающий код должен освободить result.data через clReleaseMemObject()
+     */
+    drv_gpu_lib::InputData<cl_mem> GenerateDelayedFormGpu(
+        const FormParams& params, const std::vector<float>& delay_us);
+
+    /**
+     * @brief Генерация сигнала с дробной задержкой (Farrow) на CPU
+     * @param params FormParams
+     * @param delay_us Задержки per-antenna в микросекундах
+     * @return vector[antenna_id][sample_id] complex<float>
+     */
+    std::vector<std::vector<std::complex<float>>> GenerateDelayedFormCpu(
+        const FormParams& params, const std::vector<float>& delay_us);
 
 private:
     drv_gpu_lib::IBackend* backend_;
