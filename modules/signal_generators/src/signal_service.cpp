@@ -10,6 +10,7 @@
 #include "generators/cw_generator.hpp"
 #include "generators/lfm_generator.hpp"
 #include "generators/noise_generator.hpp"
+#include "generators/form_signal_generator.hpp"
 
 namespace signal_gen {
 
@@ -67,6 +68,23 @@ cl_mem SignalService::GenerateGpu(
 {
     NoiseGenerator gen(backend_, params);
     return gen.GenerateToGpu(system, beam_count);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// FormSignal generation
+// ════════════════════════════════════════════════════════════════════════════
+
+cl_mem SignalService::GenerateFormGpu(const FormParams& params) {
+    FormSignalGenerator gen(backend_);
+    gen.SetParams(params);
+    return gen.Generate();
+}
+
+std::vector<std::vector<std::complex<float>>> SignalService::GenerateFormCpu(
+    const FormParams& params) {
+    FormSignalGenerator gen(backend_);
+    gen.SetParams(params);
+    return gen.GenerateToCpu();
 }
 
 } // namespace signal_gen

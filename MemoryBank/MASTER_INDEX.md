@@ -3,7 +3,7 @@
 > **Проект**: Библиотеки GPU-вычислений (OpenCL, ROCm, HIP)
 > **Автор**: Alex
 > **AI-ассистент**: Кодо
-> **Обновлено**: 2026-02-15
+> **Обновлено**: 2026-02-17
 
 ---
 
@@ -13,7 +13,7 @@
 |--------|--------|----------|
 | **DrvGPU** | Active | Базовый драйвер GPU (OpenCL backend). См. `specs/drvgpu.md` |
 | **SpectrumMaximaFinder** (fft_maxima) | Active | Поиск максимума спектра FFT. См. `specs/fft_maxima.md` |
-| **SignalGenerators** | Active | CW, LFM, Noise, Script. FormSignal: см. `specs/Form_signals.md` |
+| **SignalGenerators** | Active | CW, LFM, Noise, Script, **FormSignal** ✅ DONE. См. `specs/Form_signals.md` |
 | **FFTProcessor** | Active | FFT с режимами Complex/MagPhase |
 | **ScriptGenerator** | Active | Text DSL -> OpenCL kernel compiler |
 | **Python Bindings** | Active | pybind11 модуль gpuworklib |
@@ -24,8 +24,14 @@
 
 ## Текущий статус
 
+### FormSignalGenerator — ✅ ЗАВЕРШЕНО (все 6 этапов)
+- **Этап 1** ✅ — FormSignalGenerator: C++ (6/6), Python (7/7 + 6 графиков)
+- **Этап 2** ✅ — FormScriptGenerator: DSL + kernel cache, C++ (7/7)
+- **Этап 3** ✅ — SignalService + Factory: CreateForm/CreateFormROCm
+- **Этап 4** ✅ — Python bindings: PyFormSignalGenerator + PyFormScriptGenerator
+- **Этап 5** ✅ — Документация: `Doc/Python/signal_generators_api.md` + example
+- **Этап 6** ✅ — ROCm stubs: FormSignalGeneratorROCm + form_signal.hip
 
-## Задачи
 ---
 
 ## Python модуль (gpuworklib)
@@ -38,6 +44,8 @@ build/python/Release/gpuworklib.cp312-win_amd64.pyd
 - `GPUContext(device_index)` — OpenCL контекст
 - `SignalGenerator(ctx)` — CW/LFM/Noise генерация
 - `ScriptGenerator(ctx)` — Text DSL -> GPU kernel
+- `FormSignalGenerator(ctx)` — Мультиканальный генератор (getX формула) ✅
+- `FormScriptGenerator(ctx)` — DSL + on-disk kernel cache ✅ NEW
 - `FFTProcessor(ctx)` — GPU FFT (clFFT)
 
 ### Тесты: `D:\Python\С++ to Python\test_gpuworklib.py` (9 тестов)
@@ -55,4 +63,4 @@ build/python/Release/gpuworklib.cp312-win_amd64.pyd
 
 ---
 
-*Последнее обновление: 2026-02-13*
+*Последнее обновление: 2026-02-17*

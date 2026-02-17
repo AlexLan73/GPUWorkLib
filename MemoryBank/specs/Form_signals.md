@@ -1,7 +1,18 @@
 # FormSignalGenerator — Спецификация
 
-> **Статус**: Черновик для обсуждения и редактирования
-> **Дата**: 2026-02-11
+> **Статус**: ✅ ЗАВЕРШЕНО — все 6 этапов реализованы (C++/Python/DSL/кэш/документация/ROCm stubs)
+> **Дата**: 2026-02-11 | **Обновлено**: 2026-02-17
+
+---
+
+## Образец для реализации
+
+**Рабочий пример того же паттерна** — ScriptGenerator (DSL → OpenCL kernel, multi-channel, Python):
+
+- **C++**: `modules/signal_generators/include/generators/script_generator.hpp`, `src/script_generator.cpp`
+- **Документация**: `Doc/Modules/signal_generators/ScriptGenerator.md`
+- **Python + графики**: `Python_test/test_gpuworklib.py` — `test_script_generator()`, `test_script_fft_pipeline()` (Test 8, 9)
+- **Параметрический генератор**: `CwGenerator` — backend->Allocate(), GetNativeQueue()
 
 ---
 

@@ -77,6 +77,26 @@ public:
     cl_mem GenerateGpu(const NoiseParams& params, const SystemSampling& system,
                        size_t beam_count = 1);
 
+    // ═══════════════════════════════════════════════════════════════════
+    // FormSignal generation (standalone API)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * @brief Генерация FormSignal на GPU (мультиканальная)
+     * @param params FormParams (fs, antennas, points уже внутри)
+     * @return cl_mem [antennas * points * sizeof(complex<float>)]
+     * @note Вызывающий код должен освободить через clReleaseMemObject()
+     */
+    cl_mem GenerateFormGpu(const FormParams& params);
+
+    /**
+     * @brief Генерация FormSignal на CPU (по каналам)
+     * @param params FormParams
+     * @return vector[antenna_id][sample_id] complex<float>
+     */
+    std::vector<std::vector<std::complex<float>>> GenerateFormCpu(
+        const FormParams& params);
+
 private:
     drv_gpu_lib::IBackend* backend_;
 };

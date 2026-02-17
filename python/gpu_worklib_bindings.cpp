@@ -38,8 +38,11 @@
 #include "generators/lfm_generator.hpp"
 #include "generators/noise_generator.hpp"
 #include "generators/script_generator.hpp"
+#include "generators/form_signal_generator.hpp"
+#include "generators/form_script_generator.hpp"
 #include "params/signal_request.hpp"
 #include "params/system_sampling.hpp"
+#include "params/form_params.hpp"
 #include "spectrum_maxima_finder.h"
 
 namespace py = pybind11;
@@ -563,6 +566,193 @@ private:
 };
 
 // ============================================================================
+// PyFormSignalGenerator — multi-channel getX formula on GPU
+// ============================================================================
+
+class PyFormSignalGenerator {
+public:
+    explicit PyFormSignalGenerator(GPUContext& ctx)
+        : ctx_(ctx), gen_(ctx.backend()) {}
+
+    /// Set parameters from FormParams fields
+    void set_params(double fs, uint32_t antennas, uint32_t points,
+                    double f0, double amplitude, double noise_amplitude,
+                    double phase, double fdev, double norm,
+                    double tau_base, double tau_step,
+                    double tau_min, double tau_max,
+                    uint32_t tau_seed, uint32_t noise_seed) {
+        signal_gen::FormParams p;
+        p.fs = fs;
+        p.antennas = antennas;
+        p.points = points;
+        p.f0 = f0;
+        p.amplitude = amplitude;
+        p.noise_amplitude = noise_amplitude;
+        p.phase = phase;
+        p.fdev = fdev;
+        p.norm = norm;
+        p.tau_base = tau_base;
+        p.tau_step = tau_step;
+        p.tau_min = tau_min;
+        p.tau_max = tau_max;
+        p.tau_seed = tau_seed;
+        p.noise_seed = noise_seed;
+        gen_.SetParams(p);
+    }
+
+    /// Set parameters from string "f0=1e6,a=1.0,an=0.1,tau=0.001"
+    void set_params_from_string(const std::string& params_str) {
+        gen_.SetParamsFromString(params_str);
+    }
+
+    /// Generate signal on GPU → numpy array
+    py::array_t<std::complex<float>> generate() {
+        uint32_t antennas = gen_.GetAntennas();
+        uint32_t points = gen_.GetPoints();
+
+        cl_mem gpu_buf;
+        {
+            py::gil_scoped_release release;
+            gpu_buf = gen_.Generate();
+        }
+
+        size_t total = static_cast<size_t>(antennas) * points;
+        std::vector<std::complex<float>> data(total);
+        clEnqueueReadBuffer(ctx_.queue(), gpu_buf, CL_TRUE, 0,
+                            total * sizeof(std::complex<float>),
+                            data.data(), 0, nullptr, nullptr);
+        clReleaseMemObject(gpu_buf);
+
+        if (antennas <= 1) {
+            return vector_to_numpy(std::move(data));
+        } else {
+            return vector_to_numpy_2d(std::move(data), antennas, points);
+        }
+    }
+
+    uint32_t antennas() const { return gen_.GetAntennas(); }
+    uint32_t points() const { return gen_.GetPoints(); }
+    double fs() const { return gen_.GetParams().fs; }
+
+private:
+    GPUContext& ctx_;
+    signal_gen::FormSignalGenerator gen_;
+};
+
+// ============================================================================
+// PyFormScriptGenerator — DSL + on-disk kernel cache for getX
+// ============================================================================
+
+class PyFormScriptGenerator {
+public:
+    explicit PyFormScriptGenerator(GPUContext& ctx)
+        : ctx_(ctx), gen_(ctx.backend()) {}
+
+    /// Set parameters (same as FormSignalGenerator)
+    void set_params(double fs, uint32_t antennas, uint32_t points,
+                    double f0, double amplitude, double noise_amplitude,
+                    double phase, double fdev, double norm,
+                    double tau_base, double tau_step,
+                    double tau_min, double tau_max,
+                    uint32_t tau_seed, uint32_t noise_seed) {
+        signal_gen::FormParams p;
+        p.fs = fs;
+        p.antennas = antennas;
+        p.points = points;
+        p.f0 = f0;
+        p.amplitude = amplitude;
+        p.noise_amplitude = noise_amplitude;
+        p.phase = phase;
+        p.fdev = fdev;
+        p.norm = norm;
+        p.tau_base = tau_base;
+        p.tau_step = tau_step;
+        p.tau_min = tau_min;
+        p.tau_max = tau_max;
+        p.tau_seed = tau_seed;
+        p.noise_seed = noise_seed;
+        gen_.SetParams(p);
+    }
+
+    void set_params_from_string(const std::string& params_str) {
+        gen_.SetParamsFromString(params_str);
+    }
+
+    /// Compile kernel from current params
+    void compile() {
+        py::gil_scoped_release release;
+        gen_.Compile();
+    }
+
+    /// Generate DSL script text
+    std::string generate_script() const {
+        return gen_.GenerateScript();
+    }
+
+    /// Generate OpenCL kernel source
+    std::string generate_kernel_source() const {
+        return gen_.GenerateKernelSource();
+    }
+
+    /// Save compiled kernel to disk
+    void save_kernel(const std::string& name, const std::string& comment = "") {
+        gen_.SaveKernel(name, comment);
+    }
+
+    /// Load kernel from disk by name
+    void load_kernel(const std::string& name) {
+        gen_.LoadKernel(name);
+    }
+
+    /// List available kernel names from manifest
+    std::vector<std::string> list_kernels() const {
+        return gen_.ListKernels();
+    }
+
+    /// Generate signal on GPU → numpy array
+    py::array_t<std::complex<float>> generate() {
+        uint32_t antennas = gen_.GetAntennas();
+        uint32_t points = gen_.GetPoints();
+
+        cl_mem gpu_buf;
+        {
+            py::gil_scoped_release release;
+            gpu_buf = gen_.Generate();
+        }
+
+        size_t total = static_cast<size_t>(antennas) * points;
+        std::vector<std::complex<float>> data(total);
+        clEnqueueReadBuffer(ctx_.queue(), gpu_buf, CL_TRUE, 0,
+                            total * sizeof(std::complex<float>),
+                            data.data(), 0, nullptr, nullptr);
+        clReleaseMemObject(gpu_buf);
+
+        if (antennas <= 1) {
+            return vector_to_numpy(std::move(data));
+        } else {
+            return vector_to_numpy_2d(std::move(data), antennas, points);
+        }
+    }
+
+    uint32_t antennas() const { return gen_.GetAntennas(); }
+    uint32_t points() const { return gen_.GetPoints(); }
+    double fs() const { return gen_.GetParams().fs; }
+    bool is_ready() const { return gen_.IsReady(); }
+    std::string kernel_source() const { return gen_.GetCurrentKernelSource(); }
+
+    static std::string kernels_dir() {
+        return signal_gen::FormScriptGenerator::GetKernelsDir();
+    }
+    static std::string kernels_bin_dir() {
+        return signal_gen::FormScriptGenerator::GetKernelsBinDir();
+    }
+
+private:
+    GPUContext& ctx_;
+    signal_gen::FormScriptGenerator gen_;
+};
+
+// ============================================================================
 // PySpectrumMaximaFinder — find all local maxima in FFT spectrum
 // ============================================================================
 
@@ -678,6 +868,7 @@ PYBIND11_MODULE(gpuworklib, m) {
               "  GPUContext              - GPU device management\n"
               "  SignalGenerator         - CW, LFM, Noise generation\n"
               "  ScriptGenerator         - Text DSL -> GPU kernel compiler\n"
+              "  FormSignalGenerator     - Multi-channel getX formula (signal+noise+delay)\n"
               "  FFTProcessor            - FFT with various output modes\n"
               "  SpectrumMaximaFinder    - Find all local maxima in FFT spectrum\n";
 
@@ -879,6 +1070,207 @@ PYBIND11_MODULE(gpuworklib, m) {
                        " points=" + std::to_string(self.points()) + " ready>";
             }
             return std::string("<ScriptGenerator not loaded>");
+        });
+
+    // ════════════════════════════════════════════════════════════════
+    // FormSignalGenerator
+    // ════════════════════════════════════════════════════════════════
+    py::class_<PyFormSignalGenerator>(m, "FormSignalGenerator",
+        "Multi-channel signal generator using getX formula (GPU).\n\n"
+        "Formula:\n"
+        "  X = a*norm*exp(j*(2pi*f0*t + pi*fdev/ti*((t-ti/2)^2) + phi))\n"
+        "    + an*norm*(randn + j*randn)\n"
+        "  X = 0  if t < 0 or t > ti - dt\n\n"
+        "Features:\n"
+        "  - Multi-channel (antennas) parallel generation\n"
+        "  - Per-channel delay: FIXED / LINEAR / RANDOM\n"
+        "  - Chirp support (fdev != 0)\n"
+        "  - Philox-2x32 PRNG + Box-Muller noise\n\n"
+        "Usage:\n"
+        "  gen = gpuworklib.FormSignalGenerator(ctx)\n"
+        "  gen.set_params_from_string('f0=1e6,a=1.0,an=0.1,antennas=8,points=4096')\n"
+        "  data = gen.generate()  # numpy (8, 4096) complex64\n")
+        .def(py::init<GPUContext&>(), py::arg("ctx"),
+             "Create FormSignalGenerator bound to GPU context")
+
+        .def("set_params", &PyFormSignalGenerator::set_params,
+             py::arg("fs") = 12e6,
+             py::arg("antennas") = 1,
+             py::arg("points") = 4096,
+             py::arg("f0") = 0.0,
+             py::arg("amplitude") = 1.0,
+             py::arg("noise_amplitude") = 0.0,
+             py::arg("phase") = 0.0,
+             py::arg("fdev") = 0.0,
+             py::arg("norm") = 0.7071067811865476,
+             py::arg("tau_base") = 0.0,
+             py::arg("tau_step") = 0.0,
+             py::arg("tau_min") = 0.0,
+             py::arg("tau_max") = 0.0,
+             py::arg("tau_seed") = 12345,
+             py::arg("noise_seed") = 0,
+             "Set signal parameters.\n\n"
+             "Args:\n"
+             "  fs: sample rate (Hz, default 12 MHz)\n"
+             "  antennas: number of channels (default 1)\n"
+             "  points: samples per channel (default 4096)\n"
+             "  f0: center frequency (Hz)\n"
+             "  amplitude: signal amplitude 'a' (default 1.0)\n"
+             "  noise_amplitude: noise amplitude 'an' (default 0, no noise)\n"
+             "  phase: initial phase in radians (default 0)\n"
+             "  fdev: frequency deviation for chirp (default 0, pure CW)\n"
+             "  norm: normalization factor (default 1/sqrt(2))\n"
+             "  tau_base: base delay in seconds (default 0)\n"
+             "  tau_step: delay step per channel (0 = FIXED mode)\n"
+             "  tau_min: min delay for RANDOM mode\n"
+             "  tau_max: max delay for RANDOM mode\n"
+             "  tau_seed: seed for random delay (default 12345)\n"
+             "  noise_seed: seed for noise PRNG (0 = auto)\n")
+
+        .def("set_params_from_string", &PyFormSignalGenerator::set_params_from_string,
+             py::arg("params"),
+             "Set parameters from string.\n\n"
+             "Format: 'f0=1e6,a=1.0,an=0.1,tau=0.001,antennas=8,points=4096'\n\n"
+             "Keys: fs, f0, a, an, phi, fdev, norm, tau, tau_step,\n"
+             "      tau_min, tau_max, tau_seed, noise_seed, antennas, points")
+
+        .def("generate", &PyFormSignalGenerator::generate,
+             "Generate signal on GPU and return numpy array.\n\n"
+             "Returns:\n"
+             "  numpy.ndarray complex64:\n"
+             "    (points,) for 1 antenna\n"
+             "    (antennas, points) for multiple antennas")
+
+        .def_property_readonly("antennas", &PyFormSignalGenerator::antennas,
+             "Number of antennas/channels")
+
+        .def_property_readonly("points", &PyFormSignalGenerator::points,
+             "Samples per channel")
+
+        .def_property_readonly("fs", &PyFormSignalGenerator::fs,
+             "Sample rate (Hz)")
+
+        .def("__repr__", [](const PyFormSignalGenerator& self) {
+            return "<FormSignalGenerator antennas=" + std::to_string(self.antennas()) +
+                   " points=" + std::to_string(self.points()) +
+                   " fs=" + std::to_string(static_cast<int>(self.fs())) + ">";
+        });
+
+    // ════════════════════════════════════════════════════════════════
+    // FormScriptGenerator (DSL + on-disk kernel cache)
+    // ════════════════════════════════════════════════════════════════
+    py::class_<PyFormScriptGenerator>(m, "FormScriptGenerator",
+        "DSL-based signal generator with on-disk kernel cache.\n\n"
+        "Extends FormSignalGenerator with:\n"
+        "  - DSL text generation (human-readable script)\n"
+        "  - OpenCL kernel source generation (with #define params)\n"
+        "  - Save/load compiled kernels to disk\n"
+        "  - Versioning: name collisions create _00, _01, ...\n"
+        "  - manifest.json with kernel metadata\n\n"
+        "Two modes:\n"
+        "  1. From params: set_params() -> compile() -> generate()\n"
+        "  2. From cache:  load_kernel('name') -> generate()\n\n"
+        "Usage:\n"
+        "  gen = gpuworklib.FormScriptGenerator(ctx)\n"
+        "  gen.set_params(f0=1e6, antennas=8, points=4096)\n"
+        "  gen.compile()\n"
+        "  data = gen.generate()  # numpy (8, 4096) complex64\n"
+        "  gen.save_kernel('my_signal', 'CW 1MHz 8ch')\n"
+        "  gen.load_kernel('my_signal')  # fast binary load\n")
+        .def(py::init<GPUContext&>(), py::arg("ctx"),
+             "Create FormScriptGenerator bound to GPU context")
+
+        .def("set_params", &PyFormScriptGenerator::set_params,
+             py::arg("fs") = 12e6,
+             py::arg("antennas") = 1,
+             py::arg("points") = 4096,
+             py::arg("f0") = 0.0,
+             py::arg("amplitude") = 1.0,
+             py::arg("noise_amplitude") = 0.0,
+             py::arg("phase") = 0.0,
+             py::arg("fdev") = 0.0,
+             py::arg("norm") = 0.7071067811865476,
+             py::arg("tau_base") = 0.0,
+             py::arg("tau_step") = 0.0,
+             py::arg("tau_min") = 0.0,
+             py::arg("tau_max") = 0.0,
+             py::arg("tau_seed") = 12345,
+             py::arg("noise_seed") = 0,
+             "Set signal parameters (same as FormSignalGenerator)")
+
+        .def("set_params_from_string", &PyFormScriptGenerator::set_params_from_string,
+             py::arg("params"),
+             "Set parameters from string: 'f0=1e6,a=1.0,antennas=8'")
+
+        .def("compile", &PyFormScriptGenerator::compile,
+             "Compile OpenCL kernel from current parameters.\n"
+             "Must be called before generate() (unless using load_kernel).")
+
+        .def("generate_script", &PyFormScriptGenerator::generate_script,
+             "Generate human-readable DSL script text.\n\n"
+             "Returns:\n"
+             "  str: DSL text with [Params], [Defs], [Signal] sections")
+
+        .def("generate_kernel_source", &PyFormScriptGenerator::generate_kernel_source,
+             "Generate full OpenCL kernel source with #define params.\n\n"
+             "Returns:\n"
+             "  str: OpenCL C source code")
+
+        .def("save_kernel", &PyFormScriptGenerator::save_kernel,
+             py::arg("name"), py::arg("comment") = "",
+             "Save compiled kernel to disk.\n\n"
+             "Creates: name.cl + bin/name_opencl.bin\n"
+             "If name exists, old files renamed to name_00, name_01, ...\n\n"
+             "Args:\n"
+             "  name: kernel name (without extension)\n"
+             "  comment: optional description for manifest.json")
+
+        .def("load_kernel", &PyFormScriptGenerator::load_kernel,
+             py::arg("name"),
+             "Load kernel from disk by name.\n\n"
+             "Priority: binary (fast) -> source (compile + save binary)\n\n"
+             "Args:\n"
+             "  name: kernel name (without extension)")
+
+        .def("list_kernels", &PyFormScriptGenerator::list_kernels,
+             "List available kernel names from manifest.json.\n\n"
+             "Returns:\n"
+             "  list[str]: kernel names")
+
+        .def("generate", &PyFormScriptGenerator::generate,
+             "Generate signal on GPU and return numpy array.\n\n"
+             "Returns:\n"
+             "  numpy.ndarray complex64:\n"
+             "    (points,) for 1 antenna\n"
+             "    (antennas, points) for multiple antennas")
+
+        .def_property_readonly("antennas", &PyFormScriptGenerator::antennas,
+             "Number of antennas/channels")
+
+        .def_property_readonly("points", &PyFormScriptGenerator::points,
+             "Samples per channel")
+
+        .def_property_readonly("fs", &PyFormScriptGenerator::fs,
+             "Sample rate (Hz)")
+
+        .def_property_readonly("is_ready", &PyFormScriptGenerator::is_ready,
+             "True if kernel is compiled")
+
+        .def_property_readonly("kernel_source", &PyFormScriptGenerator::kernel_source,
+             "Current compiled OpenCL kernel source")
+
+        .def_static("get_kernels_dir", &PyFormScriptGenerator::kernels_dir,
+             "Path to kernels directory")
+
+        .def_static("get_kernels_bin_dir", &PyFormScriptGenerator::kernels_bin_dir,
+             "Path to compiled kernel binaries directory")
+
+        .def("__repr__", [](const PyFormScriptGenerator& self) {
+            if (self.is_ready()) {
+                return "<FormScriptGenerator antennas=" + std::to_string(self.antennas()) +
+                       " points=" + std::to_string(self.points()) + " ready>";
+            }
+            return std::string("<FormScriptGenerator not compiled>");
         });
 
     // ════════════════════════════════════════════════════════════════
