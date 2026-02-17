@@ -30,6 +30,28 @@ std::unique_ptr<ISignalGenerator> SignalGeneratorFactory::CreateNoise(
     return std::make_unique<NoiseGenerator>(backend, params);
 }
 
+std::unique_ptr<FormSignalGenerator> SignalGeneratorFactory::CreateForm(
+    drv_gpu_lib::IBackend* backend, const FormParams& params) {
+    auto gen = std::make_unique<FormSignalGenerator>(backend);
+    gen->SetParams(params);
+    return gen;
+}
+
+std::unique_ptr<FormSignalGeneratorROCm> SignalGeneratorFactory::CreateFormROCm(
+    drv_gpu_lib::IBackend* backend, const FormParams& params) {
+    auto gen = std::make_unique<FormSignalGeneratorROCm>(backend);
+    gen->SetParams(params);
+    return gen;
+}
+
+std::unique_ptr<FormScriptGenerator> SignalGeneratorFactory::CreateFormScript(
+    drv_gpu_lib::IBackend* backend, const FormParams& params) {
+    auto gen = std::make_unique<FormScriptGenerator>(backend);
+    gen->SetParams(params);
+    gen->Compile();
+    return gen;
+}
+
 std::unique_ptr<ISignalGenerator> SignalGeneratorFactory::Create(
     drv_gpu_lib::IBackend* backend, const SignalRequest& request)
 {
@@ -40,6 +62,10 @@ std::unique_ptr<ISignalGenerator> SignalGeneratorFactory::Create(
             return CreateLfm(backend, std::get<LfmParams>(request.params));
         case SignalKind::NOISE:
             return CreateNoise(backend, std::get<NoiseParams>(request.params));
+        case SignalKind::FORM_SIGNAL:
+            throw std::invalid_argument(
+                "FORM_SIGNAL: use CreateForm() or CreateFormScript() — "
+                "FormSignalGenerator is standalone (not ISignalGenerator)");
         default:
             throw std::invalid_argument("Unknown SignalKind");
     }

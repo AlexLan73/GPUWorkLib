@@ -10,7 +10,11 @@
 
 #include "i_signal_generator.hpp"
 #include "params/signal_request.hpp"
+#include "generators/form_signal_generator.hpp"
+#include "generators/form_signal_generator_rocm.hpp"
+#include "generators/form_script_generator.hpp"
 #include "interface/i_backend.hpp"
+#include "common/backend_type.hpp"
 
 #include <memory>
 
@@ -33,6 +37,18 @@ public:
     /// Создать Noise генератор
     static std::unique_ptr<ISignalGenerator> CreateNoise(
         drv_gpu_lib::IBackend* backend, const NoiseParams& params);
+
+    /// Создать FormSignalGenerator (OpenCL, standalone, не ISignalGenerator)
+    static std::unique_ptr<FormSignalGenerator> CreateForm(
+        drv_gpu_lib::IBackend* backend, const FormParams& params);
+
+    /// Создать FormSignalGeneratorROCm (ROCm stub — throws)
+    static std::unique_ptr<FormSignalGeneratorROCm> CreateFormROCm(
+        drv_gpu_lib::IBackend* backend, const FormParams& params);
+
+    /// Создать FormScriptGenerator (DSL + on-disk cache)
+    static std::unique_ptr<FormScriptGenerator> CreateFormScript(
+        drv_gpu_lib::IBackend* backend, const FormParams& params);
 
     /// Создать генератор по SignalRequest
     static std::unique_ptr<ISignalGenerator> Create(

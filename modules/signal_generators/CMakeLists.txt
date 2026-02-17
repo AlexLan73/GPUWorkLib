@@ -28,6 +28,8 @@ add_library(${MODULE_NAME} STATIC
     src/lfm_generator.cpp
     src/noise_generator.cpp
     src/script_generator.cpp
+    src/form_signal_generator.cpp
+    src/form_script_generator.cpp
     src/signal_generator_factory.cpp
     src/signal_service.cpp
 )
@@ -45,9 +47,21 @@ target_link_libraries(${MODULE_NAME}
     PUBLIC
         drvgpu
         OpenCL::OpenCL
+    PRIVATE
+        stdc++fs
 )
 
 target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
+
+# ════════════════════════════════════════════════════════════════════════════
+# Kernel cache paths (for on-disk kernel storage)
+# ════════════════════════════════════════════════════════════════════════════
+
+set(SIG_GEN_KERNELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/kernels")
+
+target_compile_definitions(${MODULE_NAME} PRIVATE
+    SIGNAL_GENERATORS_KERNELS_DIR="${SIG_GEN_KERNELS_DIR}"
+)
 
 # Alias
 add_library(GPUWorkLib::${MODULE_NAME} ALIAS ${MODULE_NAME})
@@ -73,5 +87,6 @@ install(DIRECTORY include/
 # ════════════════════════════════════════════════════════════════════════════
 
 message(STATUS "  ${MODULE_NAME}: configured")
-message(STATUS "    - Generators: CW, LFM, Noise, Script")
+message(STATUS "    - Generators: CW, LFM, Noise, Script, FormSignal, FormScript")
+message(STATUS "    - Kernels dir: ${SIG_GEN_KERNELS_DIR}")
 message(STATUS "    - Factory + Service (DI via IBackend*)")

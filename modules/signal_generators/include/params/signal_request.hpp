@@ -4,8 +4,8 @@
  * @file signal_request.hpp
  * @brief Типы запросов на генерацию сигналов
  *
- * SignalKind — тип сигнала (CW, LFM, NOISE)
- * CwParams, LfmParams, NoiseParams — параметры конкретных генераторов
+ * SignalKind — тип сигнала (CW, LFM, NOISE, FORM_SIGNAL)
+ * CwParams, LfmParams, NoiseParams, FormParams — параметры генераторов
  * SignalRequest — единый запрос с variant
  *
  * @author Кодо (AI Assistant)
@@ -13,6 +13,7 @@
  */
 
 #include "system_sampling.hpp"
+#include "form_params.hpp"
 #include <cstdint>
 #include <variant>
 
@@ -22,7 +23,7 @@ namespace signal_gen {
 // Типы сигналов
 // ════════════════════════════════════════════════════════════════════════════
 
-enum class SignalKind { CW, LFM, NOISE };
+enum class SignalKind { CW, LFM, NOISE, FORM_SIGNAL };
 
 // ════════════════════════════════════════════════════════════════════════════
 // Параметры CW (continuous wave — синусоида)
@@ -73,7 +74,7 @@ struct NoiseParams {
 struct SignalRequest {
     SignalKind kind;
     SystemSampling system;
-    std::variant<CwParams, LfmParams, NoiseParams> params;
+    std::variant<CwParams, LfmParams, NoiseParams, FormParams> params;
 };
 
 } // namespace signal_gen
