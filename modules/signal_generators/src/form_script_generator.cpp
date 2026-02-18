@@ -703,8 +703,8 @@ void FormScriptGenerator::WriteManifestEntry(
   // Add new entry
   entries.push_back(entry.str());
 
-  // Write manifest
-  std::ofstream f(manifest_path);
+  // Write manifest (binary mode — LF only, no CRLF on Windows)
+  std::ofstream f(manifest_path, std::ios::binary);
   f << "{\n";
   f << "  \"version\": 1,\n";
   f << "  \"kernels\": [\n";

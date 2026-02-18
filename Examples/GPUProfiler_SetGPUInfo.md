@@ -1,6 +1,8 @@
-# GPUProfiler: передача информации о GPU и драйверах в отчёт
+# GPUProfiler: передача информации о GPU и вывод данных профилирования
 
-> **⚠️ ВАЖНО для AI-ассистентов (Кодо и др.)**: При любом использовании GPUProfiler с `PrintReport()` или `ExportMarkdown()` **ОБЯЗАТЕЛЬНО** вызывать `SetGPUInfo()` **ДО** `profiler.Start()`. Иначе в отчёте будет «GPU -1: Unknown» и «[нет информации о драйверах]».
+> **⚠️ ВАЖНО для AI-ассистентов (Кодо и др.)**:
+> 1. При любом использовании GPUProfiler с `PrintReport()` или `ExportMarkdown()` **ОБЯЗАТЕЛЬНО** вызывать `SetGPUInfo()` **ДО** `profiler.Start()`. Иначе в отчёте будет «GPU -1: Unknown» и «[нет информации о драйверах]».
+> 2. **Вывод данных профилирования** — ТОЛЬКО через GPUProfiler: `PrintReport()`, `ExportMarkdown()`, `ExportJSON()`. ЗАПРЕЩЕНО вручную выводить через `GetStats()` + цикл + `con.Print` или `std::cout`.
 
 ---
 

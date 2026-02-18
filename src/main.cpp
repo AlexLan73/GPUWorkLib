@@ -17,13 +17,13 @@ int main() {
     // drvgpu_all_test::run();
 
     // fft_maxima: SpectrumMaximaFinder
-    fft_maxima_all_test::run();
+//    fft_maxima_all_test::run();
 
     // fft_processor: FFT с режимами Complex/MagPhase
     // fft_processor_all_test::run();
 
     // signal_generators: CW, LFM, Noise, FormSignal
-    signal_generators_all_test::run();
+//    signal_generators_all_test::run();
 
     // lch_farrow: standalone Lagrange fractional delay
     lch_farrow_all_test::run();

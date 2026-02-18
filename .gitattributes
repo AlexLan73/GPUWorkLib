@@ -25,6 +25,8 @@ CMakeLists.txt text eol=lf
 *.md     text eol=lf
 *.txt    text eol=lf
 *.json   text eol=lf
+# manifest.json — LF (генерируется FormScriptGenerator)
+modules/signal_generators/kernels/manifest.json text eol=lf
 .gitkeep text eol=lf
 
 # Бинарники не трогаем

@@ -1,0 +1,27 @@
+---
+description: Вывод данных профилирования — только через GPUProfiler
+alwaysApply: true
+---
+
+# GPUProfiler: вывод данных профилирования
+
+## Правило
+
+**Вывод данных профилирования** — ТОЛЬКО через GPUProfiler:
+- `profiler.PrintReport()` — полный отчёт (GPU, драйвер, таблица событий)
+- `profiler.ExportMarkdown(path)` — экспорт в .md
+- `profiler.ExportJSON(path)` — экспорт в .json
+
+## Запрещено
+
+- `profiler.GetStats()` + цикл + `con.Print()` или `std::cout`
+- Вручную выводить GPU name, driver, статистику событий
+
+## Пример
+
+```cpp
+profiler.Stop();
+profiler.PrintReport();
+profiler.ExportMarkdown("Results/Profiler/report.md");
+profiler.ExportJSON("Results/Profiler/report.json");
+```

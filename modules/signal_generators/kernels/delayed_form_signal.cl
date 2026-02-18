@@ -4,12 +4,13 @@
  *
  * Requires: prng.cl (prepended at compile time)
  *
- * Algorithm:
+ * Algorithm (DelayedFormSignal_Kernel_CORRECT):
  *   delay_us -> delay_samples = delay_us * 1e-6 * sample_rate
- *   D = floor(delay_samples)         -- integer delay
- *   mu = delay_samples - D           -- fractional part [0, 1)
- *   row = uint(mu * 48) % 48         -- matrix row
- *   output[n] = sum(k=0..4) L[row][k] * input[n - D - 1 + k]
+ *   read_pos = sample_id - delay_samples   -- position to read from input
+ *   center = floor(read_pos)               -- integer center of 5-point window
+ *   frac = read_pos - center              -- fractional part [0, 1)
+ *   row = uint(frac * 48) % 48             -- matrix row
+ *   output[n] = sum(k=0..4) L[row][k] * input[center - 1 + k]
  *   (boundary samples = 0)
  *
  * @author Kodo (AI Assistant)
@@ -37,19 +38,20 @@ __kernel void apply_fractional_delay(
 
     // Convert delay (us) to samples
     float delay_samples = delay_us[antenna_id] * 1e-6f * sample_rate;
-    int D = (int)floor(delay_samples);
-    float mu = delay_samples - (float)D;
 
-    // Ensure mu in [0, 1)
-    if (mu < 0.0f) { mu += 1.0f; D -= 1; }
-
-    uint row = ((uint)(mu * 48.0f)) % 48u;
+    // read_pos = sample_id - delay_samples (position to read from input)
+    float read_pos = (float)sample_id - delay_samples;
 
     // Before signal arrives -> zero
-    if ((float)sample_id < delay_samples) {
+    if (read_pos < 0.0f) {
         output[gid] = (float2)(0.0f, 0.0f);
         return;
     }
+
+    // center = floor(read_pos), frac = read_pos - center
+    int center = (int)floor(read_pos);
+    float frac = read_pos - (float)center;
+    uint row = ((uint)(frac * 48.0f)) % 48u;
 
     // 5 Lagrange coefficients for this row
     float L0 = lagrange_matrix[row * 5u + 0u];
@@ -58,8 +60,7 @@ __kernel void apply_fractional_delay(
     float L3 = lagrange_matrix[row * 5u + 3u];
     float L4 = lagrange_matrix[row * 5u + 4u];
 
-    // Read 5 input samples around (sample_id - D)
-    int center = (int)sample_id - D;
+    // Read 5 input samples around center (center-1, center, center+1, center+2, center+3)
     uint base = antenna_id * points;
 
     // Helper: read with zero-padding at boundaries

@@ -15,9 +15,13 @@
 
 #include "lch_farrow.hpp"
 #include "DrvGPU/backends/opencl/opencl_backend.hpp"
+#include "DrvGPU/services/gpu_profiler.hpp"
+#include "DrvGPU/services/console_output.hpp"
 
 #include <CL/cl.h>
 #include <iostream>
+#include <sstream>
+#include <filesystem>
 #include <vector>
 #include <complex>
 #include <cmath>
@@ -45,11 +49,19 @@ inline std::vector<std::complex<float>> generate_cw(
 }
 
 inline void run() {
-  std::cout << "\n[LchFarrow] Running tests...\n";
+  int gpu_id = 0;
+  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
+  if (!con.IsRunning()) con.Start();
+
+  con.Print(gpu_id, "LchFarrow", "Running tests...");
 
   // Initialize OpenCL backend
   auto backend = std::make_unique<drv_gpu_lib::OpenCLBackend>();
   backend->Initialize(0);
+
+  // GPUProfiler: Start before Process (SetGPUInfo + Record in LchFarrow::Process)
+  auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
+  profiler.Start();
 
   lch_farrow::LchFarrow processor(backend.get());
 
@@ -69,7 +81,7 @@ inline void run() {
       points * sizeof(std::complex<float>),
       cw_signal.data(), &err);
   if (err != CL_SUCCESS) {
-    std::cerr << "[LchFarrow] FAIL: clCreateBuffer input: " << err << "\n";
+    con.PrintError(gpu_id, "LchFarrow", "clCreateBuffer input failed: " + std::to_string(err));
     return;
   }
 
@@ -91,13 +103,10 @@ inline void run() {
       if (e > max_err) max_err = e;
     }
 
-    std::cout << "  Test 1 (zero delay): max_err = "
-              << std::scientific << std::setprecision(2) << max_err;
-    if (max_err < 1e-4f) {
-      std::cout << " PASSED\n";
-    } else {
-      std::cout << " FAILED (expected < 1e-4)\n";
-    }
+    std::ostringstream oss1;
+    oss1 << "Test 1 (zero delay): max_err = " << std::scientific << std::setprecision(2) << max_err
+         << (max_err < 1e-4f ? " PASSED" : " FAILED (expected < 1e-4)");
+    con.Print(gpu_id, "LchFarrow", oss1.str());
   }
 
   // ── Test 2: Integer delay (5 samples) ──
@@ -123,13 +132,10 @@ inline void run() {
       if (e > max_err) max_err = e;
     }
 
-    std::cout << "  Test 2 (integer delay 5): max_err = "
-              << std::scientific << std::setprecision(2) << max_err;
-    if (max_err < 1e-2f) {
-      std::cout << " PASSED\n";
-    } else {
-      std::cout << " FAILED (expected < 1e-2)\n";
-    }
+    std::ostringstream oss2;
+    oss2 << "Test 2 (integer delay 5): max_err = " << std::scientific << std::setprecision(2) << max_err
+         << (max_err < 1e-2f ? " PASSED" : " FAILED (expected < 1e-2)");
+    con.Print(gpu_id, "LchFarrow", oss2.str());
   }
 
   // ── Test 3: Fractional delay (2.7 samples) ──
@@ -155,17 +161,31 @@ inline void run() {
       if (e > max_err) max_err = e;
     }
 
-    std::cout << "  Test 3 (fractional delay 2.7): max_err = "
-              << std::scientific << std::setprecision(2) << max_err;
-    if (max_err < 1e-2f) {
-      std::cout << " PASSED\n";
-    } else {
-      std::cout << " FAILED (expected < 1e-2)\n";
-    }
+    std::ostringstream oss3;
+    oss3 << "Test 3 (fractional delay 2.7): max_err = " << std::scientific << std::setprecision(2) << max_err
+         << (max_err < 1e-2f ? " PASSED" : " FAILED (expected < 1e-2)");
+    con.Print(gpu_id, "LchFarrow", oss3.str());
   }
 
   clReleaseMemObject(input_buf);
-  std::cout << "[LchFarrow] All tests completed.\n";
+
+  profiler.Stop();  // Wait for queue drain (Record messages processed)
+
+  // Вывод профилирования ТОЛЬКО через GPUProfiler (CLAUDE.md)
+  profiler.PrintReport();
+
+  std::string profiler_dir = "Results/Profiler";
+  std::filesystem::create_directories(profiler_dir);
+  std::string ts = drv_gpu_lib::GPUProfiler::GetCurrentDateTimeString();
+  for (auto& c : ts) {
+    if (c == ' ') c = '_';
+    else if (c == ':') c = '-';
+  }
+  std::string base_path = profiler_dir + "/lch_farrow_" + ts;
+  profiler.ExportMarkdown(base_path + ".md");
+  profiler.ExportJSON(base_path + ".json");
+
+  con.Print(gpu_id, "LchFarrow", "All tests completed.");
 }
 
 }  // namespace test_lch_farrow

@@ -412,7 +412,6 @@ public:
             file << "}\n";
 
             file.close();
-            std::cout << "[GPUProfiler] Exported JSON to: " << file_path << "\n";
             return true;
 
         } catch (const std::exception& e) {
@@ -795,7 +794,6 @@ public:
             file << "\n*Время в миллисекундах (мс), усреднённое значение*\n";
 
             file.close();
-            std::cout << "[GPUProfiler] Exported MD to: " << file_path << "\n";
             return true;
 
         } catch (const std::exception& e) {

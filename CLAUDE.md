@@ -136,6 +136,7 @@ obj.sample_rate = 1e6
   - ⚠️ **ТОЛЬКО НА GPU!** Все вычисления выполняются на GPU
   - 📊 Профилирование только через механизм DrvGPU (GPUProfiler)
   - 🖥️ Вывод на консоль только через `console_output` из DrvGPU (у нас 10 GPU — без порядка будет бардак)
+  - **🚫 ВЫВОД ПРОФИЛИРОВАНИЯ**: ТОЛЬКО через GPUProfiler! `PrintReport()`, `ExportMarkdown()`, `ExportJSON()`. ЗАПРЕЩЕНО вручную выводить GetStats()+con.Print или std::cout.
 - **Исследования**: Пробовать → Сравнивать с эталоном → Записывать в `research/` → После внедрения удалять черновики
 - **Debugging**: Логи (plog, per-GPU) → Python визуализация → Анализ
 
@@ -170,6 +171,7 @@ obj.sample_rate = 1e6
 - **Консольный вывод**: Только через `console_output` из DrvGPU (мультиGPU-безопасный)
 - **Профилирование**: Только через `GPUProfiler` из DrvGPU
   - 📌 **ВАЖНО**: Перед `profiler.Start()` вызывать `SetGPUInfo()` — иначе в отчёте «Unknown» и «нет информации о драйверах». Пример: [`Examples/GPUProfiler_SetGPUInfo.md`](Examples/GPUProfiler_SetGPUInfo.md)
+  - 🚫 **ВЫВОД данных профилирования** — ТОЛЬКО: `profiler.PrintReport()`, `profiler.ExportMarkdown()`, `profiler.ExportJSON()`. ЗАПРЕЩЕНО: `GetStats()` + цикл + `con.Print` (или std::cout).
 
 ### Структура файлов
 - **Новые классы и структуры** — создавать в отдельных файлах

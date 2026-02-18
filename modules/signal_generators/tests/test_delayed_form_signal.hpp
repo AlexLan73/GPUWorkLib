@@ -123,26 +123,25 @@ static const float kLagrangeMatrix[48][5] = {
   {-0.4347f,-13.3521f, 20.0547f,  0.4347f,  0.0f}
 };
 
-// CPU reference: apply delay using Lagrange 48×5
+// CPU reference: apply delay using Lagrange 48×5 (DelayedFormSignal_Kernel_CORRECT)
+// read_pos = n - delay_samples, center = floor(read_pos), frac = read_pos - center, row = frac*48
 inline std::vector<std::complex<float>> ApplyDelayRef(
     const std::vector<std::complex<float>>& input,
     float delay_samples) {
 
   int N = static_cast<int>(input.size());
-  int D = static_cast<int>(std::floor(delay_samples));
-  float mu = delay_samples - static_cast<float>(D);
-
-  if (mu < 0.0f) { mu += 1.0f; D -= 1; }
-
-  int row = static_cast<int>(mu * 48.0f) % 48;
-  const float* L = kLagrangeMatrix[row];
-
-  std::vector<std::complex<float>> output(N);
+  std::vector<std::complex<float>> output(N, {0.0f, 0.0f});
 
   for (int n = 0; n < N; ++n) {
-    int center = n - D;
-    std::complex<float> val(0.0f, 0.0f);
+    float read_pos = static_cast<float>(n) - delay_samples;
+    if (read_pos < 0.0f) continue;  // output[n] = 0
 
+    int center = static_cast<int>(std::floor(read_pos));
+    float frac = read_pos - static_cast<float>(center);
+    int row = static_cast<int>(frac * 48.0f) % 48;
+    const float* L = kLagrangeMatrix[row];
+
+    std::complex<float> val(0.0f, 0.0f);
     for (int k = 0; k < 5; ++k) {
       int idx = center - 1 + k;
       if (idx >= 0 && idx < N) {

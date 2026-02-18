@@ -223,8 +223,8 @@ else {
 | Kernel Lagrange 48×5 | lch_farrow_delay kernel в lch_farrow.cpp | ✅ |
 | Вход: input, delay_us[], antennas, points, sample_rate | SetDelays, Process(input_buf, antennas, points), SetSampleRate | ✅ |
 | Выход: output (cl_mem) | Process возвращает cl_mem | ✅ |
-| Формулы read_pos, frac, center, row (DelayedFormSignal_Kernel_CORRECT) | **Не соответствует**: lch_farrow использует D=floor(delay_samples), mu=delay_samples−D, center=sample_id−D, row=μ×48. Правильно: read_pos=sample_id−delay_samples, center=floor(read_pos), frac=read_pos−center, row=frac×48. Требуется исправление kernel. | ❌ Ошибка |
-| GPUProfiler, SetGPUInfo, Record | Не интегрирован — в lch_farrow.cpp нет вызовов GPUProfiler. CMakeLists упоминает «GPUProfiler integration» как планируемое. | ⚠️ Не реализовано |
+| Формулы read_pos, frac, center, row (DelayedFormSignal_Kernel_CORRECT) | Исправлено 2026-02: read_pos=sample_id−delay_samples, center=floor(read_pos), frac=read_pos−center, row=frac×48. Обновлены: delayed_form_signal.cl, lch_farrow.cpp (kernel + ProcessCpu). | ✅ Исправлено |
+| GPUProfiler, SetGPUInfo, Record | Реализовано 2026-02: SetGPUInfo до Record, Record для Upload_delay_us и lch_farrow_delay. Референс: Examples/GPUProfiler_SetGPUInfo.md. | ✅ Реализовано |
 | Doc/Python/lch_farrow_api.md | Создан | ✅ |
 | Python_test/test_lch_farrow.py | Создан, 5 тестов | ✅ |
 

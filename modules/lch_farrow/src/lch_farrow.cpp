@@ -2,19 +2,21 @@
  * @file lch_farrow.cpp
  * @brief LchFarrow - fractional delay processor (Lagrange 48x5) on GPU
  *
- * Algorithm:
+ * Algorithm (DelayedFormSignal_Kernel_CORRECT):
  *   read_pos = n - delay_samples
  *   center = floor(read_pos), frac = read_pos - center
  *   row = (uint)(frac * 48) % 48
  *   output[n] = sum(L[row][k] * input[center - 1 + k], k=0..4)
- *
- * Uses Variant A (mu from delay_samples) matching the existing project kernel.
  *
  * @author Kodo (AI Assistant)
  * @date 2026-02-18
  */
 
 #include "lch_farrow.hpp"
+
+#include "common/backend_type.hpp"
+#include "services/gpu_profiler.hpp"
+#include "backends/opencl/opencl_profiling.hpp"
 
 #include <stdexcept>
 #include <cmath>
@@ -135,8 +137,6 @@ static const float kBuiltinLagrangeMatrix[48 * 5] = {
 // ════════════════════════════════════════════════════════════════════════════
 // OpenCL Kernel: Fractional delay (Lagrange 48x5) + optional Noise
 // ════════════════════════════════════════════════════════════════════════════
-//
-// Uses Variant A (mu from delay_samples) matching project's existing kernel.
 
 static const char* LCH_FARROW_KERNEL_SOURCE = R"CL(
 
@@ -164,12 +164,13 @@ uint2 philox2x32_10(uint2 ctr, uint key) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// LCH Farrow: standalone fractional delay kernel
+// LCH Farrow: standalone fractional delay kernel (DelayedFormSignal_Kernel_CORRECT)
 //
 // delay_us -> delay_samples = delay_us * 1e-6 * sample_rate
-// D = floor(delay_samples), mu = delay_samples - D
-// row = uint(mu * 48) % 48
-// output[n] = sum(L[row][k] * input[n - D - 1 + k], k=0..4)
+// read_pos = sample_id - delay_samples
+// center = floor(read_pos), frac = read_pos - center
+// row = uint(frac * 48) % 48
+// output[n] = sum(L[row][k] * input[center - 1 + k], k=0..4)
 // ─────────────────────────────────────────────────────────────────────────
 
 __kernel void lch_farrow_delay(
@@ -193,19 +194,18 @@ __kernel void lch_farrow_delay(
 
     // delay in samples
     float delay_samples = delay_us[antenna_id] * 1e-6f * sample_rate;
-    int D = (int)floor(delay_samples);
-    float mu = delay_samples - (float)D;
-
-    // Ensure mu in [0, 1)
-    if (mu < 0.0f) { mu += 1.0f; D -= 1; }
-
-    uint row = ((uint)(mu * 48.0f)) % 48u;
+    float read_pos = (float)sample_id - delay_samples;
 
     // Before signal start -> zero
-    if ((float)sample_id < delay_samples) {
+    if (read_pos < 0.0f) {
         output[gid] = (float2)(0.0f, 0.0f);
         return;
     }
+
+    // center = floor(read_pos), frac = read_pos - center
+    int center = (int)floor(read_pos);
+    float frac = read_pos - (float)center;
+    uint row = ((uint)(frac * 48.0f)) % 48u;
 
     // 5 Lagrange coefficients
     float L0 = lagrange_matrix[row * 5u + 0u];
@@ -214,8 +214,7 @@ __kernel void lch_farrow_delay(
     float L3 = lagrange_matrix[row * 5u + 3u];
     float L4 = lagrange_matrix[row * 5u + 4u];
 
-    // Read 5 input samples around center = sample_id - D
-    int center = (int)sample_id - D;
+    // Read 5 input samples around center (center-1, center, center+1, center+2, center+3)
     uint base = antenna_id * points;
 
     #define READ_SAMPLE(idx) \
@@ -416,6 +415,25 @@ LchFarrow::Process(cl_mem input_buf, uint32_t antennas, uint32_t points) {
 
   cl_int err;
 
+  // GPUProfiler: SetGPUInfo before Record (ref: Examples/GPUProfiler_SetGPUInfo.md)
+  int gpu_id = backend_->GetDeviceIndex();
+  if (gpu_id < 0) gpu_id = 0;
+  auto device_info = backend_->GetDeviceInfo();
+  drv_gpu_lib::GPUReportInfo gpu_info;
+  gpu_info.gpu_name = device_info.name.empty() ? "Unknown" : device_info.name;
+  gpu_info.backend_type = drv_gpu_lib::BackendType::OPENCL;
+  gpu_info.global_mem_mb = device_info.global_memory_size / (1024 * 1024);
+  std::map<std::string, std::string> opencl_driver;
+  opencl_driver["driver_type"] = "OpenCL";
+  opencl_driver["version"] = device_info.opencl_version;
+  opencl_driver["driver_version"] = device_info.driver_version;
+  opencl_driver["vendor"] = device_info.vendor;
+  gpu_info.drivers.push_back(opencl_driver);
+  drv_gpu_lib::GPUProfiler::GetInstance().SetGPUInfo(gpu_id, gpu_info);
+  if (backend_->GetDeviceIndex() < 0) {
+    drv_gpu_lib::GPUProfiler::GetInstance().SetGPUInfo(-1, gpu_info);
+  }
+
   // Output buffer
   cl_mem output_buf = clCreateBuffer(
       context_, CL_MEM_READ_WRITE, buffer_size, nullptr, &err);
@@ -424,15 +442,25 @@ LchFarrow::Process(cl_mem input_buf, uint32_t antennas, uint32_t points) {
         "LchFarrow: clCreateBuffer(output) failed: " + std::to_string(err));
   }
 
-  // Upload delay_us
+  // Upload delay_us (async with event for profiling)
   cl_mem delay_buf = clCreateBuffer(
-      context_, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-      delay_us_.size() * sizeof(float),
-      const_cast<float*>(delay_us_.data()), &err);
+      context_, CL_MEM_READ_ONLY,
+      delay_us_.size() * sizeof(float), nullptr, &err);
   if (err != CL_SUCCESS) {
     clReleaseMemObject(output_buf);
     throw std::runtime_error(
         "LchFarrow: clCreateBuffer(delay) failed: " + std::to_string(err));
+  }
+  cl_event upload_event = nullptr;
+  err = clEnqueueWriteBuffer(
+      queue_, delay_buf, CL_FALSE, 0,
+      delay_us_.size() * sizeof(float), delay_us_.data(),
+      0, nullptr, &upload_event);
+  if (err != CL_SUCCESS) {
+    clReleaseMemObject(output_buf);
+    clReleaseMemObject(delay_buf);
+    throw std::runtime_error(
+        "LchFarrow: clEnqueueWriteBuffer(delay) failed: " + std::to_string(err));
   }
 
   // Create kernel
@@ -476,25 +504,34 @@ LchFarrow::Process(cl_mem input_buf, uint32_t antennas, uint32_t points) {
     throw std::runtime_error("LchFarrow: clSetKernelArg failed");
   }
 
-  // Launch
+  // Launch kernel (with event for profiling)
   size_t local_size = 256;
   size_t global_size =
       ((total_points + local_size - 1) / local_size) * local_size;
 
+  cl_event kernel_event = nullptr;
   err = clEnqueueNDRangeKernel(
       queue_, k, 1, nullptr,
-      &global_size, &local_size, 0, nullptr, nullptr);
+      &global_size, &local_size, 1, &upload_event, &kernel_event);
 
   clReleaseKernel(k);
   clReleaseMemObject(delay_buf);
 
   if (err != CL_SUCCESS) {
+    if (upload_event) clReleaseEvent(upload_event);
+    if (kernel_event) clReleaseEvent(kernel_event);
     clReleaseMemObject(output_buf);
     throw std::runtime_error(
         "LchFarrow: enqueue failed: " + std::to_string(err));
   }
 
   clFinish(queue_);
+
+  // GPUProfiler: Record Upload and Kernel
+  drv_gpu_lib::RecordProfilingEvent(upload_event, gpu_id, "LchFarrow", "Upload_delay_us");
+  drv_gpu_lib::RecordProfilingEvent(kernel_event, gpu_id, "LchFarrow", "lch_farrow_delay");
+  if (upload_event) clReleaseEvent(upload_event);
+  if (kernel_event) clReleaseEvent(kernel_event);
 
   drv_gpu_lib::InputData<cl_mem> result;
   result.antenna_count = antennas;
@@ -524,19 +561,19 @@ LchFarrow::ProcessCpu(
     result[a].resize(points, {0.0f, 0.0f});
 
     float delay_samples = delay_us_[a] * 1e-6f * sample_rate_;
-    int D = static_cast<int>(std::floor(delay_samples));
-    float mu = delay_samples - static_cast<float>(D);
-    if (mu < 0.0f) { mu += 1.0f; D -= 1; }
-
-    uint32_t row = (static_cast<uint32_t>(mu * 48.0f)) % 48u;
     float L[5];
-    for (int k = 0; k < 5; ++k)
-      L[k] = lagrange_matrix_[row * 5 + k];
 
     for (uint32_t n = 0; n < points; ++n) {
-      if (static_cast<float>(n) < delay_samples) continue;
+      float read_pos = static_cast<float>(n) - delay_samples;
+      if (read_pos < 0.0f) continue;
 
-      int center = static_cast<int>(n) - D;
+      int center = static_cast<int>(std::floor(read_pos));
+      float frac = read_pos - static_cast<float>(center);
+      uint32_t row = (static_cast<uint32_t>(frac * 48.0f)) % 48u;
+
+      for (int k = 0; k < 5; ++k)
+        L[k] = lagrange_matrix_[row * 5 + k];
+
       std::complex<float> val(0.0f, 0.0f);
       for (int k = 0; k < 5; ++k) {
         int idx = center - 1 + k;
