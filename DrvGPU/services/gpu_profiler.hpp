@@ -324,7 +324,7 @@ public:
         };
 
         try {
-            std::ofstream file(file_path);
+            std::ofstream file(file_path, std::ios::out | std::ios::binary);
             if (!file.is_open()) {
                 std::cerr << "[GPUProfiler] Cannot create file: " << file_path << "\n";
                 return false;
@@ -707,7 +707,7 @@ public:
         };
 
         try {
-            std::ofstream file(file_path);
+            std::ofstream file(file_path, std::ios::out | std::ios::binary);
             if (!file.is_open()) {
                 std::cerr << "[GPUProfiler] Cannot create MD file: " << file_path << "\n";
                 return false;

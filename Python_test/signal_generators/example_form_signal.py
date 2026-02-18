@@ -6,7 +6,7 @@ FormSignalGenerator + FormScriptGenerator — Demo & Presentation Plots
   python example_form_signal.py              # все демки + графики
   python example_form_signal.py --no-plot    # только текстовый вывод
 
-Графики сохраняются в Results/Plots/FormSignal/
+Графики сохраняются в Results/Plots/signal_generators/FormSignal/
 
 @author Кодо (AI Assistant)
 @date 2026-02-17
@@ -17,11 +17,13 @@ import os
 import argparse
 import numpy as np
 
-# Auto-detect build path
-for p in ['build/python', 'build', '../build/python', '../build']:
-    full = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', p)
-    if os.path.isdir(full):
+# Auto-detect build path (Python_test/signal_generators/ -> 2 levels up)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+for subdir in ["build/python/Release", "build/python/Debug", "build/python", "build/Release", "build/Debug"]:
+    full = os.path.join(PROJECT_ROOT, subdir.replace("/", os.sep))
+    if os.path.exists(full):
         sys.path.insert(0, os.path.abspath(full))
+        break
 
 import gpuworklib
 
@@ -245,7 +247,7 @@ def make_plots(ctx):
     from matplotlib.gridspec import GridSpec
 
     outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          '..', 'Results', 'Plots', 'FormSignal')
+                          '..', '..', 'Results', 'Plots', 'signal_generators', 'FormSignal')
     os.makedirs(outdir, exist_ok=True)
 
     # Style

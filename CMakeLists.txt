@@ -33,6 +33,9 @@ add_subdirectory(modules/fft_processor)
 # LCH Farrow module (standalone fractional delay processor)
 add_subdirectory(modules/lch_farrow)
 
+# Filters module (FIR + IIR GPU filters)
+add_subdirectory(modules/filters)
+
 # Main executable (src/)
 add_subdirectory(src)
 

@@ -32,11 +32,11 @@ import numpy as np
 # Подавить предупреждение Axes3D (тест не использует 3D; часто при двух установках matplotlib)
 warnings.filterwarnings('ignore', message='Unable to import Axes3D', category=UserWarning)
 
-# ── Путь к gpuworklib ──
+# ── Путь к gpuworklib (Python_test/signal_generators/ -> 2 levels up) ──
 BUILD_PATHS = [
-    os.path.join(os.path.dirname(__file__), '..', 'build', 'python'),
-    os.path.join(os.path.dirname(__file__), '..', 'build', 'python', 'Release'),
-    os.path.join(os.path.dirname(__file__), '..', 'build', 'python', 'Debug'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Release'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Debug'),
 ]
 for p in BUILD_PATHS:
     if os.path.isdir(p):
@@ -350,7 +350,7 @@ def test_delay_with_noise():
 # Графики
 # ════════════════════════════════════════════════════════════════════════════
 
-PLOT_DIR = os.path.join(os.path.dirname(__file__), '..', 'Results', 'Plots', 'DelayedFormSignal')
+PLOT_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'Results', 'Plots', 'signal_generators', 'DelayedFormSignal')
 
 
 def ensure_plot_dir():

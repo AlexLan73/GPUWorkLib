@@ -6,6 +6,7 @@
 #include "modules/fft_processor/tests/all_test.hpp"
 #include "modules/signal_generators/tests/all_test.hpp"
 #include "modules/lch_farrow/tests/all_test.hpp"
+#include "modules/filters/tests/all_test.hpp"
 
 int main() {
     std::cout << "===============================================================\n"
@@ -27,6 +28,9 @@ int main() {
 
     // lch_farrow: standalone Lagrange fractional delay
     lch_farrow_all_test::run();
+
+    // filters: FIR + IIR GPU filters
+    filters_all_test::run();
 
     std::cout << "\nВсе тесты завершены!" << std::endl;
     return 0;

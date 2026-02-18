@@ -31,11 +31,11 @@ import sys
 import os
 import numpy as np
 
-# ── Путь к gpuworklib ──
+# ── Путь к gpuworklib (Python_test/signal_generators/ -> 2 levels up) ──
 BUILD_PATHS = [
-    os.path.join(os.path.dirname(__file__), '..', 'build', 'python'),
-    os.path.join(os.path.dirname(__file__), '..', 'build', 'python', 'Release'),
-    os.path.join(os.path.dirname(__file__), '..', 'build', 'python', 'Debug'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Release'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Debug'),
 ]
 for p in BUILD_PATHS:
     if os.path.isdir(p):
@@ -711,8 +711,8 @@ def main():
     # ── Графики (создаются по умолчанию) ──
     do_plot = '--no-plot' not in sys.argv
     if do_plot:
-        plot_dir = os.path.join(os.path.dirname(__file__), '..', 'Results',
-                                'Plots', 'FormSignal')
+        plot_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'Results',
+                                'Plots', 'signal_generators', 'FormSignal')
         make_plots(os.path.abspath(plot_dir))
 
     return 0 if passed == total else 1

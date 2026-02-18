@@ -22,8 +22,13 @@ import os
 import time
 import numpy as np
 
-# Add gpuworklib path
-sys.path.insert(0, r"E:\C++\GPUWorkLib\build\python\Release")
+# Add gpuworklib path (Python_test/fft_maxima/ -> 2 levels up to project root)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+for subdir in ["build/python/Release", "build/python/Debug", "build/Release", "build/Debug"]:
+    path = os.path.join(PROJECT_ROOT, subdir.replace("/", os.sep))
+    if os.path.exists(path):
+        sys.path.insert(0, path)
+        break
 import gpuworklib
 
 import matplotlib
@@ -39,8 +44,8 @@ except ImportError:
     HAS_SCIPY = False
     print("  [WARNING] SciPy not found, skipping comparison tests")
 
-# Output directory for plots
-PLOT_DIR = r"E:\C++\GPUWorkLib\Results\Plots"
+# Output directory for plots: Results/Plots/fft_maxima/
+PLOT_DIR = os.path.join(PROJECT_ROOT, "Results", "Plots", "fft_maxima")
 os.makedirs(PLOT_DIR, exist_ok=True)
 
 

@@ -228,8 +228,9 @@ src/main.cpp
 - **Doc_Addition/**: Вся дополнительная документация не относящаяся к описанию проекта
   - `Doc_Addition/Info_*` — Исследования и документация API
   - `Doc_Addition/PLAN/` — Планы рефакторинга (Ref01, Ref02, ...)
-- **Python_test/**: Python тесты (`test_*.py`)
-- **Results/JSON**: Результаты тестов
+- **Python_test/**: Python тесты по модулям (`Python_test/{module}/test_*.py`)
+- **Results/Plots/{module}/**: Графики из Python тестов — путь `Results/Plots/[название_модуля]/` (fft_maxima, filters, signal_generators, lch_farrow, integration). Для signal_generators — подпапки FormSignal, DelayedFormSignal, LfmAnalyticalDelay.
+- **Results/JSON**: Результаты тестов (JSON)
 - **Results/Profiler**: Данные профилирования GPU
 - **Logs/DRVGPU_XX/**: Per-GPU логи (plog format)
 
@@ -237,7 +238,8 @@ src/main.cpp
 - Формат даты: `YYYY-MM-DD` или `YYYY-MM-DD_HH-MM-SS`
 - Логи: `Logs/DRVGPU_XX/YYYY-MM-DD/HH-MM-SS.log`
 - Python API docs: `Doc/Python/{module}_api.md`
-- Python тесты: `Python_test/test_*.py`
+- Python тесты: `Python_test/{module}/test_*.py`
+- Графики Python тестов: `Results/Plots/{module}/` (модуль = fft_maxima, filters, signal_generators, lch_farrow, integration)
 - C++ тесты: `{module}/tests/*.hpp` + `{module}/tests/README.md`
 
 ### Communication Preferences

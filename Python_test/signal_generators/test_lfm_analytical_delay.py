@@ -19,11 +19,11 @@ import sys
 import os
 import numpy as np
 
-# ── Путь к gpuworklib ──
+# ── Путь к gpuworklib (Python_test/signal_generators/ -> 2 levels up) ──
 BUILD_PATHS = [
-    os.path.join(os.path.dirname(__file__), '..', 'build', 'python'),
-    os.path.join(os.path.dirname(__file__), '..', 'build', 'python', 'Release'),
-    os.path.join(os.path.dirname(__file__), '..', 'build', 'python', 'Debug'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Release'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Debug'),
 ]
 for p in BUILD_PATHS:
     if os.path.isdir(p):
@@ -239,7 +239,7 @@ def test_gpu_vs_numpy():
 # Графики — реальная задержка сигнала
 # ════════════════════════════════════════════════════════════════════════════
 
-PLOT_DIR = os.path.join(os.path.dirname(__file__), '..', 'Results', 'Plots', 'LfmAnalyticalDelay')
+PLOT_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'Results', 'Plots', 'signal_generators', 'LfmAnalyticalDelay')
 
 
 def ensure_plot_dir():

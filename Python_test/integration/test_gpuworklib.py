@@ -21,8 +21,15 @@ matplotlib.use('Agg')  # Non-interactive backend for saving files
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
-# Add gpuworklib path
-sys.path.insert(0, r"E:\C++\GPUWorkLib\build\python\Release")
+# Add gpuworklib path (Python_test/integration/ -> 2 levels up)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PLOT_DIR = os.path.join(PROJECT_ROOT, "Results", "Plots", "integration")
+os.makedirs(PLOT_DIR, exist_ok=True)
+for subdir in ["build/python/Release", "build/python/Debug", "build/Release", "build/Debug"]:
+    p = os.path.join(PROJECT_ROOT, subdir.replace("/", os.sep))
+    if os.path.exists(p):
+        sys.path.insert(0, p)
+        break
 import gpuworklib
 
 
@@ -92,7 +99,7 @@ def test_multichannel_sin_fft():
               f"(error={abs(detected_freq - f0):.2f} Hz)")
 
     plt.tight_layout()
-    plt.savefig(os.path.join(os.path.dirname(__file__), "test1_multichannel_fft.png"), dpi=150)
+    plt.savefig(os.path.join(PLOT_DIR, "test1_multichannel_fft.png"), dpi=150)
     # plt.show()  # uncomment for interactive mode
     print("  PASS")
 
@@ -164,7 +171,7 @@ def test_signal_types():
         ax3.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(os.path.dirname(__file__), "test2_signal_types.png"), dpi=150)
+    plt.savefig(os.path.join(PLOT_DIR, "test2_signal_types.png"), dpi=150)
     # plt.show()  # uncomment for interactive mode
 
     # Print statistics
@@ -237,7 +244,7 @@ def test_multibeam_cw():
     axes[1].grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(os.path.dirname(__file__), "test3_multibeam.png"), dpi=150)
+    plt.savefig(os.path.join(PLOT_DIR, "test3_multibeam.png"), dpi=150)
     # plt.show()  # uncomment for interactive mode
     print("  PASS")
 
@@ -317,7 +324,7 @@ def test_generators_from_string():
         row += 1
 
     plt.tight_layout()
-    plt.savefig(os.path.join(os.path.dirname(__file__), "test4_from_string.png"), dpi=150)
+    plt.savefig(os.path.join(PLOT_DIR, "test4_from_string.png"), dpi=150)
     # plt.show()  # uncomment for interactive mode
     print("  PASS")
 
@@ -377,7 +384,7 @@ def test_multibeam_from_string():
         axes[idx, 1].grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(os.path.dirname(__file__), "test5_multibeam_string.png"), dpi=150)
+    plt.savefig(os.path.join(PLOT_DIR, "test5_multibeam_string.png"), dpi=150)
     # plt.show()  # uncomment for interactive mode
     print("  PASS")
 
@@ -436,7 +443,7 @@ def test_mag_phase():
     axes[2].grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(os.path.dirname(__file__), "test6_mag_phase.png"), dpi=150)
+    plt.savefig(os.path.join(PLOT_DIR, "test6_mag_phase.png"), dpi=150)
     # plt.show()  # uncomment for interactive mode
     print("  PASS")
 
@@ -499,7 +506,7 @@ def test_generate_from_string():
         print(f"  '{params_str}' -> shape {shape_str} OK")
 
     plt.tight_layout()
-    plt.savefig(os.path.join(os.path.dirname(__file__), "test7_generate_from_string.png"), dpi=150)
+    plt.savefig(os.path.join(PLOT_DIR, "test7_generate_from_string.png"), dpi=150)
     # plt.show()  # uncomment for interactive mode
     print("  PASS")
 
@@ -575,7 +582,7 @@ res = var_A * sin(var_W * (float)T + var_P);
         print(f"    Antenna {ant_idx}: rms={rms:.4f}, max={np.max(np.abs(signal)):.4f}")
 
     plt.tight_layout()
-    plt.savefig(os.path.join(os.path.dirname(__file__), "test8_script_basic.png"), dpi=150)
+    plt.savefig(os.path.join(PLOT_DIR, "test8_script_basic.png"), dpi=150)
 
     # ---- Example 2: Complex IQ signal ----
     script_text_2 = """
@@ -628,7 +635,7 @@ res_im = sin(phase);
         axes2[1, i].grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(os.path.dirname(__file__), "test8b_script_iq.png"), dpi=150)
+    plt.savefig(os.path.join(PLOT_DIR, "test8b_script_iq.png"), dpi=150)
 
     # ---- Example 3: Ternary operator / conditional ----
     script_text_3 = """
@@ -749,7 +756,7 @@ res_im = sin(w * (float)T);
     assert max_error < 2.0, f"Max frequency error {max_error:.1f} Hz exceeds 2 Hz tolerance"
 
     plt.tight_layout()
-    plt.savefig(os.path.join(os.path.dirname(__file__), "test9_script_fft_pipeline.png"), dpi=150)
+    plt.savefig(os.path.join(PLOT_DIR, "test9_script_fft_pipeline.png"), dpi=150)
 
     # ---- Pipeline 2: Complex multi-harmonic signal ----
     script.load("""
@@ -830,7 +837,7 @@ res_im = sin(w1 * (float)T) + 0.5 * sin(w2 * (float)T) + 0.25 * sin(w3 * (float)
         print(f"    Ant {ant} (f1={f1:.0f}): peaks @ {', '.join(f'{p:.1f}' for p in peaks)} Hz")
 
     plt.tight_layout()
-    plt.savefig(os.path.join(os.path.dirname(__file__), "test9b_multiharmonic_fft.png"), dpi=150)
+    plt.savefig(os.path.join(PLOT_DIR, "test9b_multiharmonic_fft.png"), dpi=150)
 
     # ---- Pipeline 3: Large scale benchmark ----
     script.load("""

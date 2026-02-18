@@ -947,6 +947,7 @@ private:
 
 #include "py_lfm_analytical_delay.hpp"
 #include "py_lch_farrow.hpp"
+#include "py_filters.hpp"
 
 // ============================================================================
 // PySpectrumMaximaFinder — find all local maxima in FFT spectrum
@@ -1643,6 +1644,11 @@ PYBIND11_MODULE(gpuworklib, m) {
     // LchFarrow (see py_lch_farrow.hpp)
     // ════════════════════════════════════════════════════════════════
     register_lch_farrow(m);
+
+    // ════════════════════════════════════════════════════════════════
+    // FirFilter + IirFilter (see py_filters.hpp)
+    // ════════════════════════════════════════════════════════════════
+    register_filters(m);
 
     // ════════════════════════════════════════════════════════════════
     // Module-level utilities

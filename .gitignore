@@ -74,6 +74,9 @@ CMakeUserPresets.json
 *.log
 Logs/
 
+# Generated test artifacts
+Results/Profiler/
+
 # OS
 .DS_Store
 Thumbs.db

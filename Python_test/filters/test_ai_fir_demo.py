@@ -28,11 +28,11 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from scipy import signal as sp_signal
 
-# ── GPUWorkLib ──
+# ── GPUWorkLib (Python_test/filters/ -> 2 levels up) ──
 BUILD_PATHS = [
-    os.path.join(os.path.dirname(__file__), '..', 'build', 'python'),
-    os.path.join(os.path.dirname(__file__), '..', 'build', 'python', 'Release'),
-    os.path.join(os.path.dirname(__file__), '..', 'build', 'python', 'Debug'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Release'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Debug'),
 ]
 for p in BUILD_PATHS:
     if os.path.isdir(p):
@@ -53,7 +53,7 @@ MODE = "none"           # "groq" | "ollama" | "none"
 GROQ_API_KEY = ""       # Вставь ключ из console.groq.com (бесплатно)
 OLLAMA_MODEL = "qwen2.5-coder:7b"
 
-PLOT_DIR = os.path.join(os.path.dirname(__file__), '..', 'Results', 'Plots', 'AI_FIR')
+PLOT_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'Results', 'Plots', 'filters')
 
 # ════════════════════════════════════════════════════════════════════════════
 # AI-БЕКЕНДЫ

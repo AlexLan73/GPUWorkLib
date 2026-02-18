@@ -25,7 +25,8 @@ except ImportError:
     sys.exit(1)
 
 # Путь к gpuworklib (пробуем Debug и Release)
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Python_test/fft_maxima/ -> 2 уровня вверх до корня
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 for subdir in ["build/python/Debug", "build/python/Release", "build/Debug", "build/Release"]:
     path = os.path.join(PROJECT_ROOT, subdir.replace("/", os.sep))
     if os.path.exists(path):
@@ -39,7 +40,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch
 import matplotlib.patches as mpatches
 
-PLOT_DIR = os.path.join(PROJECT_ROOT, "Results", "Plots")
+PLOT_DIR = os.path.join(PROJECT_ROOT, "Results", "Plots", "fft_maxima")
 os.makedirs(PLOT_DIR, exist_ok=True)
 
 
@@ -156,7 +157,6 @@ def test_cpu_vs_gpu_data():
     result_cpu = finder.find_all_maxima(spectrum_cpu, sample_rate=fs)
 
     # --- Путь 2: GPU данные (SignalGenerator — генерирует на GPU при beam_count>1) ---
-    # Суммируем 3 тона через SignalGenerator
     s1 = sig.generate_cw(freq=freqs[0], fs=fs, length=nFFT, beam_count=1)
     s2 = sig.generate_cw(freq=freqs[1], fs=fs, length=nFFT, beam_count=1)
     s3 = sig.generate_cw(freq=freqs[2], fs=fs, length=nFFT, beam_count=1)
@@ -165,19 +165,16 @@ def test_cpu_vs_gpu_data():
     spectrum_gpu = fft.process_complex(signal_gpu.astype(np.complex64), sample_rate=fs)
     result_gpu = finder.find_all_maxima(spectrum_gpu, sample_rate=fs)
 
-    # Проверка
     print(f"  CPU path: {result_cpu['num_maxima']} максимумов")
     print(f"  GPU path: {result_gpu['num_maxima']} максимумов")
 
-    # График
     save_path = os.path.join(PLOT_DIR, "find_all_maxima_cpu_vs_gpu.png")
     create_beautiful_plot(
         signal_cpu, spectrum_cpu, result_cpu,
-        signal_cpu, spectrum_gpu, result_gpu,  # signal_gpu = signal_cpu для визуализации
+        signal_cpu, spectrum_gpu, result_gpu,
         fs, nFFT, freqs, save_path
     )
 
-    # Проверяем что основные пики найдены
     all_ok = True
     for ef in freqs:
         exp_bin = int(ef * nFFT / fs + 0.5)
@@ -211,7 +208,6 @@ def test_multi_beam_beautiful():
     spectra = fft.process_complex(signals, sample_rate=fs)
     result = finder.find_all_maxima(spectra, sample_rate=fs)
 
-    # --- Красивый график ---
     fig, axes = plt.subplots(beam_count, 1, figsize=(14, 3 * beam_count))
     fig.patch.set_facecolor('#f0f4f8')
     fig.suptitle("FindAllMaxima: Multi-beam (5 лучей, 50–250 Гц)", fontsize=14, fontweight='bold')
