@@ -4,7 +4,8 @@
 
 ---
 
-*Нет активных задач. TASK-007 (Filters MVP) завершён и перемещён в COMPLETED.md*
+*Нет активных задач.*
+*TASK-007 (Filters MVP) + TASK-008 (AI Pipeline Stage 3) завершены и в COMPLETED.md*
 
 ---
 
@@ -12,7 +13,7 @@
 
 См. [BACKLOG.md](BACKLOG.md):
 - Filters Stage 2: Text->kernel pipeline (FormScriptGenerator-like)
-- Filters Stage 3: Groq AI micro-agent (natural language -> filter design -> GPU)
+- ~~Filters Stage 3: Groq AI micro-agent~~ -> **DONE** (TASK-008)
 - Performance benchmarks: замеры GPU vs CPU на разных конфигурациях
 - Streaming: поддержка непрерывного потока (state persistence)
 - Overlap-Save/Add: для длинных FIR через FFT
