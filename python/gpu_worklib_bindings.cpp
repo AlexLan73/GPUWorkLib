@@ -942,6 +942,13 @@ private:
 };
 
 // ============================================================================
+// New module wrappers — separate files (one class per file)
+// ============================================================================
+
+#include "py_lfm_analytical_delay.hpp"
+#include "py_lch_farrow.hpp"
+
+// ============================================================================
 // PySpectrumMaximaFinder — find all local maxima in FFT spectrum
 // ============================================================================
 
@@ -1059,6 +1066,8 @@ PYBIND11_MODULE(gpuworklib, m) {
               "  ScriptGenerator         - Text DSL -> GPU kernel compiler\n"
               "  FormSignalGenerator     - Multi-channel getX formula (signal+noise+delay)\n"
               "  DelayedFormSignalGenerator - Farrow 48x5 fractional delay on GPU\n"
+              "  LfmAnalyticalDelay      - LFM with per-antenna analytical delay\n"
+              "  LchFarrow               - Standalone Lagrange fractional delay processor\n"
               "  FFTProcessor            - FFT with various output modes\n"
               "  SpectrumMaximaFinder    - Find all local maxima in FFT spectrum\n";
 
@@ -1624,6 +1633,16 @@ PYBIND11_MODULE(gpuworklib, m) {
              "  peaks = finder.find_all_maxima(spectrum, sample_rate=1000)\n"
              "  print(f'Found {peaks[\"num_maxima\"]} peaks')\n"
              "  print(f'Frequencies: {peaks[\"frequencies\"]} Hz')");
+
+    // ════════════════════════════════════════════════════════════════
+    // LfmAnalyticalDelay (see py_lfm_analytical_delay.hpp)
+    // ════════════════════════════════════════════════════════════════
+    register_lfm_analytical_delay(m);
+
+    // ════════════════════════════════════════════════════════════════
+    // LchFarrow (see py_lch_farrow.hpp)
+    // ════════════════════════════════════════════════════════════════
+    register_lch_farrow(m);
 
     // ════════════════════════════════════════════════════════════════
     // Module-level utilities

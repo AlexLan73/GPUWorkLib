@@ -96,6 +96,146 @@ flowchart LR
 
 ---
 
+## 7. План реализации: модуль lch_farrow и аналитический генератор
+
+### 7.1 Цель и независимость задач
+
+- **lch_farrow** — полностью самостоятельный модуль. Не зависит от signal_generators. Связь только на уровне тестов (сравнение данных).
+- **Аналитический генератор** — отдельная задача в `modules/signal_generators`. Независим от lch_farrow.
+- Переносить только файлы, относящиеся к LCH-Farrow; не трогать файлы, от которых зависят другие генераторы.
+
+### 7.2 Шаг 1: Создание и перенос (копирование) для lch_farrow
+
+**Действия:**
+- Создать `modules/lch_farrow/` со структурой по образцу `modules/fft_processor`:
+  - `include/` — заголовки
+  - `src/` — исходники
+  - `tests/` — тесты
+  - `CMakeLists.txt`
+- Скопировать в lch_farrow всё, что относится к дробной задержке Farrow/Lagrange 48×5:
+  - kernel дробной задержки, матрица 48×5
+  - `lagrange_matrix_48x5.json` (или ссылка)
+- Добавить `add_subdirectory(modules/lch_farrow)` в корневой `CMakeLists.txt`.
+- Не трогать: `form_signal_generator`, `form_script_generator`, `signal_service`, `cw_generator`, `lfm_generator`, `noise_generator` и их зависимости.
+- Результат: проект собирается (без настройки и тестов переноса).
+
+**Входной интерфейс lch_farrow:**
+- `input` — cl_mem или буфер комплексного сигнала (antennas × points)
+- `delay_us[]` — задержки per-antenna в микросекундах
+- `antennas`, `points`, `sample_rate` (fs)
+- `lagrange_matrix` 48×5 (или базисная 5×5 при переходе на Farrow)
+- опционально: `noise_amplitude`, `noise_seed`
+
+**Выходной интерфейс lch_farrow:**
+- `output` — cl_mem, задержанный сигнал + шум (antennas × points)
+
+**Python API и тест:**
+- Документация: `Doc/Python/lch_farrow_api.md` (или раздел в общем Doc)
+- Тест: `Python_test/test_lch_farrow.py` — pytest, сравнение с NumPy-эталоном и/или LfmGeneratorAnalyticalDelay
+
+**Профилирование (CLAUDE.md, Examples/GPUProfiler_SetGPUInfo.md):**
+- Интеграция с `GPUProfiler` из DrvGPU
+- Перед `profiler.Start()` — обязательно `profiler.SetGPUInfo(gpu_id, gpu_info)` (иначе «Unknown» в отчёте)
+- `profiler.Record(gpu_id, "LchFarrow", "KernelName", pdata)` — для kernel, Upload, Download
+- Вывод — через `console_output` из DrvGPU (мультиGPU-безопасно)
+
+### 7.3 Шаг 2: Генератор дробной задержки (аналитический) — LfmGeneratorAnalyticalDelay
+
+**Источник:** [Генератор дробной задержки аналит.md](Генератор%20дробной%20задержки%20аналит.md)
+
+**Идея:** Для сигнала S(t) задержанный сигнал — S(t − τ). Задержка вводится подстановкой времени в формулу, без интерполяции. «Идеальный» сдвиг для beamforming и пеленгации.
+
+**Класс:** `LfmGeneratorAnalyticalDelay` в `modules/signal_generators`. API как у DelayedFormSignalGenerator (SetParams, SetDelays, GenerateToCpu, GenerateInputData) — не ISignalGenerator из-за multi-antenna output. Использовать `LfmParams`, `SystemSampling` — не плодить сущности. Задержка: массив `delay_us[]` (мкс, значения от нс).
+
+**Входной интерфейс:**
+- `SystemSampling` — fs, length (points)
+- `LfmParams` — f_start, f_end, amplitude, complex_iq
+- `delay_us[]` — задержки per-antenna в микросекундах (float)
+- `antennas` — количество каналов (размер delay_us)
+
+**Выходной интерфейс:**
+- **CPU:** `std::vector<std::vector<std::complex<float>>>` — [antenna][sample], как у DelayedFormSignalGenerator
+- **GPU:** `InputData<cl_mem>` или `cl_mem` — буфер antennas × points × sizeof(complex<float>)
+
+**Формула:** `chirp_rate = LfmParams::GetChirpRate(duration)`, `phase = π·chirp_rate·t_local² + 2π·f_start·t_local`, `t_local = t − τ`.
+
+**Реализация (псевдокод):**
+```cpp
+// Для сэмпла n, антенны a (beam_id):
+double t = n / fs;
+double tau = delay_us[a] * 1e-6;  // секунды (мкс → с)
+if (t < tau) output[gid] = 0;
+else {
+  double t_local = t - tau;
+  double chirp_rate = params_.GetChirpRate(duration);  // как LfmGenerator
+  double phase = M_PI * chirp_rate * t_local*t_local + 2*M_PI * f_start * t_local;
+  output[gid] = std::polar(amplitude, phase);
+}
+```
+
+**Python API и тест:**
+- Документация: `Doc/Python/signal_generators_api.md` — добавить раздел `LfmGeneratorAnalyticalDelay`
+- Тест: `Python_test/test_lfm_analytical_delay.py` — pytest, сравнение с NumPy-эталоном (фаза, граница t < τ, задержка 3.24 сэмпла → первый ненулевой в индексе 4)
+
+### 7.4 Шаг 3: Возврат к lch_farrow — код и тесты
+
+**Действия:**
+- Реализовать/доработать kernel дробной задержки в `modules/lch_farrow` по [Doc_Addition/Info_FarrowFractionalDelay.md](../../Doc_Addition/Info_FarrowFractionalDelay.md).
+- Использовать корректные формулы: `read_pos`, `frac`, `center`, `row` (см. [DelayedFormSignal_Kernel_CORRECT.md](DelayedFormSignal_Kernel_CORRECT.md)).
+- **Профилирование:** включить GPUProfiler (SetGPUInfo до Start, Record для kernel/Upload/Download), вывод через console_output. Референс: [Examples/GPUProfiler_SetGPUInfo.md](../../Examples/GPUProfiler_SetGPUInfo.md).
+- Написать код, оттестировать.
+- **Связь на уровне тестов:** сравнивать выход lch_farrow с выходом LfmGeneratorAnalyticalDelay (одинаковые параметры ЛЧМ, задержка; сравнение по норме ошибки).
+
+### 7.5 Порядок выполнения
+
+```
+1. Создание modules/lch_farrow + копирование файлов → сборка OK
+2. LfmGeneratorAnalyticalDelay в signal_generators → создать, Doc/Python, Python_test
+3. lch_farrow: реализация kernel, GPUProfiler, Doc/Python, Python_test
+   Связь с аналитическим генератором — только в тестах (сравнение данных)
+```
+
+---
+
+## 8. Реализация vs План — отличия
+
+> Проверка 2026-02. Дополнять при выявлении расхождений.
+
+### 8.1 LfmGeneratorAnalyticalDelay
+
+| План (раздел 7.3) | Реализация | Статус |
+|-------------------|------------|--------|
+| API как DelayedFormSignalGenerator (SetParams, SetDelays, GenerateToCpu, GenerateInputData) | `SetParams(LfmParams)`, `SetSampling(SystemSampling)`, `SetDelays(delay_us)`, `GenerateToGpu()` → InputData, `GenerateToCpu()` → vector<vector<>> | ✅ Соответствует |
+| Вход: SystemSampling, LfmParams, delay_us[] | LfmParams в конструкторе, SetSampling, SetDelays | ✅ |
+| Выход CPU: vector<vector<complex<float>>> | Реализовано | ✅ |
+| Выход GPU: InputData<cl_mem> | Реализовано | ✅ |
+| Формула: chirp_rate = GetChirpRate, phase = π·k·t² + 2π·f_start·t | Реализовано в kernel | ✅ |
+| Python: Doc/Python, test_lfm_analytical_delay.py | signal_generators_api.md, test_lfm_analytical_delay.py | ✅ |
+| Графики | Добавлены 2026-02: Results/Plots/LfmAnalyticalDelay/ (3 PNG) | ✅ |
+
+**Отличие:** Python API — `LfmAnalyticalDelay(ctx, f_start, f_end, amplitude)` (не SetParams из LfmParams). Функционально эквивалентно.
+
+### 8.2 lch_farrow
+
+| План (разделы 7.2, 7.4) | Реализация | Статус |
+|-------------------------|------------|--------|
+| Модуль modules/lch_farrow | Создан, CMake, add_subdirectory | ✅ |
+| Kernel Lagrange 48×5 | lch_farrow_delay kernel в lch_farrow.cpp | ✅ |
+| Вход: input, delay_us[], antennas, points, sample_rate | SetDelays, Process(input_buf, antennas, points), SetSampleRate | ✅ |
+| Выход: output (cl_mem) | Process возвращает cl_mem | ✅ |
+| Формулы read_pos, frac, center, row (DelayedFormSignal_Kernel_CORRECT) | **Не соответствует**: lch_farrow использует D=floor(delay_samples), mu=delay_samples−D, center=sample_id−D, row=μ×48. Правильно: read_pos=sample_id−delay_samples, center=floor(read_pos), frac=read_pos−center, row=frac×48. Требуется исправление kernel. | ❌ Ошибка |
+| GPUProfiler, SetGPUInfo, Record | Не интегрирован — в lch_farrow.cpp нет вызовов GPUProfiler. CMakeLists упоминает «GPUProfiler integration» как планируемое. | ⚠️ Не реализовано |
+| Doc/Python/lch_farrow_api.md | Создан | ✅ |
+| Python_test/test_lch_farrow.py | Создан, 5 тестов | ✅ |
+
+### 8.3 plot2_fractional_delay_boundary.png — амплитуды
+
+**Вопрос:** почему разные амплитуды на двух subplot?
+
+**Ответ:** Специально. Верхний subplot — |signal| (огибающая), шкала Y: 0..1. Нижний — Re и Im (компоненты), шкала Y: -1..1. Для комплексного сигнала |z|=1 везде, но Re и Im осциллируют. Разные шкалы по замыслу.
+
+---
+
 ## Место для дополнений
 
 <!-- Дополни план ниже или в отдельных разделах -->

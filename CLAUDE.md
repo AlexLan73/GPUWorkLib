@@ -178,6 +178,13 @@ obj.sample_rate = 1e6
 - **Тесты**: Файлы с расширением `*.hpp` в каталогах `/tests/` внутри каждого модуля
 - **Документация тестов**: В каждом `/tests/` должен находиться `README.md` с описанием примеров
 
+### Kernels — единый стиль
+- **Все OpenCL kernels** — в отдельные `.cl` файлы в `modules/[module]/kernels/`
+- **Не inline в .cpp** — только загрузка из файла через `kernel_loader.hpp`
+- **Общий PRNG** (Philox + Box-Muller) — в `modules/[module]/kernels/prng.cl`, подключается через конкатенацию при компиляции
+- **Референс**: `MemoryBank/specs/Form_signals.md` раздел 5
+- **Утилита загрузки**: `include/kernel_loader.hpp` — `LoadKernelFile(filename)` читает из `KERNELS_DIR`
+
 ### Вызов тестов из main
 ⚠️ **Главный main НЕ вызывает тесты напрямую** — вызывает файл `all_test.hpp` каждого модуля.
 

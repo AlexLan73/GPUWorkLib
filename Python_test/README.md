@@ -32,6 +32,7 @@
 | Тест / скрипт | Папка с графиками |
 |---------------|--------------------|
 | **DelayedFormSignalGenerator** (Farrow 48×5) | `Results/Plots/DelayedFormSignal/` |
+| **LfmGeneratorAnalyticalDelay** (аналитическая задержка) | `Results/Plots/LfmAnalyticalDelay/` |
 | **FormSignalGenerator** | `Results/Plots/FormSignal/` |
 | Общие тесты (test_gpuworklib и др.) | `Results/Plots/` (корень) |
 
@@ -49,6 +50,11 @@ python3 Python_test/test_delayed_form_signal.py
 
 **FormSignal:** запуск `Python_test/test_form_signal.py` (по умолчанию с графиками) создаёт PNG в `Results/Plots/FormSignal/`.
 
+**LfmAnalyticalDelay:** запуск `Python_test/test_lfm_analytical_delay.py` создаёт 3 PNG в `Results/Plots/LfmAnalyticalDelay/`:
+- `plot1_real_delay_overlay.png` — Original vs Delayed (видимая задержка)
+- `plot2_fractional_delay_boundary.png` — Дробная задержка 3.24 сэмпла (нули до индекса 4)
+- `plot3_multiantenna_delays.png` — Multi-antenna с разными задержками
+
 ---
 
 ## Описание тестов
@@ -64,6 +70,12 @@ python3 Python_test/test_delayed_form_signal.py
 | 5 | `test_delay_with_noise()` | Задержка + шум: проверка мощности шума (noise_power vs expected), ratio в диапазоне 0.5–2.0 |
 
 Графики (если не `--no-plot`): см. таблицу выше → `Results/Plots/DelayedFormSignal/`.
+
+---
+
+### test_lfm_analytical_delay.py — LfmGeneratorAnalyticalDelay
+
+Тесты аналитической генерации ЛЧМ с задержкой **аналитическим способом** (формула S(t−τ), без Farrow/Lagrange). Графики показывают реальную задержку → `Results/Plots/LfmAnalyticalDelay/`.
 
 ---
 

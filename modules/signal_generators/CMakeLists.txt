@@ -31,6 +31,7 @@ add_library(${MODULE_NAME} STATIC
     src/form_signal_generator.cpp
     src/form_script_generator.cpp
     src/delayed_form_signal_generator.cpp
+    src/lfm_generator_analytical_delay.cpp
     src/signal_generator_factory.cpp
     src/signal_service.cpp
 )
@@ -91,6 +92,6 @@ install(DIRECTORY include/
 # ════════════════════════════════════════════════════════════════════════════
 
 message(STATUS "  ${MODULE_NAME}: configured")
-message(STATUS "    - Generators: CW, LFM, Noise, Script, FormSignal, FormScript, DelayedFormSignal")
+message(STATUS "    - Generators: CW, LFM, Noise, Script, FormSignal, FormScript, DelayedFormSignal, LfmAnalyticalDelay")
 message(STATUS "    - Kernels dir: ${SIG_GEN_KERNELS_DIR}")
 message(STATUS "    - Factory + Service (DI via IBackend*)")

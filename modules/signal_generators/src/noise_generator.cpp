@@ -7,6 +7,7 @@
  */
 
 #include "generators/noise_generator.hpp"
+#include "kernel_loader.hpp"
 #include <stdexcept>
 #include <cmath>
 #include <random>
@@ -18,90 +19,6 @@
 #endif
 
 namespace signal_gen {
-
-// ════════════════════════════════════════════════════════════════════════════
-// OpenCL Kernel: Philox-2x32 PRNG + Box-Muller
-// ════════════════════════════════════════════════════════════════════════════
-
-static const char* NOISE_KERNEL_SOURCE = R"CL(
-/**
- * Philox-2x32-10: counter-based PRNG
- * Идеален для GPU: каждый work item генерирует независимые числа
- */
-uint2 philox2x32_round(uint2 ctr, uint key) {
-    const uint PHILOX_M = 0xD2511F53u;
-    uint hi = mul_hi(ctr.x, PHILOX_M);
-    uint lo = ctr.x * PHILOX_M;
-    return (uint2)(hi ^ key ^ ctr.y, lo);
-}
-
-uint2 philox2x32_10(uint2 ctr, uint key) {
-    const uint PHILOX_BUMP = 0x9E3779B9u;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key);
-    return ctr;
-}
-
-/**
- * @brief Генерация гауссового шума: Philox + Box-Muller
- *
- * Каждый work item генерирует одну комплексную точку (re, im)
- * с нормальным распределением N(0, power).
- */
-__kernel void generate_noise_gaussian(
-    __global float2* output,
-    const uint total_points,
-    const float std_dev,
-    const uint seed)
-{
-    const uint gid = get_global_id(0);
-    if (gid >= total_points) return;
-
-    // Генерируем 2 uniform random numbers через Philox
-    uint2 ctr = (uint2)(gid, seed);
-    uint2 rnd = philox2x32_10(ctr, 0xCD9E8D57u);
-
-    // Uniform [0, 1)
-    float u1 = (float)(rnd.x) / 4294967296.0f + 1e-10f;  // avoid log(0)
-    float u2 = (float)(rnd.y) / 4294967296.0f;
-
-    // Box-Muller transform: uniform -> Gaussian
-    float r = sqrt(-2.0f * log(u1)) * std_dev;
-    float theta = 2.0f * M_PI_F * u2;
-
-    output[gid] = (float2)(r * cos(theta), r * sin(theta));
-}
-
-/**
- * @brief White noise (uniform [-1, 1])
- */
-__kernel void generate_noise_white(
-    __global float2* output,
-    const uint total_points,
-    const float amplitude,
-    const uint seed)
-{
-    const uint gid = get_global_id(0);
-    if (gid >= total_points) return;
-
-    uint2 ctr = (uint2)(gid, seed);
-    uint2 rnd = philox2x32_10(ctr, 0xCD9E8D57u);
-
-    // Uniform [-amplitude, +amplitude]
-    float re = ((float)(rnd.x) / 4294967296.0f * 2.0f - 1.0f) * amplitude;
-    float im = ((float)(rnd.y) / 4294967296.0f * 2.0f - 1.0f) * amplitude;
-
-    output[gid] = (float2)(re, im);
-}
-)CL";
 
 // ════════════════════════════════════════════════════════════════════════════
 // Конструктор / Деструктор
@@ -261,10 +178,13 @@ cl_mem NoiseGenerator::GenerateToGpu(const SystemSampling& system, size_t beam_c
 // ════════════════════════════════════════════════════════════════════════════
 
 void NoiseGenerator::CompileKernel() {
-    cl_int err;
-    size_t source_len = strlen(NOISE_KERNEL_SOURCE);
+    // Load kernel from .cl files: prng.cl + noise_kernel.cl
+    std::string source = LoadKernelWithPrng("noise_kernel.cl");
+    const char* src_ptr = source.c_str();
+    size_t source_len = source.size();
 
-    program_ = clCreateProgramWithSource(context_, 1, &NOISE_KERNEL_SOURCE, &source_len, &err);
+    cl_int err;
+    program_ = clCreateProgramWithSource(context_, 1, &src_ptr, &source_len, &err);
     if (err != CL_SUCCESS) {
         throw std::runtime_error("NoiseGenerator: clCreateProgramWithSource failed");
     }

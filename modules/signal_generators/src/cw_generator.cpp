@@ -7,6 +7,7 @@
  */
 
 #include "generators/cw_generator.hpp"
+#include "kernel_loader.hpp"
 #include <stdexcept>
 #include <cmath>
 
@@ -15,56 +16,6 @@
 #endif
 
 namespace signal_gen {
-
-// ════════════════════════════════════════════════════════════════════════════
-// OpenCL Kernel Source (inline — не зависит от .cl файла при сборке)
-// ════════════════════════════════════════════════════════════════════════════
-
-static const char* CW_KERNEL_SOURCE = R"CL(
-__kernel void generate_cw(
-    __global float2* output,
-    const uint beam_count,
-    const uint n_point,
-    const float sample_rate,
-    const float base_freq,
-    const float freq_step,
-    const float amplitude,
-    const float initial_phase)
-{
-    const size_t gid = get_global_id(0);
-    const size_t beam_id = gid / n_point;
-    const size_t sample_id = gid % n_point;
-    if (beam_id >= beam_count) return;
-
-    const float freq = base_freq + (float)beam_id * freq_step;
-    const float t = (float)sample_id / sample_rate;
-    const float phase = 2.0f * M_PI_F * freq * t + initial_phase;
-
-    output[gid] = (float2)(amplitude * cos(phase), amplitude * sin(phase));
-}
-
-__kernel void generate_cw_real(
-    __global float2* output,
-    const uint beam_count,
-    const uint n_point,
-    const float sample_rate,
-    const float base_freq,
-    const float freq_step,
-    const float amplitude,
-    const float initial_phase)
-{
-    const size_t gid = get_global_id(0);
-    const size_t beam_id = gid / n_point;
-    const size_t sample_id = gid % n_point;
-    if (beam_id >= beam_count) return;
-
-    const float freq = base_freq + (float)beam_id * freq_step;
-    const float t = (float)sample_id / sample_rate;
-    const float phase = 2.0f * M_PI_F * freq * t + initial_phase;
-
-    output[gid] = (float2)(amplitude * cos(phase), 0.0f);
-}
-)CL";
 
 // ════════════════════════════════════════════════════════════════════════════
 // Конструктор / Деструктор
@@ -214,10 +165,13 @@ cl_mem CwGenerator::GenerateToGpu(const SystemSampling& system, size_t beam_coun
 // ════════════════════════════════════════════════════════════════════════════
 
 void CwGenerator::CompileKernel() {
-    cl_int err;
-    size_t source_len = strlen(CW_KERNEL_SOURCE);
+    // Load kernel from cw_kernel.cl
+    std::string source = LoadKernelFile("cw_kernel.cl");
+    const char* src_ptr = source.c_str();
+    size_t source_len = source.size();
 
-    program_ = clCreateProgramWithSource(context_, 1, &CW_KERNEL_SOURCE, &source_len, &err);
+    cl_int err;
+    program_ = clCreateProgramWithSource(context_, 1, &src_ptr, &source_len, &err);
     if (err != CL_SUCCESS) {
         throw std::runtime_error("CwGenerator::CompileKernel: clCreateProgramWithSource failed");
     }

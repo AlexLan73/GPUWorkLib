@@ -15,6 +15,7 @@
  */
 
 #include "generators/delayed_form_signal_generator.hpp"
+#include "kernel_loader.hpp"
 #include <stdexcept>
 #include <cmath>
 #include <chrono>
@@ -130,138 +131,6 @@ static const float kBuiltinLagrangeMatrix[48 * 5] = {
   // Row 47
   -0.4347f,-13.3521f, 20.0547f,  0.4347f,  0.0f
 };
-
-// ════════════════════════════════════════════════════════════════════════════
-// OpenCL Kernel: Fractional delay (Farrow 48×5) + Noise
-// ════════════════════════════════════════════════════════════════════════════
-
-static const char* FRACTIONAL_DELAY_KERNEL_SOURCE = R"CL(
-
-// ─────────────────────────────────────────────────────────────────────────
-// Philox-2x32-10: counter-based PRNG
-// ─────────────────────────────────────────────────────────────────────────
-
-uint2 philox2x32_round(uint2 ctr, uint key) {
-    const uint PHILOX_M = 0xD2511F53u;
-    uint hi = mul_hi(ctr.x, PHILOX_M);
-    uint lo = ctr.x * PHILOX_M;
-    return (uint2)(hi ^ key ^ ctr.y, lo);
-}
-
-uint2 philox2x32_10(uint2 ctr, uint key) {
-    const uint PHILOX_BUMP = 0x9E3779B9u;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key);
-    return ctr;
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Fractional delay kernel: integer shift + Lagrange 5-point interpolation
-// + optional Gaussian noise (Philox + Box-Muller)
-// ─────────────────────────────────────────────────────────────────────────
-//
-// delay_us → delay_samples = delay_us * 1e-6 * sample_rate
-// D = floor(delay_samples)         — целая задержка
-// μ = delay_samples - D            — дробная часть [0, 1)
-// row = uint(μ * 48) % 48          — строка матрицы
-//
-// output[n] = Σ(k=0..4) L[row][k] * input[n - D - 1 + k]
-//   (граничные отсчёты = 0)
-//
-
-__kernel void apply_fractional_delay(
-    __global const float2* input,        // Чистый сигнал (от FormSignalGenerator)
-    __global float2* output,             // Результат: задержанный + шум
-    __constant float* lagrange_matrix,   // 48×5 = 240 floats
-    __global const float* delay_us,      // Per-antenna задержки (мкс)
-    const uint antennas,
-    const uint points,
-    const float sample_rate,
-    const float noise_amplitude,
-    const float norm_val,
-    const uint noise_seed)
-{
-    const uint gid = get_global_id(0);
-    const uint total = antennas * points;
-    if (gid >= total) return;
-
-    const uint antenna_id = gid / points;
-    const uint sample_id  = gid % points;
-
-    // ── Convert delay (μs) to samples ──
-    float delay_samples = delay_us[antenna_id] * 1e-6f * sample_rate;
-    int D = (int)floor(delay_samples);
-    float mu = delay_samples - (float)D;
-
-    // Ensure μ ∈ [0, 1)
-    if (mu < 0.0f) { mu += 1.0f; D -= 1; }
-
-    uint row = ((uint)(mu * 48.0f)) % 48u;
-
-    // В начале сигнала: выход = 0, если читаем "до" начала
-    if ((float)sample_id < delay_samples) {
-        output[gid] = (float2)(0.0f, 0.0f);
-        return;
-    }
-
-    // ── 5 Lagrange coefficients for this row ──
-    float L0 = lagrange_matrix[row * 5u + 0u];
-    float L1 = lagrange_matrix[row * 5u + 1u];
-    float L2 = lagrange_matrix[row * 5u + 2u];
-    float L3 = lagrange_matrix[row * 5u + 3u];
-    float L4 = lagrange_matrix[row * 5u + 4u];
-
-    // ── Read 5 input samples around (sample_id - D) ──
-    // Interpolation window: [center-1, center, center+1, center+2, center+3]
-    // where center = sample_id - D
-    int center = (int)sample_id - D;
-    uint base = antenna_id * points;
-
-    // Helper: read with zero-padding at boundaries
-    #define READ_SAMPLE(idx) \
-        (((idx) >= 0 && (idx) < (int)points) ? \
-         input[base + (uint)(idx)] : (float2)(0.0f, 0.0f))
-
-    float2 s0 = READ_SAMPLE(center - 1);
-    float2 s1 = READ_SAMPLE(center);
-    float2 s2 = READ_SAMPLE(center + 1);
-    float2 s3 = READ_SAMPLE(center + 2);
-    float2 s4 = READ_SAMPLE(center + 3);
-
-    #undef READ_SAMPLE
-
-    // ── 5-point Lagrange interpolation ──
-    float2 result = L0 * s0 + L1 * s1 + L2 * s2 + L3 * s3 + L4 * s4;
-
-    // ── Add noise (Philox + Box-Muller) if needed ──
-    if (noise_amplitude > 0.0f) {
-        uint2 n_ctr = (uint2)(gid, noise_seed);
-        uint2 n_rnd = philox2x32_10(n_ctr, 0xCD9E8D57u);
-
-        float u1 = (float)(n_rnd.x) / 4294967296.0f + 1e-10f;
-        float u2 = (float)(n_rnd.y) / 4294967296.0f;
-
-        float r = sqrt(-2.0f * log(u1));
-        float theta = 2.0f * M_PI_F * u2;
-
-        float noise_re = noise_amplitude * norm_val * r * cos(theta);
-        float noise_im = noise_amplitude * norm_val * r * sin(theta);
-
-        result += (float2)(noise_re, noise_im);
-    }
-
-    output[gid] = result;
-}
-
-)CL";
 
 // ════════════════════════════════════════════════════════════════════════════
 // Конструктор / Деструктор
@@ -581,11 +450,14 @@ DelayedFormSignalGenerator::GenerateToCpu() {
 // ════════════════════════════════════════════════════════════════════════════
 
 void DelayedFormSignalGenerator::CompileDelayKernel() {
-  cl_int err;
-  size_t source_len = strlen(FRACTIONAL_DELAY_KERNEL_SOURCE);
+  // Load kernel from .cl files: prng.cl + delayed_form_signal.cl
+  std::string source = LoadKernelWithPrng("delayed_form_signal.cl");
+  const char* src_ptr = source.c_str();
+  size_t source_len = source.size();
 
+  cl_int err;
   delay_program_ = clCreateProgramWithSource(
-      context_, 1, &FRACTIONAL_DELAY_KERNEL_SOURCE, &source_len, &err);
+      context_, 1, &src_ptr, &source_len, &err);
   if (err != CL_SUCCESS) {
     throw std::runtime_error(
         "DelayedFormSignalGenerator: clCreateProgramWithSource failed");

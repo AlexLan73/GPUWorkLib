@@ -30,6 +30,9 @@ add_subdirectory(modules/signal_generators)
 # FFT Processor module
 add_subdirectory(modules/fft_processor)
 
+# LCH Farrow module (standalone fractional delay processor)
+add_subdirectory(modules/lch_farrow)
+
 # Main executable (src/)
 add_subdirectory(src)
 

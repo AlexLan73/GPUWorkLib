@@ -78,6 +78,12 @@ if(TARGET GPUWorkLib::fft_processor)
     message(STATUS "✅ Linked: GPUWorkLib::fft_processor")
 endif()
 
+# LchFarrow module (для test_lch_farrow)
+if(TARGET GPUWorkLib::lch_farrow)
+    target_link_libraries(GPUWorkLib PRIVATE GPUWorkLib::lch_farrow)
+    message(STATUS "✅ Linked: GPUWorkLib::lch_farrow")
+endif()
+
 # Spectrum Maxima module (для test_spectrum_maxima)
 # Используем -Wl,--start-group / --end-group для разрешения циклических зависимостей
 if(TARGET GPUWorkLib::spectrum_maxima)
@@ -151,6 +157,7 @@ target_include_directories(GPUWorkLib PRIVATE
     ${CMAKE_SOURCE_DIR}/modules/fft_maxima/include
     ${CMAKE_SOURCE_DIR}/modules/signal_generators/include
     ${CMAKE_SOURCE_DIR}/modules/fft_processor/include
+    ${CMAKE_SOURCE_DIR}/modules/lch_farrow/include
 )
 #    ${CMAKE_SOURCE_DIR}/include/ManagerOpenCL
 #    ${CMAKE_SOURCE_DIR}/include/GPU

@@ -60,6 +60,7 @@ target_link_libraries(gpuworklib PRIVATE
     signal_generators
     fft_processor
     spectrum_maxima
+    lch_farrow
     ${_opencl_lib}
 )
 
@@ -74,6 +75,7 @@ target_include_directories(gpuworklib PRIVATE
     ${CMAKE_SOURCE_DIR}/modules/signal_generators/include
     ${CMAKE_SOURCE_DIR}/modules/fft_processor/include
     ${CMAKE_SOURCE_DIR}/modules/fft_maxima/include
+    ${CMAKE_SOURCE_DIR}/modules/lch_farrow/include
     ${Python3_NumPy_INCLUDE_DIRS}
 )
 

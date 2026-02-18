@@ -15,6 +15,7 @@ GPU-ускоренные генераторы сигналов для антен
 | `FormSignalGenerator` | Мультиканальный генератор по формуле getX (Philox+Box-Muller) |
 | `FormScriptGenerator` | DSL + on-disk kernel cache для FormSignal |
 | `DelayedFormSignalGenerator` | Дробная задержка Farrow 48×5 (Lagrange interpolation) |
+| `LfmAnalyticalDelay` | ЛЧМ с аналитической per-antenna задержкой (идеальный эталон) |
 | `GPUBuffer` | Handle GPU-буфера (при `generate(output='gpu')`) |
 
 ---
@@ -433,6 +434,79 @@ plt.savefig('delay_waterfall.png')
 
 ---
 
+## LfmAnalyticalDelay
+
+ЛЧМ-генератор с **аналитической** (идеальной) per-antenna задержкой.
+
+**Формула:**
+- `t_local = t - tau` (tau — задержка в секундах)
+- `phase = pi * chirp_rate * t_local^2 + 2*pi * f_start * t_local`
+- `output = amplitude * exp(j * phase)` если `t >= tau`, иначе 0
+
+Нет интерполяционных артефактов — идеальный эталон для проверки LchFarrow.
+
+### Быстрый старт
+
+```python
+import gpuworklib
+import numpy as np
+
+ctx = gpuworklib.GPUContext(0)
+
+gen = gpuworklib.LfmAnalyticalDelay(ctx, f_start=1e6, f_end=2e6)
+gen.set_sampling(fs=12e6, length=4096)
+gen.set_delays([0.0, 0.1, 0.2, 0.5])  # 4 антенны, мкс
+data = gen.generate_gpu()  # (4, 4096) complex64
+```
+
+### Конструктор
+
+```python
+gen = gpuworklib.LfmAnalyticalDelay(ctx, f_start, f_end,
+                                     amplitude=1.0, complex_iq=True)
+```
+
+| Параметр | По умолчанию | Описание |
+|----------|--------------|----------|
+| `ctx` | — | GPUContext (обязательный) |
+| `f_start` | — | Начальная частота (Гц) |
+| `f_end` | — | Конечная частота (Гц) |
+| `amplitude` | `1.0` | Амплитуда |
+| `complex_iq` | `True` | True = IQ, False = real-only |
+
+### Методы
+
+#### set_sampling(fs, length)
+```python
+gen.set_sampling(fs=12e6, length=4096)
+```
+
+#### set_delays(delay_us)
+```python
+gen.set_delays([0.0, 0.1, 0.2])  # мкс
+```
+
+#### generate_gpu() / generate_cpu()
+```python
+gpu_data = gen.generate_gpu()  # GPU (float32)
+cpu_data = gen.generate_cpu()  # CPU (double precision reference)
+```
+
+### Свойства
+
+| Свойство | Тип | Описание |
+|----------|-----|----------|
+| `antennas` | `int` | Количество антенн (= len(delays)) |
+| `delays` | `list[float]` | Задержки (мкс) |
+
+### Тесты
+
+| Файл | Описание |
+|------|----------|
+| `Python_test/test_lfm_analytical_delay.py` | 5 тестов: zero delay, boundary, GPU vs CPU, multi-antenna, vs NumPy |
+
+---
+
 ## SignalGenerator
 
 Базовые одноканальные/многолучевые генераторы (CW, LFM, Noise).
@@ -548,6 +622,8 @@ print(f"Error: {err:.2e}")  # < 1e-6
 |------|----------|
 | `Python_test/test_form_signal.py` | FormSignalGenerator: 7 тестов + 6 графиков |
 | `Python_test/test_delayed_form_signal.py` | DelayedFormSignalGenerator: 5 тестов + 4 графика |
+| `Python_test/test_lfm_analytical_delay.py` | LfmAnalyticalDelay: 5 тестов (zero, boundary, GPU vs CPU/NumPy, multi-antenna) |
+| `Python_test/test_lch_farrow.py` | LchFarrow: 5 тестов (zero, integer, fractional, multi-antenna, vs analytical) |
 | `Python_test/example_form_signal.py` | Демо: 5 сценариев + 5 презентационных графиков |
 
 ```bash

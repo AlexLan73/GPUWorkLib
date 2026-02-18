@@ -6,15 +6,37 @@ OpenCL kernel files for the signal_generators module.
 
 ```
 kernels/
-├── cw_kernel.cl          # CW (sinusoid) generator kernel
-├── bin/                   # Compiled kernel binaries (on-disk cache)
-│   ├── <name>_opencl.bin  # OpenCL compiled binary
+├── prng.cl                   # Shared PRNG: Philox-2x32-10 + Box-Muller
+├── cw_kernel.cl              # CW (sinusoid) generator kernel
+├── lfm_kernel.cl             # LFM (chirp) generator kernel
+├── noise_kernel.cl           # Noise generator (Gaussian + White), requires prng.cl
+├── form_signal.cl            # FormSignal (getX formula + noise), requires prng.cl
+├── delayed_form_signal.cl    # Fractional delay (Lagrange 5-point + noise), requires prng.cl
+├── lfm_analytical_delay.cl   # LFM with per-antenna analytical delay
+├── bin/                      # Compiled kernel binaries (on-disk cache)
+│   ├── <name>_opencl.bin     # OpenCL compiled binary
 │   └── <name>_opencl_XX.bin  # Old versions (_00, _01, ...)
-├── manifest.json          # Kernel index (names, comments, dates)
-├── <name>.cl              # Saved kernel source (FormScriptGenerator)
-├── <name>_XX.cl           # Old versions
-└── README.md              # This file
+├── manifest.json             # Kernel index (names, comments, dates)
+├── <name>.cl                 # Saved kernel source (FormScriptGenerator)
+├── <name>_XX.cl              # Old versions
+└── README.md                 # This file
 ```
+
+## Loading Kernels
+
+All kernels are loaded at runtime via `kernel_loader.hpp`:
+
+```cpp
+#include "kernel_loader.hpp"
+
+// Simple kernel (no PRNG)
+std::string src = signal_gen::LoadKernelFile("cw_kernel.cl");
+
+// Kernel with PRNG (prng.cl prepended automatically)
+std::string src = signal_gen::LoadKernelWithPrng("form_signal.cl");
+```
+
+Path is set by CMake via `SIGNAL_GENERATORS_KERNELS_DIR`.
 
 ## On-disk Kernel Cache
 
@@ -78,4 +100,4 @@ print(gen.list_kernels())
 
 ---
 
-*Updated: 2026-02-17*
+*Updated: 2026-02-18*
