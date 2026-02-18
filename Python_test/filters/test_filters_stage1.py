@@ -316,7 +316,7 @@ if __name__ == '__main__':
     test_iir_basic_properties()
     test_iir_gpu_vs_scipy()
 
-    print("\n--- Generating plots ---")
+    print("\n--- Generating FIR plot ---")
     plot_filter_results()
 
     print("\nAll tests passed!")
