@@ -75,7 +75,7 @@ build/python/Release/gpuworklib.cp312-win_amd64.pyd
 |--------|-----------|----------|
 | Filters Stage 2 | Средний | Text->kernel pipeline (FormScriptGenerator-like) |
 | ~~Filters Stage 3~~ | **DONE** | ~~Groq AI micro-agent~~ -> **AI Filter Pipeline DONE** |
-| ROCm backend | Средний | Добавить hipFFT для AMD GPU |
+| ROCm backend | Средний | Миграция на AMD Radeon 9070. **План**: `tasks/PLAN_AMD_Radeon_9070_ROCm.md` |
 | Оконные функции | Низкий | Hann, Hamming, Blackman |
 | Streaming filters | Низкий | State persistence для непрерывного потока |
 | Overlap-Save/Add | Низкий | Длинные FIR через FFT |
