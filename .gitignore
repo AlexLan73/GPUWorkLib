@@ -87,3 +87,6 @@ con
 prn
 aux
 
+# API Keys (не коммитить!)
+api_keys.json
+

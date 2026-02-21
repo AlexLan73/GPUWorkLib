@@ -18,10 +18,10 @@ namespace fft_processor_all_test {
 
 inline void run() {
     // FFTProcessor: Complex, MagPhase режимы
-    // test_fft_processor::run();
+    test_fft_processor::run();
 
     // FFTProcessor vs CPU reference (pocketfft)
-    // test_fft_vs_cpu::run();
+    test_fft_vs_cpu::run();
 }
 
 }  // namespace fft_processor_all_test

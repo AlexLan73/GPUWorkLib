@@ -61,29 +61,34 @@ def load_lagrange_matrix():
 # ════════════════════════════════════════════════════════════════════════════
 
 def apply_delay_numpy(signal, delay_samples, lagrange_matrix):
-    """CPU reference — дробная задержка через Lagrange 48×5."""
-    ds32 = np.float32(delay_samples)
+    """CPU reference — дробная задержка через Lagrange 48×5.
+
+    Зеркалит GPU-ядро (lch_farrow.cpp) точь-в-точь:
+      read_pos = n - delay_samples   ← вычисляется PER-SAMPLE (не глобально!)
+      center   = floor(read_pos)
+      frac     = read_pos - center   ← дробная часть PER-SAMPLE
+      row      = int(frac * 48) % 48 ← строка матрицы PER-SAMPLE
+    """
     N = len(signal)
-    D = int(np.floor(float(ds32)))
-    mu = float(ds32) - D
-    if mu < 0:
-        mu += 1.0
-        D -= 1
-
-    row = int(mu * 48) % 48
-    L = lagrange_matrix[row]
-
     output = np.zeros(N, dtype=np.complex64)
+    delay_f32 = np.float32(delay_samples)
+
     for n in range(N):
-        if n < float(ds32):
+        read_pos = float(n) - float(delay_f32)
+        if read_pos < 0.0:
+            output[n] = 0.0 + 0.0j
             continue
-        center = n - D
+        center = int(np.floor(read_pos))
+        frac = read_pos - center        # дробная часть: per-sample!
+        row = int(frac * 48) % 48
+        L = lagrange_matrix[row]
         val = 0.0 + 0.0j
         for k in range(5):
             idx = center - 1 + k
             if 0 <= idx < N:
-                val += L[k] * signal[idx]
+                val += float(L[k]) * complex(signal[idx])
         output[n] = val
+
     return output
 
 

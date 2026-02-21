@@ -68,11 +68,32 @@ except ImportError:
 # ============================================================================
 
 MODE = "groq"                # "groq" | "ollama" | "none"
-GROQ_API_KEY = ""            # Get free key at console.groq.com
 GROQ_MODEL = "llama-3.3-70b-versatile"
 OLLAMA_MODEL = "qwen2.5-coder:7b"
 
 PLOT_DIR = os.path.join(PROJECT_ROOT, 'Results', 'Plots', 'filters')
+
+# ── API Key — читается из api_keys.json (в корне проекта) ──────────────────
+# Создай файл:  <корень проекта>/api_keys.json  со следующим содержимым:
+#
+#   {
+#       "api": "sm_ВАШ_КЛЮЧ_ЗДЕСЬ"
+#   }
+#
+# Файл добавлен в .gitignore — в репозиторий не попадёт.
+# Альтернатива: задать переменную окружения  GROQ_API_KEY=sm_...
+# ---------------------------------------------------------------------------
+_API_KEYS_PATH = os.path.join(PROJECT_ROOT, 'api_keys.json')
+GROQ_API_KEY = ""
+if os.path.isfile(_API_KEYS_PATH):
+    try:
+        with open(_API_KEYS_PATH, 'r') as _f:
+            _api_data = json.load(_f)
+        GROQ_API_KEY = _api_data.get("api", "")
+        if GROQ_API_KEY:
+            print(f"[INFO] API key loaded from {_API_KEYS_PATH}")
+    except Exception as _e:
+        print(f"[WARN] Failed to load api_keys.json: {_e}")
 
 
 # ============================================================================

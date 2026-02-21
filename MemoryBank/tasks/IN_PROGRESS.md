@@ -1,11 +1,25 @@
 # IN PROGRESS — Текущие задачи
 
-> **Обновлено**: 2026-02-18
+> **Обновлено**: 2026-02-21
 
 ---
 
-*Нет активных задач.*
-*TASK-007 (Filters MVP) + TASK-008 (AI Pipeline Stage 3) завершены и в COMPLETED.md*
+## 🔄 TASK-009: Heterodyne LFM Dechirp Module
+
+**Статус**: 📝 ПЛАН НАПИСАН — ждёт ревью и правок от Alex
+
+**Файл плана**: `tasks/PLAN_Heterodyne_LFM_Dechirp.md` (v2.0)
+
+**Что запланировано**:
+- Новый класс `LfmConjugateGenerator` в `modules/signal_generators/`
+- Новый модуль `modules/heterodyne/` (OpenCL backend + ROCm заглушка)
+- Два OpenCL ядра: `dechirp_multiply.cl` + `dechirp_correct.cl`
+- C++ тесты (3 файла, 7 тестов): basic / pipeline / external_ctx
+- Python тесты (3 файла): step-by-step / pytest / GPU vs CPU сравнение
+- Python биндинги (pybind11)
+- Параметры: fs=12e6, B=1e6, N=4000, 5 антенн
+
+**Блокер**: Alex читает план, вносит правки → после одобрения начинаем реализацию
 
 ---
 

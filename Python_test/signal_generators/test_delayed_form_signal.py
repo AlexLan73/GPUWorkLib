@@ -102,34 +102,33 @@ def apply_delay_numpy(signal, delay_samples, lagrange_matrix):
     CPU reference — применение дробной задержки через Lagrange 48×5.
     delay_samples — задержка в сэмплах (float).
 
-    NOTE: GPU ядро работает в float32, поэтому delay_samples нужно передавать
-    как float32 для точного совпадения строки матрицы (row = int(mu*48) % 48).
-    Пример: delay_us=7.5, fs=1e6 → float64: 7.4999...→row=23, float32: 7.5→row=24.
+    Зеркалит GPU-ядро (lch_farrow.cpp) точь-в-точь:
+      read_pos = n - delay_samples   ← вычисляется PER-SAMPLE (не глобально!)
+      center   = floor(read_pos)
+      frac     = read_pos - center   ← дробная часть PER-SAMPLE
+      row      = int(frac * 48) % 48 ← строка матрицы PER-SAMPLE
+
+    ИСПРАВЛЕНО: старая версия использовала глобальный mu = delay - floor(delay),
+    что давало неверные row/center для дробных задержек (ошибка ~3.5 вместо <0.01).
     """
-    # Вычисляем D и mu в float32, как GPU
-    ds32 = np.float32(delay_samples)
     N = len(signal)
-    D = int(np.floor(float(ds32)))
-    mu = float(ds32) - D
-
-    # Ensure mu in [0, 1)
-    if mu < 0:
-        mu += 1.0
-        D -= 1
-
-    row = int(mu * 48) % 48
-    L = lagrange_matrix[row]  # 5 coefficients
-
     output = np.zeros(N, dtype=np.complex64)
+    delay_f32 = np.float32(delay_samples)
+
     for n in range(N):
-        if n < float(ds32):
-            continue  # выход = 0, пока читаем "до" начала сигнала
-        center = n - D
+        read_pos = float(n) - float(delay_f32)
+        if read_pos < 0.0:
+            output[n] = 0.0 + 0.0j
+            continue
+        center = int(np.floor(read_pos))
+        frac = read_pos - center        # дробная часть: per-sample!
+        row = int(frac * 48) % 48
+        L = lagrange_matrix[row]
         val = 0.0 + 0.0j
         for k in range(5):
             idx = center - 1 + k
             if 0 <= idx < N:
-                val += L[k] * signal[idx]
+                val += float(L[k]) * complex(signal[idx])
         output[n] = val
 
     return output
