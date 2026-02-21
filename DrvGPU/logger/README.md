@@ -1,6 +1,27 @@
-# DrvGPU/logger/
+# DrvGPU/logger — Система логирования
 
-Директория для системы логирования.
+Per-GPU логирование (plog). Логи в `Logs/DRVGPU_XX/`.
+
+## Классы
+
+| Файл | Описание |
+|------|----------|
+| `logger.hpp/cpp` | `Logger` — основной логгер |
+| `config_logger.hpp/cpp` | `ConfigLogger` — логгер на основе configGPU.json |
+| `default_logger.hpp/cpp` | `DefaultLogger` — реализация по умолчанию |
+
+## Использование
+
+```cpp
+#include "logger/logger.hpp"
+// Логгер инициализируется через ServiceManager
+```
+
+## Как тестировать
+
+- **Logger**: `tests/test_services.hpp` — `test_services::run()` — ServiceManager инициализирует логгеры по GPUConfig
+
+---
 
 ## Статус миграции
 

@@ -60,12 +60,6 @@ if(TARGET DrvGPU::Search)
     message(STATUS "✅ Linked: DrvGPU::Search")
 endif()
 
-# FFT Maxima module (для test_fft_maxima)
-if(TARGET GPUWorkLib::fft_maxima)
-    target_link_libraries(GPUWorkLib PRIVATE GPUWorkLib::fft_maxima)
-    message(STATUS "✅ Linked: GPUWorkLib::fft_maxima")
-endif()
-
 # Signal Generators module (для test_signal_generators)
 if(TARGET GPUWorkLib::signal_generators)
     target_link_libraries(GPUWorkLib PRIVATE GPUWorkLib::signal_generators)

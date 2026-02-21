@@ -32,7 +32,7 @@ inline void CheckCLError(cl_int error, const std::string& operation) {
 
 ### 1.3 Где нет единообразия
 
-- **spectrum_maxima_finder.cpp**, **antenna_fft_core.cpp** — проверки вручную, без `CheckCLError`
+- **spectrum_maxima_finder.cpp**, **spectrum_processor_opencl.cpp** — проверки вручную, без `CheckCLError`
 - **clfftStatus** (clFFT) — отдельный enum, не cl_int
 - **ROCm/HIP** — пока не реализован; будет hipError_t
 
@@ -352,7 +352,7 @@ void GPUErrorHandler::CheckROCm(hipError_t err, const char* operation, const cha
 
 **Файлы для изменения**:
 - spectrum_maxima_finder.cpp (~15 мест)
-- antenna_fft_core.cpp, antenna_fft_release.cpp
+- spectrum_processor_opencl.cpp, all_maxima_pipeline_opencl.cpp
 - opencl_backend.cpp
 - vector_ops_module, test_external_context_fft
 

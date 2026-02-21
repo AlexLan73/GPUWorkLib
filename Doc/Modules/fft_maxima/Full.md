@@ -267,7 +267,6 @@ struct MaxValue {
 | **test_large_batch** | 256 × 1.3M точек, автоматическая разбивка |
 | **test_gpu_generator_integration** | CwGenerator → SpectrumMaximaFinder |
 | **test_benchmark_all_maxima** | 10 лучей × 500k, GPUProfiler |
-| **test_fft_maxima** | Legacy (AntennaFFTRelease) |
 
 См. [modules/fft_maxima/tests/README.md](../../../modules/fft_maxima/tests/README.md)
 
@@ -324,19 +323,15 @@ modules/fft_maxima/
 │   │   └── spectrum_processor_rocm.hpp
 │   ├── pipelines/
 │   │   └── all_maxima_pipeline_opencl.hpp
-│   ├── kernels/
-│   │   ├── fft_kernel_sources.hpp
-│   │   └── all_maxima_kernel_sources.hpp
-│   ├── fft_plan_cache.hpp
-│   ├── fft_batch_adapter.hpp
-│   └── antenna_fft_core.h, antenna_fft_release.h  # Legacy
+│   └── kernels/
+│       ├── fft_kernel_sources.hpp
+│       └── all_maxima_kernel_sources.hpp
 ├── src/
 │   ├── spectrum_maxima_finder.cpp
 │   ├── spectrum_maxima_finder_process.cpp
 │   ├── spectrum_maxima_finder_all_maxima.cpp
 │   ├── spectrum_processor_opencl.cpp
-│   ├── all_maxima_pipeline_opencl.cpp
-│   └── antenna_fft_core.cpp, antenna_fft_release.cpp
+│   └── all_maxima_pipeline_opencl.cpp
 ├── kernels/
 │   └── fft_kernels.cl
 └── tests/

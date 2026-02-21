@@ -1,6 +1,6 @@
-# DrvGPU/interface/
+# DrvGPU/interface — Абстрактные интерфейсы
 
-Директория для абстрактных интерфейсов (чистые виртуальные классы).
+Чистые виртуальные классы для backend-агностичного дизайна.
 
 ## Содержимое
 
@@ -11,6 +11,14 @@
 | i_logger.hpp | ILogger - интерфейс логгера | common/logger_interface.hpp (redirect) |
 | i_memory_buffer.hpp | IMemoryBuffer - интерфейс буфера | memory/ (redirect) |
 | i_data_sink.hpp | IDataSink - интерфейс приёмника данных | **НОВЫЙ** |
+
+## Как тестировать
+
+Интерфейсы тестируются через реализации:
+- **IBackend**: `tests/single_gpu.hpp` (OpenCLBackend)
+- **IComputeModule**: модули FFT, SignalGen
+- **ILogger**: `tests/test_services.hpp`
+- **IMemoryBuffer**: `tests/single_gpu.hpp` (GPUBuffer)
 
 ## Использование
 

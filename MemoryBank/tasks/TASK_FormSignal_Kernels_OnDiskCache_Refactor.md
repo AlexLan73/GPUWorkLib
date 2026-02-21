@@ -1,6 +1,6 @@
 # Задача: Вынос kernels в .cl + On-disk cache в DrvGPU
 
-> **Источник:** [FormSignalGenerator_Разногласия.md](FormSignalGenerator_Разногласия.md) — дополнения Alex (131–147)  
+> **Источник:** Doc/Modules/signal_generators/Full.md — FormScriptGenerator, on-disk кэш  
 > **Проверка:** Главный AI (Кодо) проверяет результат — компиляцию, тесты, соответствие спецификации.
 
 ---
@@ -10,7 +10,7 @@
 | № | Файл | Зачем |
 |---|------|-------|
 | 1 | `CLAUDE.md` | Правила проекта, структура |
-| 2 | `MemoryBank/tasks/FormSignalGenerator_Разногласия.md` | Исходные дополнения (разделы 1, 6, 7 в конце) |
+| 2 | `Doc/Modules/signal_generators/Full.md` | FormScriptGenerator, kernels, on-disk кэш |
 | 3 | `Doc/Modules/signal_generators/Full.md` | Раздел 5 — FormScriptGenerator, on-disk кэш |
 | 4 | `modules/signal_generators/kernels/README.md` | Текущая структура kernels |
 | 5 | `modules/signal_generators/src/form_signal_generator.cpp` | Inline kernel — нужно вынести |

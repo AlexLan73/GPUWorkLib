@@ -14,14 +14,6 @@
 
 ## Файлы тестов
 
-### test_fft_maxima.hpp
-**Пространство имён**: `test_fft_max`
-**Статус**: Legacy (устаревший)
-
-Старые тесты для `AntennaFFTRelease` (FFT с коллбэками и поиском максимума внутри).
-- Тестирует Release (коллбэки) и Debug (пошаговую) реализации
-- Сравнивает результаты между реализациями
-
 ### test_spectrum_maxima.hpp
 **Пространство имён**: `test_spectrum_maxima`
 
@@ -97,21 +89,6 @@
 - Интеграция GPUProfiler с полным отчётом
 - ConsoleOutput для мультиGPU-безопасного вывода
 - Экспорт профилирования: `Results/Profiler/GPU_00_Profiler/benchmark_all_maxima_*.{md,json}`
-
-### test_fft_svm.hpp
-**Пространство имён**: (SVM)
-
-Тесты SVM (Shared Virtual Memory) FFT. Экспериментальный.
-
-### test_external_context_fft.hpp
-**Пространство имён**: (external context)
-
-Тестирование FFT с внешним OpenCL-контекстом (не созданным через DrvGPU).
-
-### test_signal_generator.hpp
-**Пространство имён**: (signal generator)
-
-Устаревший тестовый генератор сигналов (заменён на `signal_gen::CwGenerator`).
 
 ### cpu_fft_reference.hpp
 

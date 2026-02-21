@@ -31,7 +31,6 @@ Input Data → Zero-Pad → clFFT → Post-Processing → Peak Search → Parabo
 - **Two peak modes**: ONE_PEAK (лучший из левого/правого) и TWO_PEAKS (оба)
 - **Parabolic interpolation**: уточнение частоты до долей бина
 - **clFFT pre-callback**: zero-padding в kernel'е для максимальной производительности
-- **FFTPlanCache**: кеширование clFFT планов для разных batch_size
 - **Universal API**: CPU vectors, cl_mem, SVM pointers
 
 ---
@@ -82,63 +81,48 @@ auto results = finder.Process(gpu_input, PeakSearchMode::ONE_PEAK, DriverType::O
 ## Архитектура
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                  SpectrumMaximaFinder                        │
-│  Process(InputData<T>, PeakSearchMode, DriverType)          │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │           AntennaFFTProcMax                          │   │
-│  │  ProcessBatch(input, start, count, profiling)        │   │
-│  └──────────────────────┬───────────────────────────────┘   │
-│                         │                                    │
-│  ┌──────────────────────▼───────────────────────────────┐   │
-│  │             AntennaFFTCore                           │   │
-│  │  Initialize() → AllocateBuffers() → CreateFFTPlan()  │   │
-│  │  ExecuteFFT() → ExecutePostKernel() → FindPeaks()    │   │
-│  └──────────────────────┬───────────────────────────────┘   │
-│                         │                                    │
-│  ┌──────────────────────▼───────────────────────────────┐   │
-│  │          Support Classes                             │   │
-│  │  FFTPlanCache — кеш clFFT планов                     │   │
-│  │  FFTBatchAdapter — расчёт batch через BatchManager   │   │
-│  │  FFTResultWriter — вывод результатов (MD/JSON)       │   │
-│  │  FFTKernelSources — OpenCL kernel source strings     │   │
-│  └──────────────────────────────────────────────────────┘   │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
+SpectrumMaximaFinder
+  → ISpectrumProcessor (Strategy)
+  → SpectrumProcessorOpenCL
+      → clFFT + pre/post callbacks
+      → AllMaximaPipelineOpenCL (Detect → Scan → Compact)
 ```
-
----
 
 ## Файлы
 
 ```
 modules/fft_maxima/
 ├── include/
+│   ├── spectrum_maxima_finder.h
 │   ├── interface/
-│   │   ├── spectrum_input_data.hpp    # InputData<T>, DriverType, ProcessingParams
-│   │   ├── spectrum_maxima_types.h    # PeakSearchMode, MaxValue, SpectrumResult
-│   │   └── antenna_fft_params.h       # AntennaFFTParams, FFTResult, FFTMaxResult
-│   ├── fft_plan_cache.hpp             # FFTPlanCache (RAII, cache hits tracking)
-│   ├── fft_batch_adapter.hpp          # FFTBatchAdapter (DrvGPU::BatchManager)
-│   ├── fft_result_writer.hpp          # FFTResultWriter (MD + JSON output)
+│   │   ├── spectrum_input_data.hpp
+│   │   ├── spectrum_maxima_types.h
+│   │   ├── i_spectrum_processor.hpp
+│   │   └── i_all_maxima_pipeline.hpp
+│   ├── processors/
+│   │   ├── spectrum_processor_opencl.hpp
+│   │   └── spectrum_processor_rocm.hpp
+│   ├── pipelines/
+│   │   └── all_maxima_pipeline_opencl.hpp
 │   └── kernels/
-│       └── fft_kernel_sources.hpp     # OpenCL kernel sources
+│       ├── fft_kernel_sources.hpp
+│       └── all_maxima_kernel_sources.hpp
 ├── src/
-│   ├── antenna_fft_core.cpp
-│   ├── antenna_fft_proc_max.cpp
-│   └── spectrum_maxima_finder.cpp
-├── tests/
-│   ├── test_spectrum_maxima.hpp
-│   ├── test_fft_maxima.hpp
-│   ├── test_large_batch.hpp
-│   ├── test_fft_svm.hpp
-│   ├── test_external_context_fft.hpp
-│   ├── test_signal_generator.hpp
-│   ├── test_gpu_generator_integration.hpp
-│   └── cpu_fft_reference.hpp
-└── CMakeLists.txt
+│   ├── spectrum_maxima_finder.cpp
+│   ├── spectrum_maxima_finder_process.cpp
+│   ├── spectrum_maxima_finder_all_maxima.cpp
+│   ├── spectrum_processor_opencl.cpp
+│   └── all_maxima_pipeline_opencl.cpp
+├── kernels/
+│   └── fft_kernels.cl
+└── tests/
+    ├── test_spectrum_maxima.hpp
+    ├── test_find_all_maxima.hpp
+    ├── test_batch_all_maxima.hpp
+    ├── test_large_batch.hpp
+    ├── test_gpu_generator_integration.hpp
+    ├── test_benchmark_all_maxima.hpp
+    └── cpu_fft_reference.hpp
 ```
 
 ---

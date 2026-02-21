@@ -405,8 +405,7 @@ __kernel void post_kernel(
 //   - Все данные влезают в один вызов clFFT
 //   - Zero-copy: нет промежуточных буферов между padding и FFT
 //
-// ВЫЗЫВАЕТСЯ ИЗ:
-//   antenna_fft_release.cpp:225 → CreateFFTPlanWithCallbacks()
+// Используется в spectrum_processor_opencl (pre-callback для zero-pad)
 //
 // ════════════════════════════════════════════════════════════════════════════
 inline const char* GetPreCallbackSource32_opencl() {

@@ -701,7 +701,7 @@ ILogger
 |--------|-----------|-----------------|--------------|
 | **Signal Generators** | `signal_gen` | ISignalGenerator, CwGenerator, LfmGenerator, NoiseGenerator, ScriptGenerator, SignalService, Factory | [../Module/signal_generators/](../Module/signal_generators/) |
 | **FFT Processor** | `fft_processor` | FFTProcessor, FFTOutputMode | [../Module/fft_processor/](../Module/fft_processor/) |
-| **FFT Maxima** | `antenna_fft` | SpectrumMaximaFinder, AntennaFFTCore, FFTPlanCache | [../Module/fft_maxima/](../Module/fft_maxima/) |
+| **FFT Maxima** | `antenna_fft` | SpectrumMaximaFinder, SpectrumProcessorOpenCL | [../Modules/fft_maxima/](../Modules/fft_maxima/) |
 | **Python Bindings** | — | GPUContext, SignalGenerator, FFTProcessor, ScriptGenerator | [../Module/python_bindings/](../Module/python_bindings/) |
 
 ---

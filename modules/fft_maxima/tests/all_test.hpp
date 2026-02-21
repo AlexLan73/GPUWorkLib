@@ -17,10 +17,6 @@
 #include "test_find_all_maxima.hpp"
 #include "test_benchmark_all_maxima.hpp"
 #include "test_batch_all_maxima.hpp"
-// Legacy (antenna_fft) — вернуться отдельно
-// #include "test_fft_maxima.hpp"
-// #include "test_fft_svm.hpp"
-// #include "test_external_context_fft.hpp"
 
 namespace fft_maxima_all_test {
 
@@ -40,11 +36,6 @@ inline void run() {
 
     // BENCHMARK: 10 лучей × 500k точек
     // test_benchmark_all_maxima::run();
-
-    // Legacy (AntennaFFTCore)
-    // test_fft_max::run();
-    // test_fft_svm::run();
-    // test_external_context_fft::run();
 }
 
 }  // namespace fft_maxima_all_test
