@@ -65,7 +65,7 @@ if not hasattr(gpuworklib, 'DelayedFormSignalGenerator'):
 # ════════════════════════════════════════════════════════════════════════════
 
 MATRIX_PATH = os.path.join(
-    os.path.dirname(__file__), '..', 'MemoryBank', 'DiscussionPlan',
+    os.path.dirname(__file__), '..', '..', 'modules', 'lch_farrow',
     'lagrange_matrix_48x5.json')
 
 

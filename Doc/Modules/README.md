@@ -8,9 +8,12 @@
 
 | Модуль | Каталог | Статус | Описание |
 |--------|---------|--------|----------|
-| **Signal Generators** | [signal_generators/](signal_generators/) | Active | CW, LFM, Noise, Script генераторы сигналов на GPU |
+| **Signal Generators** | [signal_generators/](signal_generators/) | Active | CW, LFM, Noise, Script, FormSignal, DelayedFormSignal |
 | **FFT Processor** | [fft_processor/](fft_processor/) | Active | GPU FFT с режимами Complex / MagPhase / MagPhaseFreq |
 | **FFT Maxima** | [fft_maxima/](fft_maxima/) | Active | Поиск максимумов спектра FFT (SpectrumMaximaFinder) |
+| **Filters** | [filters/](filters/) | Active | FIR, IIR фильтры на GPU |
+| **LchFarrow** | [lch_farrow/](lch_farrow/) | Active | Дробная задержка Lagrange 48×5 |
+| **Heterodyne** | [heterodyne/](heterodyne/) | Planned | Дечирп, stretch processing для ЛЧМ-радара |
 | **Python Bindings** | [python_bindings/](python_bindings/) | Active | pybind11 модуль `gpuworklib` для Python 3.12 |
 
 ---
