@@ -32,12 +32,8 @@
 - `modules/filters/` — 16 C++ файлов
 - `python/py_filters.hpp` — Python bindings
 - `Python_test/test_filters_stage1.py` — Python test
-- `MemoryBank/tasks/PLAN_filters_module.md` — Plan
-- `MemoryBank/research/gpu_filters_research.md` — Research
-
-### Связанные
-- Спека: `MemoryBank/specs/Precpectiva/filters_module.md` (статус: Active)
-- План: `MemoryBank/tasks/PLAN_filters_module.md`
+- `Doc/Modules/filters/Full.md` — полная документация
+- `Doc/Modules/filters/gpu_filters_research.md` — исследование (Overlap-Save и др.)
 
 ---
 
@@ -77,7 +73,7 @@
 ### Связанные
 - Stage 1 MVP: TASK-007 (FIR + IIR C++/Python)
 - IIR order comparison plot: `Python_test/filters/test_iir_plot.py`
-- Plan: `MemoryBank/tasks/PLAN_filters_module.md`
+- Документация: `Doc/Modules/filters/Full.md`
 
 ---
 
