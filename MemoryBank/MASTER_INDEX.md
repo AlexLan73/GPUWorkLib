@@ -12,8 +12,8 @@
 | Модуль | Статус | Описание |
 |--------|--------|----------|
 | **DrvGPU** | Active | Базовый драйвер GPU (OpenCL backend). См. `specs/drvgpu.md` |
-| **SpectrumMaximaFinder** (fft_maxima) | Active | Поиск максимума спектра FFT. См. `specs/fft_maxima.md` |
-| **SignalGenerators** | Active | CW, LFM, Noise, Script, **FormSignal** DONE. См. `specs/Form_signals.md` |
+| **SpectrumMaximaFinder** (fft_maxima) | Active | Поиск максимума спектра FFT. См. `Doc/Modules/fft_maxima/Full.md` |
+| **SignalGenerators** | Active | CW, LFM, Noise, Script, **FormSignal** DONE. См. `Doc/Modules/signal_generators/Full.md` |
 | **FFTProcessor** | Active | FFT с режимами Complex/MagPhase |
 | **ScriptGenerator** | Active | Text DSL -> OpenCL kernel compiler |
 | **LchFarrow** | Active | Lagrange fractional delay (48x5 matrix) |

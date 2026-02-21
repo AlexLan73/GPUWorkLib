@@ -355,7 +355,7 @@ console_output(gpu_context_.get(),
 8. ✅ **Рефакторинг FindAllMaximaFromGPUPipeline** — замена throw на batch-цикл (DONE 2026-02-15)
 9. ✅ **Профилирование** — суммарное время через GPUProfiler + console_output (DONE 2026-02-15)
 10. ⏳ **Тесты** — требуют создания test_batch_all_maxima.hpp (TODO)
-11. ⏳ **Обновить specs/fft_maxima.md** — документация batch API (TODO)
+11. ✅ **Документация** — `Doc/Modules/fft_maxima/Full.md` (batch API, MaxValue)
 
 ---
 
@@ -433,7 +433,7 @@ console_output(gpu_context_.get(),
 
 2. **Тесты** — создать `test_batch_all_maxima.hpp`
 
-3. **Документация** — обновить `specs/fft_maxima.md`
+3. **Документация** — `Doc/Modules/fft_maxima/Full.md`
 
 ### 🎯 Что работает СЕЙЧАС:
 

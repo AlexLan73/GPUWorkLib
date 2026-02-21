@@ -39,9 +39,11 @@ MemoryBank/
 ### Модули проекта
 | Модуль | Спецификация |
 |--------|--------------|
-| DrvGPU | `specs/drvgpu.md` |
-| FFT/IFFT | `specs/fft_module.md` |
-| Filters | `specs/filters_module.md` |
+| DrvGPU | `Doc/DrvGPU/Architecture.md` |
+| Signal Generators | `Doc/Modules/signal_generators/Full.md` |
+| FFT Processor | `Doc/Modules/fft_processor/Full.md` |
+| FFT Maxima (SpectrumMaximaFinder) | `Doc/Modules/fft_maxima/Full.md` |
+| Filters | `Doc/Modules/filters/Full.md` |
 | Statistics | `specs/statistics_module.md` |
 | Heterodyne | `specs/heterodyne_module.md` |
 | SignalSynth | `specs/signal_synth_module.md` |
@@ -184,7 +186,7 @@ obj.sample_rate = 1e6
 - **Все OpenCL kernels** — в отдельные `.cl` файлы в `modules/[module]/kernels/`
 - **Не inline в .cpp** — только загрузка из файла через `kernel_loader.hpp`
 - **Общий PRNG** (Philox + Box-Muller) — в `modules/[module]/kernels/prng.cl`, подключается через конкатенацию при компиляции
-- **Референс**: `MemoryBank/specs/Form_signals.md` раздел 5
+- **Референс**: `Doc/Modules/signal_generators/Full.md` раздел 5
 - **Утилита загрузки**: `include/kernel_loader.hpp` — `LoadKernelFile(filename)` читает из `KERNELS_DIR`
 
 ### Вызов тестов из main

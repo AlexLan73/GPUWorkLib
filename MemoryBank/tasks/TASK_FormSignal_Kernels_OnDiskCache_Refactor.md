@@ -11,7 +11,7 @@
 |---|------|-------|
 | 1 | `CLAUDE.md` | Правила проекта, структура |
 | 2 | `MemoryBank/tasks/FormSignalGenerator_Разногласия.md` | Исходные дополнения (разделы 1, 6, 7 в конце) |
-| 3 | `MemoryBank/specs/Form_signals.md` | Раздел 5 — расположение kernels, раздел 12 — on-disk кэш |
+| 3 | `Doc/Modules/signal_generators/Full.md` | Раздел 5 — FormScriptGenerator, on-disk кэш |
 | 4 | `modules/signal_generators/kernels/README.md` | Текущая структура kernels |
 | 5 | `modules/signal_generators/src/form_signal_generator.cpp` | Inline kernel — нужно вынести |
 | 6 | `modules/signal_generators/src/form_script_generator.cpp` | On-disk cache — логика |
@@ -31,7 +31,7 @@
 - Все OpenCL kernels — в отдельные `.cl` файлы в `modules/[module]/kernels/`
 - Не inline в .cpp — только загрузка из файла или #include через CMake
 - Общий include (например prng.cl) — в `modules/[module]/kernels/` или общая папка
-- Референс: MemoryBank/specs/Form_signals.md раздел 5
+- Референс: Doc/Modules/signal_generators/Full.md раздел 5
 ```
 
 Если уже есть — дополнить. Ссылаться в следующих задачах.
@@ -40,7 +40,7 @@
 
 1. **FormSignalGenerator**  
    - Вынести kernel из `form_signal_generator.cpp` (KERNEL_SOURCE) в `modules/signal_generators/kernels/form_signal.cl`  
-   - Philox+Box-Muller — в `kernels/prng.cl` (общий include) или оставить в form_signal.cl по Form_signals.md  
+   - Philox+Box-Muller — в `kernels/prng.cl` (общий include) или оставить в form_signal.cl  
    - Загрузка: чтение файла при инициализации или CMake
 
 2. **FormScriptGenerator**  

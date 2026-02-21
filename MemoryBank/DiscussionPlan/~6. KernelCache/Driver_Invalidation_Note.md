@@ -1,7 +1,7 @@
 # Kernel Cache: инвалидация при смене драйвера
 
 > **Статус**: Отложено (пока не реализуем)
-> **Связь**: Form_signals.md, раздел 12.1
+> **Связь**: Doc/Modules/signal_generators/Full.md (FormScriptGenerator, on-disk кэш)
 
 ---
 

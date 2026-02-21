@@ -86,7 +86,7 @@ auto result = finder.FindAllMaxima(input_gpu, OutputDestination::GPU);
 
 ### Инфраструктура
 - [x] **TASK-8:** Включить test_batch_all_maxima::run() в main.cpp — DONE
-- [x] **TASK-9:** Обновить specs/fft_maxima.md с batch API и форматом MaxValue — DONE
+- [x] **TASK-9:** Документация batch API и MaxValue — DONE (`Doc/Modules/fft_maxima/Full.md`)
 
 ### Обязательно
 - [x] **TASK-10:** Тест формата MaxValue — CPU и GPU, проверка структуры, beam_count, counts — DONE (через test_find_all_maxima + test_batch_all_maxima)
