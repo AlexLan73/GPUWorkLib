@@ -948,6 +948,7 @@ private:
 #include "py_lfm_analytical_delay.hpp"
 #include "py_lch_farrow.hpp"
 #include "py_filters.hpp"
+#include "py_heterodyne.hpp"
 
 // ============================================================================
 // PySpectrumMaximaFinder — find all local maxima in FFT spectrum
@@ -1649,6 +1650,11 @@ PYBIND11_MODULE(gpuworklib, m) {
     // FirFilter + IirFilter (see py_filters.hpp)
     // ════════════════════════════════════════════════════════════════
     register_filters(m);
+
+    // ════════════════════════════════════════════════════════════════
+    // HeterodyneDechirp (see py_heterodyne.hpp)
+    // ════════════════════════════════════════════════════════════════
+    register_heterodyne(m);
 
     // ════════════════════════════════════════════════════════════════
     // Module-level utilities

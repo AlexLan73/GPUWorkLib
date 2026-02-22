@@ -264,7 +264,7 @@ src/main.cpp
 | FFTProcessor | 🟢 Active | ✅ FFTProcessor | FFT с режимами Complex/MagPhase |
 | SpectrumMaximaFinder | 🟢 Active | 🔶 Partial | Поиск максимума спектра FFT |
 | **Statistics** | 🟡 **В разработке** | ⚪ Planned | mean, std, variance на GPU |
-| **Heterodyne** | 🟡 **В разработке** | ⚪ Planned | NCO, MixDown/MixUp |
+| **Heterodyne** | 🟢 Active | ✅ HeterodyneDechirp | LFM Dechirp (7 C++ тестов, 3 Python теста) |
 | Filters | ⚪ Planned | ⚪ Planned | FIR, IIR фильтры на GPU |
 
 ### Инфраструктура

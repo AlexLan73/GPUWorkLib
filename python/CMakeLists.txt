@@ -62,6 +62,7 @@ target_link_libraries(gpuworklib PRIVATE
     spectrum_maxima
     lch_farrow
     filters
+    heterodyne
     ${_opencl_lib}
 )
 
@@ -78,6 +79,7 @@ target_include_directories(gpuworklib PRIVATE
     ${CMAKE_SOURCE_DIR}/modules/fft_maxima/include
     ${CMAKE_SOURCE_DIR}/modules/lch_farrow/include
     ${CMAKE_SOURCE_DIR}/modules/filters/include
+    ${CMAKE_SOURCE_DIR}/modules/heterodyne/include
     ${Python3_NumPy_INCLUDE_DIRS}
 )
 

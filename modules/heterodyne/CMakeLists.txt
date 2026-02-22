@@ -1,15 +1,15 @@
 # ════════════════════════════════════════════════════════════════════════════
-# Signal Generators Module - CMakeLists.txt
+# Heterodyne Module - CMakeLists.txt
 # ════════════════════════════════════════════════════════════════════════════
 #
-# CW, LFM, Noise генераторы сигналов на GPU (OpenCL)
-# Strategy + Factory + DI via IBackend*
+# LFM Dechirp processing on GPU (OpenCL)
+# Pipeline: conj(LFM) -> multiply -> FFT -> peak -> range
 #
 # ════════════════════════════════════════════════════════════════════════════
 
 cmake_minimum_required(VERSION 3.20)
 
-set(MODULE_NAME signal_generators)
+set(MODULE_NAME heterodyne)
 
 message(STATUS "Configuring module: ${MODULE_NAME}")
 
@@ -24,17 +24,9 @@ find_package(OpenCL REQUIRED)
 # ════════════════════════════════════════════════════════════════════════════
 
 add_library(${MODULE_NAME} STATIC
-    src/cw_generator.cpp
-    src/lfm_generator.cpp
-    src/noise_generator.cpp
-    src/script_generator.cpp
-    src/form_signal_generator.cpp
-    src/form_script_generator.cpp
-    src/delayed_form_signal_generator.cpp
-    src/lfm_generator_analytical_delay.cpp
-    src/lfm_conjugate_generator.cpp
-    src/signal_generator_factory.cpp
-    src/signal_service.cpp
+    src/heterodyne_dechirp.cpp
+    src/heterodyne_processor_opencl.cpp
+    src/heterodyne_processor_rocm.cpp
 )
 
 target_include_directories(${MODULE_NAME}
@@ -44,29 +36,27 @@ target_include_directories(${MODULE_NAME}
         ${CMAKE_SOURCE_DIR}/DrvGPU
     PRIVATE
         ${OpenCL_INCLUDE_DIRS}
+        ${CLFFT_INCLUDE_DIR}
 )
 
 target_link_libraries(${MODULE_NAME}
     PUBLIC
         drvgpu
+        signal_generators
+        spectrum_maxima
         OpenCL::OpenCL
 )
-
-# stdc++fs нужна только на GCC < 9 (не MSVC, не Clang с libc++)
-if(NOT MSVC AND NOT APPLE)
-    target_link_libraries(${MODULE_NAME} PRIVATE stdc++fs)
-endif()
 
 target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
 
 # ════════════════════════════════════════════════════════════════════════════
-# Kernel cache paths (for on-disk kernel storage)
+# Kernel paths
 # ════════════════════════════════════════════════════════════════════════════
 
-set(SIG_GEN_KERNELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/kernels")
+set(HETERODYNE_KERNELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/kernels/opencl")
 
 target_compile_definitions(${MODULE_NAME} PRIVATE
-    SIGNAL_GENERATORS_KERNELS_DIR="${SIG_GEN_KERNELS_DIR}"
+    HETERODYNE_KERNELS_DIR="${HETERODYNE_KERNELS_DIR}"
 )
 
 # Alias
@@ -93,6 +83,5 @@ install(DIRECTORY include/
 # ════════════════════════════════════════════════════════════════════════════
 
 message(STATUS "  ${MODULE_NAME}: configured")
-message(STATUS "    - Generators: CW, LFM, Noise, Script, FormSignal, FormScript, DelayedFormSignal, LfmAnalyticalDelay, LfmConjugate")
-message(STATUS "    - Kernels dir: ${SIG_GEN_KERNELS_DIR}")
-message(STATUS "    - Factory + Service (DI via IBackend*)")
+message(STATUS "    - Kernels dir: ${HETERODYNE_KERNELS_DIR}")
+message(STATUS "    - Pipeline: LfmConjugate -> Dechirp -> FFT -> Peak -> Range")

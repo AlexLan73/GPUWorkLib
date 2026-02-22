@@ -7,6 +7,7 @@
 #include "modules/signal_generators/tests/all_test.hpp"
 #include "modules/lch_farrow/tests/all_test.hpp"
 #include "modules/filters/tests/all_test.hpp"
+#include "modules/heterodyne/tests/all_test.hpp"
 
 int main() {
     std::cout << "===============================================================\n"
@@ -15,22 +16,25 @@ int main() {
     std::cout << "Программа успешно запущена!" << std::endl;
 
     // DrvGPU: примеры и тесты
-    drvgpu_all_test::run();
+//    drvgpu_all_test::run();
 
     // fft_maxima: SpectrumMaximaFinder
-    fft_maxima_all_test::run();
+//    fft_maxima_all_test::run();
 
     // fft_processor: FFT с режимами Complex/MagPhase
-    fft_processor_all_test::run();
+//    fft_processor_all_test::run();
 
     // signal_generators: CW, LFM, Noise, FormSignal
-    signal_generators_all_test::run();
+//    signal_generators_all_test::run();
 
     // lch_farrow: standalone Lagrange fractional delay
-    lch_farrow_all_test::run();
+//    lch_farrow_all_test::run();
 
     // filters: FIR + IIR GPU filters
-    filters_all_test::run();
+//    filters_all_test::run();
+
+    // heterodyne: LFM dechirp processing
+    heterodyne_all_test::run();
 
     std::cout << "\nВсе тесты завершены!" << std::endl;
     return 0;

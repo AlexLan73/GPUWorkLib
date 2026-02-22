@@ -36,6 +36,9 @@ add_subdirectory(modules/lch_farrow)
 # Filters module (FIR + IIR GPU filters)
 add_subdirectory(modules/filters)
 
+# Heterodyne module (LFM dechirp processing)
+add_subdirectory(modules/heterodyne)
+
 # Main executable (src/)
 add_subdirectory(src)
 

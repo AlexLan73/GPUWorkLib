@@ -77,4 +77,48 @@
 
 ---
 
-*Последнее обновление: 2026-02-18*
+---
+
+## ✅ [TASK-009] Heterodyne LFM Dechirp Module
+
+**Начато**: 2026-02-21
+**Завершено**: 2026-02-21
+**Приоритет**: High
+**Исполнитель**: Кодо
+
+### Что реализовано
+- C++ модуль `modules/heterodyne/` (OpenCL + ROCm заглушка)
+- `LfmConjugateGenerator` в `modules/signal_generators/` (ядро `lfm_conjugate.cl`)
+- GPU ядра: `dechirp_multiply.cl` (1D, OPT-5) + `dechirp_correct.cl` (phase_step, OPT-6)
+- Оптимизации OPT-1..OPT-6: кеш ядер, буферов, LfmConjGen, GPU ref, 1D kernels, phase_step
+- SNR вычисление: 20·log10(peak / noise_estimate)
+- Python биндинги: `python/py_heterodyne.hpp` + `register_heterodyne()`
+- 3 Python теста: базовый, step-by-step, GPU vs CPU comparison
+
+### Параметры
+- fs=12MHz, B=2MHz (f_start=0, f_end=2e6), N=8000, T=666.67μs, μ=3e9 Hz/s
+- 5 антенн, delays=[100,200,300,400,500] μs, F_BEAT_TOL=5000 Hz
+
+### Результаты тестирования
+| # | Тест | Файл | Результат |
+|---|------|------|-----------|
+| 1 | Single antenna dechirp (100μs) | basic.hpp | ✅ PASSED |
+| 2 | 5 antennas, linear delays | basic.hpp | ✅ ALL PASSED |
+| 3 | Dechirp correction (→DC) | basic.hpp | ✅ PASSED |
+| 4 | Full pipeline Process() | pipeline.hpp | ✅ PASSED |
+| 5 | ProcessExternal (cl_mem) | pipeline.hpp | ✅ PASSED |
+| 6 | Random delays (seed=42) | basic.hpp | ✅ ALL PASSED |
+| 7 | AllMaxima control | pipeline.hpp | ✅ PASSED |
+
+### Файлы (25+ новых/изменённых)
+- `modules/heterodyne/` — 12 C++ файлов (include, src, kernels, tests)
+- `modules/signal_generators/` — 3 файла (LfmConjugateGenerator)
+- `python/py_heterodyne.hpp` — Python bindings (~190 строк)
+- `Python_test/heterodyne/test_heterodyne.py` — 4 pytest теста
+- `Python_test/heterodyne/test_heterodyne_step_by_step.py` — 8 шагов + графики
+- `Python_test/heterodyne/test_heterodyne_comparison.py` — GPU vs CPU отчёт
+- `MemoryBank/tasks/ALGORITHM_Heterodyne_LFM_Dechirp.md` — полное описание алгоритма
+
+---
+
+*Последнее обновление: 2026-02-21*
