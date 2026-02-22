@@ -171,6 +171,9 @@ HeterodyneResult HeterodyneDechirp::BuildResult(
   input.data = dc_data;
   input.repeat_count = 1;
   input.sample_rate = params.sample_rate;
+  // search_range=5000 → half_range=2500, covers bins [0..2499] (~3.66 MHz @ fs=12MHz)
+  // Default nFFT/4=2048 was too narrow: f_beat=1.5MHz hits boundary (excluded bin 1024)
+  input.search_range = 5000;
 
   auto spec_results = finder.Process(input,
       antenna_fft::PeakSearchMode::ONE_PEAK,
