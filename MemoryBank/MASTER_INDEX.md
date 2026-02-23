@@ -3,7 +3,7 @@
 > **Проект**: Библиотеки GPU-вычислений (OpenCL, ROCm, HIP)
 > **Автор**: Alex
 > **AI-ассистент**: Кодо
-> **Обновлено**: 2026-02-18
+> **Обновлено**: 2026-02-23
 
 ---
 
@@ -20,31 +20,12 @@
 | **Filters** | **Active** | **FIR + IIR GPU фильтры (Stage 1 MVP + Stage 3 AI Pipeline DONE)** |
 | **Python Bindings** | Active | pybind11 модуль gpuworklib |
 | **Statistics** | Planned | Статистика. См. `specs/statistics_module.md` |
-| **Heterodyne** | Planned | Гетеродин (перенос частоты) |
+| **Heterodyne** | **Active** | LFM Dechirp (stretch-processing). См. `Doc/Modules/heterodyne/Full.md` |
 
 
 ## Текущий статус
 
-### Filters Module — Stage 1 MVP + Stage 3 AI Pipeline DONE (2026-02-18)
-- FIR: direct-form, 2D NDRange, __constant/__global авто-выбор
-- IIR: biquad cascade DFII-T, все секции в одном kernel (order 2-10+)
-- C++ тесты: GPU vs CPU err = 1e-6 (PASSED)
-- Python тесты: vs scipy err = 4.77e-7 (PASSED)
-- IIR 4-panel plot с comparison order 2/4/8: `Results/Plots/filters/test_iir_stage1.png`
-- FIR 4-panel plot: `Results/Plots/filters/test_filters_stage1.png`
-- **Stage 3: AI Filter Pipeline** — NL -> params -> scipy -> GPU -> dark-theme plot
-  - Поддержка FIR + IIR, lowpass/highpass
-  - AI бекенды: Groq (llama-3.3-70b) / Ollama (qwen2.5-coder:7b) / none (demo)
-  - 4 demo scenarios: ALL PASSED (GPU err < 6e-6)
-  - 4 dark-theme plots: `Results/Plots/filters/ai_*.png`
-
-### FormSignalGenerator — ЗАВЕРШЕНО (все 6 этапов)
-- **Этап 1** — FormSignalGenerator: C++ (6/6), Python (7/7 + 6 графиков)
-- **Этап 2** — FormScriptGenerator: DSL + kernel cache, C++ (7/7)
-- **Этап 3** — SignalService + Factory: CreateForm/CreateFormROCm
-- **Этап 4** — Python bindings: PyFormSignalGenerator + PyFormScriptGenerator
-- **Этап 5** — Документация: `Doc/Python/signal_generators_api.md` + example
-- **Этап 6** — ROCm stubs: FormSignalGeneratorROCm + form_signal.hip
+**В работе**: ROCm Backend — см. [tasks/PLAN_AMD_Radeon_9070_ROCm.md](tasks/PLAN_AMD_Radeon_9070_ROCm.md)
 
 ---
 
@@ -62,6 +43,7 @@ build/python/Release/gpuworklib.cp312-win_amd64.pyd
 - `FormScriptGenerator(ctx)` — DSL + on-disk kernel cache
 - `FFTProcessor(ctx)` — GPU FFT (clFFT)
 - `LchFarrow(ctx)` — Fractional delay processor
+- `HeterodyneDechirp(ctx)` — LFM dechirp (stretch-processing)
 - `FirFilter(ctx)` — FIR фильтр (GPU, scipy-коэффициенты) **NEW**
 - `IirFilter(ctx)` — IIR фильтр (biquad cascade, GPU) **NEW**
 
@@ -82,4 +64,4 @@ build/python/Release/gpuworklib.cp312-win_amd64.pyd
 
 ---
 
-*Последнее обновление: 2026-02-18*
+*Последнее обновление: 2026-02-23*

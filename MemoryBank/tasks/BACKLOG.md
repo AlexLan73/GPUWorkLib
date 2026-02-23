@@ -1,20 +1,13 @@
 # BACKLOG — Очередь задач
 
-> **Обновлено**: 2026-02-18
-
----
-
-## ✅ Выполнено (перенесено в COMPLETED)
-
-- **Filters Stage 1** (TASK-007): FIR + IIR GPU, Python bindings
-- **AI Filter Pipeline Stage 3** (TASK-008): NL → scipy → GPU → plot
-- **FormSignalGenerator**: все 6 этапов (FORM-001..005)
+> **Обновлено**: 2026-02-23
+> **Фокус**: ROCm
 
 ---
 
 ## Перспективные задачи
 
-### ROCm Backend (Средний приоритет)
+### ROCm Backend (Средний приоритет) — **В РАБОТЕ**
 
 **Цель**: Добавить поддержку AMD GPU через ROCm/HIP
 
@@ -51,10 +44,10 @@
 | Задача | Описание |
 |--------|----------|
 | Statistics модуль | mean, std, variance на GPU |
-| Heterodyne модуль | NCO, MixDown/MixUp |
+| Heterodyne NCO/MixDown | Планируется (LFM Dechirp уже реализован) |
 | Overlap-Save/Add | Длинные FIR через FFT |
 | AI-003 | Multi-step AI pipeline (LangChain/AutoGen) |
 
 ---
 
-*Последнее обновление: 2026-02-18*
+*Последнее обновление: 2026-02-23*
