@@ -3,6 +3,8 @@
 > **Сохранил**: Кодо | **Дата**: 2026-02-17
 > **Развернём на работе** — полный план с этапами и тестами
 
+**Рабочий план для исполнения**: [PLAN_ROCm_DrvGPU_Full.md](PLAN_ROCm_DrvGPU_Full.md) — детальные шаги, чек-лист, порядок модулей. Этот файл — общий контекст и этапы.
+
 ---
 
 ## Контекст
@@ -132,29 +134,18 @@ class ROCmBackend : public IBackend {
 
 ---
 
-### 3.3 Statistics (новый модуль)
+### 3.3 Statistics (новый модуль, ROCm only)
+
+**Только ROCm** — в рамках миграции не портируется на OpenCL. Вход: **все антенны сразу**, сигнал **complex float**.
 
 **Библиотеки**:
 
-- **rocPRIM** / **hipCUB**: `rocprim::reduce()` для sum → mean, Welford для variance
-- **rocPRIM nth_element**: `rocprim::nth_element()` для медианы (nth = size/2)
+- **rocPRIM**: `rocprim::reduce()` для mean; `rocprim::radix_sort` или `rocprim::nth_element` для median
+- **Custom kernel**: Welford для variance/std (один проход mean+variance+std)
 
-**API**: `Mean()`, `Variance()`, `Std()`, `Median()` — вход: `InputData<void*>` или `InputData<cl_mem>`, выход: scalar или per-beam
+**Анализ**: kernel vs rocPRIM — см. [PLAN_ROCm_DrvGPU_Full.md](PLAN_ROCm_DrvGPU_Full.md) секция 5.3.
 
-**Структура**:
-
-```
-modules/statistics/
-├── include/
-│   ├── statistics_processor.hpp
-│   ├── statistics_types.hpp
-│   └── kernels/
-├── src/
-├── kernels/
-│   ├── opencl/   (mean_reduction.cl, variance_welford.cl, median_radix_sort.cl)
-│   └── rocm/     (mean.hip, variance.hip, median.hip)
-└── tests/
-```
+**Структура** — по аналогии с `modules/fft_processor/`: `include/`, `src/`, `kernels/`, `tests/`.
 
 **Тесты**: C++ и Python vs `np.mean`, `np.std`, `np.median`
 
