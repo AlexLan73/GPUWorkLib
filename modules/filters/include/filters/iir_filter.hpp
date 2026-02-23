@@ -35,6 +35,7 @@
 
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
+#include "services/kernel_cache_service.hpp"
 #include "types/filter_params.hpp"
 #include "types/filter_types.hpp"
 
@@ -43,6 +44,7 @@
 #include <complex>
 #include <string>
 #include <cstdint>
+#include <memory>
 
 namespace filters {
 
@@ -115,8 +117,16 @@ private:
   void UploadSosMatrix();
   void ReleaseGpuResources();
 
+  /// Get compiled binary from cl_program
+  std::vector<uint8_t> GetProgramBinary() const;
+  /// Create cl_program from binary blob
+  void LoadFromBinary(const std::vector<uint8_t>& binary);
+
   drv_gpu_lib::IBackend* backend_ = nullptr;
   std::vector<BiquadSection> sections_;
+
+  /// On-disk kernel cache
+  std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
 
   // OpenCL resources
   cl_context       context_   = nullptr;

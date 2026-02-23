@@ -15,6 +15,7 @@
 // #include "example_external_context_usage.hpp"
 #include "test_services.hpp"
 #include "test_gpu_profiler.hpp"
+#include "test_storage_services.hpp"
 
 namespace drvgpu_all_test {
 
@@ -30,6 +31,9 @@ inline void run() {
 
     // GPUProfiler: Record, агрегация, PrintSummary
     test_gpu_profiler::run();
+
+    // Storage Services: FileStorageBackend, KernelCacheService, FilterConfigService
+    test_storage_services::run();
 }
 
 }  // namespace drvgpu_all_test

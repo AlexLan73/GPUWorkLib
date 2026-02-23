@@ -26,6 +26,11 @@ namespace filters {
 // Constructor / Destructor
 // ════════════════════════════════════════════════════════════════════════════
 
+// Path to filters kernels/ set by CMake (fallback: relative)
+#ifndef FILTERS_KERNELS_DIR
+#define FILTERS_KERNELS_DIR "modules/filters/kernels"
+#endif
+
 FirFilter::FirFilter(drv_gpu_lib::IBackend* backend)
     : backend_(backend) {
 
@@ -38,6 +43,9 @@ FirFilter::FirFilter(drv_gpu_lib::IBackend* backend)
   queue_   = static_cast<cl_command_queue>(backend_->GetNativeQueue());
   device_  = static_cast<cl_device_id>(backend_->GetNativeDevice());
 
+  kernel_cache_ = std::make_unique<drv_gpu_lib::KernelCacheService>(
+      FILTERS_KERNELS_DIR, drv_gpu_lib::BackendType::OPENCL);
+
   CompileKernel();
 }
 
@@ -49,6 +57,7 @@ FirFilter::FirFilter(FirFilter&& other) noexcept
     : backend_(other.backend_)
     , coefficients_(std::move(other.coefficients_))
     , use_global_coeffs_(other.use_global_coeffs_)
+    , kernel_cache_(std::move(other.kernel_cache_))
     , context_(other.context_)
     , queue_(other.queue_)
     , device_(other.device_)
@@ -64,6 +73,7 @@ FirFilter& FirFilter::operator=(FirFilter&& other) noexcept {
     backend_          = other.backend_;
     coefficients_     = std::move(other.coefficients_);
     use_global_coeffs_= other.use_global_coeffs_;
+    kernel_cache_     = std::move(other.kernel_cache_);
     context_          = other.context_;
     queue_            = other.queue_;
     device_           = other.device_;
@@ -238,6 +248,20 @@ FirFilter::ProcessCpu(
 // ════════════════════════════════════════════════════════════════════════════
 
 void FirFilter::CompileKernel() {
+  const std::string kernel_name = "fir_filter_cf32";
+
+  // Try loading from cache (binary fast path)
+  try {
+    auto entry = kernel_cache_->Load(kernel_name);
+    if (entry.has_binary()) {
+      LoadFromBinary(entry.binary);
+      return;
+    }
+  } catch (...) {
+    // Cache miss or load error — compile from source
+  }
+
+  // Compile from source
   cl_int err;
   const char* source = kernels::GetFirDirectSource_opencl();
   size_t source_len = strlen(source);
@@ -262,6 +286,66 @@ void FirFilter::CompileKernel() {
     program_ = nullptr;
     throw std::runtime_error(
         "FirFilter kernel build failed:\n" + std::string(log.data()));
+  }
+
+  // Save to cache for next time
+  try {
+    auto binary = GetProgramBinary();
+    kernel_cache_->Save(kernel_name, std::string(source),
+                        binary, "", "FIR direct-form");
+  } catch (...) {
+    // Non-critical: cache save failed
+  }
+}
+
+std::vector<uint8_t> FirFilter::GetProgramBinary() const {
+  if (!program_) {
+    throw std::runtime_error("FirFilter::GetProgramBinary: no compiled program");
+  }
+
+  size_t binary_size = 0;
+  cl_int err = clGetProgramInfo(program_, CL_PROGRAM_BINARY_SIZES,
+                                 sizeof(size_t), &binary_size, nullptr);
+  if (err != CL_SUCCESS || binary_size == 0) {
+    throw std::runtime_error("FirFilter::GetProgramBinary: cannot get binary size");
+  }
+
+  std::vector<uint8_t> binary(binary_size);
+  uint8_t* ptrs[] = { binary.data() };
+  err = clGetProgramInfo(program_, CL_PROGRAM_BINARIES,
+                          sizeof(uint8_t*), ptrs, nullptr);
+  if (err != CL_SUCCESS) {
+    throw std::runtime_error("FirFilter::GetProgramBinary: cannot get binary");
+  }
+
+  return binary;
+}
+
+void FirFilter::LoadFromBinary(const std::vector<uint8_t>& binary) {
+  if (program_) {
+    clReleaseProgram(program_);
+    program_ = nullptr;
+  }
+
+  cl_int err, binary_status;
+  size_t bin_size = binary.size();
+  const unsigned char* bin_ptr = binary.data();
+
+  program_ = clCreateProgramWithBinary(
+      context_, 1, &device_, &bin_size, &bin_ptr, &binary_status, &err);
+
+  if (err != CL_SUCCESS || binary_status != CL_SUCCESS) {
+    program_ = nullptr;
+    throw std::runtime_error(
+        "FirFilter::LoadFromBinary: clCreateProgramWithBinary failed");
+  }
+
+  err = clBuildProgram(program_, 1, &device_,
+                       "-cl-fast-relaxed-math", nullptr, nullptr);
+  if (err != CL_SUCCESS) {
+    clReleaseProgram(program_);
+    program_ = nullptr;
+    throw std::runtime_error("FirFilter::LoadFromBinary: clBuildProgram failed");
   }
 }
 

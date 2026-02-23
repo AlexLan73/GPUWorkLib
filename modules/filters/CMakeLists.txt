@@ -46,6 +46,16 @@ target_link_libraries(${MODULE_NAME}
 
 target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
 
+# ════════════════════════════════════════════════════════════════════════════
+# Kernel cache paths (for on-disk kernel storage via KernelCacheService)
+# ════════════════════════════════════════════════════════════════════════════
+
+set(FILTERS_KERNELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/kernels")
+
+target_compile_definitions(${MODULE_NAME} PRIVATE
+    FILTERS_KERNELS_DIR="${FILTERS_KERNELS_DIR}"
+)
+
 # Alias
 add_library(GPUWorkLib::${MODULE_NAME} ALIAS ${MODULE_NAME})
 
@@ -73,3 +83,4 @@ message(STATUS "  ${MODULE_NAME}: configured")
 message(STATUS "    - FIR: direct-form, __constant coeffs, multi-channel parallel")
 message(STATUS "    - IIR: biquad cascade, DFII-T, per-channel parallel")
 message(STATUS "    - GPUProfiler integration")
+message(STATUS "    - Kernels dir: ${FILTERS_KERNELS_DIR}")

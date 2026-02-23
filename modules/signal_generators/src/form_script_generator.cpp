@@ -52,6 +52,10 @@ FormScriptGenerator::FormScriptGenerator(drv_gpu_lib::IBackend* backend)
   context_ = static_cast<cl_context>(backend_->GetNativeContext());
   queue_   = static_cast<cl_command_queue>(backend_->GetNativeQueue());
   device_  = static_cast<cl_device_id>(backend_->GetNativeDevice());
+
+  // Initialize kernel cache service (on-disk cache in DrvGPU)
+  kernel_cache_ = std::make_unique<drv_gpu_lib::KernelCacheService>(
+      GetKernelsDir(), drv_gpu_lib::BackendType::OPENCL);
 }
 
 FormScriptGenerator::~FormScriptGenerator() {
@@ -62,6 +66,7 @@ FormScriptGenerator::FormScriptGenerator(FormScriptGenerator&& o) noexcept
     : backend_(o.backend_), params_(o.params_),
       kernel_source_(std::move(o.kernel_source_)),
       loaded_kernel_name_(std::move(o.loaded_kernel_name_)),
+      kernel_cache_(std::move(o.kernel_cache_)),
       context_(o.context_), queue_(o.queue_),
       device_(o.device_), program_(o.program_) {
   o.program_ = nullptr;
@@ -75,6 +80,7 @@ FormScriptGenerator& FormScriptGenerator::operator=(
     params_ = o.params_;
     kernel_source_ = std::move(o.kernel_source_);
     loaded_kernel_name_ = std::move(o.loaded_kernel_name_);
+    kernel_cache_ = std::move(o.kernel_cache_);
     context_ = o.context_;
     queue_ = o.queue_;
     device_ = o.device_;
@@ -422,7 +428,7 @@ FormScriptGenerator::GenerateToCpu() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// On-disk cache: Save
+// On-disk cache: Save (delegated to KernelCacheService)
 // ════════════════════════════════════════════════════════════════════════════
 
 void FormScriptGenerator::SaveKernel(const std::string& name,
@@ -436,101 +442,43 @@ void FormScriptGenerator::SaveKernel(const std::string& name,
         "FormScriptGenerator::SaveKernel: name cannot be empty");
   }
 
-  std::string kdir = GetKernelsDir();
-  std::string bdir = GetKernelsBinDir();
-
-  // Ensure directories exist
-  fs::create_directories(bdir);
-
-  // Version old files if they exist
-  VersionOldFiles(name);
-
-  // Save .cl source
-  std::string cl_path = kdir + "/" + name + ".cl";
-  {
-    std::ofstream f(cl_path);
-    if (!f.is_open()) {
-      throw std::runtime_error(
-          "FormScriptGenerator::SaveKernel: cannot write " + cl_path);
-    }
-    f << kernel_source_;
-  }
-
-  // Save binary
   auto binary = GetProgramBinary();
-  std::string bin_path = bdir + "/" + name + "_opencl.bin";
-  {
-    std::ofstream f(bin_path, std::ios::binary);
-    if (!f.is_open()) {
-      throw std::runtime_error(
-          "FormScriptGenerator::SaveKernel: cannot write " + bin_path);
-    }
-    f.write(reinterpret_cast<const char*>(binary.data()), binary.size());
-  }
+  std::vector<uint8_t> binary_u8(binary.begin(), binary.end());
 
-  // Update manifest
-  WriteManifestEntry(name, comment);
-
+  kernel_cache_->Save(name, kernel_source_, binary_u8,
+                      ParamsToString(), comment);
   loaded_kernel_name_ = name;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// On-disk cache: Load
+// On-disk cache: Load (delegated to KernelCacheService)
 // ════════════════════════════════════════════════════════════════════════════
 
 void FormScriptGenerator::LoadKernel(const std::string& name) {
-  std::string kdir = GetKernelsDir();
-  std::string bdir = GetKernelsBinDir();
-  std::string bin_path = bdir + "/" + name + "_opencl.bin";
-  std::string cl_path = kdir + "/" + name + ".cl";
+  auto entry = kernel_cache_->Load(name);
 
-  // Try binary first (fast path)
-  if (fs::exists(bin_path)) {
-    std::ifstream f(bin_path, std::ios::binary | std::ios::ate);
-    if (f.is_open()) {
-      auto size = f.tellg();
-      f.seekg(0, std::ios::beg);
-      std::vector<unsigned char> binary(size);
-      f.read(reinterpret_cast<char*>(binary.data()), size);
-
-      try {
-        LoadFromBinary(binary);
-        // Also load source for inspection
-        if (fs::exists(cl_path)) {
-          std::ifstream sf(cl_path);
-          std::ostringstream ss;
-          ss << sf.rdbuf();
-          kernel_source_ = ss.str();
-        }
-        loaded_kernel_name_ = name;
-        return;
-      } catch (...) {
-        // Binary load failed, fall through to source
+  if (entry.has_binary()) {
+    std::vector<unsigned char> binary(entry.binary.begin(), entry.binary.end());
+    try {
+      LoadFromBinary(binary);
+      if (entry.has_source()) {
+        kernel_source_ = entry.source;
       }
+      loaded_kernel_name_ = name;
+      return;
+    } catch (...) {
+      // Binary load failed, fall through to source
     }
   }
 
-  // Try source (compile + save binary)
-  if (fs::exists(cl_path)) {
-    std::ifstream f(cl_path);
-    if (!f.is_open()) {
-      throw std::runtime_error(
-          "FormScriptGenerator::LoadKernel: cannot read " + cl_path);
-    }
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    std::string source = ss.str();
-
-    LoadFromSource(source);
+  if (entry.has_source()) {
+    LoadFromSource(entry.source);
 
     // Save binary for next time
     try {
-      fs::create_directories(bdir);
       auto binary = GetProgramBinary();
-      std::ofstream bf(bin_path, std::ios::binary);
-      if (bf.is_open()) {
-        bf.write(reinterpret_cast<const char*>(binary.data()), binary.size());
-      }
+      std::vector<uint8_t> binary_u8(binary.begin(), binary.end());
+      kernel_cache_->Save(name, entry.source, binary_u8, "", "auto-cached");
     } catch (...) {
       // Non-critical: binary save failed, source still works
     }
@@ -540,41 +488,15 @@ void FormScriptGenerator::LoadKernel(const std::string& name) {
   }
 
   throw std::runtime_error(
-      "FormScriptGenerator::LoadKernel: kernel '" + name
-      + "' not found (checked: " + bin_path + ", " + cl_path + ")");
+      "FormScriptGenerator::LoadKernel: kernel '" + name + "' not found");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// List kernels
+// List kernels (delegated to KernelCacheService)
 // ════════════════════════════════════════════════════════════════════════════
 
 std::vector<std::string> FormScriptGenerator::ListKernels() const {
-  std::vector<std::string> names;
-  std::string manifest_path = GetKernelsDir() + "/manifest.json";
-
-  if (!fs::exists(manifest_path)) return names;
-
-  // Simple JSON parsing (no external deps): find "name": "value" pairs
-  std::ifstream f(manifest_path);
-  std::string content((std::istreambuf_iterator<char>(f)),
-                       std::istreambuf_iterator<char>());
-
-  // Find all "name" keys after "kernels" section
-  std::string search = "\"name\"";
-  size_t pos = 0;
-  while ((pos = content.find(search, pos)) != std::string::npos) {
-    pos += search.size();
-    // Skip whitespace and colon
-    while (pos < content.size() && (content[pos] == ' ' || content[pos] == ':' || content[pos] == '"'))
-      ++pos;
-    size_t end = content.find('"', pos);
-    if (end != std::string::npos) {
-      names.push_back(content.substr(pos, end - pos));
-      pos = end + 1;
-    }
-  }
-
-  return names;
+  return kernel_cache_->ListKernels();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -600,122 +522,7 @@ void FormScriptGenerator::ReleaseGpuResources() {
   }
 }
 
-void FormScriptGenerator::VersionOldFiles(const std::string& name) const {
-  std::string kdir = GetKernelsDir();
-  std::string bdir = GetKernelsBinDir();
-  std::string cl_path = kdir + "/" + name + ".cl";
-  std::string bin_path = bdir + "/" + name + "_opencl.bin";
-
-  bool cl_exists = fs::exists(cl_path);
-  bool bin_exists = fs::exists(bin_path);
-
-  if (!cl_exists && !bin_exists) return;
-
-  // Find next free suffix: _00, _01, ...
-  int suffix = 0;
-  while (true) {
-    char buf[8];
-    snprintf(buf, sizeof(buf), "_%02d", suffix);
-    std::string s(buf);
-
-    std::string old_cl = kdir + "/" + name + s + ".cl";
-    std::string old_bin = bdir + "/" + name + "_opencl" + s + ".bin";
-
-    if (!fs::exists(old_cl) && !fs::exists(old_bin)) {
-      // Rename current → _XX
-      if (cl_exists)  fs::rename(cl_path, old_cl);
-      if (bin_exists) fs::rename(bin_path, old_bin);
-      return;
-    }
-    ++suffix;
-    if (suffix > 99) break;  // safety
-  }
-}
-
-void FormScriptGenerator::WriteManifestEntry(
-    const std::string& name, const std::string& comment) const {
-  std::string manifest_path = GetKernelsDir() + "/manifest.json";
-
-  // Read existing manifest or start fresh
-  std::string content;
-  if (fs::exists(manifest_path)) {
-    std::ifstream f(manifest_path);
-    content.assign((std::istreambuf_iterator<char>(f)),
-                    std::istreambuf_iterator<char>());
-  }
-
-  // Check if this name already exists — update or append
-  std::string timestamp = GetTimestamp();
-  std::string params_str = ParamsToString();
-
-  // Build new entry JSON
-  std::ostringstream entry;
-  entry << "    {\n";
-  entry << "      \"name\": \"" << name << "\",\n";
-  entry << "      \"comment\": \"" << comment << "\",\n";
-  entry << "      \"created\": \"" << timestamp << "\",\n";
-  entry << "      \"params\": \"" << params_str << "\",\n";
-  entry << "      \"backend\": \"opencl\"\n";
-  entry << "    }";
-
-  // Simple approach: rewrite manifest with all existing + new/updated
-  // Parse existing entries (skip entry with same name)
-  std::vector<std::string> entries;
-  if (!content.empty()) {
-    // Find entries between [ and ]
-    size_t arr_start = content.find('[');
-    size_t arr_end = content.rfind(']');
-    if (arr_start != std::string::npos && arr_end != std::string::npos) {
-      std::string arr = content.substr(arr_start + 1, arr_end - arr_start - 1);
-
-      // Split by "}" and reconstruct
-      size_t pos = 0;
-      while (true) {
-        size_t obj_start = arr.find('{', pos);
-        if (obj_start == std::string::npos) break;
-        size_t obj_end = arr.find('}', obj_start);
-        if (obj_end == std::string::npos) break;
-
-        std::string obj = arr.substr(obj_start, obj_end - obj_start + 1);
-
-        // Check if this is the same name
-        bool same_name = false;
-        std::string name_check = "\"name\": \"" + name + "\"";
-        if (obj.find(name_check) != std::string::npos) {
-          same_name = true;
-        }
-        // Also check without space
-        name_check = "\"name\":\"" + name + "\"";
-        if (obj.find(name_check) != std::string::npos) {
-          same_name = true;
-        }
-
-        if (!same_name) {
-          // Re-indent
-          entries.push_back("    " + obj);
-        }
-
-        pos = obj_end + 1;
-      }
-    }
-  }
-
-  // Add new entry
-  entries.push_back(entry.str());
-
-  // Write manifest (binary mode — LF only, no CRLF on Windows)
-  std::ofstream f(manifest_path, std::ios::binary);
-  f << "{\n";
-  f << "  \"version\": 1,\n";
-  f << "  \"kernels\": [\n";
-  for (size_t i = 0; i < entries.size(); ++i) {
-    f << entries[i];
-    if (i + 1 < entries.size()) f << ",";
-    f << "\n";
-  }
-  f << "  ]\n";
-  f << "}\n";
-}
+// VersionOldFiles and WriteManifestEntry removed — delegated to KernelCacheService
 
 std::vector<unsigned char> FormScriptGenerator::GetProgramBinary() const {
   if (!program_) {
@@ -770,20 +577,7 @@ void FormScriptGenerator::LoadFromSource(const std::string& source) {
   CompileSource(source);
 }
 
-std::string FormScriptGenerator::GetTimestamp() {
-  auto now = std::chrono::system_clock::now();
-  auto t = std::chrono::system_clock::to_time_t(now);
-  std::tm tm_buf;
-#ifdef _WIN32
-  localtime_s(&tm_buf, &t);
-#else
-  localtime_r(&t, &tm_buf);
-#endif
-
-  char buf[32];
-  std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &tm_buf);
-  return std::string(buf);
-}
+// GetTimestamp removed — delegated to KernelCacheService
 
 std::string FormScriptGenerator::ParamsToString() const {
   std::ostringstream s;

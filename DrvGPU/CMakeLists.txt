@@ -148,6 +148,9 @@ set(DRVGPU_CONFIG_SOURCES
 # Services Sources (NEW)
 set(DRVGPU_SERVICES_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/services/batch_manager.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/services/storage/file_storage_backend.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/services/kernel_cache_service.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/services/filter_config_service.cpp"
 )
 
 # ════════════════════════════════════════════════════════════════════
@@ -201,6 +204,7 @@ target_include_directories(drvgpu
         ${CMAKE_CURRENT_SOURCE_DIR}/interface    # NEW: interfaces
         ${CMAKE_CURRENT_SOURCE_DIR}/logger       # NEW: logger redirect
         ${CMAKE_CURRENT_SOURCE_DIR}/services     # NEW: services
+        ${CMAKE_CURRENT_SOURCE_DIR}/services/storage  # Storage backends
         ${CMAKE_CURRENT_SOURCE_DIR}/config       # NEW: config
         ${CMAKE_CURRENT_SOURCE_DIR}/memory
         ${CMAKE_CURRENT_SOURCE_DIR}/backends

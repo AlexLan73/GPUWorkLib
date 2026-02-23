@@ -18,12 +18,14 @@
 #include "../params/form_params.hpp"
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
+#include "services/kernel_cache_service.hpp"
 
 #include <CL/cl.h>
 #include <vector>
 #include <complex>
 #include <string>
 #include <cstdint>
+#include <memory>
 
 namespace signal_gen {
 
@@ -164,21 +166,20 @@ private:
   void CompileSource(const std::string& source);
   void ReleaseGpuResources();
 
-  // On-disk helpers
-  void VersionOldFiles(const std::string& name) const;
-  void WriteManifestEntry(const std::string& name,
-                          const std::string& comment) const;
+  // OpenCL binary helpers (remain here — work with cl_program)
   std::vector<unsigned char> GetProgramBinary() const;
   void LoadFromBinary(const std::vector<unsigned char>& binary);
   void LoadFromSource(const std::string& source);
 
-  static std::string GetTimestamp();
   std::string ParamsToString() const;
 
   drv_gpu_lib::IBackend* backend_ = nullptr;
   FormParams params_;
   std::string kernel_source_;
   std::string loaded_kernel_name_;  ///< имя загруженного с диска кернела
+
+  /// On-disk kernel cache (delegated to DrvGPU service)
+  std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
 
   cl_context context_ = nullptr;
   cl_command_queue queue_ = nullptr;
