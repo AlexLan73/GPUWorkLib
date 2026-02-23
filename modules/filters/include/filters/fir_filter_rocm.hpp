@@ -2,14 +2,129 @@
 
 /**
  * @file fir_filter_rocm.hpp
- * @brief FIR filter ROCm stub (not implemented yet)
+ * @brief FirFilterROCm - GPU FIR convolution filter (ROCm/HIP)
  *
- * Placeholder for future ROCm/HIP FIR implementation.
- * All methods throw std::runtime_error.
+ * ROCm port of FirFilter (OpenCL). Same algorithm, HIP runtime:
+ * - hiprtc for kernel compilation
+ * - void* device pointers instead of cl_mem
+ * - hipStream_t instead of cl_command_queue
+ *
+ * Compiles ONLY with ENABLE_ROCM=1 (Linux + AMD GPU).
+ *
+ * Usage:
+ * @code
+ * FirFilterROCm fir(rocm_backend);
+ * fir.SetCoefficients({0.1f, 0.2f, 0.4f, 0.2f, 0.1f});
+ *
+ * auto result = fir.Process(gpu_input, channels, points);
+ * // result.data is void* (HIP device pointer), caller must hipFree()
+ * @endcode
  *
  * @author Kodo (AI Assistant)
- * @date 2026-02-18
+ * @date 2026-02-23
  */
+
+#if ENABLE_ROCM
+
+#include "interface/i_backend.hpp"
+#include "interface/input_data.hpp"
+#include "types/filter_params.hpp"
+
+#include <hip/hip_runtime.h>
+#include <hip/hiprtc.h>
+
+#include <vector>
+#include <complex>
+#include <string>
+#include <cstdint>
+
+namespace filters {
+
+class FirFilterROCm {
+public:
+  explicit FirFilterROCm(drv_gpu_lib::IBackend* backend);
+  ~FirFilterROCm();
+
+  // No copy
+  FirFilterROCm(const FirFilterROCm&) = delete;
+  FirFilterROCm& operator=(const FirFilterROCm&) = delete;
+
+  // Move
+  FirFilterROCm(FirFilterROCm&& other) noexcept;
+  FirFilterROCm& operator=(FirFilterROCm&& other) noexcept;
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Configuration
+  // ════════════════════════════════════════════════════════════════════════
+
+  void LoadConfig(const std::string& json_path);
+  void SetCoefficients(const std::vector<float>& coeffs);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Processing
+  // ════════════════════════════════════════════════════════════════════════
+
+  /**
+   * @brief Apply FIR filter on GPU (ROCm)
+   * @param input_ptr HIP device pointer with [channels * points] complex float
+   * @param channels Number of parallel channels
+   * @param points Samples per channel
+   * @return InputData<void*> with filtered signal (caller must hipFree result.data)
+   * @note input_ptr is NOT freed by this method
+   */
+  drv_gpu_lib::InputData<void*> Process(
+      void* input_ptr, uint32_t channels, uint32_t points);
+
+  /**
+   * @brief Apply FIR filter from CPU data (upload + process + keep on GPU)
+   */
+  drv_gpu_lib::InputData<void*> ProcessFromCPU(
+      const std::vector<std::complex<float>>& data,
+      uint32_t channels, uint32_t points);
+
+  /**
+   * @brief CPU reference implementation (for validation)
+   */
+  std::vector<std::complex<float>> ProcessCpu(
+      const std::vector<std::complex<float>>& input,
+      uint32_t channels, uint32_t points);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Getters
+  // ════════════════════════════════════════════════════════════════════════
+
+  uint32_t GetNumTaps() const { return static_cast<uint32_t>(coefficients_.size()); }
+  const std::vector<float>& GetCoefficients() const { return coefficients_; }
+  bool IsReady() const { return kernel_compiled_ && !coefficients_.empty(); }
+
+private:
+  void CompileKernel();
+  void UploadCoefficients();
+  void ReleaseGpuResources();
+
+  drv_gpu_lib::IBackend* backend_ = nullptr;
+  hipStream_t stream_ = nullptr;
+
+  std::vector<float> coefficients_;
+
+  // hiprtc compiled kernel
+  hipModule_t module_ = nullptr;
+  hipFunction_t kernel_ = nullptr;
+  bool kernel_compiled_ = false;
+
+  // GPU buffer for coefficients (persistent)
+  void* coeff_buf_ = nullptr;
+
+  static constexpr unsigned int kBlockSize = 256;
+};
+
+}  // namespace filters
+
+#else  // !ENABLE_ROCM
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Stub for non-ROCm builds (Windows)
+// ═══════════════════════════════════════════════════════════════════════════
 
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
@@ -25,30 +140,39 @@ namespace filters {
 
 class FirFilterROCm {
 public:
-  explicit FirFilterROCm(drv_gpu_lib::IBackend* /*backend*/) {}
+  explicit FirFilterROCm(drv_gpu_lib::IBackend*) {}
   ~FirFilterROCm() = default;
 
   void LoadConfig(const std::string&) {
-    throw std::runtime_error("FirFilter ROCm backend not implemented");
+    throw std::runtime_error("FirFilterROCm: ROCm not enabled");
   }
 
   void SetCoefficients(const std::vector<float>&) {
-    throw std::runtime_error("FirFilter ROCm backend not implemented");
+    throw std::runtime_error("FirFilterROCm: ROCm not enabled");
   }
 
-  drv_gpu_lib::InputData<void*> Process(
-      void* /*input_buf*/, uint32_t /*channels*/, uint32_t /*points*/) {
-    throw std::runtime_error("FirFilter ROCm backend not implemented");
+  drv_gpu_lib::InputData<void*> Process(void*, uint32_t, uint32_t) {
+    throw std::runtime_error("FirFilterROCm: ROCm not enabled");
+  }
+
+  drv_gpu_lib::InputData<void*> ProcessFromCPU(
+      const std::vector<std::complex<float>>&, uint32_t, uint32_t) {
+    throw std::runtime_error("FirFilterROCm: ROCm not enabled");
   }
 
   std::vector<std::complex<float>> ProcessCpu(
-      const std::vector<std::complex<float>>&,
-      uint32_t, uint32_t) {
-    throw std::runtime_error("FirFilter ROCm backend not implemented");
+      const std::vector<std::complex<float>>&, uint32_t, uint32_t) {
+    throw std::runtime_error("FirFilterROCm: ROCm not enabled");
   }
 
   uint32_t GetNumTaps() const { return 0; }
+  const std::vector<float>& GetCoefficients() const {
+    static std::vector<float> empty;
+    return empty;
+  }
   bool IsReady() const { return false; }
 };
 
-} // namespace filters
+}  // namespace filters
+
+#endif  // ENABLE_ROCM

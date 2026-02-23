@@ -14,6 +14,7 @@
 #include "backends/opencl/opencl_core.hpp"
 #if ENABLE_ROCM
 #include "backends/rocm/rocm_backend.hpp"
+#include "backends/hybrid/hybrid_backend.hpp"
 #endif
 #include "logger/logger.hpp"
 #include <iostream>
@@ -113,8 +114,12 @@ void DrvGPU::CreateBackend() {
 #endif
             break;
         case BackendType::OPENCLandROCm:
-            // Hybrid backend would be implemented here
-            throw std::runtime_error("OPENCLandROCm backend not yet implemented");
+#if ENABLE_ROCM
+            backend_ = std::make_unique<HybridBackend>();
+#else
+            throw std::runtime_error("OPENCLandROCm backend not available (ENABLE_ROCM=OFF)");
+#endif
+            break;
         default:
             throw std::runtime_error("Unknown backend type");
     }

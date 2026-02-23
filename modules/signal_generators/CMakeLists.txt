@@ -37,6 +37,18 @@ add_library(${MODULE_NAME} STATIC
     src/signal_service.cpp
 )
 
+# ════════════════════════════════════════════════════════════════════════════
+# ROCm/HIP support (conditional)
+# ════════════════════════════════════════════════════════════════════════════
+
+if(ROCM_ENABLED)
+    target_sources(${MODULE_NAME} PRIVATE
+        src/form_signal_generator_rocm.cpp
+    )
+    target_compile_definitions(${MODULE_NAME} PUBLIC ENABLE_ROCM=1)
+    message(STATUS "  ${MODULE_NAME}: ROCm support enabled (FormSignalGeneratorROCm)")
+endif()
+
 target_include_directories(${MODULE_NAME}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -51,6 +63,10 @@ target_link_libraries(${MODULE_NAME}
         drvgpu
         OpenCL::OpenCL
 )
+
+if(ROCM_ENABLED)
+    target_link_libraries(${MODULE_NAME} PUBLIC hip::host hiprtc)
+endif()
 
 # stdc++fs нужна только на GCC < 9 (не MSVC, не Clang с libc++)
 if(NOT MSVC AND NOT APPLE)
@@ -96,3 +112,6 @@ message(STATUS "  ${MODULE_NAME}: configured")
 message(STATUS "    - Generators: CW, LFM, Noise, Script, FormSignal, FormScript, DelayedFormSignal, LfmAnalyticalDelay, LfmConjugate")
 message(STATUS "    - Kernels dir: ${SIG_GEN_KERNELS_DIR}")
 message(STATUS "    - Factory + Service (DI via IBackend*)")
+if(ROCM_ENABLED)
+    message(STATUS "    - ROCm: FormSignalGeneratorROCm (HIP)")
+endif()

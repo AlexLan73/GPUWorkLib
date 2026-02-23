@@ -2,14 +2,132 @@
 
 /**
  * @file iir_filter_rocm.hpp
- * @brief IIR filter ROCm stub (not implemented yet)
+ * @brief IirFilterROCm - GPU IIR biquad cascade filter (ROCm/HIP)
  *
- * Placeholder for future ROCm/HIP IIR implementation.
- * All methods throw std::runtime_error.
+ * ROCm port of IirFilter (OpenCL). Same algorithm, HIP runtime:
+ * - hiprtc for kernel compilation
+ * - void* device pointers instead of cl_mem
+ * - hipStream_t instead of cl_command_queue
+ *
+ * Compiles ONLY with ENABLE_ROCM=1 (Linux + AMD GPU).
+ *
+ * Usage:
+ * @code
+ * IirFilterROCm iir(rocm_backend);
+ * iir.SetBiquadSections({{0.02f, 0.04f, 0.02f, -1.56f, 0.64f}});
+ *
+ * auto result = iir.Process(gpu_input, channels, points);
+ * // result.data is void* (HIP device pointer), caller must hipFree()
+ * @endcode
+ *
+ * @note GPU IIR is efficient ONLY with many channels (>= 8).
+ *       Single-channel IIR is faster on CPU!
  *
  * @author Kodo (AI Assistant)
- * @date 2026-02-18
+ * @date 2026-02-23
  */
+
+#if ENABLE_ROCM
+
+#include "interface/i_backend.hpp"
+#include "interface/input_data.hpp"
+#include "types/filter_params.hpp"
+
+#include <hip/hip_runtime.h>
+#include <hip/hiprtc.h>
+
+#include <vector>
+#include <complex>
+#include <string>
+#include <cstdint>
+
+namespace filters {
+
+class IirFilterROCm {
+public:
+  explicit IirFilterROCm(drv_gpu_lib::IBackend* backend);
+  ~IirFilterROCm();
+
+  // No copy
+  IirFilterROCm(const IirFilterROCm&) = delete;
+  IirFilterROCm& operator=(const IirFilterROCm&) = delete;
+
+  // Move
+  IirFilterROCm(IirFilterROCm&& other) noexcept;
+  IirFilterROCm& operator=(IirFilterROCm&& other) noexcept;
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Configuration
+  // ════════════════════════════════════════════════════════════════════════
+
+  void LoadConfig(const std::string& json_path);
+  void SetBiquadSections(const std::vector<BiquadSection>& sections);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Processing
+  // ════════════════════════════════════════════════════════════════════════
+
+  /**
+   * @brief Apply IIR biquad cascade on GPU (ROCm)
+   * @param input_ptr HIP device pointer with [channels * points] complex float
+   * @param channels Number of parallel channels
+   * @param points Samples per channel
+   * @return InputData<void*> with filtered signal (caller must hipFree result.data)
+   * @note input_ptr is NOT freed by this method
+   */
+  drv_gpu_lib::InputData<void*> Process(
+      void* input_ptr, uint32_t channels, uint32_t points);
+
+  /**
+   * @brief Apply IIR filter from CPU data (upload + process + keep on GPU)
+   */
+  drv_gpu_lib::InputData<void*> ProcessFromCPU(
+      const std::vector<std::complex<float>>& data,
+      uint32_t channels, uint32_t points);
+
+  /**
+   * @brief CPU reference implementation (for validation)
+   */
+  std::vector<std::complex<float>> ProcessCpu(
+      const std::vector<std::complex<float>>& input,
+      uint32_t channels, uint32_t points);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Getters
+  // ════════════════════════════════════════════════════════════════════════
+
+  uint32_t GetNumSections() const { return static_cast<uint32_t>(sections_.size()); }
+  const std::vector<BiquadSection>& GetSections() const { return sections_; }
+  bool IsReady() const { return kernel_compiled_ && !sections_.empty(); }
+
+private:
+  void CompileKernel();
+  void UploadSosMatrix();
+  void ReleaseGpuResources();
+
+  drv_gpu_lib::IBackend* backend_ = nullptr;
+  hipStream_t stream_ = nullptr;
+
+  std::vector<BiquadSection> sections_;
+
+  // hiprtc compiled kernel
+  hipModule_t module_ = nullptr;
+  hipFunction_t kernel_ = nullptr;
+  bool kernel_compiled_ = false;
+
+  // GPU buffer for SOS matrix (persistent)
+  void* sos_buf_ = nullptr;
+
+  static constexpr unsigned int kBlockSize = 256;
+};
+
+}  // namespace filters
+
+#else  // !ENABLE_ROCM
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Stub for non-ROCm builds (Windows)
+// ═══════════════════════════════════════════════════════════════════════════
 
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
@@ -25,30 +143,39 @@ namespace filters {
 
 class IirFilterROCm {
 public:
-  explicit IirFilterROCm(drv_gpu_lib::IBackend* /*backend*/) {}
+  explicit IirFilterROCm(drv_gpu_lib::IBackend*) {}
   ~IirFilterROCm() = default;
 
   void LoadConfig(const std::string&) {
-    throw std::runtime_error("IirFilter ROCm backend not implemented");
+    throw std::runtime_error("IirFilterROCm: ROCm not enabled");
   }
 
   void SetBiquadSections(const std::vector<BiquadSection>&) {
-    throw std::runtime_error("IirFilter ROCm backend not implemented");
+    throw std::runtime_error("IirFilterROCm: ROCm not enabled");
   }
 
-  drv_gpu_lib::InputData<void*> Process(
-      void* /*input_buf*/, uint32_t /*channels*/, uint32_t /*points*/) {
-    throw std::runtime_error("IirFilter ROCm backend not implemented");
+  drv_gpu_lib::InputData<void*> Process(void*, uint32_t, uint32_t) {
+    throw std::runtime_error("IirFilterROCm: ROCm not enabled");
+  }
+
+  drv_gpu_lib::InputData<void*> ProcessFromCPU(
+      const std::vector<std::complex<float>>&, uint32_t, uint32_t) {
+    throw std::runtime_error("IirFilterROCm: ROCm not enabled");
   }
 
   std::vector<std::complex<float>> ProcessCpu(
-      const std::vector<std::complex<float>>&,
-      uint32_t, uint32_t) {
-    throw std::runtime_error("IirFilter ROCm backend not implemented");
+      const std::vector<std::complex<float>>&, uint32_t, uint32_t) {
+    throw std::runtime_error("IirFilterROCm: ROCm not enabled");
   }
 
   uint32_t GetNumSections() const { return 0; }
+  const std::vector<BiquadSection>& GetSections() const {
+    static std::vector<BiquadSection> empty;
+    return empty;
+  }
   bool IsReady() const { return false; }
 };
 
-} // namespace filters
+}  // namespace filters
+
+#endif  // ENABLE_ROCM

@@ -362,18 +362,19 @@ OpenCL (cl_mem) → ExportClBufferToFd → dma_buf fd → ZeroCopyBridge → hip
 
 **Сегодня**: код + тесты (создать, не запускать). **Завтра**: Кодо запускает тесты на Debian/Ubuntu.
 
-1. [ ] ROCmBackend + rocm_core — компиляция, линковка hip
-2. [ ] DrvGPU::CreateBackend(ROCm) — без throw
-3. [ ] test_rocm_backend.hpp — создать, добавить в all_test.hpp
-4. [ ] FFTProcessorROCm + test_fft_processor_rocm.hpp
-5. [ ] **StatisticsProcessorROCm** + test_statistics_rocm.hpp (ROCm only, complex float, все антенны)
-6. [ ] SpectrumProcessorROCm + test_spectrum_maxima_rocm.hpp
-7. [ ] FirFilterROCm, IirFilterROCm + test_filters_rocm.hpp
-8. [ ] LchFarrowROCm + test_lch_farrow_rocm.hpp
-9. [ ] FormSignalGeneratorROCm + test_form_signal_rocm.hpp
-10. [ ] HeterodyneProcessorROCm + test_heterodyne_rocm.hpp
-11. [ ] ExportClBufferToFd, ZeroCopyBridge (опционально)
-12. [ ] OPENCLandROCm — HybridBackend (опционально)
+1. [x] ROCmBackend + rocm_core — компиляция, линковка hip ✅ (Task_00, 2026-02-23)
+2. [x] DrvGPU::CreateBackend(ROCm) — без throw ✅ (Task_00, 2026-02-23)
+3. [x] test_rocm_backend.hpp — создать, добавить в all_test.hpp ✅ (Task_00, 2026-02-23)
+4. [x] FFTProcessorROCm + test_fft_processor_rocm.hpp ✅ (Task_002, 2026-02-23)
+5. [x] **StatisticsProcessorROCm** + test_statistics_rocm.hpp ✅ (Task_002, 2026-02-23) — ROCm only, mean/median/variance/std
+6. [x] SpectrumProcessorROCm + test_spectrum_maxima_rocm.hpp ✅ (Task_03, 2026-02-23)
+7. [x] FirFilterROCm, IirFilterROCm + test_filters_rocm.hpp ✅ (Task_06, 2026-02-23)
+8. [x] LchFarrowROCm + test_lch_farrow_rocm.hpp ✅ (Task_05, 2026-02-23)
+9. [x] FormSignalGeneratorROCm + test_form_signal_rocm.hpp ✅ (Task_07, 2026-02-23)
+10. [x] HeterodyneProcessorROCm + test_heterodyne_rocm.hpp ✅ (Task_08, 2026-02-23)
+11. [x] ExportClBufferToFd, ZeroCopyBridge ✅ (Task_09, 2026-02-23) — opencl_export.hpp + zero_copy_bridge.hpp/.cpp
+12. [x] OPENCLandROCm — HybridBackend ✅ (Task_09, 2026-02-23) — hybrid_backend.hpp/.cpp + интеграция в CreateBackend()
+    - ⚠️ all_test.hpp и CMakeLists.txt НЕ обновлены (доделать!)
 
 ---
 

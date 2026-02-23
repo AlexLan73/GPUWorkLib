@@ -14,6 +14,7 @@
 
 #include "test_heterodyne_basic.hpp"
 #include "test_heterodyne_pipeline.hpp"
+#include "test_heterodyne_rocm.hpp"
 
 #include "DrvGPU/services/console_output.hpp"
 
@@ -43,6 +44,9 @@ inline void run() {
   heterodyne::tests::run_test_all_maxima();           // Test 7
 
   con.Print(gpu_id, "Heterodyne", "════════════════════════════════════════════════════════════");
+
+  // ROCm: HeterodyneProcessorROCm tests (on Linux + AMD GPU)
+  // test_heterodyne_rocm::run();
 }
 
 }  // namespace heterodyne_all_test

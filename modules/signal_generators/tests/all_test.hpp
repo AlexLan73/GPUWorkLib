@@ -16,6 +16,7 @@
 #include "test_form_script.hpp"
 #include "test_delayed_form_signal.hpp"
 #include "test_lfm_analytical_delay.hpp"
+#include "test_form_signal_rocm.hpp"
 
 namespace signal_generators_all_test {
 
@@ -34,6 +35,9 @@ inline void run() {
 
     // LfmGeneratorAnalyticalDelay: analytical LFM with per-antenna delay
     test_lfm_analytical_delay::run();
+
+    // FormSignalGeneratorROCm: getX on HIP (Linux + AMD GPU only)
+    // test_form_signal_rocm::run();
 }
 
 }  // namespace signal_generators_all_test

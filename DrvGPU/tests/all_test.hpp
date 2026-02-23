@@ -18,6 +18,8 @@
 #include "test_storage_services.hpp"
 #if ENABLE_ROCM
 #include "test_rocm_backend.hpp"
+#include "test_zero_copy.hpp"
+#include "test_hybrid_backend.hpp"
 #endif
 
 namespace drvgpu_all_test {
@@ -41,6 +43,8 @@ inline void run() {
     // ROCm Backend: Initialize, Allocate, Memcpy, Synchronize
 #if ENABLE_ROCM
     test_rocm_backend::run();
+    test_zero_copy::run();
+    test_hybrid_backend::run();
 #endif
 }
 

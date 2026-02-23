@@ -33,7 +33,8 @@ namespace drv_gpu_lib {
 
 HeterodyneDechirp::HeterodyneDechirp(
     IBackend* backend, BackendType compute_backend)
-    : backend_(backend) {
+    : backend_(backend)
+    , compute_backend_(compute_backend) {
 
   if (!backend_ || !backend_->IsInitialized()) {
     throw std::runtime_error(
@@ -43,6 +44,7 @@ HeterodyneDechirp::HeterodyneDechirp(
   switch (compute_backend) {
     case BackendType::OPENCL:
     case BackendType::AUTO:
+      compute_backend_ = BackendType::OPENCL;
       processor_ = std::make_unique<HeterodyneProcessorOpenCL>(backend_);
       break;
     case BackendType::ROCm:
@@ -114,11 +116,11 @@ HeterodyneResult HeterodyneDechirp::Process(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// ProcessExternal: pipeline from external cl_mem buffer
+// ProcessExternal: pipeline from external GPU buffer (cl_mem or hipDeviceptr_t)
 // ════════════════════════════════════════════════════════════════════════════
 
 HeterodyneResult HeterodyneDechirp::ProcessExternal(
-    void* rx_cl_mem, const HeterodyneParams& params) {
+    void* rx_gpu_ptr, const HeterodyneParams& params) {
 
   try {
     // Update params_ if caller provides different params
@@ -134,10 +136,18 @@ HeterodyneResult HeterodyneDechirp::ProcessExternal(
     // OPT-4: Reuse cached conj generator
     EnsureConjugateGenerator();
 
-    // OPT-3: Generate ref on GPU, dechirp both on GPU (no PCIe for ref)
-    cl_mem ref_gpu = conj_gen_->GenerateToGpu();
-    auto dc_data = processor_->DechirpWithGPURef(rx_cl_mem, ref_gpu, params);
-    clReleaseMemObject(ref_gpu);
+    std::vector<std::complex<float>> dc_data;
+
+    if (compute_backend_ == BackendType::ROCm) {
+      // ROCm path: generate ref on CPU, dechirp from external GPU buffer
+      auto ref_cpu = conj_gen_->GenerateToCpu();
+      dc_data = processor_->DechirpFromGPU(rx_gpu_ptr, ref_cpu, params);
+    } else {
+      // OpenCL path: OPT-3 — generate ref on GPU, dechirp both on GPU
+      cl_mem ref_gpu = conj_gen_->GenerateToGpu();
+      dc_data = processor_->DechirpWithGPURef(rx_gpu_ptr, ref_gpu, params);
+      clReleaseMemObject(ref_gpu);
+    }
 
     // Build result
     last_result_ = BuildResult(dc_data, params);
@@ -175,9 +185,10 @@ HeterodyneResult HeterodyneDechirp::BuildResult(
   // Default nFFT/4=2048 was too narrow: f_beat=1.5MHz hits boundary (excluded bin 1024)
   input.search_range = 5000;
 
+  // Use matching driver for spectrum analysis (forward-compatible with ROCm)
   auto spec_results = finder.Process(input,
       antenna_fft::PeakSearchMode::ONE_PEAK,
-      antenna_fft::DriverType::OPENCL);
+      static_cast<antenna_fft::DriverType>(compute_backend_));
 
   float bandwidth = params.GetBandwidth();
   result.antennas.resize(params.num_antennas);

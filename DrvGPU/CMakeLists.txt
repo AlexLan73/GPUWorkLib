@@ -161,6 +161,9 @@ if(ROCM_ENABLED)
         "${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/rocm_core.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/rocm_backend.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/rocm_core.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/zero_copy_bridge.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/zero_copy_bridge.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/backends/hybrid/hybrid_backend.cpp"
     )
     message(STATUS "ROCm Backend: ENABLED (${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/)")
 endif()
@@ -225,6 +228,7 @@ target_include_directories(drvgpu
         ${CMAKE_CURRENT_SOURCE_DIR}/backends
         ${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl
         ${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm
+        ${CMAKE_CURRENT_SOURCE_DIR}/backends/hybrid
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${OpenCL_INCLUDE_DIRS}
 )

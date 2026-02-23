@@ -10,9 +10,9 @@
  *   het.SetParams(params);
  *   auto result = het.Process(rx_matrix);  // num_antennas * num_samples
  *
- * USAGE (external OpenCL context):
+ * USAGE (external GPU buffer):
  *   het.SetParams(params);
- *   auto result = het.ProcessExternal(cl_mem_ptr, params);
+ *   auto result = het.ProcessExternal(gpu_ptr, params);  // cl_mem or hipDeviceptr_t
  *
  * PIPELINE:
  *   1. LfmConjugateGenerator -> s_ref* (GPU)
@@ -42,7 +42,7 @@ class HeterodyneDechirp {
 public:
   /**
    * @param backend         Pointer to DrvGPU backend (does not own)
-   * @param compute_backend OpenCL (default) or ROCm (stub)
+   * @param compute_backend OpenCL (default) or ROCm
    */
   explicit HeterodyneDechirp(
       IBackend* backend,
@@ -68,12 +68,13 @@ public:
       const std::vector<std::complex<float>>& rx_data);
 
   /**
-   * External OpenCL context variant.
-   * rx_cl_mem is a pointer to cl_mem (external program owns buffer).
+   * External GPU buffer variant.
+   * rx_gpu_ptr is a pointer to cl_mem (OpenCL) or hipDeviceptr_t (ROCm).
+   * External program owns the buffer — NOT freed by HeterodyneDechirp.
    * params are passed from CPU (metadata: fs, B, N, antennas).
    */
   HeterodyneResult ProcessExternal(
-      void* rx_cl_mem,
+      void* rx_gpu_ptr,
       const HeterodyneParams& params);
 
   /** Last result (cached) */
@@ -92,6 +93,7 @@ private:
 
   std::unique_ptr<IHeterodyneProcessor> processor_;
   IBackend*                             backend_ = nullptr;
+  BackendType                           compute_backend_ = BackendType::OPENCL;
   HeterodyneParams                      params_;
   HeterodyneResult                      last_result_;
 

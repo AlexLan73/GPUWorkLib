@@ -2,7 +2,7 @@
 # Heterodyne Module - CMakeLists.txt
 # ════════════════════════════════════════════════════════════════════════════
 #
-# LFM Dechirp processing on GPU (OpenCL)
+# LFM Dechirp processing on GPU (OpenCL + ROCm/HIP)
 # Pipeline: conj(LFM) -> multiply -> FFT -> peak -> range
 #
 # ════════════════════════════════════════════════════════════════════════════
@@ -50,6 +50,16 @@ target_link_libraries(${MODULE_NAME}
 target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
 
 # ════════════════════════════════════════════════════════════════════════════
+# ROCm/HIP support (conditional)
+# ════════════════════════════════════════════════════════════════════════════
+
+if(ROCM_ENABLED)
+    target_compile_definitions(${MODULE_NAME} PUBLIC ENABLE_ROCM=1)
+    target_link_libraries(${MODULE_NAME} PUBLIC hip::host hiprtc)
+    message(STATUS "  ${MODULE_NAME}: ROCm support enabled (HeterodyneProcessorROCm)")
+endif()
+
+# ════════════════════════════════════════════════════════════════════════════
 # Kernel paths
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -83,5 +93,9 @@ install(DIRECTORY include/
 # ════════════════════════════════════════════════════════════════════════════
 
 message(STATUS "  ${MODULE_NAME}: configured")
+message(STATUS "    - OpenCL: HeterodyneProcessorOpenCL")
 message(STATUS "    - Kernels dir: ${HETERODYNE_KERNELS_DIR}")
 message(STATUS "    - Pipeline: LfmConjugate -> Dechirp -> FFT -> Peak -> Range")
+if(ROCM_ENABLED)
+    message(STATUS "    - ROCm: HeterodyneProcessorROCm (HIP)")
+endif()

@@ -65,6 +65,23 @@ add_library(GPUWorkLib::spectrum_maxima ALIAS spectrum_maxima)
 add_library(GPUWorkLib::${MODULE_NAME} ALIAS spectrum_maxima)
 
 # ════════════════════════════════════════════════════════════════════════════
+# ROCm / hipFFT Support (conditional)
+# ════════════════════════════════════════════════════════════════════════════
+
+if(ROCM_ENABLED AND HIPFFT_FOUND)
+    target_sources(spectrum_maxima PRIVATE
+        src/spectrum_processor_rocm.cpp
+        src/all_maxima_pipeline_rocm.cpp
+    )
+    target_link_libraries(spectrum_maxima PUBLIC
+        hip::hipfft
+    )
+    message(STATUS "  ${MODULE_NAME}: ROCm/hipFFT ENABLED")
+else()
+    message(STATUS "  ${MODULE_NAME}: ROCm/hipFFT disabled")
+endif()
+
+# ════════════════════════════════════════════════════════════════════════════
 # Install rules
 # ════════════════════════════════════════════════════════════════════════════
 

@@ -17,6 +17,7 @@
 #include "test_find_all_maxima.hpp"
 #include "test_benchmark_all_maxima.hpp"
 #include "test_batch_all_maxima.hpp"
+#include "test_spectrum_maxima_rocm.hpp"
 
 namespace fft_maxima_all_test {
 
@@ -36,6 +37,9 @@ inline void run() {
 
     // BENCHMARK: 10 лучей × 500k точек
     // test_benchmark_all_maxima::run();
+
+    // ROCm: SpectrumProcessorROCm тесты (запускать на Linux + AMD GPU)
+    // test_spectrum_maxima_rocm::run();
 }
 
 }  // namespace fft_maxima_all_test

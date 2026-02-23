@@ -1,0 +1,197 @@
+#pragma once
+
+/**
+ * @file lch_farrow_rocm.hpp
+ * @brief LchFarrowROCm - Lagrange interpolation fractional delay processor (ROCm/HIP)
+ *
+ * ROCm port of LchFarrow (OpenCL). Same algorithm, HIP runtime:
+ * - hiprtc for kernel compilation
+ * - void* device pointers instead of cl_mem
+ * - hipStream_t instead of cl_command_queue
+ *
+ * Compiles ONLY with ENABLE_ROCM=1 (Linux + AMD GPU).
+ *
+ * @author Kodo (AI Assistant)
+ * @date 2026-02-23
+ */
+
+#if ENABLE_ROCM
+
+#include "interface/i_backend.hpp"
+#include "interface/input_data.hpp"
+
+#include <hip/hip_runtime.h>
+#include <hip/hiprtc.h>
+
+#include <vector>
+#include <complex>
+#include <string>
+#include <cstdint>
+
+namespace lch_farrow {
+
+/**
+ * @class LchFarrowROCm
+ * @brief ROCm/HIP fractional delay processor (Lagrange 48x5)
+ *
+ * Same API as LchFarrow (OpenCL) but for ROCm backend:
+ * - Process() returns InputData<void*> (device pointer)
+ * - ProcessCpu() is identical (CPU reference)
+ *
+ * @code
+ * LchFarrowROCm processor(rocm_backend);
+ * processor.SetDelays({0.0f, 1.5f, 3.0f});
+ * processor.SetSampleRate(1e6f);
+ *
+ * auto result = processor.Process(gpu_input, antennas, points);
+ * // result.data is void* (HIP device pointer)
+ * @endcode
+ */
+class LchFarrowROCm {
+public:
+  explicit LchFarrowROCm(drv_gpu_lib::IBackend* backend);
+  ~LchFarrowROCm();
+
+  // No copy
+  LchFarrowROCm(const LchFarrowROCm&) = delete;
+  LchFarrowROCm& operator=(const LchFarrowROCm&) = delete;
+
+  // Move
+  LchFarrowROCm(LchFarrowROCm&& other) noexcept;
+  LchFarrowROCm& operator=(LchFarrowROCm&& other) noexcept;
+
+  /// Set per-antenna delays in microseconds
+  void SetDelays(const std::vector<float>& delay_us);
+
+  /// Set sample rate (Hz)
+  void SetSampleRate(float sample_rate);
+
+  /// Set noise parameters (amplitude and seed; 0 = no noise)
+  void SetNoise(float noise_amplitude, float norm_val = 0.7071067811865476f,
+                uint32_t noise_seed = 0);
+
+  /**
+   * @brief Load Lagrange matrix from JSON file
+   * Uses built-in 48x5 matrix by default.
+   */
+  void LoadMatrix(const std::string& json_path);
+
+  /**
+   * @brief Apply fractional delay on GPU (ROCm)
+   * @param input_ptr HIP device pointer with complex signal [antennas * points]
+   * @param antennas Number of antennas/channels
+   * @param points Samples per antenna
+   * @return InputData<void*> with delayed signal (caller must hipFree result.data)
+   * @note input_ptr is NOT freed by this method
+   */
+  drv_gpu_lib::InputData<void*> Process(
+      void* input_ptr, uint32_t antennas, uint32_t points);
+
+  /**
+   * @brief Apply fractional delay from CPU data (upload + process + keep on GPU)
+   * @param data Flat complex signal: antennas * points elements
+   * @param antennas Number of antennas
+   * @param points Samples per antenna
+   * @return InputData<void*> with delayed signal on GPU
+   */
+  drv_gpu_lib::InputData<void*> ProcessFromCPU(
+      const std::vector<std::complex<float>>& data,
+      uint32_t antennas, uint32_t points);
+
+  /**
+   * @brief Apply fractional delay on CPU (reference)
+   * Identical to LchFarrow::ProcessCpu.
+   */
+  std::vector<std::vector<std::complex<float>>> ProcessCpu(
+      const std::vector<std::vector<std::complex<float>>>& input,
+      uint32_t antennas, uint32_t points);
+
+  // Getters
+  const std::vector<float>& GetDelays() const { return delay_us_; }
+  float GetSampleRate() const { return sample_rate_; }
+
+private:
+  void CompileKernel();
+  void UploadMatrix();
+  void ReleaseGpuResources();
+
+  drv_gpu_lib::IBackend* backend_ = nullptr;
+
+  // HIP stream (from backend)
+  hipStream_t stream_ = nullptr;
+
+  // Parameters
+  std::vector<float> delay_us_;
+  float sample_rate_ = 1e6f;
+  float noise_amplitude_ = 0.0f;
+  float norm_val_ = 0.7071067811865476f;
+  uint32_t noise_seed_ = 0;
+
+  // Lagrange matrix 48x5 (240 floats)
+  std::vector<float> lagrange_matrix_;
+  bool matrix_loaded_ = false;
+
+  // hiprtc compiled kernel
+  hipModule_t module_ = nullptr;
+  hipFunction_t kernel_ = nullptr;
+  bool kernel_compiled_ = false;
+
+  // GPU buffer for matrix (persistent)
+  void* matrix_buf_ = nullptr;
+
+  static constexpr unsigned int kBlockSize = 256;
+};
+
+}  // namespace lch_farrow
+
+#else  // !ENABLE_ROCM
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Stub for non-ROCm builds (Windows)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#include "interface/i_backend.hpp"
+#include "interface/input_data.hpp"
+
+#include <vector>
+#include <complex>
+#include <string>
+#include <cstdint>
+#include <stdexcept>
+
+namespace lch_farrow {
+
+class LchFarrowROCm {
+public:
+  explicit LchFarrowROCm(drv_gpu_lib::IBackend*) {}
+  ~LchFarrowROCm() = default;
+
+  void SetDelays(const std::vector<float>&) {}
+  void SetSampleRate(float) {}
+  void SetNoise(float, float = 0.0f, uint32_t = 0) {}
+  void LoadMatrix(const std::string&) {
+    throw std::runtime_error("LchFarrowROCm: ROCm not enabled");
+  }
+
+  drv_gpu_lib::InputData<void*> Process(void*, uint32_t, uint32_t) {
+    throw std::runtime_error("LchFarrowROCm: ROCm not enabled");
+  }
+  drv_gpu_lib::InputData<void*> ProcessFromCPU(
+      const std::vector<std::complex<float>>&, uint32_t, uint32_t) {
+    throw std::runtime_error("LchFarrowROCm: ROCm not enabled");
+  }
+  std::vector<std::vector<std::complex<float>>> ProcessCpu(
+      const std::vector<std::vector<std::complex<float>>>&, uint32_t, uint32_t) {
+    throw std::runtime_error("LchFarrowROCm: ROCm not enabled");
+  }
+
+  const std::vector<float>& GetDelays() const {
+    static std::vector<float> empty;
+    return empty;
+  }
+  float GetSampleRate() const { return 0.0f; }
+};
+
+}  // namespace lch_farrow
+
+#endif  // ENABLE_ROCM

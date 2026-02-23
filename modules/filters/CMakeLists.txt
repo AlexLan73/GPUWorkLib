@@ -24,10 +24,21 @@ find_package(OpenCL REQUIRED)
 # Library
 # ════════════════════════════════════════════════════════════════════════════
 
-add_library(${MODULE_NAME} STATIC
+set(MODULE_SOURCES
     src/fir_filter.cpp
     src/iir_filter.cpp
 )
+
+# ROCm support (conditional)
+if(ROCM_ENABLED)
+    list(APPEND MODULE_SOURCES
+        src/fir_filter_rocm.cpp
+        src/iir_filter_rocm.cpp
+    )
+    message(STATUS "  ${MODULE_NAME}: ROCm support ENABLED")
+endif()
+
+add_library(${MODULE_NAME} STATIC ${MODULE_SOURCES})
 
 target_include_directories(${MODULE_NAME}
     PUBLIC
@@ -43,6 +54,11 @@ target_link_libraries(${MODULE_NAME}
         drvgpu
         OpenCL::OpenCL
 )
+
+# ROCm linkage
+if(ROCM_ENABLED)
+    target_link_libraries(${MODULE_NAME} PUBLIC hip::host)
+endif()
 
 target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
 
