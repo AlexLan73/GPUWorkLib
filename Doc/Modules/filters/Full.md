@@ -16,6 +16,8 @@
 4. [Архитектура kernel](#4-архитектура-kernel)
 5. [API (C++ и Python)](#5-api)
 6. [JSON формат конфигурации](#6-json-формат)
+   - [6.1 KernelCacheService](#61-kernelcacheservice--on-disk-кэш-скомпилированных-kernel)
+   - [6.2 FilterConfigService](#62-filterconfigservice--сохранение-конфигов-фильтров)
 7. [Тесты — что читать и где смотреть](#7-тесты)
 8. [Ссылки](#8-ссылки)
 
@@ -187,6 +189,34 @@ result = iir.process(signal)
 
 ---
 
+## 6.1. KernelCacheService — on-disk кэш скомпилированных kernel
+
+FirFilter и IirFilter используют DrvGPU [KernelCacheService](../../DrvGPU/Services/Full.md):
+
+| Этап | Действие |
+|------|----------|
+| **Первый запуск** | CompileKernel() → компиляция из source → Save в `modules/filters/kernels/bin/` |
+| **Повторный** | Load binary (~1 мс вместо ~50 мс компиляции) |
+| **Fallback** | При отсутствии/ошибке cache — компиляция из source |
+
+**Cache key:** `fir_filter_cf32`, `iir_filter_cf32` (source не зависит от коэффициентов).
+
+**Структура:** `modules/filters/kernels/bin/fir_filter_cf32_opencl.bin`, `manifest.json`.
+
+---
+
+## 6.2. FilterConfigService — сохранение конфигов фильтров
+
+DrvGPU [FilterConfigService](../../DrvGPU/Services/Full.md) — сохранение/загрузка коэффициентов в JSON:
+- **FIR:** type, coefficients[]
+- **IIR:** type, sections[] (b0,b1,b2,a1,a2)
+- **Ключи:** `filters/{name}.json`
+- **Версионирование:** при перезаписи → `name_00.json`, `name_01.json`
+
+**Интеграция** SaveFilterConfig/LoadFilterConfig в FirFilter/IirFilter — планируется (TASK-006).
+
+---
+
 ## 7. Тесты — что читать и где смотреть
 
 ### C++ тесты
@@ -266,6 +296,11 @@ result = iir.process(signal)
 
 ```
 modules/filters/
+├── kernels/
+│   ├── bin/                    # KernelCacheService (создаётся при первом запуске)
+│   │   ├── fir_filter_cf32_opencl.bin
+│   │   └── iir_filter_cf32_opencl.bin
+│   └── manifest.json
 ├── include/
 │   ├── filters/
 │   │   ├── fir_filter.hpp
@@ -291,4 +326,4 @@ modules/filters/
 
 ---
 
-*Обновлено: 2026-02-18*
+*Обновлено: 2026-02-23*

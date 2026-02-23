@@ -121,4 +121,30 @@
 
 ---
 
-*Последнее обновление: 2026-02-21*
+---
+
+## ✅ KernelCacheService + FormSignal Refactor (пакет тасок)
+
+**Завершено**: 2026-02-23
+**Исполнитель**: Кодо
+
+### Что реализовано
+- **IStorageBackend + FileStorageBackend** — абстракция хранения (key-value, поддиректории)
+- **KernelCacheService** — on-disk кэш kernel (.cl + binary + manifest.json), VersionOldFiles, ROCm суффикс
+- **FilterConfigService** — сохранение/загрузка конфигов FIR/IIR в JSON (filters/{name}.json)
+- **FormScriptGenerator** → KernelCacheService (SaveKernel/LoadKernel/ListKernels)
+- **FirFilter, IirFilter** → KernelCacheService (CompileKernel: Load binary или compile + Save)
+- Пути в тасках обновлены: Python_test/signal_generators/, Results/Plots/signal_generators/
+
+### Документация
+- [Doc/DrvGPU/Services/Quick.md](../../Doc/DrvGPU/Services/Quick.md) — шпаргалка
+- [Doc/DrvGPU/Services/Full.md](../../Doc/DrvGPU/Services/Full.md) — полное описание
+- Doc/Modules/signal_generators, Doc/Modules/filters — добавлены разделы KernelCacheService, FilterConfigService
+
+### Тесты
+- test_storage_services: FileStorageBackend, KernelCacheService, FilterConfigService — PASS
+- FormScript 7/7, Python test_form_signal 7, test_delayed_form_signal 5 — PASS
+
+---
+
+*Последнее обновление: 2026-02-23*

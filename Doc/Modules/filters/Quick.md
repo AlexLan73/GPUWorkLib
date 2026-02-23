@@ -13,6 +13,15 @@
 
 ---
 
+## On-disk kernel cache
+
+FirFilter и IirFilter используют DrvGPU [KernelCacheService](../../DrvGPU/Services/Quick.md):
+- **Первый запуск:** компиляция → Save в `modules/filters/kernels/bin/`
+- **Повторный:** Load binary (~1 мс вместо ~50 мс компиляции)
+- **Fallback:** при отсутствии cache — компиляция из source
+
+---
+
 ## Быстрый старт
 
 ### C++
@@ -40,11 +49,20 @@ out = fir.process(signal)
 
 ---
 
-## Тесты
+## FilterConfigService (сохранение конфигов)
 
-- C++: `modules/filters/tests/test_fir_basic.hpp`, `test_iir_basic.hpp`
-- Python: `Python_test/test_filters*.py`
+DrvGPU [FilterConfigService](../../DrvGPU/Services/Quick.md) — сохранение/загрузка коэффициентов FIR/IIR в JSON:
+- `filters/{name}.json` — тип, коэффициенты, comment
+- Версионирование при перезаписи: `name_00.json`, `name_01.json`
+- Интеграция SaveFilterConfig/LoadFilterConfig в FirFilter/IirFilter — планируется (TASK-006)
 
 ---
 
-*Обновлено: 2026-02-17*
+## Тесты
+
+- C++: `modules/filters/tests/test_fir_basic.hpp`, `test_iir_basic.hpp`
+- Python: `Python_test/filters/test_filters_stage1.py`
+
+---
+
+*Обновлено: 2026-02-23*

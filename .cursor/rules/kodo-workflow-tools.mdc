@@ -1,0 +1,28 @@
+---
+description: Workflow Кодо — Context7, sequential-thinking, URL, GitHub
+alwaysApply: true
+---
+
+# Workflow: инструменты Кодо
+
+При работе над задачами использовать:
+
+## 1. Context7
+- **Когда:** Нужен контекст по теме, библиотеке, API
+- **Как:** Запрашивать через MCP `user-context7`
+- **Пример:** Исследование OpenCL kernel cache, ROCm hipModuleLoad
+
+## 2. Релевантные библиотеки
+- **Когда:** Работа с внешними библиотеками (OpenCL, ROCm, pybind11, nlohmann/json)
+- **Как:** Подтягивать статьи/документацию по URL через `mcp_web_fetch` или Firecrawl
+- **Пример:** Khronos clCreateProgramWithBinary, AMD ROCm docs
+
+## 3. Sequential-thinking
+- **Когда:** Сложная задача, несколько вариантов, архитектурные решения
+- **Как:** MCP `user-sequential-thinking` — разбор задачи, плюсы/минусы вариантов
+- **Пример:** Выбор между единой БД и раздельными, интеграция FilterConfigService
+
+## 4. GitHub
+- **Когда:** Поиск референсного кода, примеров, best practices (при рабочей авторизации)
+- **Как:** MCP `user-github` — поиск по репозиториям
+- **Пример:** Intel COMPILER_CACHE, gnieto/cl-cache, ROCm samples

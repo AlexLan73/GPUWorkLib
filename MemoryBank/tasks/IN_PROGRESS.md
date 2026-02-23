@@ -1,22 +1,6 @@
 # IN PROGRESS — Текущие задачи
 
-> **Обновлено**: 2026-02-21
-
----
-
-## KernelCacheService (пакет тасок)
-
-Детальные таски созданы. Выполняет другая AI, принимает Кодо (старшая).
-
-| Таска | Статус |
-|-------|--------|
-| [TASK_KernelCacheService_001_StorageBackend](TASK_KernelCacheService_001_StorageBackend.md) | Ожидает |
-| [TASK_KernelCacheService_002_KernelCacheService](TASK_KernelCacheService_002_KernelCacheService.md) | Ожидает |
-| [TASK_KernelCacheService_003_FormScriptRefactor](TASK_KernelCacheService_003_FormScriptRefactor.md) | Ожидает |
-| [TASK_KernelCacheService_004_Filters](TASK_KernelCacheService_004_Filters.md) | Ожидает |
-| [TASK_KernelCacheService_005_FilterConfigService](TASK_KernelCacheService_005_FilterConfigService.md) | Ожидает |
-
-План: [PLAN_KernelCacheService_DrvGPU.md](PLAN_KernelCacheService_DrvGPU.md)
+> **Обновлено**: 2026-02-23
 
 ---
 

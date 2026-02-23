@@ -185,13 +185,16 @@ inline bool TestKernelCacheService() {
       ok = false;
     }
 
-    // 5. GetBinDir / GetCacheDir
+    // 5. GetBinDir / GetCacheDir (cross-platform: normalize paths for Windows)
+    auto expected_bin = (fs::path(dir) / "bin").lexically_normal();
+    auto actual_bin = fs::path(cache.GetBinDir()).lexically_normal();
     if (cache.GetCacheDir() != dir) {
       std::cout << "  [FAIL] GetCacheDir mismatch\n";
       ok = false;
     }
-    if (cache.GetBinDir() != dir + "/bin") {
-      std::cout << "  [FAIL] GetBinDir mismatch\n";
+    if (actual_bin != expected_bin) {
+      std::cout << "  [FAIL] GetBinDir mismatch (got: " << cache.GetBinDir()
+                << ", expected: " << expected_bin.string() << ")\n";
       ok = false;
     }
 

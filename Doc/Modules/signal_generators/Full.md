@@ -177,11 +177,13 @@ data = gen2.generate()
 
 | Метод | Действие |
 |-------|----------|
-| `save_kernel("name", "comment")` | Сохраняет `name.cl`, `name_opencl.bin`, manifest.json |
+| `save_kernel("name", "comment")` | Сохраняет `name.cl`, `bin/name_opencl.bin`, manifest.json |
 | `load_kernel("name")` | Загружает binary (если есть) или source (перекомпиляция) |
 | `list_kernels()` | Список имён сохранённых кернелов |
 
 При коллизии имён: старые файлы → `name_00.cl`, `name_01.cl`, ...
+
+**Реализация:** FormScriptGenerator использует DrvGPU [KernelCacheService](../../DrvGPU/Services/Full.md). base_dir: `modules/signal_generators/kernels`.
 
 ---
 

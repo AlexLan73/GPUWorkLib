@@ -13,6 +13,7 @@
 | **NoiseGenerator** | Philox + Box-Muller |
 | **ScriptGenerator** | Text DSL → OpenCL kernel |
 | **FormSignalGenerator** | Мультиканальный (getX формула) |
+| **FormScriptGenerator** | FormSignal + **on-disk kernel cache** (SaveKernel/LoadKernel) |
 
 ---
 
@@ -36,4 +37,16 @@ data = gen.generate_cw(256, 4096, 1000.0, f0=100.0, freq_step=10.0)
 
 ---
 
-*Обновлено: 2026-02-17*
+## On-disk kernel cache (FormScriptGenerator)
+
+| Метод | Действие |
+|-------|----------|
+| `save_kernel("name", "comment")` | Сохраняет `name.cl`, `bin/name_opencl.bin`, manifest.json |
+| `load_kernel("name")` | Binary (fast) или source (compile) |
+| `list_kernels()` | Список сохранённых кернелов |
+
+Через DrvGPU [KernelCacheService](../../DrvGPU/Services/Quick.md). При коллизии: `name_00.cl`, `name_01.cl`, …
+
+---
+
+*Обновлено: 2026-02-23*

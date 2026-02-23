@@ -14,6 +14,7 @@
 | `GPUBuffer` | Стандартный буфер (cl_mem) |
 | `SVMBuffer` | SVM (Shared Virtual Memory) |
 | `GPUManager` | Multi-GPU, load balancing |
+| **Services** | [KernelCacheService](Services/Quick.md), FilterConfigService, Storage |
 
 ---
 
@@ -42,6 +43,7 @@ mem->ReleaseBuffer(buf);
 - [Memory](Memory.md) — GPUBuffer, SVMBuffer
 - [OpenCL](OpenCL.md) — OpenCL бэкенд
 - [Classes](Classes.md) — полный справочник
+- [Services](Services/Quick.md) — KernelCache, FilterConfig, Storage
 
 ---
 
