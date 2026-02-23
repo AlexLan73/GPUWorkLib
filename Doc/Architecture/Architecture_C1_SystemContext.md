@@ -122,6 +122,11 @@
 @startuml C1_SystemContext
 !include <C4/C4_Context>
 
+' Лейаут и тема
+LAYOUT_TOP_DOWN()
+LAYOUT_WITH_LEGEND()
+!theme C4_united from <C4/themes>
+
 title GPUWorkLib — C1: System Context Diagram
 
 Person(cpp_dev, "C++ Engineer", "Разработчик ЦОС-приложений")
@@ -136,17 +141,21 @@ System_Ext(plog_lib, "plog", "Логирование (header-only)")
 System_Ext(pybind, "pybind11", "C++ ↔ Python bridge")
 System_Ext(host_fs, "Host OS / FS", "Логи, конфиг, кеш, результаты")
 
+' Связи от людей к системе – сверху
 Rel(cpp_dev, gpuworklib, "C++ API", "#include <drv_gpu.hpp>")
 Rel(py_sci, gpuworklib, "Python API", "import gpu_worklib")
 Rel(ci_cd, gpuworklib, "Build & Test", "cmake + ctest")
 
+' Внешние зависимости – ниже/сбоку
 Rel(gpuworklib, gpu_hw, "Compute", "OpenCL / HIP API")
 Rel(gpuworklib, clfft, "FFT", "clFFT / hipFFT API")
 Rel(gpuworklib, plog_lib, "Logging", "plog macros")
 Rel(gpuworklib, pybind, "Bindings", "pybind11 module")
 Rel(gpuworklib, host_fs, "I/O", "Read/Write files")
 
+SHOW_LEGEND()
 @enduml
+
 ```
 
 ---

@@ -1,7 +1,75 @@
 {
   "permissions": {
     "allow": [
-      "Bash(powershell -Command:*)"
+      "Bash(powershell -Command:*)",
+      "Bash(powershell -File:*)",
+      "Bash(cmake --build*)",
+      "Bash(cmake --preset*)",
+      "Bash(cmake -B*)",
+      "Bash(python*)",
+      "Bash(ninja*)",
+      "mcp__sequential-thinking__*",
+      "mcp__context7__*",
+      "mcp__dap-debug__get-call-stack",
+      "mcp__dap-debug__evaluate-expression",
+      "mcp__dap-debug__step-over",
+      "mcp__dap-debug__step-into",
+      "mcp__dap-debug__step-out",
+      "mcp__dap-debug__continue",
+      "mcp__dap-debug__get-debug-state",
+      "mcp__dap-debug__get-variables-scope",
+      "mcp__dap-debug__get-debug-console",
+      "mcp__filesystem__*",
+      "mcp__memory__*",
+      "mcp__sqlite__*",
+      "mcp__git__*",
+      "mcp__fetch__*"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "dap-debug",
+    "sequential-thinking",
+    "context7",
+    "filesystem",
+    "memory",
+    "sqlite",
+    "git",
+    "fetch",
+    "testsprite"
+  ],
+  "enableAllProjectMcpServers": true,
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -File \"e:\\C++\\GPUWorkLib\\.claude\\hooks\\on_stop.ps1\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -File \"e:\\C++\\GPUWorkLib\\.claude\\hooks\\pre_bash.ps1\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -File \"e:\\C++\\GPUWorkLib\\.claude\\hooks\\post_write.ps1\""
+          }
+        ]
+      }
     ]
   }
 }

@@ -1,0 +1,71 @@
+@startuml C2_Container
+!include <C4/C4_Container>
+
+LAYOUT_TOP_DOWN()
+LAYOUT_WITH_LEGEND()
+!theme C4_united from <C4/themes>
+
+title GPUWorkLib — C2: Container Diagram
+
+Person(cpp_dev, "C++ Engineer", "Разработчик ЦОС-приложений")
+Person(py_sci, "Python Scientist", "Исследователь / аналитик данных")
+
+System_Boundary(gpuworklib, "GPUWorkLib") {
+
+    Container(pybind, "Python Bindings", "pybind11",
+              "gpu_worklib.pyd\nNumPy ↔ cl_mem")
+
+    Container(siggen, "Signal Generators", "C++17 / OpenCL",
+              "CW, LFM, Noise,\nForm, Conjugate")
+
+    Container(fftproc, "FFT Processor", "C++17 / clFFT",
+              "Complex, MagPhase\nмоды вывода")
+
+    Container(fftmax, "FFT Maxima", "C++17 / OpenCL",
+              "1-peak, 2-peaks,\nAll Maxima")
+
+    Container(filters, "Filters", "C++17 / OpenCL",
+              "FIR, IIR\n(до 16000 taps)")
+
+    Container(hetero, "Heterodyne", "C++17 / OpenCL",
+              "LFM Dechirp\npipeline")
+
+    Container(farrow, "LCH Farrow", "C++17 / OpenCL",
+              "Fractional Delay\nLagrange 5-pt")
+
+    Container(drvgpu, "DrvGPU", "C++17",
+              "Core Driver:\nBackends, Memory,\nServices, Profiler")
+}
+
+System_Ext(gpu, "GPU Hardware", "OpenCL / ROCm")
+System_Ext(clfft, "clFFT / hipFFT", "FFT Library")
+System_Ext(fs, "Host FS", "Logs, Config, Cache")
+
+Rel(cpp_dev, siggen, "C++ API")
+Rel(cpp_dev, drvgpu, "C++ API")
+Rel(py_sci, pybind, "Python API")
+
+Rel(pybind, siggen, "wraps")
+Rel(pybind, fftproc, "wraps")
+Rel(pybind, fftmax, "wraps")
+Rel(pybind, filters, "wraps")
+Rel(pybind, hetero, "wraps")
+Rel(pybind, farrow, "wraps")
+
+Rel(siggen, drvgpu, "IBackend*")
+Rel(fftproc, drvgpu, "IBackend*")
+Rel(fftmax, drvgpu, "IBackend*")
+Rel(fftmax, fftproc, "uses FFT")
+Rel(filters, drvgpu, "IBackend*")
+Rel(hetero, drvgpu, "IBackend*")
+Rel(hetero, siggen, "LfmConjGen")
+Rel(hetero, fftproc, "FFT stage")
+Rel(hetero, fftmax, "Peak find")
+Rel(farrow, drvgpu, "IBackend*")
+
+Rel(drvgpu, gpu, "OpenCL / HIP API")
+Rel(fftproc, clfft, "clFFT API")
+Rel(drvgpu, fs, "I/O")
+
+SHOW_LEGEND()
+@enduml
