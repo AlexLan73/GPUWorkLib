@@ -1,26 +1,38 @@
 # ════════════════════════════════════════════════════════════════════════════
-# FFT Processor Module - CMakeLists.txt
+# Statistics Module - CMakeLists.txt
 # ════════════════════════════════════════════════════════════════════════════
 #
-# FFT 1/n лучей с вариантами вывода (complex, magnitude+phase, freq)
-# Использует clFFT с pre-callback для padding
+# ROCm-only module: mean, median, variance, std for complex signal data.
+# Uses HIP kernels (hiprtc) and rocPRIM (radix sort for median).
+#
+# IMPORTANT: This module compiles ONLY when ROCM_ENABLED=TRUE.
+# On Windows (no ROCm), this module is completely skipped.
 #
 # ════════════════════════════════════════════════════════════════════════════
 
 cmake_minimum_required(VERSION 3.20)
 
-set(MODULE_NAME fft_processor)
-
-message(STATUS "Configuring module: ${MODULE_NAME}")
+set(MODULE_NAME statistics)
 
 # ════════════════════════════════════════════════════════════════════════════
-# Dependencies
+# Check ROCm dependency
 # ════════════════════════════════════════════════════════════════════════════
 
-find_package(OpenCL REQUIRED)
+if(NOT ROCM_ENABLED)
+    message(STATUS "⏭️  ${MODULE_NAME}: skipped (ROCm disabled)")
+    return()
+endif()
 
-if(NOT CLFFT_FOUND)
-    message(FATAL_ERROR "clFFT not found! Please check cmake/dependencies.cmake")
+message(STATUS "Configuring module: ${MODULE_NAME} (ROCm)")
+
+# ════════════════════════════════════════════════════════════════════════════
+# Find rocPRIM (header-only, part of ROCm SDK)
+# ════════════════════════════════════════════════════════════════════════════
+
+find_package(rocprim QUIET)
+if(NOT rocprim_FOUND)
+    message(WARNING "  ${MODULE_NAME}: rocPRIM not found! Median computation disabled.")
+    message(STATUS "   Ubuntu: sudo apt install rocprim-dev")
 endif()
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -28,7 +40,7 @@ endif()
 # ════════════════════════════════════════════════════════════════════════════
 
 add_library(${MODULE_NAME} STATIC
-    src/fft_processor.cpp
+    src/statistics_processor.cpp
 )
 
 target_include_directories(${MODULE_NAME}
@@ -36,35 +48,24 @@ target_include_directories(${MODULE_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/DrvGPU
-    PRIVATE
-        ${OpenCL_INCLUDE_DIRS}
-        ${CLFFT_INCLUDE_DIR}
 )
 
 target_link_libraries(${MODULE_NAME}
     PUBLIC
         drvgpu
-        OpenCL::OpenCL
-        ${CLFFT_LIB}
+        hip::host
 )
 
-target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
-
-# ════════════════════════════════════════════════════════════════════════════
-# ROCm / hipFFT Support (conditional)
-# ════════════════════════════════════════════════════════════════════════════
-
-if(ROCM_ENABLED AND HIPFFT_FOUND)
-    target_sources(${MODULE_NAME} PRIVATE
-        src/fft_processor_rocm.cpp
-    )
-    target_link_libraries(${MODULE_NAME} PUBLIC
-        hip::hipfft
-    )
-    message(STATUS "  ${MODULE_NAME}: ROCm/hipFFT ENABLED")
+# rocPRIM (header-only)
+if(rocprim_FOUND)
+    target_link_libraries(${MODULE_NAME} PUBLIC roc::rocprim)
+    target_compile_definitions(${MODULE_NAME} PRIVATE HAS_ROCPRIM=1)
+    message(STATUS "  ${MODULE_NAME}: rocPRIM ENABLED")
 else()
-    message(STATUS "  ${MODULE_NAME}: ROCm/hipFFT disabled")
+    message(STATUS "  ${MODULE_NAME}: rocPRIM disabled (median not available)")
 endif()
+
+target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
 
 # Alias
 add_library(GPUWorkLib::${MODULE_NAME} ALIAS ${MODULE_NAME})
@@ -89,5 +90,6 @@ install(DIRECTORY include/
 # Summary
 # ════════════════════════════════════════════════════════════════════════════
 
-message(STATUS "  ${MODULE_NAME}: configured")
-message(STATUS "    - Modes: COMPLEX, MAGNITUDE_PHASE, MAGNITUDE_PHASE_FREQ")
+message(STATUS "  ${MODULE_NAME}: configured (ROCm only)")
+message(STATUS "    - Operations: Mean, Median, Variance, STD (Welford)")
+message(STATUS "    - Input: complex<float>, per-beam")

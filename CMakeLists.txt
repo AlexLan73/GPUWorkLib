@@ -39,6 +39,9 @@ add_subdirectory(modules/filters)
 # Heterodyne module (LFM dechirp processing)
 add_subdirectory(modules/heterodyne)
 
+# Statistics module (ROCm only: mean, median, variance, std)
+add_subdirectory(modules/statistics)
+
 # Main executable (src/)
 add_subdirectory(src)
 

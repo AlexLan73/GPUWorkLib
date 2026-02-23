@@ -16,6 +16,9 @@
 #include "test_services.hpp"
 #include "test_gpu_profiler.hpp"
 #include "test_storage_services.hpp"
+#if ENABLE_ROCM
+#include "test_rocm_backend.hpp"
+#endif
 
 namespace drvgpu_all_test {
 
@@ -34,6 +37,11 @@ inline void run() {
 
     // Storage Services: FileStorageBackend, KernelCacheService, FilterConfigService
     test_storage_services::run();
+
+    // ROCm Backend: Initialize, Allocate, Memcpy, Synchronize
+#if ENABLE_ROCM
+    test_rocm_backend::run();
+#endif
 }
 
 }  // namespace drvgpu_all_test

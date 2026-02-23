@@ -153,6 +153,18 @@ set(DRVGPU_SERVICES_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/services/filter_config_service.cpp"
 )
 
+# ROCm Backend (conditional — Linux only, ENABLE_ROCM=ON)
+set(DRVGPU_ROCM_SOURCES "")
+if(ROCM_ENABLED)
+    set(DRVGPU_ROCM_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/rocm_backend.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/rocm_core.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/rocm_backend.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/rocm_core.hpp"
+    )
+    message(STATUS "ROCm Backend: ENABLED (${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/)")
+endif()
+
 # ════════════════════════════════════════════════════════════════════
 # Библиотека DrvGPU
 # ════════════════════════════════════════════════════════════════════
@@ -188,6 +200,9 @@ add_library(drvgpu
     # External Context (if enabled)
     ${DRVGPU_EXTERNAL_CONTEXT_SOURCES}
 
+    # ROCm Backend (if enabled)
+    ${DRVGPU_ROCM_SOURCES}
+
     # Headers (для IDE visibility)
     ${DRVGPU_HEADERS}
     ${DRVGPU_MEMORY_HEADERS}
@@ -209,6 +224,7 @@ target_include_directories(drvgpu
         ${CMAKE_CURRENT_SOURCE_DIR}/memory
         ${CMAKE_CURRENT_SOURCE_DIR}/backends
         ${CMAKE_CURRENT_SOURCE_DIR}/backends/opencl
+        ${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${OpenCL_INCLUDE_DIRS}
 )
@@ -237,6 +253,13 @@ endif()
 # Compile definitions
 if(BUILD_EXTERNAL_CONTEXT_SUPPORT)
     target_compile_definitions(drvgpu PUBLIC DRVGPU_EXTERNAL_CONTEXT_SUPPORT)
+endif()
+
+# ROCm: link hip::host and add ENABLE_ROCM definition
+if(ROCM_ENABLED)
+    target_link_libraries(drvgpu PUBLIC hip::host)
+    target_compile_definitions(drvgpu PUBLIC ENABLE_ROCM=1)
+    message(STATUS "DrvGPU: ROCm/HIP linked (hip::host, ENABLE_ROCM=1)")
 endif()
 
 # plog is header-only — no special compile definitions needed
@@ -304,5 +327,6 @@ message(STATUS "  OpenCL version:      ${OpenCL_VERSION_STRING}")
 message(STATUS "  OpenCL include:      ${OpenCL_INCLUDE_DIRS}")
 message(STATUS "  OpenCL library:      ${OpenCL_LIBRARIES}")
 message(STATUS "  plog:                HEADER-ONLY (${PLOG_INCLUDE_DIR})")
+message(STATUS "  ROCm/HIP:           ${ROCM_ENABLED}")
 message(STATUS "═══════════════════════════════════════")
 message(STATUS "")
