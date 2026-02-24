@@ -1,11 +1,5 @@
 {
   "mcpServers": {
-    "dap-debug": {
-      "type": "stdio",
-      "command": "cmd",
-      "args": ["/c", "npx", "-y", "@uhd_kr/mcp-debug-tools@latest"],
-      "env": {}
-    },
     "sequential-thinking": {
       "type": "stdio",
       "command": "npx",
@@ -21,7 +15,7 @@
     "filesystem": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "E:\\C++\\GPUWorkLib"],
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/alex/C++/GPUWorkLib"],
       "env": {}
     },
     "memory": {
@@ -33,13 +27,13 @@
     "sqlite": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sqlite", "--db-path", "E:\\C++\\GPUWorkLib\\results.db"],
+      "args": ["-y", "@modelcontextprotocol/server-sqlite", "--db-path", "/home/alex/C++/GPUWorkLib/results.db"],
       "env": {}
     },
     "git": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-git", "--repository", "E:\\C++\\GPUWorkLib"],
+      "args": ["-y", "@modelcontextprotocol/server-git", "--repository", "/home/alex/C++/GPUWorkLib"],
       "env": {}
     },
     "fetch": {
@@ -52,6 +46,12 @@
       "type": "stdio",
       "command": "npx",
       "args": ["-y", "testsprite-mcp"],
+      "env": {}
+    },
+    "dap-debug": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@uhd_kr/mcp-debug-tools@latest"],
       "env": {}
     }
   }

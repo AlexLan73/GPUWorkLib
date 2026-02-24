@@ -90,3 +90,10 @@ aux
 # API Keys (не коммитить!)
 api_keys.json
 
+# AMD GPU driver packages (большие бинарники, не нужны в репо)
+*.deb
+amdgpu-install*
+
+# MCP server temp data
+!mcp/
+
