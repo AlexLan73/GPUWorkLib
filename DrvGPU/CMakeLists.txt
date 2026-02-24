@@ -259,11 +259,16 @@ if(BUILD_EXTERNAL_CONTEXT_SUPPORT)
     target_compile_definitions(drvgpu PUBLIC DRVGPU_EXTERNAL_CONTEXT_SUPPORT)
 endif()
 
-# ROCm: link hip::host and add ENABLE_ROCM definition
+# ROCm: link hip::host + hiprtc and add ENABLE_ROCM definition
 if(ROCM_ENABLED)
     target_link_libraries(drvgpu PUBLIC hip::host)
+    if(TARGET hiprtc::hiprtc)
+        target_link_libraries(drvgpu PUBLIC hiprtc::hiprtc)
+        message(STATUS "DrvGPU: ROCm/HIP linked (hip::host + hiprtc::hiprtc, ENABLE_ROCM=1)")
+    else()
+        message(STATUS "DrvGPU: ROCm/HIP linked (hip::host, ENABLE_ROCM=1) [hiprtc not found]")
+    endif()
     target_compile_definitions(drvgpu PUBLIC ENABLE_ROCM=1)
-    message(STATUS "DrvGPU: ROCm/HIP linked (hip::host, ENABLE_ROCM=1)")
 endif()
 
 # plog is header-only — no special compile definitions needed

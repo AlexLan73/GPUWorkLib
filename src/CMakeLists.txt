@@ -198,6 +198,12 @@ else()
     target_compile_options(GPUWorkLib PRIVATE -Wall -Wextra -march=native)
 endif()
 
+# HIP fat binaries use absolute 32-bit relocations (R_X86_64_32) incompatible with PIE.
+# Disable PIE when ROCm is enabled.
+if(ROCM_ENABLED)
+    target_link_options(GPUWorkLib PRIVATE -no-pie)
+endif()
+
 # ============================================================================
 # COMPILE DEFINITIONS
 # ============================================================================

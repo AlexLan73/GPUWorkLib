@@ -11,6 +11,9 @@ include(cmake/platform-detection.cmake)
 include(cmake/gpu-config.cmake)
 include(cmake/dependencies.cmake)
 
+# Required for linking static libs into Python shared module (.so)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 message(STATUS "")
 message(STATUS "╔══════════════════════════════════════════════════════════╗")
 message(STATUS "║  GPUWorkLib - Multi-GPU Library (DrvGPU)                 ║")

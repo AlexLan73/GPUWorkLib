@@ -318,7 +318,8 @@ inline bool test_synchronize(ConsoleOutput& con, int gpu_id) {
 // ════════════════════════════════════════════════════════════════════════════
 
 inline void run() {
-  ConsoleOutput con;
+  auto& con = ConsoleOutput::GetInstance();
+  con.Start();
   int gpu_id = 0;
 
   con.Print(gpu_id, "ROCm Test", "");

@@ -215,7 +215,7 @@ void ROCmBackend::MemcpyHostToDevice(void* dst, const void* src, size_t size_byt
   }
 
   // Синхронизируем для совместимости с синхронным API OpenCL backend
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 }
 
 void ROCmBackend::MemcpyDeviceToHost(void* dst, const void* src, size_t size_bytes) {
@@ -232,7 +232,7 @@ void ROCmBackend::MemcpyDeviceToHost(void* dst, const void* src, size_t size_byt
     return;
   }
 
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 }
 
 void ROCmBackend::MemcpyDeviceToDevice(void* dst, const void* src, size_t size_bytes) {
@@ -249,7 +249,7 @@ void ROCmBackend::MemcpyDeviceToDevice(void* dst, const void* src, size_t size_b
     return;
   }
 
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -270,7 +270,7 @@ void ROCmBackend::Flush() {
   if (stream_) {
     // HIP: hipStreamQuery возвращает hipSuccess если все операции завершены,
     // или hipErrorNotReady если ещё в процессе — non-blocking check
-    hipStreamQuery(stream_);
+    (void)hipStreamQuery(stream_);
   }
 }
 

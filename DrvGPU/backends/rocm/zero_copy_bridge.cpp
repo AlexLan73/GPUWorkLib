@@ -120,7 +120,7 @@ hipError_t ZeroCopyBridge::ImportFromDmaBuf(int dma_buf_fd, size_t buffer_size) 
   if (err != hipSuccess) {
     DRVGPU_LOG_ERROR("ZeroCopyBridge", "hipExternalMemoryGetMappedBuffer failed: " +
                      std::string(hipGetErrorString(err)));
-    hipDestroyExternalMemory(ext_mem_);
+    (void)hipDestroyExternalMemory(ext_mem_);
     ext_mem_ = nullptr;
     return err;
   }
@@ -210,7 +210,7 @@ void ZeroCopyBridge::ImportFromOpenCl(cl_mem cl_buffer, size_t buffer_size,
 
 void ZeroCopyBridge::Release() {
   if (owns_memory_ && ext_mem_) {
-    hipDestroyExternalMemory(ext_mem_);
+    (void)hipDestroyExternalMemory(ext_mem_);
     DRVGPU_LOG_INFO("ZeroCopyBridge", "Released external memory");
   }
 

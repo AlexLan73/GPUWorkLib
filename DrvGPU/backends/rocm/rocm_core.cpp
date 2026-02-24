@@ -138,7 +138,7 @@ void ROCmCore::Cleanup() {
 
 void ROCmCore::ReleaseResources() {
   if (stream_) {
-    hipStreamDestroy(stream_);
+    (void)hipStreamDestroy(stream_);
     stream_ = nullptr;
   }
   device_ = 0;

@@ -107,6 +107,17 @@ public:
     ConsoleOutput(const ConsoleOutput&) = delete;
     ConsoleOutput& operator=(const ConsoleOutput&) = delete;
 
+    /**
+     * @brief Деструктор — останавливает рабочий поток ДО сброса vtable.
+     *
+     * КРИТИЧНО: Stop() должен быть вызван в деструкторе ПРОИЗВОДНОГО класса.
+     * Если Stop() вызывается только в ~AsyncServiceBase(), vtable уже переключён
+     * на базовый класс и ProcessMessage() (pure virtual) вызывает terminate().
+     */
+    ~ConsoleOutput() {
+        Stop();
+    }
+
     // ========================================================================
     // Удобный API (неблокирующий)
     // ========================================================================
