@@ -32,6 +32,9 @@ set(SPECTRUM_MAXIMA_SOURCES
     src/spectrum_maxima_finder.cpp
     src/spectrum_maxima_finder_process.cpp
     src/spectrum_maxima_finder_all_maxima.cpp
+    src/spectrum_processor_factory.cpp
+    src/spectrum_processor_opencl.cpp
+    src/all_maxima_pipeline_opencl.cpp
 )
 
 add_library(spectrum_maxima STATIC ${SPECTRUM_MAXIMA_SOURCES})

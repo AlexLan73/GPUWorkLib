@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kernels": [
+    {
+      "name": "fir_filter_cf32",
+      "comment": "FIR direct-form",
+      "created": "2026-02-24T16:34:21",
+      "params": "",
+      "backend": "opencl"
+    },
+    {
+      "name": "iir_filter_cf32",
+      "comment": "IIR biquad cascade",
+      "created": "2026-02-24T16:34:21",
+      "params": "",
+      "backend": "opencl"
+    }
+  ]
+}

@@ -58,9 +58,13 @@ if(ROCM_ENABLED AND HIPFFT_FOUND)
     target_sources(${MODULE_NAME} PRIVATE
         src/fft_processor_rocm.cpp
     )
-    target_link_libraries(${MODULE_NAME} PUBLIC
-        hip::hipfft
-    )
+    if(hipfft_FOUND)
+        target_link_libraries(${MODULE_NAME} PUBLIC hip::hipfft)
+    else()
+        # Fallback: manual link
+        target_link_libraries(${MODULE_NAME} PUBLIC ${HIPFFT_LIB})
+        target_include_directories(${MODULE_NAME} PRIVATE ${HIPFFT_INCLUDE_DIR})
+    endif()
     message(STATUS "  ${MODULE_NAME}: ROCm/hipFFT ENABLED")
 else()
     message(STATUS "  ${MODULE_NAME}: ROCm/hipFFT disabled")

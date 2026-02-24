@@ -446,9 +446,10 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
         for (uint32_t b = 0; b < beam_count; ++b) {
             uint32_t count = beam_counts[b];
             if (count > max_output_per_beam) {
-                con.Print(gpu_id,
-                    "WARNING: Beam {} reached max_maxima limit ({}/{}), results truncated",
-                    b, count, max_output_per_beam);
+                con.PrintWarning(gpu_id, "AllMaxima",
+                    "WARNING: Beam " + std::to_string(b) +
+                    " reached max_maxima limit (" + std::to_string(count) +
+                    "/" + std::to_string(max_output_per_beam) + "), results truncated");
                 count = max_output_per_beam;
             }
 

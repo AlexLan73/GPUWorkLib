@@ -31,14 +31,16 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-namespace test_filters_rocm {
-
 #if ENABLE_ROCM
-
 #include "filters/fir_filter_rocm.hpp"
 #include "filters/iir_filter_rocm.hpp"
 #include "backends/rocm/rocm_backend.hpp"
 #include "services/console_output.hpp"
+#endif
+
+namespace test_filters_rocm {
+
+#if ENABLE_ROCM
 
 using namespace filters;
 using namespace drv_gpu_lib;

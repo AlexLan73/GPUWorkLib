@@ -336,15 +336,15 @@ LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points) {
   size_t delay_size = delay_us_.size() * sizeof(float);
   err = hipMalloc(&delay_buf, delay_size);
   if (err != hipSuccess) {
-    hipFree(output_ptr);
+    (void)hipFree(output_ptr);
     throw std::runtime_error(
         "LchFarrowROCm::Process: hipMalloc(delay) failed");
   }
 
   err = hipMemcpyHtoDAsync(delay_buf, delay_us_.data(), delay_size, stream_);
   if (err != hipSuccess) {
-    hipFree(output_ptr);
-    hipFree(delay_buf);
+    (void)hipFree(output_ptr);
+    (void)hipFree(delay_buf);
     throw std::runtime_error(
         "LchFarrowROCm::Process: hipMemcpyHtoDAsync(delay) failed");
   }
@@ -387,17 +387,17 @@ LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points) {
       args, nullptr);
 
   if (err != hipSuccess) {
-    hipFree(output_ptr);
-    hipFree(delay_buf);
+    (void)hipFree(output_ptr);
+    (void)hipFree(delay_buf);
     throw std::runtime_error(
         "LchFarrowROCm::Process: hipModuleLaunchKernel failed: " +
         std::string(hipGetErrorString(err)));
   }
 
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 
   // Free temporary delay buffer
-  hipFree(delay_buf);
+  (void)hipFree(delay_buf);
 
   drv_gpu_lib::InputData<void*> result;
   result.antenna_count = antennas;
@@ -434,17 +434,17 @@ LchFarrowROCm::ProcessFromCPU(
                             const_cast<std::complex<float>*>(data.data()),
                             data_size, stream_);
   if (err != hipSuccess) {
-    hipFree(input_ptr);
+    (void)hipFree(input_ptr);
     throw std::runtime_error(
         "LchFarrowROCm::ProcessFromCPU: hipMemcpyHtoDAsync(input) failed");
   }
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 
   // Process on GPU
   auto result = Process(input_ptr, antennas, points);
 
   // Free the temporary input buffer
-  hipFree(input_ptr);
+  (void)hipFree(input_ptr);
 
   return result;
 }
@@ -524,7 +524,7 @@ void LchFarrowROCm::CompileKernel() {
     auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
     con.PrintError(0, "LchFarrow[ROCm]", "Kernel compile log:\n" + log);
 
-    hiprtcDestroyProgram(&prog);
+    (void)hiprtcDestroyProgram(&prog);
     throw std::runtime_error(
         "LchFarrowROCm::CompileKernel: compilation failed");
   }
@@ -533,7 +533,7 @@ void LchFarrowROCm::CompileKernel() {
   hiprtcGetCodeSize(prog, &codeSize);
   std::vector<char> code(codeSize);
   hiprtcGetCode(prog, code.data());
-  hiprtcDestroyProgram(&prog);
+  (void)hiprtcDestroyProgram(&prog);
 
   hipError_t hipErr = hipModuleLoadData(&module_, code.data());
   if (hipErr != hipSuccess) {
@@ -557,7 +557,7 @@ void LchFarrowROCm::CompileKernel() {
 
 void LchFarrowROCm::UploadMatrix() {
   if (matrix_buf_) {
-    hipFree(matrix_buf_);
+    (void)hipFree(matrix_buf_);
     matrix_buf_ = nullptr;
   }
 
@@ -572,23 +572,23 @@ void LchFarrowROCm::UploadMatrix() {
   err = hipMemcpyHtoDAsync(matrix_buf_, lagrange_matrix_.data(),
                             matrix_size, stream_);
   if (err != hipSuccess) {
-    hipFree(matrix_buf_);
+    (void)hipFree(matrix_buf_);
     matrix_buf_ = nullptr;
     throw std::runtime_error(
         "LchFarrowROCm::UploadMatrix: hipMemcpyHtoDAsync failed");
   }
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 }
 
 void LchFarrowROCm::ReleaseGpuResources() {
   if (module_) {
-    hipModuleUnload(module_);
+    (void)hipModuleUnload(module_);
     module_ = nullptr;
     kernel_ = nullptr;
     kernel_compiled_ = false;
   }
   if (matrix_buf_) {
-    hipFree(matrix_buf_);
+    (void)hipFree(matrix_buf_);
     matrix_buf_ = nullptr;
   }
 }

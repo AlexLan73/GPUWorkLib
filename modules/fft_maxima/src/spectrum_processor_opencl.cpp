@@ -1405,7 +1405,6 @@ AllMaximaResult SpectrumProcessorOpenCL::FindAllMaxima(
         const int gpu_id = 0;
         auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
         const bool do_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(gpu_id);
-        double mag_ms = ProfileEvent(mag_event, "AllMaxima_ComputeMag");
         if (do_prof) {
             drv_gpu_lib::OpenCLProfilingData data{};
             if (drv_gpu_lib::FillOpenCLProfilingData(mag_event, data))

@@ -414,7 +414,7 @@ AllMaximaResult SpectrumProcessorROCm::AllMaximaFromCPU(
     err = hipMemcpyHtoDAsync(gpu_fft, const_cast<std::complex<float>*>(fft_data.data()),
                               data_bytes, stream_);
     if (err != hipSuccess) {
-        hipFree(gpu_fft);
+        (void)hipFree(gpu_fft);
         throw std::runtime_error("AllMaximaFromCPU: hipMemcpyHtoDAsync failed");
     }
 
@@ -423,7 +423,7 @@ AllMaximaResult SpectrumProcessorROCm::AllMaximaFromCPU(
     AllMaximaResult result = FindAllMaxima(gpu_fft, beam_count, nFFT,
                                             sample_rate, dest, search_start, search_end);
 
-    hipFree(gpu_fft);
+    (void)hipFree(gpu_fft);
     return result;
 }
 
@@ -600,7 +600,7 @@ void SpectrumProcessorROCm::CompileKernels() {
         auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
         con.PrintError(0, "SpectrumMaxima[ROCm]", "Kernel compile log:\n" + log);
 
-        hiprtcDestroyProgram(&prog);
+        (void)hiprtcDestroyProgram(&prog);
         throw std::runtime_error("CompileKernels: hiprtcCompileProgram failed");
     }
 
@@ -608,7 +608,7 @@ void SpectrumProcessorROCm::CompileKernels() {
     hiprtcGetCodeSize(prog, &code_size);
     std::vector<char> code(code_size);
     hiprtcGetCode(prog, code.data());
-    hiprtcDestroyProgram(&prog);
+    (void)hiprtcDestroyProgram(&prog);
 
     hipError_t hip_err = hipModuleLoadData(&module_, code.data());
     if (hip_err != hipSuccess) {
@@ -864,7 +864,7 @@ void SpectrumProcessorROCm::EnsureMagnitudesBuffer(size_t total_elements) {
     if (magnitudes_buffer_ && magnitudes_buffer_size_ >= total_elements) return;
 
     if (magnitudes_buffer_) {
-        hipFree(magnitudes_buffer_);
+        (void)hipFree(magnitudes_buffer_);
         magnitudes_buffer_ = nullptr;
     }
 
@@ -884,10 +884,10 @@ void SpectrumProcessorROCm::ReallocateBuffersForBatch(size_t batch_antenna_count
 
     if (need_new_buffers) {
         // Free old buffers
-        if (input_buffer_)    { hipFree(input_buffer_);    input_buffer_ = nullptr; }
-        if (fft_input_)       { hipFree(fft_input_);       fft_input_ = nullptr; }
-        if (fft_output_)      { hipFree(fft_output_);      fft_output_ = nullptr; }
-        if (maxima_output_)   { hipFree(maxima_output_);   maxima_output_ = nullptr; }
+        if (input_buffer_)    { (void)hipFree(input_buffer_);    input_buffer_ = nullptr; }
+        if (fft_input_)       { (void)hipFree(fft_input_);       fft_input_ = nullptr; }
+        if (fft_output_)      { (void)hipFree(fft_output_);      fft_output_ = nullptr; }
+        if (maxima_output_)   { (void)hipFree(maxima_output_);   maxima_output_ = nullptr; }
 
         hipError_t err;
 
@@ -935,7 +935,7 @@ void SpectrumProcessorROCm::ReleaseAllMaximaResources() {
     }
 
     if (magnitudes_buffer_) {
-        hipFree(magnitudes_buffer_);
+        (void)hipFree(magnitudes_buffer_);
         magnitudes_buffer_ = nullptr;
         magnitudes_buffer_size_ = 0;
     }
@@ -953,14 +953,14 @@ void SpectrumProcessorROCm::ReleaseResources() {
     }
 
     // GPU buffers
-    if (input_buffer_)    { hipFree(input_buffer_);    input_buffer_ = nullptr; }
-    if (fft_input_)       { hipFree(fft_input_);       fft_input_ = nullptr; }
-    if (fft_output_)      { hipFree(fft_output_);      fft_output_ = nullptr; }
-    if (maxima_output_)   { hipFree(maxima_output_);   maxima_output_ = nullptr; }
+    if (input_buffer_)    { (void)hipFree(input_buffer_);    input_buffer_ = nullptr; }
+    if (fft_input_)       { (void)hipFree(fft_input_);       fft_input_ = nullptr; }
+    if (fft_output_)      { (void)hipFree(fft_output_);      fft_output_ = nullptr; }
+    if (maxima_output_)   { (void)hipFree(maxima_output_);   maxima_output_ = nullptr; }
 
     // hiprtc module
     if (module_) {
-        hipModuleUnload(module_);
+        (void)hipModuleUnload(module_);
         module_ = nullptr;
         pad_kernel_ = nullptr;
         compute_mag_kernel_ = nullptr;

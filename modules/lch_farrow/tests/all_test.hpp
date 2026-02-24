@@ -19,7 +19,7 @@ inline void run() {
     test_lch_farrow::run();
 
     // ROCm: LchFarrowROCm tests (run on Linux + AMD GPU)
-    // test_lch_farrow_rocm::run();
+    test_lch_farrow_rocm::run();
 }
 
 }  // namespace lch_farrow_all_test

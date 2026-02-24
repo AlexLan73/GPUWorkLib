@@ -20,12 +20,11 @@
 #include "statistics_processor.hpp"
 #include "kernels/statistics_kernels_rocm.hpp"
 
-#include <rocprim/rocprim.hpp>
-
 #include <stdexcept>
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#include <vector>
 
 namespace statistics {
 
@@ -64,6 +63,7 @@ StatisticsProcessor::StatisticsProcessor(StatisticsProcessor&& other) noexcept
     , magnitudes_buf_(other.magnitudes_buf_)
     , sort_buf_(other.sort_buf_)
     , sort_temp_buf_(other.sort_temp_buf_)
+    , offsets_buf_(other.offsets_buf_)
     , reduce_buf_(other.reduce_buf_)
     , result_buf_(other.result_buf_)
     , module_(other.module_)
@@ -82,6 +82,7 @@ StatisticsProcessor::StatisticsProcessor(StatisticsProcessor&& other) noexcept
   other.magnitudes_buf_ = nullptr;
   other.sort_buf_ = nullptr;
   other.sort_temp_buf_ = nullptr;
+  other.offsets_buf_ = nullptr;
   other.reduce_buf_ = nullptr;
   other.result_buf_ = nullptr;
   other.module_ = nullptr;
@@ -105,6 +106,7 @@ StatisticsProcessor& StatisticsProcessor::operator=(StatisticsProcessor&& other)
     magnitudes_buf_ = other.magnitudes_buf_;
     sort_buf_ = other.sort_buf_;
     sort_temp_buf_ = other.sort_temp_buf_;
+    offsets_buf_ = other.offsets_buf_;
     reduce_buf_ = other.reduce_buf_;
     result_buf_ = other.result_buf_;
     module_ = other.module_;
@@ -123,6 +125,7 @@ StatisticsProcessor& StatisticsProcessor::operator=(StatisticsProcessor&& other)
     other.magnitudes_buf_ = nullptr;
     other.sort_buf_ = nullptr;
     other.sort_temp_buf_ = nullptr;
+    other.offsets_buf_ = nullptr;
     other.reduce_buf_ = nullptr;
     other.result_buf_ = nullptr;
     other.module_ = nullptr;
@@ -157,7 +160,7 @@ std::vector<MeanResult> StatisticsProcessor::ComputeMean(
   AllocateBuffers(params.beam_count, params.n_point);
   UploadData(data.data(), data.size());
   ExecuteMeanReduction(params.beam_count, params.n_point);
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 
   // Read results: beam_count * float2_t (re, im)
   struct float2_t { float x, y; };
@@ -196,7 +199,7 @@ std::vector<MeanResult> StatisticsProcessor::ComputeMean(
   CopyGpuData(gpu_data, count);
 
   ExecuteMeanReduction(params.beam_count, params.n_point);
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 
   struct float2_t { float x, y; };
   std::vector<float2_t> raw(params.beam_count);
@@ -235,7 +238,7 @@ std::vector<MedianResult> StatisticsProcessor::ComputeMedian(
   size_t total = static_cast<size_t>(params.beam_count) * params.n_point;
   ExecuteMagnitudesKernel(total);
   ExecuteMedianSort(params.beam_count, params.n_point);
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 
   // Read median values from sort_buf_ (middle element per beam)
   std::vector<MedianResult> results;
@@ -276,7 +279,7 @@ std::vector<MedianResult> StatisticsProcessor::ComputeMedian(
 
   ExecuteMagnitudesKernel(count);
   ExecuteMedianSort(params.beam_count, params.n_point);
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 
   std::vector<MedianResult> results;
   results.reserve(params.beam_count);
@@ -316,7 +319,7 @@ std::vector<StatisticsResult> StatisticsProcessor::ComputeStatistics(
   size_t total = static_cast<size_t>(params.beam_count) * params.n_point;
   ExecuteMagnitudesKernel(total);
   ExecuteWelfordKernel(params.beam_count, params.n_point);
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 
   // Read WelfordResult per beam (5 floats each)
   struct WelfordResult {
@@ -361,7 +364,7 @@ std::vector<StatisticsResult> StatisticsProcessor::ComputeStatistics(
 
   ExecuteMagnitudesKernel(count);
   ExecuteWelfordKernel(params.beam_count, params.n_point);
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 
   struct WelfordResult {
     float mean_re, mean_im, mean_mag, variance, std_dev;
@@ -450,12 +453,13 @@ void StatisticsProcessor::AllocateBuffers(size_t beam_count, size_t n_point) {
   }
 
   // Free old buffers
-  if (input_buffer_)   { hipFree(input_buffer_);   input_buffer_ = nullptr; }
-  if (magnitudes_buf_) { hipFree(magnitudes_buf_); magnitudes_buf_ = nullptr; }
-  if (sort_buf_)       { hipFree(sort_buf_);       sort_buf_ = nullptr; }
-  if (sort_temp_buf_)  { hipFree(sort_temp_buf_);  sort_temp_buf_ = nullptr; }
-  if (reduce_buf_)     { hipFree(reduce_buf_);     reduce_buf_ = nullptr; }
-  if (result_buf_)     { hipFree(result_buf_);     result_buf_ = nullptr; }
+  if (input_buffer_)   { (void)hipFree(input_buffer_);   input_buffer_ = nullptr; }
+  if (magnitudes_buf_) { (void)hipFree(magnitudes_buf_); magnitudes_buf_ = nullptr; }
+  if (sort_buf_)       { (void)hipFree(sort_buf_);       sort_buf_ = nullptr; }
+  if (sort_temp_buf_)  { (void)hipFree(sort_temp_buf_);  sort_temp_buf_ = nullptr; }
+  if (offsets_buf_)    { (void)hipFree(offsets_buf_);    offsets_buf_ = nullptr; }
+  if (reduce_buf_)     { (void)hipFree(reduce_buf_);     reduce_buf_ = nullptr; }
+  if (result_buf_)     { (void)hipFree(result_buf_);     result_buf_ = nullptr; }
 
   size_t total = beam_count * n_point;
   hipError_t err;
@@ -474,28 +478,57 @@ void StatisticsProcessor::AllocateBuffers(size_t beam_count, size_t n_point) {
                               std::string(hipGetErrorString(err)));
   }
 
-  // 3. Sort buffer: float per element (copy of magnitudes for in-place sort)
+  // 3. Sort output buffer (rocprim writes here)
   err = hipMalloc(&sort_buf_, total * sizeof(float));
   if (err != hipSuccess) {
     throw std::runtime_error("AllocateBuffers: sort_buf hipMalloc failed: " +
                               std::string(hipGetErrorString(err)));
   }
 
-  // 4. Sort temp buffer: query rocPRIM for required size
-  sort_temp_size_ = 0;
-  rocprim::radix_sort_keys(nullptr, sort_temp_size_,
-                            static_cast<float*>(sort_buf_),
-                            static_cast<float*>(sort_buf_),
-                            n_point, 0, 8 * sizeof(float), stream_);
-  if (sort_temp_size_ > 0) {
-    err = hipMalloc(&sort_temp_buf_, sort_temp_size_);
+  // 4. Segment offsets for rocprim::segmented_radix_sort_keys
+  //    offsets[i] = i * n_point  (uniform segments, each beam is one segment)
+  err = hipMalloc(&offsets_buf_, (beam_count + 1) * sizeof(unsigned int));
+  if (err != hipSuccess) {
+    throw std::runtime_error("AllocateBuffers: offsets_buf hipMalloc failed: " +
+                              std::string(hipGetErrorString(err)));
+  }
+  {
+    std::vector<unsigned int> host_offsets(beam_count + 1);
+    for (size_t i = 0; i <= beam_count; ++i)
+      host_offsets[i] = static_cast<unsigned int>(i * n_point);
+    err = hipMemcpy(offsets_buf_, host_offsets.data(),
+                    (beam_count + 1) * sizeof(unsigned int),
+                    hipMemcpyHostToDevice);
     if (err != hipSuccess) {
-      throw std::runtime_error("AllocateBuffers: sort_temp_buf hipMalloc failed: " +
+      throw std::runtime_error("AllocateBuffers: offsets fill failed: " +
                                 std::string(hipGetErrorString(err)));
     }
   }
 
-  // 5. Reduce buffer: partial sums for mean reduction
+  // 5. Query and allocate rocprim temp storage for segmented sort
+  {
+    auto* d_offsets = static_cast<const unsigned int*>(offsets_buf_);
+    hipError_t rc = gpu_sort::QuerySortTempSize(
+        sort_temp_size_,
+        d_offsets,          // begin_offsets: offsets[0..beam_count-1]
+        d_offsets + 1,      // end_offsets:   offsets[1..beam_count]
+        static_cast<unsigned int>(total),
+        static_cast<unsigned int>(beam_count),
+        stream_);
+    if (rc != hipSuccess) {
+      throw std::runtime_error("AllocateBuffers: QuerySortTempSize failed: " +
+                                std::string(hipGetErrorString(rc)));
+    }
+    if (sort_temp_size_ > 0) {
+      err = hipMalloc(&sort_temp_buf_, sort_temp_size_);
+      if (err != hipSuccess) {
+        throw std::runtime_error("AllocateBuffers: sort_temp hipMalloc failed: " +
+                                  std::string(hipGetErrorString(err)));
+      }
+    }
+  }
+
+  // 6. Reduce buffer: partial sums for mean reduction
   //    blocks_per_beam = ceil(n_point / kBlockSize)
   //    Total partial sums = beam_count * blocks_per_beam
   size_t blocks_per_beam = (n_point + kBlockSize - 1) / kBlockSize;
@@ -520,15 +553,16 @@ void StatisticsProcessor::AllocateBuffers(size_t beam_count, size_t n_point) {
 }
 
 void StatisticsProcessor::ReleaseResources() {
-  if (input_buffer_)   { hipFree(input_buffer_);   input_buffer_ = nullptr; }
-  if (magnitudes_buf_) { hipFree(magnitudes_buf_); magnitudes_buf_ = nullptr; }
-  if (sort_buf_)       { hipFree(sort_buf_);       sort_buf_ = nullptr; }
-  if (sort_temp_buf_)  { hipFree(sort_temp_buf_);  sort_temp_buf_ = nullptr; }
-  if (reduce_buf_)     { hipFree(reduce_buf_);     reduce_buf_ = nullptr; }
-  if (result_buf_)     { hipFree(result_buf_);     result_buf_ = nullptr; }
+  if (input_buffer_)   { (void)hipFree(input_buffer_);   input_buffer_ = nullptr; }
+  if (magnitudes_buf_) { (void)hipFree(magnitudes_buf_); magnitudes_buf_ = nullptr; }
+  if (sort_buf_)       { (void)hipFree(sort_buf_);       sort_buf_ = nullptr; }
+  if (sort_temp_buf_)  { (void)hipFree(sort_temp_buf_);  sort_temp_buf_ = nullptr; }
+  if (offsets_buf_)    { (void)hipFree(offsets_buf_);    offsets_buf_ = nullptr; }
+  if (reduce_buf_)     { (void)hipFree(reduce_buf_);     reduce_buf_ = nullptr; }
+  if (result_buf_)     { (void)hipFree(result_buf_);     result_buf_ = nullptr; }
 
   if (module_) {
-    hipModuleUnload(module_);
+    (void)hipModuleUnload(module_);
     module_ = nullptr;
     magnitudes_kernel_ = nullptr;
     mean_reduce_kernel_ = nullptr;
@@ -681,31 +715,24 @@ void StatisticsProcessor::ExecuteWelfordKernel(size_t beam_count, size_t n_point
 }
 
 void StatisticsProcessor::ExecuteMedianSort(size_t beam_count, size_t n_point) {
-  // Copy magnitudes to sort_buf_ (rocPRIM sort is in-place)
-  size_t total = beam_count * n_point;
-  hipError_t err = hipMemcpyDtoDAsync(sort_buf_, magnitudes_buf_,
-                                       total * sizeof(float), stream_);
+  // GPU segmented radix sort: all beams sorted in ONE call (fully parallel).
+  // rocprim::segmented_radix_sort_keys reads magnitudes_buf_ → writes sort_buf_.
+  auto* d_offsets = static_cast<const unsigned int*>(offsets_buf_);
+
+  hipError_t err = gpu_sort::ExecuteSort(
+      sort_temp_buf_,
+      sort_temp_size_,
+      static_cast<const float*>(magnitudes_buf_),  // input: magnitudes
+      static_cast<float*>(sort_buf_),              // output: sorted magnitudes
+      d_offsets,                                   // begin_offsets[beam_count]
+      d_offsets + 1,                               // end_offsets[beam_count]
+      static_cast<unsigned int>(beam_count * n_point),
+      static_cast<unsigned int>(beam_count),
+      stream_);
+
   if (err != hipSuccess) {
-    throw std::runtime_error("ExecuteMedianSort: D2D copy failed: " +
+    throw std::runtime_error("ExecuteMedianSort: GPU segmented sort failed: " +
                               std::string(hipGetErrorString(err)));
-  }
-
-  // Sort each beam independently using rocPRIM
-  for (size_t b = 0; b < beam_count; ++b) {
-    float* beam_data = static_cast<float*>(sort_buf_) + b * n_point;
-
-    // rocPRIM radix sort (in-place via double-buffering with temp)
-    // We sort into the same buffer using a temp buffer
-    size_t temp_size = sort_temp_size_;
-    auto status = rocprim::radix_sort_keys(
-        sort_temp_buf_, temp_size,
-        beam_data, beam_data,
-        n_point, 0, 8 * sizeof(float), stream_);
-
-    if (status != hipSuccess) {
-      throw std::runtime_error("ExecuteMedianSort: rocprim::radix_sort_keys failed for beam " +
-                                std::to_string(b));
-    }
   }
 }
 

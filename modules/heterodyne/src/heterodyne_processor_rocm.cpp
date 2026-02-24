@@ -152,9 +152,9 @@ void HeterodyneProcessorROCm::EnsureBuffers(int total_samples, int num_samples) 
 
   // Rx + DC + Corr buffers (total = antennas * samples)
   if (total_samples != cached_total_) {
-    if (buf_rx_)   { hipFree(buf_rx_);   buf_rx_ = nullptr; }
-    if (buf_dc_)   { hipFree(buf_dc_);   buf_dc_ = nullptr; }
-    if (buf_corr_) { hipFree(buf_corr_); buf_corr_ = nullptr; }
+    if (buf_rx_)   { (void)hipFree(buf_rx_);   buf_rx_ = nullptr; }
+    if (buf_dc_)   { (void)hipFree(buf_dc_);   buf_dc_ = nullptr; }
+    if (buf_corr_) { (void)hipFree(buf_corr_); buf_corr_ = nullptr; }
 
     size_t bytes = static_cast<size_t>(total_samples) * sizeof(std::complex<float>);
 
@@ -178,7 +178,7 @@ void HeterodyneProcessorROCm::EnsureBuffers(int total_samples, int num_samples) 
 
   // Ref buffer (num_samples)
   if (num_samples != cached_samples_) {
-    if (buf_ref_) { hipFree(buf_ref_); buf_ref_ = nullptr; }
+    if (buf_ref_) { (void)hipFree(buf_ref_); buf_ref_ = nullptr; }
 
     size_t ref_bytes = static_cast<size_t>(num_samples) * sizeof(std::complex<float>);
     err = hipMalloc(&buf_ref_, ref_bytes);
@@ -191,7 +191,7 @@ void HeterodyneProcessorROCm::EnsureBuffers(int total_samples, int num_samples) 
 
   // Freq/phase_step buffer (antennas)
   if (antennas != cached_antennas_) {
-    if (buf_freq_) { hipFree(buf_freq_); buf_freq_ = nullptr; }
+    if (buf_freq_) { (void)hipFree(buf_freq_); buf_freq_ = nullptr; }
 
     size_t freq_bytes = static_cast<size_t>(antennas) * sizeof(float);
     err = hipMalloc(&buf_freq_, freq_bytes);
@@ -476,7 +476,7 @@ void HeterodyneProcessorROCm::CompileKernels() {
       std::string log(logSize, '\0');
       hiprtcGetProgramLog(prog, &log[0]);
       con.PrintError(0, "Heterodyne[ROCm]", "multiply kernel compile log:\n" + log);
-      hiprtcDestroyProgram(&prog);
+      (void)hiprtcDestroyProgram(&prog);
       throw std::runtime_error("CompileKernels: dechirp_multiply compilation failed");
     }
 
@@ -484,7 +484,7 @@ void HeterodyneProcessorROCm::CompileKernels() {
     hiprtcGetCodeSize(prog, &codeSize);
     std::vector<char> code(codeSize);
     hiprtcGetCode(prog, code.data());
-    hiprtcDestroyProgram(&prog);
+    (void)hiprtcDestroyProgram(&prog);
 
     hipError_t hipErr = hipModuleLoadData(&module_multiply_, code.data());
     if (hipErr != hipSuccess) {
@@ -495,7 +495,7 @@ void HeterodyneProcessorROCm::CompileKernels() {
 
     hipErr = hipModuleGetFunction(&kernel_multiply_, module_multiply_, "dechirp_multiply");
     if (hipErr != hipSuccess) {
-      hipModuleUnload(module_multiply_);
+      (void)hipModuleUnload(module_multiply_);
       module_multiply_ = nullptr;
       throw std::runtime_error(
           "CompileKernels: hipModuleGetFunction(dechirp_multiply) failed: " +
@@ -511,7 +511,7 @@ void HeterodyneProcessorROCm::CompileKernels() {
     hiprtcResult rtcResult = hiprtcCreateProgram(
         &prog, source, "dechirp_correct.hip", 0, nullptr, nullptr);
     if (rtcResult != HIPRTC_SUCCESS) {
-      hipModuleUnload(module_multiply_);
+      (void)hipModuleUnload(module_multiply_);
       module_multiply_ = nullptr;
       kernel_multiply_ = nullptr;
       throw std::runtime_error(
@@ -527,8 +527,8 @@ void HeterodyneProcessorROCm::CompileKernels() {
       std::string log(logSize, '\0');
       hiprtcGetProgramLog(prog, &log[0]);
       con.PrintError(0, "Heterodyne[ROCm]", "correct kernel compile log:\n" + log);
-      hiprtcDestroyProgram(&prog);
-      hipModuleUnload(module_multiply_);
+      (void)hiprtcDestroyProgram(&prog);
+      (void)hipModuleUnload(module_multiply_);
       module_multiply_ = nullptr;
       kernel_multiply_ = nullptr;
       throw std::runtime_error("CompileKernels: dechirp_correct compilation failed");
@@ -538,11 +538,11 @@ void HeterodyneProcessorROCm::CompileKernels() {
     hiprtcGetCodeSize(prog, &codeSize);
     std::vector<char> code(codeSize);
     hiprtcGetCode(prog, code.data());
-    hiprtcDestroyProgram(&prog);
+    (void)hiprtcDestroyProgram(&prog);
 
     hipError_t hipErr = hipModuleLoadData(&module_correct_, code.data());
     if (hipErr != hipSuccess) {
-      hipModuleUnload(module_multiply_);
+      (void)hipModuleUnload(module_multiply_);
       module_multiply_ = nullptr;
       kernel_multiply_ = nullptr;
       throw std::runtime_error(
@@ -552,9 +552,9 @@ void HeterodyneProcessorROCm::CompileKernels() {
 
     hipErr = hipModuleGetFunction(&kernel_correct_, module_correct_, "dechirp_correct");
     if (hipErr != hipSuccess) {
-      hipModuleUnload(module_correct_);
+      (void)hipModuleUnload(module_correct_);
       module_correct_ = nullptr;
-      hipModuleUnload(module_multiply_);
+      (void)hipModuleUnload(module_multiply_);
       module_multiply_ = nullptr;
       kernel_multiply_ = nullptr;
       throw std::runtime_error(
@@ -575,23 +575,23 @@ void HeterodyneProcessorROCm::CompileKernels() {
 void HeterodyneProcessorROCm::ReleaseGpuResources() {
   // OPT-1: Release cached modules (kernels are invalidated with module)
   if (module_multiply_) {
-    hipModuleUnload(module_multiply_);
+    (void)hipModuleUnload(module_multiply_);
     module_multiply_ = nullptr;
     kernel_multiply_ = nullptr;
   }
   if (module_correct_) {
-    hipModuleUnload(module_correct_);
+    (void)hipModuleUnload(module_correct_);
     module_correct_ = nullptr;
     kernel_correct_ = nullptr;
   }
   kernels_compiled_ = false;
 
   // OPT-2: Release cached buffers
-  if (buf_rx_)   { hipFree(buf_rx_);   buf_rx_ = nullptr; }
-  if (buf_ref_)  { hipFree(buf_ref_);  buf_ref_ = nullptr; }
-  if (buf_dc_)   { hipFree(buf_dc_);   buf_dc_ = nullptr; }
-  if (buf_corr_) { hipFree(buf_corr_); buf_corr_ = nullptr; }
-  if (buf_freq_) { hipFree(buf_freq_); buf_freq_ = nullptr; }
+  if (buf_rx_)   { (void)hipFree(buf_rx_);   buf_rx_ = nullptr; }
+  if (buf_ref_)  { (void)hipFree(buf_ref_);  buf_ref_ = nullptr; }
+  if (buf_dc_)   { (void)hipFree(buf_dc_);   buf_dc_ = nullptr; }
+  if (buf_corr_) { (void)hipFree(buf_corr_); buf_corr_ = nullptr; }
+  if (buf_freq_) { (void)hipFree(buf_freq_); buf_freq_ = nullptr; }
 
   cached_total_ = 0;
   cached_samples_ = 0;

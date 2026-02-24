@@ -28,13 +28,15 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-namespace test_lch_farrow_rocm {
-
 #if ENABLE_ROCM
-
 #include "lch_farrow_rocm.hpp"
 #include "backends/rocm/rocm_backend.hpp"
 #include "services/console_output.hpp"
+#endif
+
+namespace test_lch_farrow_rocm {
+
+#if ENABLE_ROCM
 
 using namespace lch_farrow;
 using namespace drv_gpu_lib;
@@ -252,7 +254,7 @@ inline bool test_multi_antenna(ConsoleOutput& con, int gpu_id) {
     const uint32_t points = 2048;
     const float freq = 50000.0f;
     const uint32_t antennas = 4;
-    std::vector<float> delays = {0.0f, 1.5f, 3.0f, 4.7f};
+    std::vector<float> delays = {0.3f, 1.7f, 3.3f, 4.9f};
 
     auto signal = generate_cw_flat(antennas, points, fs, freq);
 

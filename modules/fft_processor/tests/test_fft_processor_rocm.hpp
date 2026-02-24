@@ -186,13 +186,17 @@ inline bool test_multi_beam_batch(ConsoleOutput& con, int gpu_id) {
         for (uint32_t b = 0; b < beam_count && ok; ++b) {
             float freq = base_freq + b * freq_step;
             uint32_t nFFT = results[b].nFFT;
-            size_t expected_bin = static_cast<size_t>(freq * nFFT / sample_rate);
+            // Use round() — for non-bin-aligned frequencies the DFT peak lands at
+            // the nearest bin, not the floor bin.
+            size_t expected_bin = static_cast<size_t>(
+                std::lround(freq * static_cast<float>(nFFT) / sample_rate));
             size_t peak_bin = FindPeakBinComplex(results[b].spectrum, nFFT / 2);
 
-            if (peak_bin != expected_bin) {
+            // Allow ±1 bin tolerance (spectral leakage for non-aligned freqs)
+            if (peak_bin + 1 < expected_bin || peak_bin > expected_bin + 1) {
                 con.Print(gpu_id, "FFT ROCm",
                           "  Beam " + std::to_string(b) + ": expected bin " +
-                          std::to_string(expected_bin) + ", got " + std::to_string(peak_bin));
+                          std::to_string(expected_bin) + " ±1, got " + std::to_string(peak_bin));
                 ok = false;
             }
         }
@@ -394,7 +398,8 @@ inline bool test_gpu_input(ConsoleOutput& con, int gpu_id) {
 // =========================================================================
 
 inline void run() {
-    ConsoleOutput con;
+    auto& con = ConsoleOutput::GetInstance();
+    con.Start();
     int gpu_id = 0;
 
     con.Print(gpu_id, "FFT ROCm", "");

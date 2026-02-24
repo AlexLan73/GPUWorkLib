@@ -55,7 +55,7 @@ target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
 
 if(ROCM_ENABLED)
     target_compile_definitions(${MODULE_NAME} PUBLIC ENABLE_ROCM=1)
-    target_link_libraries(${MODULE_NAME} PUBLIC hip::host hiprtc)
+    target_link_libraries(${MODULE_NAME} PUBLIC hip::host)
     message(STATUS "  ${MODULE_NAME}: ROCm support enabled (HeterodyneProcessorROCm)")
 endif()
 

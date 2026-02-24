@@ -3,10 +3,14 @@
 # ════════════════════════════════════════════════════════════════════════════
 #
 # ROCm-only module: mean, median, variance, std for complex signal data.
-# Uses HIP kernels (hiprtc) and rocPRIM (radix sort for median).
 #
-# IMPORTANT: This module compiles ONLY when ROCM_ENABLED=TRUE.
-# On Windows (no ROCm), this module is completely skipped.
+# Sources:
+#   statistics_processor.cpp  — compiled by g++ (host logic, hiprtc kernels)
+#   statistics_sort_gpu.hip   — compiled by HIP/clang++ (rocprim segmented sort)
+#
+# Median uses rocprim::segmented_radix_sort_keys:
+#   - All 256 beams sorted in ONE GPU call (fully parallel)
+#   - ~30ms for 256×1.3M floats on RDNA4 vs ~2000ms CPU sort
 #
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -26,22 +30,39 @@ endif()
 message(STATUS "Configuring module: ${MODULE_NAME} (ROCm)")
 
 # ════════════════════════════════════════════════════════════════════════════
-# Find rocPRIM (header-only, part of ROCm SDK)
+# HIP language (needed to compile statistics_sort_gpu.hip with clang++)
+# ════════════════════════════════════════════════════════════════════════════
+
+enable_language(HIP)
+
+# ════════════════════════════════════════════════════════════════════════════
+# rocPRIM (header-only, required for segmented sort in .hip file)
 # ════════════════════════════════════════════════════════════════════════════
 
 find_package(rocprim QUIET)
-if(NOT rocprim_FOUND)
-    message(WARNING "  ${MODULE_NAME}: rocPRIM not found! Median computation disabled.")
-    message(STATUS "   Ubuntu: sudo apt install rocprim-dev")
+if(rocprim_FOUND)
+    message(STATUS "  ${MODULE_NAME}: rocPRIM FOUND — GPU median enabled")
+else()
+    message(FATAL_ERROR "  ${MODULE_NAME}: rocPRIM NOT FOUND — install rocprim-dev")
 endif()
 
 # ════════════════════════════════════════════════════════════════════════════
 # Library
 # ════════════════════════════════════════════════════════════════════════════
 
-add_library(${MODULE_NAME} STATIC
-    src/statistics_processor.cpp
+# Mark the .hip file explicitly so CMake uses the HIP compiler for it
+set_source_files_properties(
+    src/statistics_sort_gpu.hip
+    PROPERTIES LANGUAGE HIP
 )
+
+add_library(${MODULE_NAME} STATIC
+    src/statistics_processor.cpp   # g++: host logic + hiprtc kernels
+    src/statistics_sort_gpu.hip    # HIP: rocprim segmented sort
+)
+
+# Required for linking into a shared library (.so / Python .pyd)
+set_property(TARGET ${MODULE_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 target_include_directories(${MODULE_NAME}
     PUBLIC
@@ -54,16 +75,8 @@ target_link_libraries(${MODULE_NAME}
     PUBLIC
         drvgpu
         hip::host
+        roc::rocprim
 )
-
-# rocPRIM (header-only)
-if(rocprim_FOUND)
-    target_link_libraries(${MODULE_NAME} PUBLIC roc::rocprim)
-    target_compile_definitions(${MODULE_NAME} PRIVATE HAS_ROCPRIM=1)
-    message(STATUS "  ${MODULE_NAME}: rocPRIM ENABLED")
-else()
-    message(STATUS "  ${MODULE_NAME}: rocPRIM disabled (median not available)")
-endif()
 
 target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
 
@@ -92,4 +105,5 @@ install(DIRECTORY include/
 
 message(STATUS "  ${MODULE_NAME}: configured (ROCm only)")
 message(STATUS "    - Operations: Mean, Median, Variance, STD (Welford)")
+message(STATUS "    - Median: rocprim::segmented_radix_sort_keys (GPU, all beams parallel)")
 message(STATUS "    - Input: complex<float>, per-beam")

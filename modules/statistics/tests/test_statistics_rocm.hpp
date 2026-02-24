@@ -11,6 +11,7 @@
  * 4. ComputeMedian -- sorted magnitudes, verify median value
  * 5. ComputeStatistics -- GPU input (void*)
  * 6. ComputeMean -- constant signal (mean = constant)
+ * 7. Benchmark -- ComputeMedian GPU vs CPU sort (4 beams x 500000 points)
  *
  * IMPORTANT: Tests compile ONLY with ENABLE_ROCM=1.
  * On Windows (no ROCm) this file is completely skipped.
@@ -36,6 +37,7 @@
 #include <numeric>
 #include <algorithm>
 #include <random>
+#include <chrono>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -440,11 +442,96 @@ inline bool test_mean_constant(ConsoleOutput& con, int gpu_id) {
 }
 
 // =========================================================================
+// Test 7: Benchmark -- ComputeMedian GPU vs CPU sort
+// =========================================================================
+
+inline bool test_benchmark_median(ConsoleOutput& con, int gpu_id) {
+  try {
+    const uint32_t beam_count = 4;
+    const uint32_t n_point = 500000;
+
+    // Generate random complex data (magnitudes only, imag=0)
+    std::mt19937 rng(42);
+    std::uniform_real_distribution<float> dist(0.0f, 1000.0f);
+
+    std::vector<std::complex<float>> data(beam_count * n_point);
+    for (auto& v : data) {
+      float mag = dist(rng);
+      v = std::complex<float>(mag, 0.0f);
+    }
+
+    StatisticsParams params;
+    params.beam_count = beam_count;
+    params.n_point = n_point;
+
+    // --- CPU timing ---
+    auto cpu_start = std::chrono::high_resolution_clock::now();
+
+    std::vector<float> cpu_medians(beam_count);
+    for (uint32_t b = 0; b < beam_count; ++b) {
+      std::vector<float> mags(n_point);
+      for (uint32_t i = 0; i < n_point; ++i) {
+        mags[i] = std::abs(data[b * n_point + i]);
+      }
+      std::sort(mags.begin(), mags.end());
+      cpu_medians[b] = mags[n_point / 2];
+    }
+
+    auto cpu_end = std::chrono::high_resolution_clock::now();
+    double cpu_ms = std::chrono::duration<double, std::milli>(
+        cpu_end - cpu_start).count();
+
+    // --- GPU timing ---
+    ROCmBackend backend;
+    backend.Initialize(gpu_id);
+    StatisticsProcessor stats(&backend);
+
+    // Warm-up: first call may include JIT/driver init overhead
+    {
+      std::vector<std::complex<float>> warm_data(
+          beam_count * 1024, std::complex<float>(1.0f, 0.0f));
+      StatisticsParams warm_params;
+      warm_params.beam_count = beam_count;
+      warm_params.n_point = 1024;
+      stats.ComputeMedian(warm_data, warm_params);
+    }
+
+    auto gpu_start = std::chrono::high_resolution_clock::now();
+    auto results = stats.ComputeMedian(data, params);
+    auto gpu_end = std::chrono::high_resolution_clock::now();
+
+    double gpu_ms = std::chrono::duration<double, std::milli>(
+        gpu_end - gpu_start).count();
+
+    double speedup = cpu_ms / gpu_ms;
+
+    con.Print(gpu_id, "Stats ROCm",
+              "  Benchmark: " + std::to_string(beam_count) +
+              " beams x " + std::to_string(n_point) + " points");
+    con.Print(gpu_id, "Stats ROCm",
+              "  CPU sort : " + std::to_string(cpu_ms) + " ms");
+    con.Print(gpu_id, "Stats ROCm",
+              "  GPU sort : " + std::to_string(gpu_ms) + " ms");
+    con.Print(gpu_id, "Stats ROCm",
+              "  Speedup  : " + std::to_string(speedup) + "x");
+
+    bool ok = (speedup > 1.0);
+    print_result(con, gpu_id, "Benchmark Median GPU vs CPU", ok);
+    return ok;
+  } catch (const std::exception& e) {
+    con.Print(gpu_id, "Stats ROCm",
+              "[X] Benchmark Median EXCEPTION: " + std::string(e.what()));
+    return false;
+  }
+}
+
+// =========================================================================
 // Main test runner
 // =========================================================================
 
 inline void run() {
-  ConsoleOutput con;
+  auto& con = ConsoleOutput::GetInstance();
+  con.Start();
   int gpu_id = 0;
 
   con.Print(gpu_id, "Stats ROCm", "");
@@ -462,7 +549,7 @@ inline void run() {
   }
 
   int passed = 0;
-  int total = 6;
+  int total = 7;
 
   if (test_mean_single_beam(con, gpu_id)) ++passed;
   if (test_mean_multi_beam(con, gpu_id)) ++passed;
@@ -470,6 +557,7 @@ inline void run() {
   if (test_median(con, gpu_id)) ++passed;
   if (test_gpu_input(con, gpu_id)) ++passed;
   if (test_mean_constant(con, gpu_id)) ++passed;
+  if (test_benchmark_median(con, gpu_id)) ++passed;
 
   con.Print(gpu_id, "Stats ROCm", "");
   con.Print(gpu_id, "Stats ROCm", "Results: " + std::to_string(passed) + "/" +

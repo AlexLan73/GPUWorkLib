@@ -65,7 +65,7 @@ target_link_libraries(${MODULE_NAME}
 )
 
 if(ROCM_ENABLED)
-    target_link_libraries(${MODULE_NAME} PUBLIC hip::host hiprtc)
+    target_link_libraries(${MODULE_NAME} PUBLIC hip::host)
 endif()
 
 # stdc++fs нужна только на GCC < 9 (не MSVC, не Clang с libc++)

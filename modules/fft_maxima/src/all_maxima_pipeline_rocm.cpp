@@ -39,7 +39,7 @@ AllMaximaPipelineROCm::AllMaximaPipelineROCm(hipStream_t stream,
 
 AllMaximaPipelineROCm::~AllMaximaPipelineROCm() {
     if (module_) {
-        hipModuleUnload(module_);
+        (void)hipModuleUnload(module_);
         module_ = nullptr;
     }
     detect_kernel_ = nullptr;
@@ -77,7 +77,7 @@ void AllMaximaPipelineROCm::CompileKernels() {
         auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
         con.PrintError(0, "AllMaximaPipelineROCm", "Kernel compile log:\n" + log);
 
-        hiprtcDestroyProgram(&prog);
+        (void)hiprtcDestroyProgram(&prog);
         throw std::runtime_error("AllMaximaPipelineROCm: hiprtcCompileProgram failed: " +
                                   std::string(hiprtcGetErrorString(rtc_err)));
     }
@@ -86,7 +86,7 @@ void AllMaximaPipelineROCm::CompileKernels() {
     hiprtcGetCodeSize(prog, &code_size);
     std::vector<char> code(code_size);
     hiprtcGetCode(prog, code.data());
-    hiprtcDestroyProgram(&prog);
+    (void)hiprtcDestroyProgram(&prog);
 
     hipError_t hip_err = hipModuleLoadData(&module_, code.data());
     if (hip_err != hipSuccess) {
@@ -166,7 +166,7 @@ void AllMaximaPipelineROCm::ExecutePrefixSum(
 
     err = hipMalloc(&block_sums_scanned, total_blocks * sizeof(unsigned int));
     if (err != hipSuccess) {
-        hipFree(block_sums);
+        (void)hipFree(block_sums);
         throw std::runtime_error("ExecutePrefixSum: block_sums_scanned alloc failed");
     }
 
@@ -187,8 +187,8 @@ void AllMaximaPipelineROCm::ExecutePrefixSum(
             shared_mem_size, stream_,
             args, nullptr);
         if (err != hipSuccess) {
-            hipFree(block_sums);
-            hipFree(block_sums_scanned);
+            (void)hipFree(block_sums);
+            (void)hipFree(block_sums_scanned);
             throw std::runtime_error("ExecutePrefixSum: L1 block_scan launch failed");
         }
     }
@@ -216,8 +216,8 @@ void AllMaximaPipelineROCm::ExecutePrefixSum(
             0, stream_,
             args, nullptr);
         if (err != hipSuccess) {
-            hipFree(block_sums);
-            hipFree(block_sums_scanned);
+            (void)hipFree(block_sums);
+            (void)hipFree(block_sums_scanned);
             throw std::runtime_error("ExecutePrefixSum: block_add launch failed");
         }
     }
@@ -225,8 +225,8 @@ void AllMaximaPipelineROCm::ExecutePrefixSum(
     // Sync before freeing temp buffers (they're used by stream-ordered kernels)
     hipStreamSynchronize(stream_);
 
-    hipFree(block_sums);
-    hipFree(block_sums_scanned);
+    (void)hipFree(block_sums);
+    (void)hipFree(block_sums_scanned);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -275,7 +275,7 @@ AllMaximaResult AllMaximaPipelineROCm::Execute(
 
     err = hipMalloc(&scan_buf, total_elements * sizeof(unsigned int));
     if (err != hipSuccess) {
-        hipFree(flags_buf);
+        (void)hipFree(flags_buf);
         throw std::runtime_error("AllMaximaPipelineROCm: scan_buf alloc failed");
     }
 
@@ -287,16 +287,16 @@ AllMaximaResult AllMaximaPipelineROCm::Execute(
     err = hipMalloc(&out_maxima,
         static_cast<size_t>(beam_count) * max_output_per_beam * sizeof(MaxValue));
     if (err != hipSuccess) {
-        hipFree(flags_buf);
-        hipFree(scan_buf);
+        (void)hipFree(flags_buf);
+        (void)hipFree(scan_buf);
         throw std::runtime_error("AllMaximaPipelineROCm: out_maxima alloc failed");
     }
 
     err = hipMalloc(&out_beam_counts, beam_count * sizeof(unsigned int));
     if (err != hipSuccess) {
-        hipFree(flags_buf);
-        hipFree(scan_buf);
-        hipFree(out_maxima);
+        (void)hipFree(flags_buf);
+        (void)hipFree(scan_buf);
+        (void)hipFree(out_maxima);
         throw std::runtime_error("AllMaximaPipelineROCm: out_beam_counts alloc failed");
     }
 
@@ -320,8 +320,8 @@ AllMaximaResult AllMaximaPipelineROCm::Execute(
             0, stream_,
             args, nullptr);
         if (err != hipSuccess) {
-            hipFree(flags_buf); hipFree(scan_buf);
-            hipFree(out_maxima); hipFree(out_beam_counts);
+            (void)hipFree(flags_buf); (void)hipFree(scan_buf);
+            (void)hipFree(out_maxima); (void)hipFree(out_beam_counts);
             throw std::runtime_error("AllMaximaPipelineROCm: detect launch failed");
         }
     }
@@ -357,8 +357,8 @@ AllMaximaResult AllMaximaPipelineROCm::Execute(
             0, stream_,
             args, nullptr);
         if (err != hipSuccess) {
-            hipFree(flags_buf); hipFree(scan_buf);
-            hipFree(out_maxima); hipFree(out_beam_counts);
+            (void)hipFree(flags_buf); (void)hipFree(scan_buf);
+            (void)hipFree(out_maxima); (void)hipFree(out_beam_counts);
             throw std::runtime_error("AllMaximaPipelineROCm: compact launch failed");
         }
     }
@@ -374,8 +374,8 @@ AllMaximaResult AllMaximaPipelineROCm::Execute(
     err = hipMemcpyDtoH(beam_counts.data(), out_beam_counts,
                          beam_count * sizeof(unsigned int));
     if (err != hipSuccess) {
-        hipFree(flags_buf); hipFree(scan_buf);
-        hipFree(out_maxima); hipFree(out_beam_counts);
+        (void)hipFree(flags_buf); (void)hipFree(scan_buf);
+        (void)hipFree(out_maxima); (void)hipFree(out_beam_counts);
         throw std::runtime_error("AllMaximaPipelineROCm: read beam_counts failed");
     }
 
@@ -393,9 +393,10 @@ AllMaximaResult AllMaximaPipelineROCm::Execute(
         for (uint32_t b = 0; b < beam_count; ++b) {
             uint32_t count = beam_counts[b];
             if (count > max_output_per_beam) {
-                con.Print(0,
-                    "WARNING: Beam {} reached max_maxima limit ({}/{}), results truncated",
-                    b, count, max_output_per_beam);
+                con.Print(0, "AllMaximaPipeline",
+                    "WARNING: Beam " + std::to_string(b) +
+                    " reached max_maxima limit (" + std::to_string(count) +
+                    "/" + std::to_string(max_output_per_beam) + "), results truncated");
                 count = max_output_per_beam;
             }
 
@@ -438,10 +439,10 @@ AllMaximaResult AllMaximaPipelineROCm::Execute(
     // Cleanup temp buffers
     // ────────────────────────────────────────────────────────────────────
 
-    hipFree(flags_buf);
-    hipFree(scan_buf);
-    if (out_maxima) hipFree(out_maxima);
-    if (out_beam_counts) hipFree(out_beam_counts);
+    (void)hipFree(flags_buf);
+    (void)hipFree(scan_buf);
+    if (out_maxima) (void)hipFree(out_maxima);
+    if (out_beam_counts) (void)hipFree(out_beam_counts);
 
     return result;
 }

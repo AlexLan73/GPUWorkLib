@@ -22,6 +22,7 @@
 #include "kernels/fft_processor_kernels_rocm.hpp"
 #include "services/gpu_profiler.hpp"
 #include "config/gpu_config.hpp"
+#include "logger/logger.hpp"
 
 #include <stdexcept>
 #include <cstring>
@@ -376,11 +377,11 @@ void FFTProcessorROCm::AllocateBuffers(size_t batch_beam_count, FFTOutputMode mo
     }
 
     // Free old buffers
-    if (input_buffer_)  { hipFree(input_buffer_);  input_buffer_ = nullptr; }
-    if (fft_input_)     { hipFree(fft_input_);     fft_input_ = nullptr; }
-    if (fft_output_)    { hipFree(fft_output_);    fft_output_ = nullptr; }
-    if (mag_output_)    { hipFree(mag_output_);    mag_output_ = nullptr; }
-    if (phase_output_)  { hipFree(phase_output_);  phase_output_ = nullptr; }
+    if (input_buffer_)  { (void)hipFree(input_buffer_);  input_buffer_ = nullptr; }
+    if (fft_input_)     { (void)hipFree(fft_input_);     fft_input_ = nullptr; }
+    if (fft_output_)    { (void)hipFree(fft_output_);    fft_output_ = nullptr; }
+    if (mag_output_)    { (void)hipFree(mag_output_);    mag_output_ = nullptr; }
+    if (phase_output_)  { (void)hipFree(phase_output_);  phase_output_ = nullptr; }
     has_mag_phase_buffers_ = false;
 
     hipError_t err;
@@ -484,7 +485,7 @@ void FFTProcessorROCm::CompileKernels() {
         hiprtcGetProgramLogSize(prog, &logSize);
         std::string log(logSize, '\0');
         hiprtcGetProgramLog(prog, &log[0]);
-        hiprtcDestroyProgram(&prog);
+        (void)hiprtcDestroyProgram(&prog);
         throw std::runtime_error("CompileKernels: compilation failed:\n" + log);
     }
 
@@ -493,7 +494,7 @@ void FFTProcessorROCm::CompileKernels() {
     hiprtcGetCodeSize(prog, &codeSize);
     std::vector<char> code(codeSize);
     hiprtcGetCode(prog, code.data());
-    hiprtcDestroyProgram(&prog);
+    (void)hiprtcDestroyProgram(&prog);
 
     // Load module
     hipError_t hipErr = hipModuleLoadData(&module_, code.data());
@@ -505,7 +506,7 @@ void FFTProcessorROCm::CompileKernels() {
     // Get kernel functions
     hipErr = hipModuleGetFunction(&pad_kernel_, module_, "pad_data");
     if (hipErr != hipSuccess) {
-        hipModuleUnload(module_);
+        (void)hipModuleUnload(module_);
         module_ = nullptr;
         throw std::runtime_error("CompileKernels: hipModuleGetFunction(pad_data) failed: " +
                                   std::string(hipGetErrorString(hipErr)));
@@ -513,7 +514,7 @@ void FFTProcessorROCm::CompileKernels() {
 
     hipErr = hipModuleGetFunction(&mag_phase_kernel_, module_, "complex_to_mag_phase");
     if (hipErr != hipSuccess) {
-        hipModuleUnload(module_);
+        (void)hipModuleUnload(module_);
         module_ = nullptr;
         pad_kernel_ = nullptr;
         throw std::runtime_error("CompileKernels: hipModuleGetFunction(complex_to_mag_phase) failed: " +
@@ -535,15 +536,15 @@ void FFTProcessorROCm::ReleaseResources() {
     }
 
     // Free GPU buffers
-    if (input_buffer_)  { hipFree(input_buffer_);  input_buffer_ = nullptr; }
-    if (fft_input_)     { hipFree(fft_input_);     fft_input_ = nullptr; }
-    if (fft_output_)    { hipFree(fft_output_);    fft_output_ = nullptr; }
-    if (mag_output_)    { hipFree(mag_output_);    mag_output_ = nullptr; }
-    if (phase_output_)  { hipFree(phase_output_);  phase_output_ = nullptr; }
+    if (input_buffer_)  { (void)hipFree(input_buffer_);  input_buffer_ = nullptr; }
+    if (fft_input_)     { (void)hipFree(fft_input_);     fft_input_ = nullptr; }
+    if (fft_output_)    { (void)hipFree(fft_output_);    fft_output_ = nullptr; }
+    if (mag_output_)    { (void)hipFree(mag_output_);    mag_output_ = nullptr; }
+    if (phase_output_)  { (void)hipFree(phase_output_);  phase_output_ = nullptr; }
 
     // Unload hiprtc module
     if (module_) {
-        hipModuleUnload(module_);
+        (void)hipModuleUnload(module_);
         module_ = nullptr;
         pad_kernel_ = nullptr;
         mag_phase_kernel_ = nullptr;

@@ -159,13 +159,13 @@ IirFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points) {
       args, nullptr);
 
   if (err != hipSuccess) {
-    hipFree(output_ptr);
+    (void)hipFree(output_ptr);
     throw std::runtime_error(
         "IirFilterROCm::Process: hipModuleLaunchKernel failed: " +
         std::string(hipGetErrorString(err)));
   }
 
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 
   drv_gpu_lib::InputData<void*> result;
   result.antenna_count = channels;
@@ -200,15 +200,15 @@ IirFilterROCm::ProcessFromCPU(
                             const_cast<std::complex<float>*>(data.data()),
                             data_size, stream_);
   if (err != hipSuccess) {
-    hipFree(input_ptr);
+    (void)hipFree(input_ptr);
     throw std::runtime_error(
         "IirFilterROCm::ProcessFromCPU: hipMemcpyHtoDAsync(input) failed");
   }
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 
   auto result = Process(input_ptr, channels, points);
 
-  hipFree(input_ptr);
+  (void)hipFree(input_ptr);
   return result;
 }
 
@@ -283,7 +283,7 @@ void IirFilterROCm::CompileKernel() {
     auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
     con.PrintError(0, "IirFilter[ROCm]", "Kernel compile log:\n" + log);
 
-    hiprtcDestroyProgram(&prog);
+    (void)hiprtcDestroyProgram(&prog);
     throw std::runtime_error(
         "IirFilterROCm::CompileKernel: compilation failed");
   }
@@ -292,7 +292,7 @@ void IirFilterROCm::CompileKernel() {
   hiprtcGetCodeSize(prog, &codeSize);
   std::vector<char> code(codeSize);
   hiprtcGetCode(prog, code.data());
-  hiprtcDestroyProgram(&prog);
+  (void)hiprtcDestroyProgram(&prog);
 
   hipError_t hipErr = hipModuleLoadData(&module_, code.data());
   if (hipErr != hipSuccess) {
@@ -316,7 +316,7 @@ void IirFilterROCm::CompileKernel() {
 
 void IirFilterROCm::UploadSosMatrix() {
   if (sos_buf_) {
-    hipFree(sos_buf_);
+    (void)hipFree(sos_buf_);
     sos_buf_ = nullptr;
   }
 
@@ -341,23 +341,23 @@ void IirFilterROCm::UploadSosMatrix() {
 
   err = hipMemcpyHtoDAsync(sos_buf_, sos_flat.data(), sos_size, stream_);
   if (err != hipSuccess) {
-    hipFree(sos_buf_);
+    (void)hipFree(sos_buf_);
     sos_buf_ = nullptr;
     throw std::runtime_error(
         "IirFilterROCm::UploadSosMatrix: hipMemcpyHtoDAsync failed");
   }
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 }
 
 void IirFilterROCm::ReleaseGpuResources() {
   if (module_) {
-    hipModuleUnload(module_);
+    (void)hipModuleUnload(module_);
     module_ = nullptr;
     kernel_ = nullptr;
     kernel_compiled_ = false;
   }
   if (sos_buf_) {
-    hipFree(sos_buf_);
+    (void)hipFree(sos_buf_);
     sos_buf_ = nullptr;
   }
 }

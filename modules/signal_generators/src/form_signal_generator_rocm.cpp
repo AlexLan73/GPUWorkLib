@@ -159,13 +159,13 @@ drv_gpu_lib::InputData<void*> FormSignalGeneratorROCm::GenerateInputData() {
       args, nullptr);
 
   if (err != hipSuccess) {
-    hipFree(output_ptr);
+    (void)hipFree(output_ptr);
     throw std::runtime_error(
         "FormSignalGeneratorROCm::GenerateInputData: hipModuleLaunchKernel failed: " +
         std::string(hipGetErrorString(err)));
   }
 
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 
   drv_gpu_lib::InputData<void*> result;
   result.antenna_count = params_.antennas;
@@ -191,7 +191,7 @@ FormSignalGeneratorROCm::GenerateToCpu() {
   hipError_t err = hipMemcpyDtoH(
       flat.data(), gpu_buf,
       total * sizeof(std::complex<float>));
-  hipFree(gpu_buf);
+  (void)hipFree(gpu_buf);
 
   if (err != hipSuccess) {
     throw std::runtime_error(
@@ -240,7 +240,7 @@ void FormSignalGeneratorROCm::CompileKernel() {
     auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
     con.PrintError(0, "FormSignal[ROCm]", "Kernel compile log:\n" + log);
 
-    hiprtcDestroyProgram(&prog);
+    (void)hiprtcDestroyProgram(&prog);
     throw std::runtime_error(
         "FormSignalGeneratorROCm::CompileKernel: compilation failed");
   }
@@ -249,7 +249,7 @@ void FormSignalGeneratorROCm::CompileKernel() {
   hiprtcGetCodeSize(prog, &codeSize);
   std::vector<char> code(codeSize);
   hiprtcGetCode(prog, code.data());
-  hiprtcDestroyProgram(&prog);
+  (void)hiprtcDestroyProgram(&prog);
 
   hipError_t hipErr = hipModuleLoadData(&module_, code.data());
   if (hipErr != hipSuccess) {
@@ -273,7 +273,7 @@ void FormSignalGeneratorROCm::CompileKernel() {
 
 void FormSignalGeneratorROCm::ReleaseGpuResources() {
   if (module_) {
-    hipModuleUnload(module_);
+    (void)hipModuleUnload(module_);
     module_ = nullptr;
     kernel_ = nullptr;
     kernel_compiled_ = false;

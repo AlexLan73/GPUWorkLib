@@ -21,7 +21,7 @@ namespace filters_all_test {
 inline void run() {
   filters::tests::run_fir_basic();
   filters::tests::run_iir_basic();
-  // test_filters_rocm::run();  // ROCm — Linux only, uncomment on AMD GPU
+  test_filters_rocm::run();  // ROCm — Linux only, uncomment on AMD GPU
 }
 
 }  // namespace filters_all_test

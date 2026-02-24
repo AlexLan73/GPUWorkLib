@@ -22,6 +22,7 @@
 #if ENABLE_ROCM
 
 #include "statistics_types.hpp"
+#include "statistics_sort_gpu.hpp"
 #include "interface/i_backend.hpp"
 
 #include <hip/hip_runtime.h>
@@ -166,8 +167,9 @@ private:
   // GPU buffers
   void* input_buffer_    = nullptr;  ///< complex<float> input: beams * n_point
   void* magnitudes_buf_  = nullptr;  ///< float magnitudes: beams * n_point
-  void* sort_buf_        = nullptr;  ///< float working buffer for sort
-  void* sort_temp_buf_   = nullptr;  ///< rocPRIM sort temp storage
+  void* sort_buf_        = nullptr;  ///< float sorted output (rocprim writes here)
+  void* sort_temp_buf_   = nullptr;  ///< rocPRIM segmented_radix_sort temp storage
+  void* offsets_buf_     = nullptr;  ///< unsigned int[beam_count+1]: segment offsets
   void* reduce_buf_      = nullptr;  ///< float2 partial sums for mean reduction
   void* result_buf_      = nullptr;  ///< per-beam results (various types)
 

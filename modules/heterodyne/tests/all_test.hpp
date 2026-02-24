@@ -46,7 +46,7 @@ inline void run() {
   con.Print(gpu_id, "Heterodyne", "════════════════════════════════════════════════════════════");
 
   // ROCm: HeterodyneProcessorROCm tests (on Linux + AMD GPU)
-  // test_heterodyne_rocm::run();
+  test_heterodyne_rocm::run();
 }
 
 }  // namespace heterodyne_all_test

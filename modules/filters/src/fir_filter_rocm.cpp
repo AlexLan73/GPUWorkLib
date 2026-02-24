@@ -159,13 +159,13 @@ FirFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points) {
       args, nullptr);
 
   if (err != hipSuccess) {
-    hipFree(output_ptr);
+    (void)hipFree(output_ptr);
     throw std::runtime_error(
         "FirFilterROCm::Process: hipModuleLaunchKernel failed: " +
         std::string(hipGetErrorString(err)));
   }
 
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 
   drv_gpu_lib::InputData<void*> result;
   result.antenna_count = channels;
@@ -200,15 +200,15 @@ FirFilterROCm::ProcessFromCPU(
                             const_cast<std::complex<float>*>(data.data()),
                             data_size, stream_);
   if (err != hipSuccess) {
-    hipFree(input_ptr);
+    (void)hipFree(input_ptr);
     throw std::runtime_error(
         "FirFilterROCm::ProcessFromCPU: hipMemcpyHtoDAsync(input) failed");
   }
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 
   auto result = Process(input_ptr, channels, points);
 
-  hipFree(input_ptr);
+  (void)hipFree(input_ptr);
   return result;
 }
 
@@ -279,7 +279,7 @@ void FirFilterROCm::CompileKernel() {
     auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
     con.PrintError(0, "FirFilter[ROCm]", "Kernel compile log:\n" + log);
 
-    hiprtcDestroyProgram(&prog);
+    (void)hiprtcDestroyProgram(&prog);
     throw std::runtime_error(
         "FirFilterROCm::CompileKernel: compilation failed");
   }
@@ -288,7 +288,7 @@ void FirFilterROCm::CompileKernel() {
   hiprtcGetCodeSize(prog, &codeSize);
   std::vector<char> code(codeSize);
   hiprtcGetCode(prog, code.data());
-  hiprtcDestroyProgram(&prog);
+  (void)hiprtcDestroyProgram(&prog);
 
   hipError_t hipErr = hipModuleLoadData(&module_, code.data());
   if (hipErr != hipSuccess) {
@@ -312,7 +312,7 @@ void FirFilterROCm::CompileKernel() {
 
 void FirFilterROCm::UploadCoefficients() {
   if (coeff_buf_) {
-    hipFree(coeff_buf_);
+    (void)hipFree(coeff_buf_);
     coeff_buf_ = nullptr;
   }
 
@@ -327,23 +327,23 @@ void FirFilterROCm::UploadCoefficients() {
   err = hipMemcpyHtoDAsync(coeff_buf_, coefficients_.data(),
                             coeff_size, stream_);
   if (err != hipSuccess) {
-    hipFree(coeff_buf_);
+    (void)hipFree(coeff_buf_);
     coeff_buf_ = nullptr;
     throw std::runtime_error(
         "FirFilterROCm::UploadCoefficients: hipMemcpyHtoDAsync failed");
   }
-  hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(stream_);
 }
 
 void FirFilterROCm::ReleaseGpuResources() {
   if (module_) {
-    hipModuleUnload(module_);
+    (void)hipModuleUnload(module_);
     module_ = nullptr;
     kernel_ = nullptr;
     kernel_compiled_ = false;
   }
   if (coeff_buf_) {
-    hipFree(coeff_buf_);
+    (void)hipFree(coeff_buf_);
     coeff_buf_ = nullptr;
   }
 }

@@ -30,14 +30,16 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+#if ENABLE_ROCM
+#include "processors/spectrum_processor_rocm.hpp"
+#include "factory/spectrum_processor_factory.hpp"
+#include "backends/rocm/rocm_backend.hpp"
+#include "common/backend_type.hpp"
+#endif
+
 namespace test_spectrum_maxima_rocm {
 
 #if ENABLE_ROCM
-
-#include "processors/spectrum_processor_rocm.hpp"
-#include "factory/spectrum_processor_factory.hpp"
-#include "drv_gpu.hpp"
-#include "common/backend_type.hpp"
 
 using namespace antenna_fft;
 using namespace drv_gpu_lib;
@@ -404,18 +406,15 @@ inline void run() {
     std::cout << "║  SpectrumProcessorROCm Tests                     ║\n";
     std::cout << "╚══════════════════════════════════════════════════╝\n";
 
-    // Create ROCm backend
-    auto gpu_manager = drv_gpu_lib::DrvGPU::Create();
-    if (!gpu_manager) {
-        std::cout << "  SKIPPED: DrvGPU not available\n";
+    // Create ROCm backend directly (same pattern as test_fft_processor_rocm)
+    drv_gpu_lib::ROCmBackend rocm_backend;
+    try {
+        rocm_backend.Initialize(0);
+    } catch (const std::exception& e) {
+        std::cout << "  SKIPPED: ROCm backend not available: " << e.what() << "\n";
         return;
     }
-
-    auto* backend = gpu_manager->GetBackend(BackendType::ROCm, 0);
-    if (!backend || !backend->IsInitialized()) {
-        std::cout << "  SKIPPED: ROCm backend not available\n";
-        return;
-    }
+    drv_gpu_lib::IBackend* backend = &rocm_backend;
 
     TestOnePeak(backend);
     TestTwoPeaks(backend);
@@ -423,9 +422,8 @@ inline void run() {
     TestAllMaximaFromCPU(backend);
     TestBatchProcessing(backend);
 
-    // Optional: compare with OpenCL
-    auto* opencl_backend = gpu_manager->GetBackend(BackendType::OPENCL, 0);
-    TestCompareWithOpenCL(backend, opencl_backend);
+    // OpenCL comparison skipped (single-backend test)
+    TestCompareWithOpenCL(backend, nullptr);
 
     std::cout << "\n  All ROCm SpectrumMaxima tests PASSED!\n";
 }

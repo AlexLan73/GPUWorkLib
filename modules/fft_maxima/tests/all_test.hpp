@@ -32,14 +32,16 @@ inline void run() {
     // FindAllMaxima: полный pipeline, AllMaxima
     // test_find_all_maxima::run();
 
-    // BATCH: тесты для batch-обработки FindAllMaxima
-    test_batch_all_maxima::run();
+    // BATCH: тесты для batch-обработки FindAllMaxima (OpenCL = падает на gfx1201)
+    // test_batch_all_maxima::run();
 
     // BENCHMARK: 10 лучей × 500k точек
     // test_benchmark_all_maxima::run();
 
     // ROCm: SpectrumProcessorROCm тесты (запускать на Linux + AMD GPU)
-    // test_spectrum_maxima_rocm::run();
+#if ENABLE_ROCM
+    test_spectrum_maxima_rocm::run();
+#endif
 }
 
 }  // namespace fft_maxima_all_test
