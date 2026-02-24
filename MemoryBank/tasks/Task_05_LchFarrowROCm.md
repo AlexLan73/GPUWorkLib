@@ -45,11 +45,15 @@
 
 ## 4. Чек-лист
 
-- [ ] LCH_FARROW kernel в .hip
-- [ ] LchFarrowROCm класс
-- [ ] CMake
-- [ ] test_lch_farrow_rocm.hpp + all_test.hpp
-- [ ] Компиляция без ошибок
+- [x] LCH_FARROW kernel в .hip ✅
+- [x] LchFarrowROCm класс ✅
+- [x] CMake ✅
+- [x] test_lch_farrow_rocm.hpp + all_test.hpp ✅
+- [x] Компиляция без ошибок ✅
+
+> **Статус**: ✅ РЕАЛИЗОВАНО (2026-02-24, Кодо)
+> C++ тесты: 4/4 PASSED. Python тесты: 5/5 PASSED.
+> ⚠️ Не использовать целочисленные задержки! delay=3.0µs → row=47 матрицы Лагранжа (огромные коэффициенты). Использовать: 0.3, 1.7, 3.3, 4.9 µs.
 
 ---
 

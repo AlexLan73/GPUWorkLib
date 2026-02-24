@@ -56,13 +56,18 @@ Stub: `modules/heterodyne/src/heterodyne_processor_rocm.cpp` — все мето
 
 ## 5. Чек-лист
 
-- [ ] dechirp_multiply kernel в .hip
-- [ ] dechirp_correct kernel в .hip
-- [ ] HeterodyneProcessorROCm: Dechirp, Correct
-- [ ] Интеграция с SpectrumProcessorROCm
-- [ ] CMake
-- [ ] test_heterodyne_rocm.hpp + all_test.hpp
-- [ ] Компиляция без ошибок
+- [x] dechirp_multiply kernel в .hip ✅
+- [x] dechirp_correct kernel в .hip ✅
+- [x] HeterodyneProcessorROCm: Dechirp, Correct ✅
+- [x] Интеграция с SpectrumProcessorROCm ✅
+- [x] CMake ✅
+- [x] test_heterodyne_rocm.hpp + all_test.hpp ✅
+- [x] Компиляция без ошибок ✅
+
+> **Статус**: ✅ РЕАЛИЗОВАНО (2026-02-24, Кодо)
+> C++ тесты: 6/6 PASSED. Python тесты: 6/6 PASSED.
+> Python биндинги: HeterodyneROCm в gpuworklib.
+> Примечание: тесты используют CPU-math вместо OpenCL-генераторов (сигналы генерируются на CPU).
 
 ---
 

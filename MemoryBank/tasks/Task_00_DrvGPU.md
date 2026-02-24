@@ -114,13 +114,16 @@ case BackendType::ROCm:
 
 ## 8. Чек-лист
 
-- [ ] rocm_backend.hpp, rocm_backend.cpp
-- [ ] rocm_core.hpp, rocm_core.cpp
-- [ ] CreateBackend(ROCm) в drv_gpu.cpp
-- [ ] CMake: ROCm sources, hip::hip, include_directories
-- [ ] HIPBuffer (hip_buffer.hpp)
-- [ ] test_rocm_backend.hpp + all_test.hpp
-- [ ] Компиляция без ошибок (на Windows: ROCm код отключён через ENABLE_ROCM=OFF)
+- [x] rocm_backend.hpp, rocm_backend.cpp — `DrvGPU/backends/rocm/` ✅
+- [x] rocm_core.hpp, rocm_core.cpp — `DrvGPU/backends/rocm/` ✅
+- [x] CreateBackend(ROCm) в drv_gpu.cpp — `#if ENABLE_ROCM` ✅
+- [x] CMake: ROCm sources, hip::host, include_directories, ENABLE_ROCM=1 ✅
+- [x] HIPBuffer (hip_buffer.hpp) — `DrvGPU/memory/hip_buffer.hpp` (non-owning wrapper) ✅
+- [x] test_rocm_backend.hpp + all_test.hpp — 7 тестов, вызов под `#if ENABLE_ROCM` ✅
+- [x] CMake preset `Debian-Radeon9070` с ENABLE_ROCM=ON ✅
+
+> **Статус**: ✅ РЕАЛИЗОВАНО (2026-02-24, Кодо)
+> Компиляция на Linux с ROCm 7.2 — cmake configure проходит успешно.
 
 ---
 

@@ -72,14 +72,17 @@ Stub: [modules/fft_maxima/src/spectrum_processor_rocm.cpp](../../modules/fft_max
 
 ## 5. Чек-лист
 
-- [ ] SpectrumProcessorROCm::Initialize
-- [ ] ProcessFromCPU, ProcessFromGPU
-- [ ] ProcessBatch, ProcessBatchFromGPU
-- [ ] FindAllMaximaFromCPU, FindAllMaximaFromGPUPipeline
-- [ ] HIP kernels: magnitude, peak detection, parabolic interpolation
-- [ ] CMake
-- [ ] test_spectrum_maxima_rocm.hpp + all_test.hpp
-- [ ] Компиляция без ошибок
+- [x] SpectrumProcessorROCm::Initialize ✅
+- [x] ProcessFromCPU, ProcessFromGPU ✅
+- [x] ProcessBatch, ProcessBatchFromGPU ✅
+- [x] FindAllMaximaFromCPU, FindAllMaximaFromGPUPipeline ✅
+- [x] HIP kernels: magnitude, peak detection, parabolic interpolation ✅
+- [x] CMake ✅
+- [x] test_spectrum_maxima_rocm.hpp + all_test.hpp ✅
+- [x] Компиляция без ошибок ✅
+
+> **Статус**: ✅ РЕАЛИЗОВАНО (2026-02-24, Кодо)
+> C++ тесты: 5/5 PASSED на Radeon 9070 / gfx1201.
 
 ---
 

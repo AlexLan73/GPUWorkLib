@@ -51,13 +51,16 @@
 
 ## 4. Чек-лист
 
-- [ ] FFTProcessorROCm или ветка BackendType::ROCm в FFTProcessor
-- [ ] hipFFT инициализация, план, выполнение
-- [ ] Pre-callback (padding) в HIP
-- [ ] Post-kernel (mag/phase) в HIP
-- [ ] CMake: hipFFT при ENABLE_ROCM
-- [ ] test_fft_processor_rocm.hpp + all_test.hpp
-- [ ] Компиляция без ошибок
+- [x] FFTProcessorROCm или ветка BackendType::ROCm в FFTProcessor ✅
+- [x] hipFFT инициализация, план, выполнение ✅
+- [x] Pre-callback (padding) в HIP ✅
+- [x] Post-kernel (mag/phase) в HIP ✅
+- [x] CMake: hipFFT при ENABLE_ROCM ✅
+- [x] test_fft_processor_rocm.hpp + all_test.hpp ✅
+- [x] Компиляция без ошибок ✅
+
+> **Статус**: ✅ РЕАЛИЗОВАНО (2026-02-24, Кодо)
+> C++ тесты PASSED на Radeon 9070 / gfx1201.
 
 ---
 

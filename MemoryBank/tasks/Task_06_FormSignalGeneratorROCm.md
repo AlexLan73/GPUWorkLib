@@ -45,11 +45,14 @@
 
 ## 4. Чек-лист
 
-- [ ] form_signal kernel в .hip
-- [ ] FormSignalGeneratorROCm класс
-- [ ] CMake
-- [ ] test_form_signal_rocm.hpp + all_test.hpp
-- [ ] Компиляция без ошибок
+- [x] form_signal kernel в .hip ✅
+- [x] FormSignalGeneratorROCm класс ✅
+- [x] CMake ✅
+- [x] test_form_signal_rocm.hpp + all_test.hpp ✅
+- [x] Компиляция без ошибок ✅
+
+> **Статус**: ✅ РЕАЛИЗОВАНО (2026-02-24, Кодо)
+> C++ тесты: 6/6 PASSED на Radeon 9070 / gfx1201.
 
 ---
 

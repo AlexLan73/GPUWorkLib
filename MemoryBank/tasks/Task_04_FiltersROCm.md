@@ -50,12 +50,16 @@
 
 ## 4. Чек-лист
 
-- [ ] FIR kernel в .hip
-- [ ] IIR kernel в .hip
-- [ ] FirFilterROCm, IirFilterROCm
-- [ ] CMake
-- [ ] test_filters_rocm.hpp + all_test.hpp
-- [ ] Компиляция без ошибок
+- [x] FIR kernel в .hip ✅
+- [x] IIR kernel в .hip ✅
+- [x] FirFilterROCm, IirFilterROCm ✅
+- [x] CMake ✅
+- [x] test_filters_rocm.hpp + all_test.hpp ✅
+- [x] Компиляция без ошибок ✅
+
+> **Статус**: ✅ РЕАЛИЗОВАНО (2026-02-24, Кодо)
+> C++ тесты: 6/6 PASSED. Python тесты: FIR 5/5, IIR 5/5 PASSED.
+> Python биндинги: FirFilterROCm, IirFilterROCm в gpuworklib.
 
 ---
 
