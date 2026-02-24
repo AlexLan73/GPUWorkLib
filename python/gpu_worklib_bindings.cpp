@@ -46,6 +46,15 @@
 #include "params/form_params.hpp"
 #include "spectrum_maxima_finder.h"
 
+// ============================================================================
+// ROCm headers (Linux + AMD GPU only)
+// ============================================================================
+
+#if ENABLE_ROCM
+#include "backends/rocm/rocm_backend.hpp"
+#include "backends/hybrid/hybrid_backend.hpp"
+#endif
+
 namespace py = pybind11;
 
 // ============================================================================
@@ -153,6 +162,87 @@ private:
     std::string device_name_;
     std::unique_ptr<drv_gpu_lib::OpenCLBackend> backend_;
 };
+
+// ============================================================================
+// ROCmGPUContext — wraps ROCm backend (Linux + AMD GPU only)
+// ============================================================================
+
+#if ENABLE_ROCM
+
+class ROCmGPUContext {
+public:
+  explicit ROCmGPUContext(int device_index = 0)
+      : backend_(std::make_unique<drv_gpu_lib::ROCmBackend>()) {
+    backend_->Initialize(device_index);
+  }
+
+  ~ROCmGPUContext() = default;
+
+  // No copy
+  ROCmGPUContext(const ROCmGPUContext&) = delete;
+  ROCmGPUContext& operator=(const ROCmGPUContext&) = delete;
+
+  drv_gpu_lib::IBackend* backend() { return backend_.get(); }
+  std::string device_name() const { return backend_->GetDeviceName(); }
+  int device_index() const { return backend_->GetDeviceIndex(); }
+
+private:
+  std::unique_ptr<drv_gpu_lib::ROCmBackend> backend_;
+};
+
+// ROCm Python wrappers (include AFTER ROCmGPUContext is defined)
+#include "py_filters_rocm.hpp"
+#include "py_lch_farrow_rocm.hpp"
+#include "py_heterodyne_rocm.hpp"
+#include "py_statistics.hpp"
+
+// ============================================================================
+// HybridGPUContext — wraps HybridBackend (OpenCL + ROCm on one GPU)
+// ============================================================================
+
+class HybridGPUContext {
+public:
+  explicit HybridGPUContext(int device_index = 0)
+      : backend_(std::make_unique<drv_gpu_lib::HybridBackend>()) {
+    backend_->Initialize(device_index);
+  }
+
+  ~HybridGPUContext() = default;
+
+  HybridGPUContext(const HybridGPUContext&) = delete;
+  HybridGPUContext& operator=(const HybridGPUContext&) = delete;
+
+  drv_gpu_lib::HybridBackend* backend() { return backend_.get(); }
+
+  std::string opencl_device_name() const {
+    auto* ocl = backend_->GetOpenCL();
+    if (ocl && ocl->IsInitialized()) return ocl->GetDeviceName();
+    return "Unknown";
+  }
+
+  std::string rocm_device_name() const {
+    auto* rocm = backend_->GetROCm();
+    if (rocm && rocm->IsInitialized()) return rocm->GetDeviceName();
+    return "Unknown";
+  }
+
+  std::string device_name() const { return backend_->GetDeviceName(); }
+  int device_index() const { return backend_->GetDeviceIndex(); }
+
+  std::string zero_copy_method() const {
+    auto method = backend_->GetBestZeroCopyMethod();
+    return drv_gpu_lib::ZeroCopyMethodToString(method);
+  }
+
+  bool is_zero_copy_supported() const {
+    return backend_->GetBestZeroCopyMethod() != drv_gpu_lib::ZeroCopyMethod::NONE;
+  }
+
+private:
+  std::unique_ptr<drv_gpu_lib::HybridBackend> backend_;
+};
+
+#endif  // ENABLE_ROCM
 
 // ============================================================================
 // PySignalGenerator — pythonic wrapper over signal_gen::SignalService
@@ -1061,9 +1151,9 @@ private:
 // ============================================================================
 
 PYBIND11_MODULE(gpuworklib, m) {
-    m.doc() = "GPUWorkLib - GPU Signal Processing (OpenCL)\n\n"
-              "Modules:\n"
-              "  GPUContext              - GPU device management\n"
+    m.doc() = "GPUWorkLib - GPU Signal Processing (OpenCL + ROCm)\n\n"
+              "OpenCL classes:\n"
+              "  GPUContext              - GPU device management (OpenCL)\n"
               "  SignalGenerator         - CW, LFM, Noise generation\n"
               "  ScriptGenerator         - Text DSL -> GPU kernel compiler\n"
               "  FormSignalGenerator     - Multi-channel getX formula (signal+noise+delay)\n"
@@ -1071,7 +1161,17 @@ PYBIND11_MODULE(gpuworklib, m) {
               "  LfmAnalyticalDelay      - LFM with per-antenna analytical delay\n"
               "  LchFarrow               - Standalone Lagrange fractional delay processor\n"
               "  FFTProcessor            - FFT with various output modes\n"
-              "  SpectrumMaximaFinder    - Find all local maxima in FFT spectrum\n";
+              "  SpectrumMaximaFinder    - Find all local maxima in FFT spectrum\n"
+              "  FirFilter               - GPU FIR convolution filter\n"
+              "  IirFilter               - GPU IIR biquad cascade filter\n"
+              "  HeterodyneDechirp       - LFM dechirp pipeline\n\n"
+              "ROCm classes (Linux + AMD GPU, ENABLE_ROCM=1):\n"
+              "  ROCmGPUContext          - GPU device management (ROCm/HIP)\n"
+              "  FirFilterROCm           - GPU FIR filter (ROCm)\n"
+              "  IirFilterROCm           - GPU IIR biquad cascade (ROCm)\n"
+              "  LchFarrowROCm           - Lagrange fractional delay (ROCm)\n"
+              "  HeterodyneROCm          - LFM dechirp + correct (ROCm)\n"
+              "  StatisticsProcessor     - mean/median/variance/std (ROCm)\n";
 
     // ════════════════════════════════════════════════════════════════
     // GPUContext
@@ -1655,6 +1755,82 @@ PYBIND11_MODULE(gpuworklib, m) {
     // HeterodyneDechirp (see py_heterodyne.hpp)
     // ════════════════════════════════════════════════════════════════
     register_heterodyne(m);
+
+#if ENABLE_ROCM
+    // ════════════════════════════════════════════════════════════════
+    // ROCm classes (Linux + AMD GPU only)
+    // ════════════════════════════════════════════════════════════════
+
+    // ROCmGPUContext
+    py::class_<ROCmGPUContext>(m, "ROCmGPUContext",
+        "ROCm GPU context wrapping AMD HIP device.\n\n"
+        "Usage:\n"
+        "  ctx = gpuworklib.ROCmGPUContext(device_index=0)\n"
+        "  print(ctx.device_name)")
+        .def(py::init<int>(), py::arg("device_index") = 0,
+             "Create ROCm GPU context on given device index")
+        .def_property_readonly("device_name", &ROCmGPUContext::device_name,
+             "GPU device name (str)")
+        .def_property_readonly("device_index", &ROCmGPUContext::device_index,
+             "GPU device index (int)")
+        .def("__repr__", [](const ROCmGPUContext& ctx) {
+            return "<ROCmGPUContext device='" + ctx.device_name() + "'>";
+        })
+        .def("__enter__", [](ROCmGPUContext& self) -> ROCmGPUContext& { return self; },
+             py::return_value_policy::reference)
+        .def("__exit__", [](ROCmGPUContext&, py::object, py::object, py::object) {
+            return false;
+        });
+
+    // FirFilterROCm (see py_filters_rocm.hpp)
+    register_fir_filter_rocm(m);
+
+    // IirFilterROCm (see py_filters_rocm.hpp)
+    register_iir_filter_rocm(m);
+
+    // LchFarrowROCm (see py_lch_farrow_rocm.hpp)
+    register_lch_farrow_rocm(m);
+
+    // HeterodyneROCm (see py_heterodyne_rocm.hpp)
+    register_heterodyne_rocm(m);
+
+    // StatisticsProcessor (see py_statistics.hpp)
+    register_statistics(m);
+
+    // HybridGPUContext
+    py::class_<HybridGPUContext>(m, "HybridGPUContext",
+        "Hybrid GPU context with OpenCL + ROCm on one GPU.\n\n"
+        "Usage:\n"
+        "  ctx = gpuworklib.HybridGPUContext(device_index=0)\n"
+        "  print(ctx.opencl_device_name)\n"
+        "  print(ctx.rocm_device_name)\n"
+        "  print(ctx.zero_copy_method)\n"
+        "  if ctx.is_zero_copy_supported:\n"
+        "      print('ZeroCopy available!')")
+        .def(py::init<int>(), py::arg("device_index") = 0,
+             "Create Hybrid GPU context (OpenCL + ROCm) on given device index")
+        .def_property_readonly("opencl_device_name", &HybridGPUContext::opencl_device_name,
+             "OpenCL sub-backend device name (str)")
+        .def_property_readonly("rocm_device_name", &HybridGPUContext::rocm_device_name,
+             "ROCm sub-backend device name (str)")
+        .def_property_readonly("device_name", &HybridGPUContext::device_name,
+             "Combined device name (str)")
+        .def_property_readonly("device_index", &HybridGPUContext::device_index,
+             "GPU device index (int)")
+        .def_property_readonly("zero_copy_method", &HybridGPUContext::zero_copy_method,
+             "Best available ZeroCopy method: 'AMD GPU VA', 'DMA-BUF', 'SVM', or 'None'")
+        .def_property_readonly("is_zero_copy_supported", &HybridGPUContext::is_zero_copy_supported,
+             "True if any ZeroCopy method is available on this GPU")
+        .def("__repr__", [](const HybridGPUContext& ctx) {
+            return "<HybridGPUContext device='" + ctx.device_name() +
+                   "' zero_copy='" + ctx.zero_copy_method() + "'>";
+        })
+        .def("__enter__", [](HybridGPUContext& self) -> HybridGPUContext& { return self; },
+             py::return_value_policy::reference)
+        .def("__exit__", [](HybridGPUContext&, py::object, py::object, py::object) {
+            return false;
+        });
+#endif  // ENABLE_ROCM
 
     // ════════════════════════════════════════════════════════════════
     // Module-level utilities
