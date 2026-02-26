@@ -15,6 +15,7 @@
 #include "test_cholesky_inverter_rocm.hpp"
 #include "test_cross_backend_conversion.hpp"
 #include "test_benchmark_symmetrize.hpp"
+#include "test_stage_profiling.hpp"
 #include "backends/rocm/rocm_core.hpp"
 #include "backends/rocm/rocm_backend.hpp"
 #endif
@@ -81,13 +82,14 @@ inline void run() {
   TestConvert_OutputFormats(backend, SymmetrizeMode::Roundtrip);
   TestConvert_OutputFormats(backend, SymmetrizeMode::GpuKernel);
 
+  // --- Stage Profiling (Task_12) ---
+  TestStageProfiling(backend);
+
   // --- Profiler ---
   TestProfilerIntegration(backend);
 
-  // --- Benchmark (раскомментировать для запуска) ---
-  // BenchmarkSingle341(backend);
-  // BenchmarkBatch_16x64(backend);
-  // BenchmarkBatch_4x256(backend);
+  // --- Benchmark (hipEvent GPU timing, MD report) ---
+  RunComprehensiveBenchmark(backend);
 
   rocm.Cleanup();
 

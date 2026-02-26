@@ -19,10 +19,13 @@
  */
 
 #include <complex>
+#include <memory>
 #include <vector>
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
 #include "vector_algebra_types.hpp"
+
+namespace drv_gpu_lib { class KernelCacheService; }
 
 namespace vector_algebra {
 
@@ -53,10 +56,18 @@ public:
   CholeskyInverterROCm& operator=(const CholeskyInverterROCm&) = delete;
 
   /// Изменить режим симметризации
-  void SetSymmetrizeMode(SymmetrizeMode mode) { mode_ = mode; }
+  void SetSymmetrizeMode(SymmetrizeMode mode);
 
   /// Текущий режим симметризации
   SymmetrizeMode GetSymmetrizeMode() const { return mode_; }
+
+  /// Явная прекомпиляция hiprtc kernel (для warmup/benchmark).
+  /// Вызывается автоматически в конструкторе при GpuKernel mode.
+  void CompileKernels();
+
+  /// Включить/выключить проверку info (POTRF/POTRI). Default: true.
+  /// Для benchmark/production с гарантированно HPD матрицами — false.
+  void SetCheckInfo(bool enabled) { check_info_ = enabled; }
 
   // ─── Одна матрица ─────────────────────────────────────────────────────
 
@@ -101,10 +112,14 @@ private:
   void* handle_ = nullptr;    ///< rocblas_handle (opaque)
   SymmetrizeMode mode_;
 
+  // ─── Предаллоцированный dev_info (Task_12: убираем hipMalloc/hipFree) ──
+  void* d_info_ = nullptr;    ///< rocblas_int[2] на GPU (slot 0=potrf, 1=potri)
+
   // ─── hiprtc kernel state ──────────────────────────────────────────────
   void* sym_module_ = nullptr;   ///< hipModule_t
   void* sym_kernel_ = nullptr;   ///< hipFunction_t
   bool kernels_compiled_ = false;
+  std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
 
   // ─── Core GPU ops ─────────────────────────────────────────────────────
 
@@ -130,9 +145,6 @@ private:
 
   // ─── Symmetrize: GPU Kernel (в symmetrize_gpu_rocm.cpp) ──────────────
 
-  /// Скомпилировать hiprtc kernel (lazy, один раз)
-  void CompileKernels();
-
   /// HIP kernel in-place (одна матрица)
   void SymmetrizeGpuKernel(void* d_matrix, int n, void* stream);
 
@@ -147,6 +159,12 @@ private:
 
   /// Диспетчер batched
   void SymmetrizeBatched(void* d_contiguous, int n, int batch, void* stream);
+
+  /// Проверить d_info_ после pipeline (отложенная проверка, одна синхронизация).
+  /// Вызывается автоматически если check_info_ == true.
+  void CheckInfo(const char* context);
+
+  bool check_info_ = true;  ///< true=проверять info (safe), false=пропустить (benchmark)
 
   /// Вычислить n из n_point (sqrt) или вернуть n_hint
   int ResolveMatrixSize(uint32_t n_point, int n_hint) const;

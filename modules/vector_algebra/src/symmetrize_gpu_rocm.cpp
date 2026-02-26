@@ -1,9 +1,12 @@
 /**
  * @file symmetrize_gpu_rocm.cpp
- * @brief CompileKernels + SymmetrizeGpuKernel (hiprtc)
+ * @brief CompileKernels + SymmetrizeGpuKernel (hiprtc + disk cache)
  *
  * Реализация GPU-пути симметризации: компиляция HIP kernel через hiprtc,
  * запуск через hipModuleLaunchKernel.
+ *
+ * Оптимизация: дисковый кеш HSACO через KernelCacheService.
+ * Первый запуск: hiprtc compile + save. Последующие: load binary.
  *
  * @author Кодо (AI Assistant)
  * @date 2026-02-26
@@ -14,6 +17,7 @@
 #include "cholesky_inverter_rocm.hpp"
 #include "kernels/symmetrize_kernel_sources_rocm.hpp"
 
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -21,18 +25,65 @@
 #include <hip/hip_runtime.h>
 #include <hip/hiprtc.h>
 
-// ConsoleOutput для логирования ошибок компиляции
 #include "services/console_output.hpp"
+#include "services/kernel_cache_service.hpp"
 
 namespace vector_algebra {
 
 // ════════════════════════════════════════════════════════════════════════════
-// CompileKernels — hiprtc compilation (lazy, один раз)
+// LoadModuleFromBinary — загрузить hipModule из бинарного blob'а
+// ════════════════════════════════════════════════════════════════════════════
+
+static void LoadModuleAndFunction(const void* binary_data, size_t /*binary_size*/,
+                                   void*& out_module, void*& out_kernel) {
+  hipModule_t module = nullptr;
+  hipError_t hip_err = hipModuleLoadData(&module, binary_data);
+  if (hip_err != hipSuccess) {
+    throw std::runtime_error(
+        "CompileKernels: hipModuleLoadData failed: " +
+        std::string(hipGetErrorString(hip_err)));
+  }
+  out_module = static_cast<void*>(module);
+
+  hipFunction_t func = nullptr;
+  hip_err =
+      hipModuleGetFunction(&func, module, "symmetrize_upper_to_full");
+  if (hip_err != hipSuccess) {
+    throw std::runtime_error(
+        "CompileKernels: hipModuleGetFunction failed: " +
+        std::string(hipGetErrorString(hip_err)));
+  }
+  out_kernel = static_cast<void*>(func);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// CompileKernels — hiprtc compilation with disk cache
 // ════════════════════════════════════════════════════════════════════════════
 
 void CholeskyInverterROCm::CompileKernels() {
   if (kernels_compiled_) return;
 
+  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
+  constexpr const char* kKernelName = "symmetrize_upper_to_full";
+
+  // ─── Try loading from disk cache ───────────────────────────────────────
+  if (kernel_cache_) {
+    try {
+      auto entry = kernel_cache_->Load(kKernelName);
+      if (entry.has_binary()) {
+        LoadModuleAndFunction(entry.binary.data(), entry.binary.size(),
+                               sym_module_, sym_kernel_);
+        kernels_compiled_ = true;
+        con.Print(0, "VecAlg",
+                  "symmetrize kernel loaded from cache (HSACO)");
+        return;
+      }
+    } catch (...) {
+      // Cache miss or corrupt — fall through to compile
+    }
+  }
+
+  // ─── Compile via hiprtc ────────────────────────────────────────────────
   const char* src = kernels::GetSymmetrizeKernelSource();
 
   hiprtcProgram prog;
@@ -47,13 +98,11 @@ void CholeskyInverterROCm::CompileKernels() {
   const char* options[] = {"-O3"};
   rtc_err = hiprtcCompileProgram(prog, 1, options);
   if (rtc_err != HIPRTC_SUCCESS) {
-    // Получить лог компиляции для диагностики
     size_t log_size = 0;
     hiprtcGetProgramLogSize(prog, &log_size);
     std::string log(log_size, '\0');
     hiprtcGetProgramLog(prog, log.data());
 
-    auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
     con.PrintError(0, "VectorAlgebra",
                    "symmetrize kernel compile log:\n" + log);
 
@@ -63,35 +112,34 @@ void CholeskyInverterROCm::CompileKernels() {
         std::string(hiprtcGetErrorString(rtc_err)));
   }
 
-  // Get binary code
+  // Get binary code (HSACO)
   size_t code_size = 0;
   hiprtcGetCodeSize(prog, &code_size);
   std::vector<char> code(code_size);
   hiprtcGetCode(prog, code.data());
   (void)hiprtcDestroyProgram(&prog);
 
-  // Load module
-  hipModule_t module = nullptr;
-  hipError_t hip_err = hipModuleLoadData(&module, code.data());
-  if (hip_err != hipSuccess) {
-    throw std::runtime_error(
-        "CompileKernels: hipModuleLoadData failed: " +
-        std::string(hipGetErrorString(hip_err)));
-  }
-  sym_module_ = static_cast<void*>(module);
-
-  // Get kernel function
-  hipFunction_t func = nullptr;
-  hip_err =
-      hipModuleGetFunction(&func, module, "symmetrize_upper_to_full");
-  if (hip_err != hipSuccess) {
-    throw std::runtime_error(
-        "CompileKernels: hipModuleGetFunction failed: " +
-        std::string(hipGetErrorString(hip_err)));
-  }
-  sym_kernel_ = static_cast<void*>(func);
-
+  // Load module from compiled binary
+  LoadModuleAndFunction(code.data(), code.size(),
+                         sym_module_, sym_kernel_);
   kernels_compiled_ = true;
+
+  con.Print(0, "VecAlg",
+            "symmetrize kernel compiled (hiprtc, " +
+            std::to_string(code_size) + " bytes HSACO)");
+
+  // ─── Save to disk cache for next run ───────────────────────────────────
+  if (kernel_cache_) {
+    try {
+      std::vector<uint8_t> binary(code.begin(), code.end());
+      kernel_cache_->Save(kKernelName, src, binary,
+                           "", "symmetrize_upper_to_full hiprtc kernel");
+      con.Print(0, "VecAlg", "symmetrize kernel saved to cache");
+    } catch (const std::exception& e) {
+      con.Print(0, "VecAlg",
+                "warning: cache save failed: " + std::string(e.what()));
+    }
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -121,9 +169,6 @@ void CholeskyInverterROCm::SymmetrizeGpuKernel(void* d_matrix, int n,
         "SymmetrizeGpuKernel: launch failed: " +
         std::string(hipGetErrorString(err)));
   }
-
-  // Sync after kernel — результат нужен немедленно
-  hipStreamSynchronize(static_cast<hipStream_t>(stream));
 }
 
 // ════════════════════════════════════════════════════════════════════════════

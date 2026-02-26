@@ -23,6 +23,8 @@
 #include <rocblas/rocblas.h>
 #include <rocsolver/rocsolver.h>
 
+#include "services/kernel_cache_service.hpp"
+
 // ZeroCopy (Task_08) — только если собирается с OpenCL
 #ifdef CL_VERSION_1_0
 #include "backends/hybrid/zero_copy_bridge.hpp"
@@ -126,9 +128,39 @@ CholeskyInverterROCm::CholeskyInverterROCm(drv_gpu_lib::IBackend* backend,
 
   auto* stream = static_cast<hipStream_t>(backend_->GetNativeQueue());
   rocblas_set_stream(h, stream);
+
+  // Task_12: предаллокация dev_info — 2 слота (potrf + potri)
+  rocblas_int* info_ptr = nullptr;
+  hipError_t herr = hipMalloc(&info_ptr, 2 * sizeof(rocblas_int));
+  if (herr != hipSuccess) {
+    throw std::runtime_error(
+        "CholeskyInverterROCm: hipMalloc(d_info_) failed");
+  }
+  d_info_ = static_cast<void*>(info_ptr);
+
+  // Дисковый кеш HSACO (modules/vector_algebra/kernels/bin/)
+  kernel_cache_ = std::make_unique<drv_gpu_lib::KernelCacheService>(
+      "modules/vector_algebra/kernels", drv_gpu_lib::BackendType::ROCm);
+
+  // Eager compile: предкомпиляция hiprtc kernel при GpuKernel mode
+  if (mode_ == SymmetrizeMode::GpuKernel) {
+    CompileKernels();
+  }
+}
+
+void CholeskyInverterROCm::SetSymmetrizeMode(SymmetrizeMode mode) {
+  mode_ = mode;
+  // Если переключились на GpuKernel — скомпилировать сразу
+  if (mode_ == SymmetrizeMode::GpuKernel) {
+    CompileKernels();
+  }
 }
 
 CholeskyInverterROCm::~CholeskyInverterROCm() {
+  if (d_info_) {
+    (void)hipFree(d_info_);
+    d_info_ = nullptr;
+  }
   if (handle_) {
     rocblas_destroy_handle(static_cast<rocblas_handle>(handle_));
     handle_ = nullptr;
@@ -171,60 +203,56 @@ void CholeskyInverterROCm::SymmetrizeUpperToFull(std::complex<float>* data,
 // CorePotrf / CorePotri (single matrix)
 // ════════════════════════════════════════════════════════════════════════════
 
+// Task_12: Оптимизация — предаллоцированный d_info_, без hipMalloc/hipFree,
+// без промежуточных hipMemcpy D2H. Проверка info отложена в CheckInfo().
+
 void CholeskyInverterROCm::CorePotrf(void* d_matrix, int n, void* /*stream*/) {
   auto* h = static_cast<rocblas_handle>(handle_);
   auto* A = static_cast<rocblas_float_complex*>(d_matrix);
-
-  rocblas_int* dev_info = nullptr;
-  hipError_t herr = hipMalloc(&dev_info, sizeof(rocblas_int));
-  if (herr != hipSuccess) {
-    throw std::runtime_error("CorePotrf: hipMalloc(dev_info) failed");
-  }
+  auto* info_potrf = static_cast<rocblas_int*>(d_info_);  // slot 0
 
   rocblas_status rs =
-      rocsolver_cpotrf(h, rocblas_fill_lower, n, A, n, dev_info);
+      rocsolver_cpotrf(h, rocblas_fill_lower, n, A, n, info_potrf);
   if (rs != rocblas_status_success) {
-    hipFree(dev_info);
     throw std::runtime_error("CorePotrf: rocsolver_cpotrf failed (" +
                              std::to_string(static_cast<int>(rs)) + ")");
   }
-
-  rocblas_int host_info = 0;
-  hipMemcpy(&host_info, dev_info, sizeof(rocblas_int), hipMemcpyDeviceToHost);
-  hipFree(dev_info);
-
-  if (host_info != 0) {
-    throw std::runtime_error(
-        "CorePotrf: матрица не положительно определена (info=" +
-        std::to_string(host_info) + ")");
-  }
+  // info проверяется в CheckInfo() после всего pipeline
 }
 
 void CholeskyInverterROCm::CorePotri(void* d_matrix, int n, void* /*stream*/) {
   auto* h = static_cast<rocblas_handle>(handle_);
   auto* A = static_cast<rocblas_float_complex*>(d_matrix);
-
-  rocblas_int* dev_info = nullptr;
-  hipError_t herr = hipMalloc(&dev_info, sizeof(rocblas_int));
-  if (herr != hipSuccess) {
-    throw std::runtime_error("CorePotri: hipMalloc(dev_info) failed");
-  }
+  auto* info_potri = static_cast<rocblas_int*>(d_info_) + 1;  // slot 1
 
   rocblas_status rs =
-      rocsolver_cpotri(h, rocblas_fill_lower, n, A, n, dev_info);
+      rocsolver_cpotri(h, rocblas_fill_lower, n, A, n, info_potri);
   if (rs != rocblas_status_success) {
-    hipFree(dev_info);
     throw std::runtime_error("CorePotri: rocsolver_cpotri failed (" +
                              std::to_string(static_cast<int>(rs)) + ")");
   }
+  // info проверяется в CheckInfo() после всего pipeline
+}
 
-  rocblas_int host_info = 0;
-  hipMemcpy(&host_info, dev_info, sizeof(rocblas_int), hipMemcpyDeviceToHost);
-  hipFree(dev_info);
-
-  if (host_info != 0) {
-    throw std::runtime_error("CorePotri: ошибка инверсии (info=" +
-                             std::to_string(host_info) + ")");
+// Task_12: отложенная проверка — одна синхронизация вместо двух
+void CholeskyInverterROCm::CheckInfo(const char* context) {
+  rocblas_int host_info[2] = {0, 0};
+  hipError_t herr = hipMemcpy(host_info, d_info_, 2 * sizeof(rocblas_int),
+                               hipMemcpyDeviceToHost);
+  if (herr != hipSuccess) {
+    throw std::runtime_error(
+        std::string(context) + ": hipMemcpy(d_info_) failed");
+  }
+  if (host_info[0] != 0) {
+    throw std::runtime_error(
+        std::string(context) +
+        ": матрица не положительно определена (potrf info=" +
+        std::to_string(host_info[0]) + ")");
+  }
+  if (host_info[1] != 0) {
+    throw std::runtime_error(
+        std::string(context) + ": ошибка инверсии (potri info=" +
+        std::to_string(host_info[1]) + ")");
   }
 }
 
@@ -328,9 +356,9 @@ CholeskyResult CholeskyInverterROCm::Invert(
 
   CorePotrf(d_output, matrix_n, stream);
   CorePotri(d_output, matrix_n, stream);
-  backend_->Synchronize();
-
+  // Task_12: убрали backend_->Synchronize() — один stream гарантирует порядок
   Symmetrize(d_output, matrix_n, stream);
+  if (check_info_) CheckInfo("Invert(vector)");
 
   CholeskyResult result;
   result.d_data = d_output;
@@ -357,9 +385,9 @@ CholeskyResult CholeskyInverterROCm::Invert(
 
   CorePotrf(d_output, matrix_n, stream);
   CorePotri(d_output, matrix_n, stream);
-  backend_->Synchronize();
-
+  // Task_12: убрали backend_->Synchronize() — один stream гарантирует порядок
   Symmetrize(d_output, matrix_n, stream);
+  if (check_info_) CheckInfo("Invert(void*)");
 
   CholeskyResult result;
   result.d_data = d_output;
@@ -397,9 +425,9 @@ CholeskyResult CholeskyInverterROCm::Invert(
 
   CorePotrf(d_output, matrix_n, stream);
   CorePotri(d_output, matrix_n, stream);
-  backend_->Synchronize();
-
+  // Task_12: убрали backend_->Synchronize()
   Symmetrize(d_output, matrix_n, stream);
+  if (check_info_) CheckInfo("Invert(cl_mem)");
 
   CholeskyResult result;
   result.d_data = d_output;
@@ -429,9 +457,9 @@ CholeskyResult CholeskyInverterROCm::InvertBatch(
 
   CorePotrfBatched(d_output, n, batch, stream);
   CorePotriBatched(d_output, n, batch, stream);
-  backend_->Synchronize();
-
+  // Task_12: убрали backend_->Synchronize()
   SymmetrizeBatched(d_output, n, batch, stream);
+  if (check_info_) CheckInfo("InvertBatch(vector)");
 
   CholeskyResult result;
   result.d_data = d_output;
@@ -459,9 +487,9 @@ CholeskyResult CholeskyInverterROCm::InvertBatch(
 
   CorePotrfBatched(d_output, n, batch, stream);
   CorePotriBatched(d_output, n, batch, stream);
-  backend_->Synchronize();
-
+  // Task_12: убрали backend_->Synchronize()
   SymmetrizeBatched(d_output, n, batch, stream);
+  if (check_info_) CheckInfo("InvertBatch(void*)");
 
   CholeskyResult result;
   result.d_data = d_output;
@@ -500,9 +528,9 @@ CholeskyResult CholeskyInverterROCm::InvertBatch(
 
   CorePotrfBatched(d_output, n, batch, stream);
   CorePotriBatched(d_output, n, batch, stream);
-  backend_->Synchronize();
-
+  // Task_12: убрали backend_->Synchronize()
   SymmetrizeBatched(d_output, n, batch, stream);
+  if (check_info_) CheckInfo("InvertBatch(cl_mem)");
 
   CholeskyResult result;
   result.d_data = d_output;
