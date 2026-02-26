@@ -29,9 +29,13 @@
 #include <hip/hiprtc.h>
 
 #include <complex>
+#include <memory>
 #include <vector>
 #include <cstdint>
 #include <mutex>
+
+// Forward declaration to avoid header pollution
+namespace drv_gpu_lib { class KernelCacheService; }
 
 namespace statistics {
 
@@ -153,8 +157,14 @@ private:
   /// Execute Welford statistics kernel (mean_mag + variance + std per beam)
   void ExecuteWelfordKernel(size_t beam_count, size_t n_point);
 
+  /// TASK-1: Execute fused Welford kernel (reads only input, no magnitudes buffer)
+  void ExecuteWelfordFusedKernel(size_t beam_count, size_t n_point);
+
   /// Execute sort + median extraction per beam
   void ExecuteMedianSort(size_t beam_count, size_t n_point);
+
+  /// TASK-2: Execute extract_medians kernel → compact medians_compact_buf_
+  void ExecuteExtractMediansKernel(size_t beam_count, size_t n_point);
 
   // =========================================================================
   // Members
@@ -165,21 +175,27 @@ private:
   hipStream_t stream_ = nullptr;
 
   // GPU buffers
-  void* input_buffer_    = nullptr;  ///< complex<float> input: beams * n_point
-  void* magnitudes_buf_  = nullptr;  ///< float magnitudes: beams * n_point
-  void* sort_buf_        = nullptr;  ///< float sorted output (rocprim writes here)
-  void* sort_temp_buf_   = nullptr;  ///< rocPRIM segmented_radix_sort temp storage
-  void* offsets_buf_     = nullptr;  ///< unsigned int[beam_count+1]: segment offsets
-  void* reduce_buf_      = nullptr;  ///< float2 partial sums for mean reduction
-  void* result_buf_      = nullptr;  ///< per-beam results (various types)
+  void* input_buffer_        = nullptr;  ///< complex<float> input: beams * n_point
+  void* magnitudes_buf_      = nullptr;  ///< float magnitudes: beams * n_point
+  void* sort_buf_            = nullptr;  ///< float sorted output (rocprim writes here)
+  void* sort_temp_buf_       = nullptr;  ///< rocPRIM segmented_radix_sort temp storage
+  void* offsets_buf_         = nullptr;  ///< unsigned int[beam_count+1]: segment offsets
+  void* reduce_buf_          = nullptr;  ///< float2 partial sums for mean reduction
+  void* result_buf_          = nullptr;  ///< per-beam results (various types)
+  void* medians_compact_buf_ = nullptr;  ///< TASK-2: compact float[beam_count] medians
 
   // hiprtc compiled kernels
   hipModule_t module_ = nullptr;
-  hipFunction_t magnitudes_kernel_ = nullptr;   ///< complex -> |z|
-  hipFunction_t mean_reduce_kernel_ = nullptr;  ///< hierarchical sum for complex mean
-  hipFunction_t mean_final_kernel_ = nullptr;   ///< final mean division
-  hipFunction_t welford_kernel_ = nullptr;      ///< Welford single-pass stats
+  hipFunction_t magnitudes_kernel_      = nullptr;  ///< complex -> |z|
+  hipFunction_t mean_reduce_kernel_     = nullptr;  ///< hierarchical sum for complex mean
+  hipFunction_t mean_final_kernel_      = nullptr;  ///< final mean division
+  hipFunction_t welford_kernel_         = nullptr;  ///< Welford (magnitudes + input)
+  hipFunction_t welford_fused_kernel_   = nullptr;  ///< TASK-1: fused, input only
+  hipFunction_t extract_medians_kernel_ = nullptr;  ///< TASK-2: compact median extract
   bool kernels_compiled_ = false;
+
+  // TASK-3: Disk cache for compiled HSACO
+  std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
 
   // State
   size_t current_beams_ = 0;

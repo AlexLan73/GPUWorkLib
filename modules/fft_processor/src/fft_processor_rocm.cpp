@@ -23,6 +23,9 @@
 #include "services/gpu_profiler.hpp"
 #include "config/gpu_config.hpp"
 #include "logger/logger.hpp"
+#include "backends/rocm/rocm_backend.hpp"
+#include "services/console_output.hpp"
+#include "services/kernel_cache_service.hpp"
 
 #include <stdexcept>
 #include <cstring>
@@ -50,6 +53,10 @@ FFTProcessorROCm::FFTProcessorROCm(drv_gpu_lib::IBackend* backend)
     if (!stream_) {
         throw std::runtime_error("FFTProcessorROCm: failed to get HIP stream from backend");
     }
+
+    // TASK-1: Initialize disk cache for compiled HSACO kernels
+    kernel_cache_ = std::make_unique<drv_gpu_lib::KernelCacheService>(
+        "modules/fft_processor/kernels", drv_gpu_lib::BackendType::ROCm);
 }
 
 FFTProcessorROCm::~FFTProcessorROCm() {
@@ -61,11 +68,13 @@ FFTProcessorROCm::FFTProcessorROCm(FFTProcessorROCm&& other) noexcept
     , stream_(other.stream_)
     , plan_(other.plan_)
     , plan_created_(other.plan_created_)
+    , plan_last_(other.plan_last_)
+    , plan_last_batch_(other.plan_last_batch_)
     , input_buffer_(other.input_buffer_)
     , fft_input_(other.fft_input_)
     , fft_output_(other.fft_output_)
-    , mag_output_(other.mag_output_)
-    , phase_output_(other.phase_output_)
+    , mag_phase_interleaved_(other.mag_phase_interleaved_)
+    , kernel_cache_(std::move(other.kernel_cache_))
     , module_(other.module_)
     , pad_kernel_(other.pad_kernel_)
     , mag_phase_kernel_(other.mag_phase_kernel_)
@@ -80,11 +89,12 @@ FFTProcessorROCm::FFTProcessorROCm(FFTProcessorROCm&& other) noexcept
     other.stream_ = nullptr;
     other.plan_ = 0;
     other.plan_created_ = false;
+    other.plan_last_ = 0;
+    other.plan_last_batch_ = 0;
     other.input_buffer_ = nullptr;
     other.fft_input_ = nullptr;
     other.fft_output_ = nullptr;
-    other.mag_output_ = nullptr;
-    other.phase_output_ = nullptr;
+    other.mag_phase_interleaved_ = nullptr;
     other.module_ = nullptr;
     other.pad_kernel_ = nullptr;
     other.mag_phase_kernel_ = nullptr;
@@ -102,11 +112,13 @@ FFTProcessorROCm& FFTProcessorROCm::operator=(FFTProcessorROCm&& other) noexcept
         stream_ = other.stream_;
         plan_ = other.plan_;
         plan_created_ = other.plan_created_;
+        plan_last_ = other.plan_last_;
+        plan_last_batch_ = other.plan_last_batch_;
         input_buffer_ = other.input_buffer_;
         fft_input_ = other.fft_input_;
         fft_output_ = other.fft_output_;
-        mag_output_ = other.mag_output_;
-        phase_output_ = other.phase_output_;
+        mag_phase_interleaved_ = other.mag_phase_interleaved_;
+        kernel_cache_ = std::move(other.kernel_cache_);
         module_ = other.module_;
         pad_kernel_ = other.pad_kernel_;
         mag_phase_kernel_ = other.mag_phase_kernel_;
@@ -121,11 +133,12 @@ FFTProcessorROCm& FFTProcessorROCm::operator=(FFTProcessorROCm&& other) noexcept
         other.stream_ = nullptr;
         other.plan_ = 0;
         other.plan_created_ = false;
+        other.plan_last_ = 0;
+        other.plan_last_batch_ = 0;
         other.input_buffer_ = nullptr;
         other.fft_input_ = nullptr;
         other.fft_output_ = nullptr;
-        other.mag_output_ = nullptr;
-        other.phase_output_ = nullptr;
+        other.mag_phase_interleaved_ = nullptr;
         other.module_ = nullptr;
         other.pad_kernel_ = nullptr;
         other.mag_phase_kernel_ = nullptr;
@@ -377,11 +390,10 @@ void FFTProcessorROCm::AllocateBuffers(size_t batch_beam_count, FFTOutputMode mo
     }
 
     // Free old buffers
-    if (input_buffer_)  { (void)hipFree(input_buffer_);  input_buffer_ = nullptr; }
-    if (fft_input_)     { (void)hipFree(fft_input_);     fft_input_ = nullptr; }
-    if (fft_output_)    { (void)hipFree(fft_output_);    fft_output_ = nullptr; }
-    if (mag_output_)    { (void)hipFree(mag_output_);    mag_output_ = nullptr; }
-    if (phase_output_)  { (void)hipFree(phase_output_);  phase_output_ = nullptr; }
+    if (input_buffer_)         { (void)hipFree(input_buffer_);         input_buffer_ = nullptr; }
+    if (fft_input_)            { (void)hipFree(fft_input_);            fft_input_ = nullptr; }
+    if (fft_output_)           { (void)hipFree(fft_output_);           fft_output_ = nullptr; }
+    if (mag_phase_interleaved_){ (void)hipFree(mag_phase_interleaved_);mag_phase_interleaved_ = nullptr; }
     has_mag_phase_buffers_ = false;
 
     hipError_t err;
@@ -408,19 +420,14 @@ void FFTProcessorROCm::AllocateBuffers(size_t batch_beam_count, FFTOutputMode mo
                                   std::string(hipGetErrorString(err)));
     }
 
-    // 3. Mag/phase buffers (if needed)
+    // 3. Interleaved mag+phase buffer (TASK-4A: single buffer instead of two)
     if (mode != FFTOutputMode::COMPLEX) {
-        size_t scalar_size = batch_beam_count * nFFT_ * sizeof(float);
+        // float2_t per element: .x=mag, .y=phase  (2 floats = 8 bytes total)
+        size_t interleaved_size = batch_beam_count * nFFT_ * 2 * sizeof(float);
 
-        err = hipMalloc(&mag_output_, scalar_size);
+        err = hipMalloc(&mag_phase_interleaved_, interleaved_size);
         if (err != hipSuccess) {
-            throw std::runtime_error("AllocateBuffers: mag_output hipMalloc failed: " +
-                                      std::string(hipGetErrorString(err)));
-        }
-
-        err = hipMalloc(&phase_output_, scalar_size);
-        if (err != hipSuccess) {
-            throw std::runtime_error("AllocateBuffers: phase_output hipMalloc failed: " +
+            throw std::runtime_error("AllocateBuffers: mag_phase_interleaved hipMalloc failed: " +
                                       std::string(hipGetErrorString(err)));
         }
 
@@ -431,13 +438,30 @@ void FFTProcessorROCm::AllocateBuffers(size_t batch_beam_count, FFTOutputMode mo
 }
 
 void FFTProcessorROCm::CreateFFTPlan(size_t batch_beam_count) {
+    // Already active?
     if (plan_created_ && plan_batch_size_ == batch_beam_count) {
-        return;  // Plan already created for this batch size
+        return;
     }
 
-    // Destroy old plan
+    // TASK-4B: Check secondary plan cache before creating a new plan
+    if (plan_last_ != 0 && plan_last_batch_ == batch_beam_count) {
+        // Swap: promote secondary plan to active, demote current to secondary
+        std::swap(plan_, plan_last_);
+        std::swap(plan_batch_size_, plan_last_batch_);
+        plan_created_ = true;
+        return;
+    }
+
+    // Need a new plan — evict secondary cache slot if occupied, then move
+    // current active plan to secondary (keeps it alive for alternating sizes)
+    if (plan_last_ != 0) {
+        hipfftDestroy(plan_last_);
+        plan_last_ = 0;
+        plan_last_batch_ = 0;
+    }
     if (plan_created_) {
-        hipfftDestroy(plan_);
+        plan_last_ = plan_;
+        plan_last_batch_ = plan_batch_size_;
         plan_ = 0;
         plan_created_ = false;
     }
@@ -451,10 +475,10 @@ void FFTProcessorROCm::CreateFFTPlan(size_t batch_beam_count) {
                                   std::to_string(static_cast<int>(result)));
     }
 
-    // Set stream
     result = hipfftSetStream(plan_, stream_);
     if (result != HIPFFT_SUCCESS) {
         hipfftDestroy(plan_);
+        plan_ = 0;
         throw std::runtime_error("CreateFFTPlan: hipfftSetStream failed: " +
                                   std::to_string(static_cast<int>(result)));
     }
@@ -466,9 +490,54 @@ void FFTProcessorROCm::CreateFFTPlan(size_t batch_beam_count) {
 void FFTProcessorROCm::CompileKernels() {
     if (kernels_compiled_) return;
 
+    auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
+    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
+    constexpr const char* kCacheName = "fft_processor_kernels";
+
+    // ─── Helper: load kernel functions from loaded module ──────────────────
+    auto getKernel = [this](hipFunction_t* func, const char* name) {
+        hipError_t err = hipModuleGetFunction(func, module_, name);
+        if (err != hipSuccess) {
+            throw std::runtime_error(std::string("CompileKernels: hipModuleGetFunction(") +
+                                      name + ") failed: " + hipGetErrorString(err));
+        }
+    };
+
+    // ─── Try loading from HSACO disk cache ─────────────────────────────────
+    if (kernel_cache_) {
+        try {
+            auto entry = kernel_cache_->Load(kCacheName);
+            if (entry.has_binary()) {
+                hipError_t hip_err = hipModuleLoadData(&module_, entry.binary.data());
+                if (hip_err == hipSuccess) {
+                    getKernel(&pad_kernel_,       "pad_data");
+                    getKernel(&mag_phase_kernel_, "complex_to_mag_phase");
+                    kernels_compiled_ = true;
+                    con.Print(gpu_id, "FFTProc", "kernels loaded from HSACO cache");
+                    DRVGPU_LOG_INFO_GPU(gpu_id, "FFTProcessorROCm", "HIP kernels loaded from cache");
+                    return;
+                }
+                // Stale cache (different arch) — fall through to recompile
+                (void)hipModuleUnload(module_);
+                module_ = nullptr;
+            }
+        } catch (...) {
+            // Cache miss or corrupt — fall through to compile
+        }
+    }
+
+    // ─── Get target architecture for --offload-arch ────────────────────────
+    std::string arch_name;
+    try {
+        auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
+        arch_name = rocm_backend->GetCore().GetArchName();
+    } catch (...) {
+        arch_name = "";
+    }
+
+    // ─── Compile via hiprtc with optimization flags ─────────────────────────
     const char* source = kernels::GetHIPKernelSource();
 
-    // Create hiprtc program
     hiprtcProgram prog;
     hiprtcResult rtcResult = hiprtcCreateProgram(&prog, source, "fft_kernels.hip",
                                                   0, nullptr, nullptr);
@@ -477,10 +546,14 @@ void FFTProcessorROCm::CompileKernels() {
                                   std::to_string(static_cast<int>(rtcResult)));
     }
 
-    // Compile
-    rtcResult = hiprtcCompileProgram(prog, 0, nullptr);
+    std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
+    std::vector<const char*> opts = {"-O3", "-DWARP_SIZE=32"};
+    if (!arch_flag.empty()) {
+        opts.push_back(arch_flag.c_str());
+    }
+
+    rtcResult = hiprtcCompileProgram(prog, static_cast<int>(opts.size()), opts.data());
     if (rtcResult != HIPRTC_SUCCESS) {
-        // Get build log
         size_t logSize = 0;
         hiprtcGetProgramLogSize(prog, &logSize);
         std::string log(logSize, '\0');
@@ -489,58 +562,57 @@ void FFTProcessorROCm::CompileKernels() {
         throw std::runtime_error("CompileKernels: compilation failed:\n" + log);
     }
 
-    // Get compiled code
     size_t codeSize = 0;
     hiprtcGetCodeSize(prog, &codeSize);
     std::vector<char> code(codeSize);
     hiprtcGetCode(prog, code.data());
     (void)hiprtcDestroyProgram(&prog);
 
-    // Load module
     hipError_t hipErr = hipModuleLoadData(&module_, code.data());
     if (hipErr != hipSuccess) {
         throw std::runtime_error("CompileKernels: hipModuleLoadData failed: " +
                                   std::string(hipGetErrorString(hipErr)));
     }
 
-    // Get kernel functions
-    hipErr = hipModuleGetFunction(&pad_kernel_, module_, "pad_data");
-    if (hipErr != hipSuccess) {
-        (void)hipModuleUnload(module_);
-        module_ = nullptr;
-        throw std::runtime_error("CompileKernels: hipModuleGetFunction(pad_data) failed: " +
-                                  std::string(hipGetErrorString(hipErr)));
-    }
-
-    hipErr = hipModuleGetFunction(&mag_phase_kernel_, module_, "complex_to_mag_phase");
-    if (hipErr != hipSuccess) {
-        (void)hipModuleUnload(module_);
-        module_ = nullptr;
-        pad_kernel_ = nullptr;
-        throw std::runtime_error("CompileKernels: hipModuleGetFunction(complex_to_mag_phase) failed: " +
-                                  std::string(hipGetErrorString(hipErr)));
-    }
+    getKernel(&pad_kernel_,       "pad_data");
+    getKernel(&mag_phase_kernel_, "complex_to_mag_phase");
 
     kernels_compiled_ = true;
-
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
+    con.Print(gpu_id, "FFTProc",
+              "kernels compiled (" + std::to_string(codeSize) + " bytes HSACO" +
+              (arch_name.empty() ? "" : ", " + arch_name) + ")");
     DRVGPU_LOG_INFO_GPU(gpu_id, "FFTProcessorROCm", "HIP kernels compiled successfully");
+
+    // ─── Save compiled binary to disk cache ────────────────────────────────
+    if (kernel_cache_) {
+        try {
+            std::vector<uint8_t> binary(code.begin(), code.end());
+            kernel_cache_->Save(kCacheName, source, binary, "", "fft_processor hiprtc kernels");
+            con.Print(gpu_id, "FFTProc", "kernels saved to HSACO cache");
+        } catch (const std::exception& e) {
+            con.Print(gpu_id, "FFTProc", "warning: cache save failed: " + std::string(e.what()));
+        }
+    }
 }
 
 void FFTProcessorROCm::ReleaseResources() {
-    // Destroy hipFFT plan
+    // Destroy hipFFT plans (active + secondary cache)
     if (plan_created_) {
         hipfftDestroy(plan_);
         plan_ = 0;
         plan_created_ = false;
     }
+    if (plan_last_ != 0) {
+        hipfftDestroy(plan_last_);
+        plan_last_ = 0;
+        plan_last_batch_ = 0;
+    }
 
     // Free GPU buffers
-    if (input_buffer_)  { (void)hipFree(input_buffer_);  input_buffer_ = nullptr; }
-    if (fft_input_)     { (void)hipFree(fft_input_);     fft_input_ = nullptr; }
-    if (fft_output_)    { (void)hipFree(fft_output_);    fft_output_ = nullptr; }
-    if (mag_output_)    { (void)hipFree(mag_output_);    mag_output_ = nullptr; }
-    if (phase_output_)  { (void)hipFree(phase_output_);  phase_output_ = nullptr; }
+    if (input_buffer_)         { (void)hipFree(input_buffer_);         input_buffer_ = nullptr; }
+    if (fft_input_)            { (void)hipFree(fft_input_);            fft_input_ = nullptr; }
+    if (fft_output_)           { (void)hipFree(fft_output_);           fft_output_ = nullptr; }
+    if (mag_phase_interleaved_){ (void)hipFree(mag_phase_interleaved_);mag_phase_interleaved_ = nullptr; }
 
     // Unload hiprtc module
     if (module_) {
@@ -584,30 +656,39 @@ void FFTProcessorROCm::CopyGpuData(void* src, size_t src_offset_bytes, size_t co
 }
 
 void FFTProcessorROCm::ExecutePadKernel(size_t beam_count) {
-    unsigned int bc = static_cast<unsigned int>(beam_count);
-    unsigned int np = n_point_;
+    unsigned int np   = n_point_;
     unsigned int nfft = nFFT_;
 
-    size_t total = beam_count * nFFT_;
-    unsigned int block_size = 256;
-    unsigned int grid_size = static_cast<unsigned int>((total + block_size - 1) / block_size);
+    // TASK-3: Zero the entire padded buffer async — no divergent else-branch in kernel
+    hipError_t err = hipMemsetAsync(fft_input_,
+                                     0,
+                                     beam_count * nFFT_ * sizeof(std::complex<float>),
+                                     stream_);
+    if (err != hipSuccess) {
+        throw std::runtime_error("ExecutePadKernel: hipMemsetAsync failed: " +
+                                  std::string(hipGetErrorString(err)));
+    }
+
+    // TASK-2: 2D grid — blockIdx.y = beam_id, eliminates int div/mod per thread
+    unsigned int block_x = 256;
+    unsigned int grid_x  = static_cast<unsigned int>((n_point_ + block_x - 1) / block_x);
+    unsigned int grid_y  = static_cast<unsigned int>(beam_count);
 
     void* args[] = {
         &input_buffer_,
         &fft_input_,
-        &bc,
         &np,
         &nfft
     };
 
-    hipError_t err = hipModuleLaunchKernel(
+    err = hipModuleLaunchKernel(
         pad_kernel_,
-        grid_size, 1, 1,       // grid dimensions
-        block_size, 1, 1,      // block dimensions
-        0,                      // shared memory
-        stream_,                // stream
-        args,                   // kernel arguments
-        nullptr);               // extra
+        grid_x, grid_y, 1,     // grid: X covers n_point, Y = beam index
+        block_x, 1, 1,          // block
+        0,                       // shared memory
+        stream_,                 // stream
+        args,                    // kernel arguments
+        nullptr);                // extra
 
     if (err != hipSuccess) {
         throw std::runtime_error("ExecutePadKernel: hipModuleLaunchKernel failed: " +
@@ -629,19 +710,16 @@ void FFTProcessorROCm::ExecuteFFT() {
 }
 
 void FFTProcessorROCm::ExecuteMagPhaseKernel(size_t beam_count) {
-    unsigned int bc = static_cast<unsigned int>(beam_count);
-    unsigned int nfft = nFFT_;
+    // TASK-4A: single interleaved output buffer {mag, phase} per element
+    unsigned int total_u = static_cast<unsigned int>(beam_count * nFFT_);
 
-    size_t total = beam_count * nFFT_;
     unsigned int block_size = 256;
-    unsigned int grid_size = static_cast<unsigned int>((total + block_size - 1) / block_size);
+    unsigned int grid_size  = (total_u + block_size - 1) / block_size;
 
     void* args[] = {
         &fft_output_,
-        &mag_output_,
-        &phase_output_,
-        &bc,
-        &nfft
+        &mag_phase_interleaved_,
+        &total_u
     };
 
     hipError_t err = hipModuleLaunchKernel(
@@ -696,25 +774,17 @@ std::vector<FFTMagPhaseResult> FFTProcessorROCm::ReadMagPhaseResults(
 {
     size_t total = beam_count * nFFT_;
 
-    std::vector<float> raw_mag(total);
-    std::vector<float> raw_phase(total);
-
-    // Read mag and phase
-    hipError_t err = hipMemcpyDtoH(raw_mag.data(), mag_output_,
-                                     total * sizeof(float));
+    // TASK-4A: Single DtoH of interleaved {mag, phase} buffer (2 floats per element)
+    // Layout: [mag0, phase0, mag1, phase1, ...] — matches float2_t kernel output
+    std::vector<float> raw(total * 2);
+    hipError_t err = hipMemcpyDtoH(raw.data(), mag_phase_interleaved_,
+                                    total * 2 * sizeof(float));
     if (err != hipSuccess) {
-        throw std::runtime_error("ReadMagPhaseResults: mag hipMemcpyDtoH failed: " +
+        throw std::runtime_error("ReadMagPhaseResults: hipMemcpyDtoH failed: " +
                                   std::string(hipGetErrorString(err)));
     }
 
-    err = hipMemcpyDtoH(raw_phase.data(), phase_output_,
-                          total * sizeof(float));
-    if (err != hipSuccess) {
-        throw std::runtime_error("ReadMagPhaseResults: phase hipMemcpyDtoH failed: " +
-                                  std::string(hipGetErrorString(err)));
-    }
-
-    // Split into per-beam results
+    // Split interleaved data into per-beam results
     std::vector<FFTMagPhaseResult> results;
     results.reserve(beam_count);
 
@@ -723,16 +793,15 @@ std::vector<FFTMagPhaseResult> FFTProcessorROCm::ReadMagPhaseResults(
         result.beam_id = static_cast<uint32_t>(start_beam + i);
         result.nFFT = nFFT_;
         result.sample_rate = sample_rate;
+        result.magnitude.resize(nFFT_);
+        result.phase.resize(nFFT_);
 
-        result.magnitude.assign(
-            raw_mag.begin() + i * nFFT_,
-            raw_mag.begin() + (i + 1) * nFFT_);
+        for (uint32_t k = 0; k < nFFT_; ++k) {
+            size_t idx = (i * nFFT_ + k) * 2;
+            result.magnitude[k] = raw[idx    ];  // .x = mag
+            result.phase[k]     = raw[idx + 1];  // .y = phase
+        }
 
-        result.phase.assign(
-            raw_phase.begin() + i * nFFT_,
-            raw_phase.begin() + (i + 1) * nFFT_);
-
-        // Calculate frequencies on CPU
         if (include_freq) {
             result.frequency.resize(nFFT_);
             float freq_step = sample_rate / static_cast<float>(nFFT_);

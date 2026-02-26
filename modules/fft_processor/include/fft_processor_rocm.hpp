@@ -33,10 +33,14 @@
 #include <hip/hiprtc.h>
 
 #include <complex>
+#include <memory>
 #include <vector>
 #include <cstdint>
 #include <string>
 #include <mutex>
+
+// Forward declaration — full header included in .cpp only
+namespace drv_gpu_lib { class KernelCacheService; }
 
 namespace fft_processor {
 
@@ -175,22 +179,26 @@ private:
     drv_gpu_lib::IBackend* backend_ = nullptr;
     hipStream_t stream_ = nullptr;
 
-    // hipFFT
+    // hipFFT — two-plan cache (avoids Destroy+Create on last smaller batch)
     hipfftHandle plan_ = 0;
     bool plan_created_ = false;
+    hipfftHandle plan_last_ = 0;      ///< Cached secondary plan (different batch size)
+    size_t plan_last_batch_ = 0;
 
     // GPU buffers (device pointers)
-    void* input_buffer_ = nullptr;    ///< Raw input data: batch * n_point * sizeof(complex)
-    void* fft_input_ = nullptr;       ///< Padded input:   batch * nFFT * sizeof(complex)
-    void* fft_output_ = nullptr;      ///< FFT output:     batch * nFFT * sizeof(complex)
-    void* mag_output_ = nullptr;      ///< Magnitudes:     batch * nFFT * sizeof(float)
-    void* phase_output_ = nullptr;    ///< Phases:         batch * nFFT * sizeof(float)
+    void* input_buffer_ = nullptr;         ///< Raw input data: batch * n_point * sizeof(complex)
+    void* fft_input_ = nullptr;            ///< Padded input:   batch * nFFT * sizeof(complex)
+    void* fft_output_ = nullptr;           ///< FFT output:     batch * nFFT * sizeof(complex)
+    void* mag_phase_interleaved_ = nullptr;///< Interleaved {mag, phase}: batch * nFFT * 2*sizeof(float)
 
     // hiprtc compiled kernels
     hipModule_t module_ = nullptr;
     hipFunction_t pad_kernel_ = nullptr;
     hipFunction_t mag_phase_kernel_ = nullptr;
     bool kernels_compiled_ = false;
+
+    // HSACO kernel cache (disk)
+    std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
 
     // State
     uint32_t nFFT_ = 0;
