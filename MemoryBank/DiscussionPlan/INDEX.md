@@ -1,12 +1,18 @@
-# 📚 Statistics Module — Discussion Plans Index
+# 📚 Discussion Plans Index
 
-> **Дата**: 2026-02-14
-> **Статус**: Все исследования завершены ✅
-> **Готово к реализации**: OpenCL (сейчас) + ROCm (когда придёт AMD GPU)
+> **Дата**: 2026-02-24
+> **Статус**: Исследования Statistics завершены ✅ + планы модулей
 
 ---
 
-## 📋 Задачи исследования
+## 📋 Планы модулей
+
+- **[PLAN_Vector_Algebra_Cholesky.md](PLAN_Vector_Algebra_Cholesky.md)** — модуль vector_algebra: инверсия матрицы методом Холецкого (ROCm-only). Вход/выход: InputData\<T\> (vector\<complex\<float\>\>, void*).
+- **[~!_внимание_PLAN_Discrepancies_ROCm_Tasks.md](~!_внимание_PLAN_Discrepancies_ROCm_Tasks.md)** — разногласия планов ROCm.
+
+---
+
+## 📋 Задачи исследования (Statistics)
 
 Все задачи связаны с обработкой данных:
 - **256 лучей** × **4 млн точек** каждый

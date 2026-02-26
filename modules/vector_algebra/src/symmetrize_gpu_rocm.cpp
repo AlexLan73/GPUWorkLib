@@ -1,0 +1,148 @@
+/**
+ * @file symmetrize_gpu_rocm.cpp
+ * @brief CompileKernels + SymmetrizeGpuKernel (hiprtc)
+ *
+ * Реализация GPU-пути симметризации: компиляция HIP kernel через hiprtc,
+ * запуск через hipModuleLaunchKernel.
+ *
+ * @author Кодо (AI Assistant)
+ * @date 2026-02-26
+ */
+
+#if ENABLE_ROCM
+
+#include "cholesky_inverter_rocm.hpp"
+#include "kernels/symmetrize_kernel_sources_rocm.hpp"
+
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include <hip/hip_runtime.h>
+#include <hip/hiprtc.h>
+
+// ConsoleOutput для логирования ошибок компиляции
+#include "services/console_output.hpp"
+
+namespace vector_algebra {
+
+// ════════════════════════════════════════════════════════════════════════════
+// CompileKernels — hiprtc compilation (lazy, один раз)
+// ════════════════════════════════════════════════════════════════════════════
+
+void CholeskyInverterROCm::CompileKernels() {
+  if (kernels_compiled_) return;
+
+  const char* src = kernels::GetSymmetrizeKernelSource();
+
+  hiprtcProgram prog;
+  hiprtcResult rtc_err =
+      hiprtcCreateProgram(&prog, src, "symmetrize.hip", 0, nullptr, nullptr);
+  if (rtc_err != HIPRTC_SUCCESS) {
+    throw std::runtime_error(
+        "CompileKernels: hiprtcCreateProgram failed: " +
+        std::string(hiprtcGetErrorString(rtc_err)));
+  }
+
+  const char* options[] = {"-O3"};
+  rtc_err = hiprtcCompileProgram(prog, 1, options);
+  if (rtc_err != HIPRTC_SUCCESS) {
+    // Получить лог компиляции для диагностики
+    size_t log_size = 0;
+    hiprtcGetProgramLogSize(prog, &log_size);
+    std::string log(log_size, '\0');
+    hiprtcGetProgramLog(prog, log.data());
+
+    auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
+    con.PrintError(0, "VectorAlgebra",
+                   "symmetrize kernel compile log:\n" + log);
+
+    (void)hiprtcDestroyProgram(&prog);
+    throw std::runtime_error(
+        "CompileKernels: hiprtcCompileProgram failed: " +
+        std::string(hiprtcGetErrorString(rtc_err)));
+  }
+
+  // Get binary code
+  size_t code_size = 0;
+  hiprtcGetCodeSize(prog, &code_size);
+  std::vector<char> code(code_size);
+  hiprtcGetCode(prog, code.data());
+  (void)hiprtcDestroyProgram(&prog);
+
+  // Load module
+  hipModule_t module = nullptr;
+  hipError_t hip_err = hipModuleLoadData(&module, code.data());
+  if (hip_err != hipSuccess) {
+    throw std::runtime_error(
+        "CompileKernels: hipModuleLoadData failed: " +
+        std::string(hipGetErrorString(hip_err)));
+  }
+  sym_module_ = static_cast<void*>(module);
+
+  // Get kernel function
+  hipFunction_t func = nullptr;
+  hip_err =
+      hipModuleGetFunction(&func, module, "symmetrize_upper_to_full");
+  if (hip_err != hipSuccess) {
+    throw std::runtime_error(
+        "CompileKernels: hipModuleGetFunction failed: " +
+        std::string(hipGetErrorString(hip_err)));
+  }
+  sym_kernel_ = static_cast<void*>(func);
+
+  kernels_compiled_ = true;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SymmetrizeGpuKernel — single matrix
+// ════════════════════════════════════════════════════════════════════════════
+
+void CholeskyInverterROCm::SymmetrizeGpuKernel(void* d_matrix, int n,
+                                                 void* stream) {
+  CompileKernels();
+
+  unsigned int un = static_cast<unsigned int>(n);
+  dim3 block(16, 16);
+  dim3 grid((un + 15) / 16, (un + 15) / 16);
+
+  void* args[] = {&d_matrix, &un};
+
+  hipError_t err = hipModuleLaunchKernel(
+      static_cast<hipFunction_t>(sym_kernel_),
+      grid.x, grid.y, 1,    // grid dimensions
+      block.x, block.y, 1,  // block dimensions
+      0,                     // shared memory
+      static_cast<hipStream_t>(stream),
+      args, nullptr);
+
+  if (err != hipSuccess) {
+    throw std::runtime_error(
+        "SymmetrizeGpuKernel: launch failed: " +
+        std::string(hipGetErrorString(err)));
+  }
+
+  // Sync after kernel — результат нужен немедленно
+  hipStreamSynchronize(static_cast<hipStream_t>(stream));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// SymmetrizeGpuKernelBatched — цикл по матрицам
+// ════════════════════════════════════════════════════════════════════════════
+
+void CholeskyInverterROCm::SymmetrizeGpuKernelBatched(void* d_contiguous,
+                                                        int n, int batch,
+                                                        void* stream) {
+  const size_t one_bytes =
+      static_cast<size_t>(n) * n * sizeof(std::complex<float>);
+  auto* base = static_cast<char*>(d_contiguous);
+
+  for (int k = 0; k < batch; ++k) {
+    void* ptr_k = base + static_cast<size_t>(k) * one_bytes;
+    SymmetrizeGpuKernel(ptr_k, n, stream);
+  }
+}
+
+}  // namespace vector_algebra
+
+#endif  // ENABLE_ROCM

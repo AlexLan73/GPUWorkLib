@@ -195,6 +195,7 @@ private:
 #include "py_lch_farrow_rocm.hpp"
 #include "py_heterodyne_rocm.hpp"
 #include "py_statistics.hpp"
+#include "py_vector_algebra_rocm.hpp"
 
 // ============================================================================
 // HybridGPUContext — wraps HybridBackend (OpenCL + ROCm on one GPU)
@@ -1796,6 +1797,9 @@ PYBIND11_MODULE(gpuworklib, m) {
 
     // StatisticsProcessor (see py_statistics.hpp)
     register_statistics(m);
+
+    // CholeskyInverterROCm (see py_vector_algebra_rocm.hpp)
+    register_cholesky_inverter_rocm(m);
 
     // HybridGPUContext
     py::class_<HybridGPUContext>(m, "HybridGPUContext",

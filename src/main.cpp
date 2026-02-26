@@ -9,6 +9,7 @@
 #include "modules/filters/tests/all_test.hpp"
 #include "modules/heterodyne/tests/all_test.hpp"
 #include "modules/statistics/tests/all_test.hpp"
+#include "modules/vector_algebra/tests/all_test.hpp"
 
 int main() {
     std::cout << "===============================================================\n"
@@ -39,6 +40,9 @@ int main() {
 
     // statistics: mean, median, variance, std (ROCm only)
     statistics_all_test::run();
+
+    // vector_algebra: Cholesky matrix inversion (ROCm only)
+    vector_algebra_all_test::run();
 
     std::cout << "\nВсе тесты завершены!" << std::endl;
     return 0;

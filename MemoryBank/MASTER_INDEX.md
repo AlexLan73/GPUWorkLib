@@ -19,6 +19,7 @@
 | **LchFarrow** | Active | Lagrange fractional delay (48x5 matrix) |
 | **Filters** | **Active** | **FIR + IIR GPU фильтры (Stage 1 MVP + Stage 3 AI Pipeline DONE)** |
 | **Python Bindings** | Active | pybind11 модуль gpuworklib |
+| **vector_algebra** | **COMPLETED** | Cholesky инверсия матриц (rocBLAS+rocSOLVER). **v2**: SymmetrizeMode (Roundtrip/GpuKernel), hiprtc, RAII CholeskyResult. C++ 23 PASSED, Python 6 PASSED. API: `Doc/Python/vector_algebra_api.md` |
 | **Statistics** | Planned | Статистика. См. `specs/statistics_module.md` |
 | **Heterodyne** | **Active** | LFM Dechirp (stretch-processing). См. `Doc/Modules/heterodyne/Full.md` |
 
@@ -45,7 +46,8 @@ build/python/Release/gpuworklib.cp312-win_amd64.pyd
 - `LchFarrow(ctx)` — Fractional delay processor
 - `HeterodyneDechirp(ctx)` — LFM dechirp (stretch-processing)
 - `FirFilter(ctx)` — FIR фильтр (GPU, scipy-коэффициенты) **NEW**
-- `IirFilter(ctx)` — IIR фильтр (biquad cascade, GPU) **NEW**
+- `IirFilter(ctx)` — IIR фильтр (biquad cascade, GPU)
+- `CholeskyInverterROCm(ctx, mode)` — Инверсия матриц (Cholesky, ROCm). SymmetrizeMode: Roundtrip/GpuKernel **v2**
 
 ### Тесты: `Python_test/test_*.py`
 
@@ -64,4 +66,4 @@ build/python/Release/gpuworklib.cp312-win_amd64.pyd
 
 ---
 
-*Последнее обновление: 2026-02-23*
+*Последнее обновление: 2026-02-26*

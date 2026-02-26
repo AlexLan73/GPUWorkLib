@@ -67,6 +67,10 @@ target_link_libraries(gpuworklib PRIVATE
     ${_opencl_lib}
 )
 
+if(ROCM_ENABLED AND rocblas_FOUND AND rocsolver_FOUND)
+    target_link_libraries(gpuworklib PRIVATE vector_algebra)
+endif()
+
 if(CLFFT_FOUND AND CLFFT_LIB)
     target_link_libraries(gpuworklib PRIVATE "${CLFFT_LIB}")
 endif()
@@ -82,6 +86,8 @@ target_include_directories(gpuworklib PRIVATE
     ${CMAKE_SOURCE_DIR}/modules/filters/include
     ${CMAKE_SOURCE_DIR}/modules/heterodyne/include
     ${CMAKE_SOURCE_DIR}/modules/statistics/include
+    ${CMAKE_SOURCE_DIR}/modules/vector_algebra/include
+    ${CMAKE_SOURCE_DIR}/modules
     ${Python3_NumPy_INCLUDE_DIRS}
 )
 

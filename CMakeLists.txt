@@ -45,6 +45,9 @@ add_subdirectory(modules/heterodyne)
 # Statistics module (ROCm only: mean, median, variance, std)
 add_subdirectory(modules/statistics)
 
+# vector_algebra module (ROCm only: Cholesky matrix inversion via rocBLAS+rocSOLVER)
+add_subdirectory(modules/vector_algebra)
+
 # Main executable (src/)
 add_subdirectory(src)
 

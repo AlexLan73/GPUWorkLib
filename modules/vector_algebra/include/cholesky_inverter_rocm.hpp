@@ -1,0 +1,160 @@
+#pragma once
+#if ENABLE_ROCM
+
+/**
+ * @file cholesky_inverter_rocm.hpp
+ * @brief Инверсия эрмитовой положительно определённой матрицы (ROCm, POTRF+POTRI)
+ *
+ * Task_11 v2: два режима симметризации (Roundtrip / GpuKernel).
+ *
+ * Поддерживаемые входные форматы:
+ *   - InputData<vector<complex<float>>>  — CPU вектор
+ *   - InputData<void*>                   — ROCm device pointer
+ *   - InputData<cl_mem>                  — OpenCL буфер (ZeroCopy)
+ *
+ * Результат: CholeskyResult (единый тип, void* d_data на GPU).
+ *
+ * @author Кодо (AI Assistant)
+ * @date 2026-02-26
+ */
+
+#include <complex>
+#include <vector>
+#include "interface/i_backend.hpp"
+#include "interface/input_data.hpp"
+#include "vector_algebra_types.hpp"
+
+namespace vector_algebra {
+
+/**
+ * @class CholeskyInverterROCm
+ * @brief Инверсия эрмитовой положительно определённой матрицы (POTRF + POTRI).
+ *
+ * Два режима симметризации:
+ *   - Roundtrip: Download → CPU sym → Upload
+ *   - GpuKernel: HIP kernel in-place (hiprtc)
+ *
+ * Не копируемый, не перемещаемый (владеет rocBLAS handle + hipModule).
+ */
+class CholeskyInverterROCm {
+public:
+  /**
+   * @brief Конструктор.
+   * @param backend  ROCmBackend (или HybridBackend). Должен жить дольше объекта.
+   * @param mode     Режим симметризации (по умолчанию GpuKernel).
+   */
+  explicit CholeskyInverterROCm(
+      drv_gpu_lib::IBackend* backend,
+      SymmetrizeMode mode = SymmetrizeMode::GpuKernel);
+
+  ~CholeskyInverterROCm();
+
+  CholeskyInverterROCm(const CholeskyInverterROCm&) = delete;
+  CholeskyInverterROCm& operator=(const CholeskyInverterROCm&) = delete;
+
+  /// Изменить режим симметризации
+  void SetSymmetrizeMode(SymmetrizeMode mode) { mode_ = mode; }
+
+  /// Текущий режим симметризации
+  SymmetrizeMode GetSymmetrizeMode() const { return mode_; }
+
+  // ─── Одна матрица ─────────────────────────────────────────────────────
+
+  /// CPU вектор → GPU → CholeskyResult
+  CholeskyResult Invert(
+      const drv_gpu_lib::InputData<std::vector<std::complex<float>>>& input,
+      int n = 0);
+
+  /// ROCm device pointer → CholeskyResult
+  CholeskyResult Invert(
+      const drv_gpu_lib::InputData<void*>& input,
+      int n = 0);
+
+#ifdef CL_VERSION_1_0
+  /// OpenCL cl_mem (ZeroCopy) → CholeskyResult
+  CholeskyResult Invert(
+      const drv_gpu_lib::InputData<cl_mem>& input,
+      int n = 0);
+#endif
+
+  // ─── Batched ──────────────────────────────────────────────────────────
+
+  /// CPU batched → CholeskyResult
+  CholeskyResult InvertBatch(
+      const drv_gpu_lib::InputData<std::vector<std::complex<float>>>& input,
+      int n);
+
+  /// GPU batched → CholeskyResult
+  CholeskyResult InvertBatch(
+      const drv_gpu_lib::InputData<void*>& input,
+      int n);
+
+#ifdef CL_VERSION_1_0
+  /// cl_mem batched (ZeroCopy) → CholeskyResult
+  CholeskyResult InvertBatch(
+      const drv_gpu_lib::InputData<cl_mem>& input,
+      int n);
+#endif
+
+private:
+  drv_gpu_lib::IBackend* backend_;
+  void* handle_ = nullptr;    ///< rocblas_handle (opaque)
+  SymmetrizeMode mode_;
+
+  // ─── hiprtc kernel state ──────────────────────────────────────────────
+  void* sym_module_ = nullptr;   ///< hipModule_t
+  void* sym_kernel_ = nullptr;   ///< hipFunction_t
+  bool kernels_compiled_ = false;
+
+  // ─── Core GPU ops ─────────────────────────────────────────────────────
+
+  /// POTRF: Cholesky decomposition A = U^H * U
+  void CorePotrf(void* d_matrix, int n, void* stream);
+
+  /// POTRI: Compute A^{-1} from U
+  void CorePotri(void* d_matrix, int n, void* stream);
+
+  /// POTRF batched (sequential per matrix, uses same handle)
+  void CorePotrfBatched(void* d_contiguous, int n, int batch, void* stream);
+
+  /// POTRI batched
+  void CorePotriBatched(void* d_contiguous, int n, int batch, void* stream);
+
+  // ─── Symmetrize: Roundtrip ────────────────────────────────────────────
+
+  /// Download → CPU symmetrize → Upload (одна матрица)
+  void SymmetrizeRoundtrip(void* d_matrix, int n);
+
+  /// Download → CPU symmetrize → Upload (batched)
+  void SymmetrizeRoundtripBatched(void* d_contiguous, int n, int batch);
+
+  // ─── Symmetrize: GPU Kernel (в symmetrize_gpu_rocm.cpp) ──────────────
+
+  /// Скомпилировать hiprtc kernel (lazy, один раз)
+  void CompileKernels();
+
+  /// HIP kernel in-place (одна матрица)
+  void SymmetrizeGpuKernel(void* d_matrix, int n, void* stream);
+
+  /// HIP kernel (batched — цикл по матрицам)
+  void SymmetrizeGpuKernelBatched(void* d_contiguous, int n, int batch,
+                                   void* stream);
+
+  // ─── Утилиты ──────────────────────────────────────────────────────────
+
+  /// Диспетчер симметризации: выбирает Roundtrip или GpuKernel
+  void Symmetrize(void* d_matrix, int n, void* stream);
+
+  /// Диспетчер batched
+  void SymmetrizeBatched(void* d_contiguous, int n, int batch, void* stream);
+
+  /// Вычислить n из n_point (sqrt) или вернуть n_hint
+  int ResolveMatrixSize(uint32_t n_point, int n_hint) const;
+
+  /// CPU-side symmetrize (используется в Roundtrip)
+  static void SymmetrizeUpperToFull(std::complex<float>* data, int n);
+};
+
+}  // namespace vector_algebra
+
+#endif  // ENABLE_ROCM

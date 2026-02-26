@@ -29,6 +29,8 @@
 8. [Task_07_HeterodyneProcessorROCm.md](Task_07_HeterodyneProcessorROCm.md) — гетеродин
 9. [Task_08_ZeroCopy.md](Task_08_ZeroCopy.md) — опционально: OpenCL↔ROCm без копирования
 10. [Task_09_HybridBackend.md](Task_09_HybridBackend.md) — опционально: OPENCLandROCm режим
+11. [Task_10_VectorAlgebraCholesky.md](Task_10_VectorAlgebraCholesky.md) — Cholesky Inverter (vector_algebra)
+12. [Task_11_VectorAlgebraCholesky_v2.md](Task_11_VectorAlgebraCholesky_v2.md) — vector_algebra v2: RAII CholeskyResult, SymmetrizeMode, hiprtc, benchmarks
 
 **Референсы**:
 - [PLAN_ROCm_DrvGPU_Full.md](PLAN_ROCm_DrvGPU_Full.md) — полный план
@@ -52,6 +54,8 @@
 | 07 | [Task_07_HeterodyneProcessorROCm.md](Task_07_HeterodyneProcessorROCm.md) | Гетеродин | Да |
 | 08 | [Task_08_ZeroCopy.md](Task_08_ZeroCopy.md) | ZeroCopy OpenCL↔ROCm | Опционально |
 | 09 | [Task_09_HybridBackend.md](Task_09_HybridBackend.md) | OPENCLandROCm режим | Опционально |
+| 10 | [Task_10_VectorAlgebraCholesky.md](Task_10_VectorAlgebraCholesky.md) | Cholesky Inverter: vector_algebra (rocBLAS+rocSOLVER) | Да |
+| 11 | [Task_11_VectorAlgebraCholesky_v2.md](Task_11_VectorAlgebraCholesky_v2.md) | vector_algebra v2: RAII CholeskyResult, SymmetrizeMode (Roundtrip/GpuKernel), hiprtc, benchmarks | Да |
 
 ---
 
@@ -68,6 +72,7 @@ Task_00 (DrvGPU) ─────────────────────
     ├── Task_06 (FormSignal)                                   │
     │                                                          │
     └── Task_08 (ZeroCopy) ──► Task_09 (HybridBackend)         │
+                         └──► Task_10 (VectorAlgebra/Cholesky) ──► Task_11 (Cholesky GPU-only + Profiling)
 ```
 
 ---

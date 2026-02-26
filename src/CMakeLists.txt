@@ -96,6 +96,12 @@ if(TARGET GPUWorkLib::statistics)
     message(STATUS "✅ Linked: GPUWorkLib::statistics")
 endif()
 
+# Vector Algebra module (ROCm only: Cholesky matrix inversion)
+if(TARGET GPUWorkLib::vector_algebra)
+    target_link_libraries(GPUWorkLib PRIVATE GPUWorkLib::vector_algebra)
+    message(STATUS "✅ Linked: GPUWorkLib::vector_algebra")
+endif()
+
 # Spectrum Maxima module (для test_spectrum_maxima)
 # Используем -Wl,--start-group / --end-group для разрешения циклических зависимостей
 if(TARGET GPUWorkLib::spectrum_maxima)
@@ -173,6 +179,7 @@ target_include_directories(GPUWorkLib PRIVATE
     ${CMAKE_SOURCE_DIR}/modules/filters/include
     ${CMAKE_SOURCE_DIR}/modules/heterodyne/include
     ${CMAKE_SOURCE_DIR}/modules/statistics/include
+    ${CMAKE_SOURCE_DIR}/modules/vector_algebra/include
 )
 #    ${CMAKE_SOURCE_DIR}/include/ManagerOpenCL
 #    ${CMAKE_SOURCE_DIR}/include/GPU
