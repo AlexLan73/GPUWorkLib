@@ -108,7 +108,7 @@ private:
         uint32_t beam_count;
         uint32_t count_points;
         uint32_t nFFT;
-        uint32_t padding1;
+        uint32_t nFFT_log2;   // TASK-3: log2(nFFT) для bitwise div/mod в pre-callback
         uint32_t padding2;
         uint32_t padding3;
         uint32_t padding4;

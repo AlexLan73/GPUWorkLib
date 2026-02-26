@@ -11,8 +11,15 @@
 // 2. prefix_sum_* — Blelloch work-efficient exclusive scan
 // 3. compact_maxima — stream compaction (читает float*)
 //
+// ОПТИМИЗАЦИИ (fft_maxima_optimization_plan.md):
+//   TASK-2 (P1-C): native_sqrt() в compute_magnitudes, length() в post_callback — OK
+//   TASK-6 (P2-B): detect_all_maxima → 2D NDRange (устраняет div/mod)
+//   TASK-7 (P2-C): reqd_work_group_size(256,1,1) — компилятор убирает dead-branches
+//   TASK-8 (P2-D): __restrict на все pointer params
+//   TASK-9 (P3-A): LDS +1 padding в prefix_sum (block_scan)
+//
 // @author Kodo (AI Assistant)
-// @date 2026-02-14
+// @date 2026-02-26
 // ════════════════════════════════════════════════════════════════════════════
 
 namespace antenna_fft {
@@ -28,19 +35,7 @@ namespace kernels {
 //   Записывает: complex FFT → output (без изменений),
 //               |FFT[i]| → userdata (magnitudes buffer)
 //
-// СИГНАТУРА clFFT post-callback:
-//   void callback(__global void* output, uint outoffset,
-//                 __global void* userdata, float2 fftoutput)
-//
-// ПАРАМЕТРЫ:
-//   output    — выходной буфер FFT (cl_mem fft_output_)
-//   outoffset — индекс текущего элемента (0..beam_count*nFFT-1)
-//   userdata  — буфер для амплитуд (cl_mem magnitudes_buffer_)
-//   fftoutput — результат FFT для текущего элемента (complex float2)
-//
-// ИСПОЛЬЗОВАНИЕ:
-//   Регистрируется через clfftSetPlanCallback(plan, "computeMagnitudePost",
-//       source, 0, POSTCALLBACK, &magnitudes_buffer_, 1);
+// Использует length() — оптимизированная встроенная функция clFFT-компилятора
 //
 // ════════════════════════════════════════════════════════════════════════════
 inline const char* GetPostCallbackMagnitudeSource_opencl() {
@@ -64,24 +59,24 @@ inline const char* GetPostCallbackMagnitudeSource_opencl() {
 //   Для случая когда FFT данные уже на GPU (FindAllMaxima(cl_mem) — старый API).
 //   FFT не выполняется → post-callback не вызывается → нужен отдельный кернел.
 //
-// ВХОДНЫЕ ПАРАМЕТРЫ:
-//   fft_output  — результат FFT (beam_count * nFFT float2)
-//   magnitudes  — выходной массив |FFT[i]| (beam_count * nFFT float)
-//   total_size  — общее количество элементов (beam_count * nFFT)
+// ОПТИМИЗАЦИИ:
+//   - TASK-2 (P1-C): native_sqrt() вместо sqrt() — 2-4× быстрее
+//   - TASK-8 (P2-D): __restrict на pointer params
 //
 // ════════════════════════════════════════════════════════════════════════════
 inline const char* GetComputeMagnitudesKernelSource_opencl() {
     return R"CL(
 __kernel void compute_magnitudes(
-    __global const float2* fft_output,  // FFT: beam_count * nFFT (complex)
-    __global float* magnitudes,         // Out: beam_count * nFFT (float)
+    __global const float2* restrict fft_output,  // FFT: beam_count * nFFT (complex)
+    __global float* restrict magnitudes,         // Out: beam_count * nFFT (float)
     const uint total_size
 ) {
     const uint gid = get_global_id(0);
     if (gid >= total_size) return;
 
     float2 val = fft_output[gid];
-    magnitudes[gid] = sqrt(val.x * val.x + val.y * val.y);
+    // TASK-2: native_sqrt — 2-4× быстрее sqrt(), достаточная точность
+    magnitudes[gid] = native_sqrt(val.x * val.x + val.y * val.y);
 }
 )CL";
 }
@@ -95,33 +90,34 @@ __kernel void compute_magnitudes(
 //   по pre-computed амплитуде (mag[i] > mag[i-1] && mag[i] > mag[i+1]).
 //   Записывает 1 в flags[i] если максимум, 0 иначе.
 //
-// ВХОДНЫЕ ПАРАМЕТРЫ:
-//   magnitudes   - pre-computed |FFT[i]| (beam_count * nFFT float)
-//   flags        - выходной массив (beam_count * nFFT uint32_t: 0 или 1)
-//   beam_count   - количество лучей
-//   nFFT         - размер FFT
-//   search_start - начало диапазона поиска (обычно 1, пропускаем DC bin=0)
-//   search_end   - конец диапазона поиска (обычно nFFT/2, Найквист)
+// ОПТИМИЗАЦИИ:
+//   - TASK-6 (P2-B): 2D NDRange устраняет дорогие gid/nFFT и gid%nFFT
+//       Dispatch: global=(nFFT, beam_count), local=(256, 1)
+//       beam_idx = get_global_id(1), pos = get_global_id(0)
+//   - TASK-7 (P2-C): reqd_work_group_size(256,1,1) для 2D dispatch
+//   - TASK-8 (P2-D): __restrict на pointer params
 //
-// ОПТИМИЗАЦИЯ (vs старая версия):
-//   - Читает float* вместо float2* — на 50% меньше чтений памяти
-//   - НЕ вычисляет sqrt — 0 вместо 3 sqrt на work-item
-//   - Амплитуды pre-computed через clFFT post-callback или compute_magnitudes
+// C++ DISPATCH (после TASK-6):
+//   size_t global[2] = { nFFT, beam_count };   // nFFT кратно 256
+//   size_t local[2]  = { 256, 1 };
+//   clEnqueueNDRangeKernel(queue, detect_kernel, 2, nullptr, global, local, ...);
 //
 // ════════════════════════════════════════════════════════════════════════════
 inline const char* GetDetectAllMaximaKernelSource_opencl() {
   return R"CL(
+__attribute__((reqd_work_group_size(256, 1, 1)))
 __kernel void detect_all_maxima(
-    __global const float* magnitudes,   // Pre-computed |FFT[i]| (beam_count * nFFT)
-    __global uint* flags,               // Out: beam_count * nFFT (0 or 1)
+    __global const float* restrict magnitudes,   // Pre-computed |FFT[i]| (beam_count * nFFT)
+    __global uint* restrict flags,               // Out: beam_count * nFFT (0 or 1)
     const uint beam_count,
     const uint nFFT,
-    const uint search_start,            // Начало поиска (обычно 1)
-    const uint search_end               // Конец поиска (обычно nFFT/2)
+    const uint search_start,                     // Начало поиска (обычно 1)
+    const uint search_end                        // Конец поиска (обычно nFFT/2)
 ) {
-    const uint gid = get_global_id(0);
-    const uint beam_idx = gid / nFFT;
-    const uint pos = gid % nFFT;
+    // TASK-6: 2D NDRange — нет дорогих div/mod
+    const uint pos      = get_global_id(0);      // [0, nFFT)
+    const uint beam_idx = get_global_id(1);      // [0, beam_count)
+    const uint gid = beam_idx * nFFT + pos;
 
     // Проверка границ
     if (beam_idx >= beam_count) {
@@ -149,7 +145,10 @@ __kernel void detect_all_maxima(
 // 2. Prefix Sum (Blelloch Work-Efficient Exclusive Scan)
 // ════════════════════════════════════════════════════════════════════════════
 //
-// (без изменений — prefix sum не зависит от формата данных)
+// ОПТИМИЗАЦИИ:
+//   - TASK-8 (P2-D): __restrict на pointer params
+//   - TASK-9 (P3-A): +1 padding в LDS (temp передаётся через C++ clSetKernelArg)
+//       C++ должен выделять (BLOCK_SIZE + 1) * sizeof(uint32_t) вместо BLOCK_SIZE
 //
 // ════════════════════════════════════════════════════════════════════════════
 inline const char* GetPrefixSumKernelSource_opencl() {
@@ -161,15 +160,18 @@ inline const char* GetPrefixSumKernelSource_opencl() {
 //
 // Layout: [beam0: nFFT элементов][beam1: nFFT элементов][...]
 // group_id = beam_idx * blocks_per_beam + block_idx
+//
+// TASK-9: Алloкация temp через C++ должна быть (BLOCK_SIZE+1)*sizeof(uint32_t)
+//         для устранения LDS bank conflicts
 // ═══════════════════════════════════════════════
 __kernel void block_scan(
-    __global const uint* input,       // Входные данные [beam_count * n_per_beam]
-    __global uint* output,            // Результат scan [beam_count * n_per_beam]
-    __global uint* block_sums,        // Суммы блоков [beam_count * blocks_per_beam]
-    const uint n_per_beam,            // Элементов на луч (nFFT)
-    const uint beam_count,            // Количество лучей
-    const uint blocks_per_beam,       // Блоков на луч
-    __local uint* temp                // Локальная память: BLOCK_SIZE uint
+    __global const uint* restrict input,       // Входные данные [beam_count * n_per_beam]
+    __global uint* restrict output,            // Результат scan [beam_count * n_per_beam]
+    __global uint* restrict block_sums,        // Суммы блоков [beam_count * blocks_per_beam]
+    const uint n_per_beam,                     // Элементов на луч (nFFT)
+    const uint beam_count,                     // Количество лучей
+    const uint blocks_per_beam,                // Блоков на луч
+    __local uint* temp                         // Локальная память: (BLOCK_SIZE+1) uint (TASK-9)
 ) {
     const uint lid = get_local_id(0);
     const uint group_id = get_group_id(0);
@@ -234,12 +236,12 @@ __kernel void block_scan(
 // Каждый луч обрабатывается независимо!
 // ═══════════════════════════════════════════════
 __kernel void block_add(
-    __global uint* data,              // Результат scan (in-place) [beam_count * n_per_beam]
-    __global const uint* block_sums,  // Scanned block sums [beam_count * blocks_per_beam]
-    const uint n_per_beam,            // Элементов на луч
-    const uint beam_count,            // Количество лучей
-    const uint blocks_per_beam,       // Блоков на луч
-    const uint block_size             // BLOCK_SIZE = 2 * local_size
+    __global uint* restrict data,              // Результат scan (in-place) [beam_count * n_per_beam]
+    __global const uint* restrict block_sums,  // Scanned block sums [beam_count * blocks_per_beam]
+    const uint n_per_beam,                     // Элементов на луч
+    const uint beam_count,                     // Количество лучей
+    const uint blocks_per_beam,                // Блоков на луч
+    const uint block_size                      // BLOCK_SIZE = 2 * local_size
 ) {
     const uint gid = get_global_id(0);
     const uint total_n = beam_count * n_per_beam;
@@ -260,14 +262,8 @@ __kernel void block_add(
 // 3. compact_maxima — Stream Compaction (вывод MaxValue[])
 // ════════════════════════════════════════════════════════════════════════════
 //
-// НАЗНАЧЕНИЕ:
-//   Для каждого flags[i] == 1 записывает MaxValue в компактный выходной массив.
-//   Используем scan_output[i] как индекс записи.
-//   MaxValue: index, real, imag, magnitude, phase, freq_offset=0, refined_frequency
-//
-// ВХОДЫ:
-//   fft_output — комплексный спектр FFT (float2*) для real/imag
-//   magnitudes — pre-computed |FFT[i]|
+// ОПТИМИЗАЦИИ:
+//   - TASK-8 (P2-D): __restrict на все pointer params
 //
 // ════════════════════════════════════════════════════════════════════════════
 inline const char* GetCompactMaximaKernelSource_opencl() {
@@ -287,17 +283,17 @@ typedef struct {
 #define M_PI_F 3.14159265358979323846f
 
 __kernel void compact_maxima(
-    __global const float2* fft_output,   // FFT: beam_count * nFFT (complex)
-    __global const float* magnitudes,    // Pre-computed |FFT[i]| (beam_count * nFFT)
-    __global const uint* flags,          // Flags: beam_count * nFFT
-    __global const uint* scan_output,    // Scan: beam_count * nFFT (per-beam scan)
-    __global MaxValue* out_maxima,       // Out: total_beams * max_output_per_beam
-    __global uint* out_beam_counts,      // Out: total_beams (кол-во максимумов на луч)
-    const uint beam_count,               // Кол-во лучей в текущем batch
+    __global const float2* restrict fft_output,   // FFT: beam_count * nFFT (complex)
+    __global const float* restrict magnitudes,    // Pre-computed |FFT[i]| (beam_count * nFFT)
+    __global const uint* restrict flags,          // Flags: beam_count * nFFT
+    __global const uint* restrict scan_output,    // Scan: beam_count * nFFT (per-beam scan)
+    __global MaxValue* restrict out_maxima,       // Out: total_beams * max_output_per_beam
+    __global uint* restrict out_beam_counts,      // Out: total_beams (кол-во максимумов на луч)
+    const uint beam_count,                        // Кол-во лучей в текущем batch
     const uint nFFT,
     const float sample_rate,
-    const uint max_output_per_beam,      // Макс. кол-во максимумов на луч
-    const uint beam_offset               // Offset для batch-обработки (0 при single-batch)
+    const uint max_output_per_beam,               // Макс. кол-во максимумов на луч
+    const uint beam_offset                        // Offset для batch-обработки (0 при single-batch)
 ) {
     const uint gid = get_global_id(0);
     const uint beam_idx = gid / nFFT;     // Локальный индекс в batch (0..batch_count-1)

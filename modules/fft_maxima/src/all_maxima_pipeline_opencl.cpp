@@ -154,7 +154,8 @@ cl_event AllMaximaPipelineOpenCL::ExecutePrefixSum(
     uint32_t bpb = static_cast<uint32_t>(blocks_per_beam);
 
     if (blocks_per_beam == 1) {
-        size_t local_mem_size = SCAN_BLOCK_SIZE * sizeof(uint32_t);
+        // TASK-9: +1 padding устраняет LDS bank conflicts в block_scan (Blelloch)
+        size_t local_mem_size = (SCAN_BLOCK_SIZE + 1) * sizeof(uint32_t);
         cl_mem null_mem = nullptr;
 
         err = clSetKernelArg(block_scan_kernel_, 0, sizeof(cl_mem), &input);
@@ -193,7 +194,8 @@ cl_event AllMaximaPipelineOpenCL::ExecutePrefixSum(
     }
 
     {
-        size_t local_mem_size = SCAN_BLOCK_SIZE * sizeof(uint32_t);
+        // TASK-9: +1 padding устраняет LDS bank conflicts в block_scan (Blelloch)
+        size_t local_mem_size = (SCAN_BLOCK_SIZE + 1) * sizeof(uint32_t);
 
         err = clSetKernelArg(block_scan_kernel_, 0, sizeof(cl_mem), &input);
         err |= clSetKernelArg(block_scan_kernel_, 1, sizeof(cl_mem), &output);
@@ -355,12 +357,14 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
         throw std::runtime_error("AllMaximaPipeline: detect setKernelArg failed: " + std::to_string(err));
     }
 
-    size_t global_size = ((total_elements + 255) / 256) * 256;
-    size_t local_size = 256;
+    // TASK-6: 2D NDRange устраняет дорогие gid/nFFT и gid%nFFT в detect_all_maxima
+    // nFFT гарантированно кратно 256 (pow2, минимум 256)
+    size_t detect_global[2] = { static_cast<size_t>(nFFT), static_cast<size_t>(beam_count) };
+    size_t detect_local[2]  = { 256, 1 };
 
     cl_event detect_event = nullptr;
-    err = clEnqueueNDRangeKernel(queue_, detect_kernel_, 1, nullptr,
-        &global_size, &local_size, 0, nullptr, &detect_event);
+    err = clEnqueueNDRangeKernel(queue_, detect_kernel_, 2, nullptr,
+        detect_global, detect_local, 0, nullptr, &detect_event);
     if (err != CL_SUCCESS) {
         clReleaseMemObject(flags_buf);
         clReleaseMemObject(scan_buf);

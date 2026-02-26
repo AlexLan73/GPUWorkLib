@@ -1428,12 +1428,19 @@ void SpectrumProcessorOpenCL::ReleaseAllMaximaResources() {
 // ════════════════════════════════════════════════════════════════════════════
 
 void SpectrumProcessorOpenCL::WritePreCallbackHeader(size_t batch_count) {
+    // TASK-3: вычисляем log2(nFFT) для bitwise div/mod в pre-callback
+    // nFFT гарантированно pow2 (CalculateFFTSize)
+    uint32_t nFFT_log2 = 0;
+    uint32_t tmp = params_.nFFT;
+    while (tmp > 1) { tmp >>= 1; ++nFFT_log2; }
+
     // Записать заголовок pre-callback с параметрами для GPU
     PreCallbackHeader header = {
         static_cast<uint32_t>(batch_count),
         params_.n_point,
         params_.nFFT,
-        0, 0, 0, 0, 0
+        nFFT_log2,    // TASK-3: log2(nFFT)
+        0, 0, 0, 0
     };
 
     cl_int err = clEnqueueWriteBuffer(queue_, pre_callback_userdata_, CL_TRUE,

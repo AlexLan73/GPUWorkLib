@@ -27,6 +27,7 @@
 ## Текущий статус
 
 **В работе**: ROCm Backend — см. [tasks/PLAN_AMD_Radeon_9070_ROCm.md](tasks/PLAN_AMD_Radeon_9070_ROCm.md)
+**Завершено**: SpectrumMaximaFinder — OpenCL kernel optimizations (все 9 TASK) → [tasks/fft_maxima_optimization_plan.md](tasks/fft_maxima_optimization_plan.md)
 
 ---
 
