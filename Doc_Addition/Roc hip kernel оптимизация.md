@@ -223,6 +223,289 @@ Block size: 256 threads.
 Эти подходы в комбинации — структурированный промпт с контекстом, данными профайлера и конкретными ограничениями — дадут значительно более качественный результат, чем generic-запрос вида «оптимизируй мой GPU-код».
 <span style="display:none">[^10][^11][^12][^13][^14][^15][^16][^17][^18][^19][^20][^21][^22][^23][^24][^25][^26][^9]</span>
 
+---
+
+# Проверенные паттерны GPUWorkLib (Best Practices)
+
+> **Обновлено**: 2026-02-28
+> **Источник**: Реальный опыт оптимизации модулей `vector_algebra`, `statistics`, `fft_processor`, `fft_maxima`
+
+Эта секция описывает **конкретные проверенные паттерны**, которые мы применяем в проекте GPUWorkLib. При оптимизации нового модуля — **используй их как чеклист**.
+
+---
+
+## Паттерн 1: hiprtc Kernel Source — `float2_t` struct
+
+**Проблема**: hiprtc не поддерживает `float2` из HIP runtime.
+
+**Решение**: Определяем свой struct в начале kernel source:
+
+```c
+struct float2_t {
+    float x;
+    float y;
+};
+```
+
+**Где используется**: `statistics`, `fft_processor`, `vector_algebra`
+**Файлы**: `modules/*/include/kernels/*_kernels_rocm.hpp`
+
+---
+
+## Паттерн 2: KernelCacheService — HSACO disk cache
+
+**Проблема**: hiprtcCompileProgram = ~100-200мс на каждый запуск.
+
+**Решение**: Кешируем скомпилированный бинарь на диск, при повторном запуске загружаем за ~1-5мс.
+
+```cpp
+#include "services/kernel_cache_service.hpp"
+
+// Конструктор:
+kernel_cache_ = std::make_unique<drv_gpu_lib::KernelCacheService>(
+    "modules/<module>/kernels");
+
+// CompileKernels():
+void Module::CompileKernels() {
+    if (kernels_compiled_) return;
+
+    // Шаг 1: Попытка загрузить из HSACO cache
+    if (kernel_cache_) {
+        try {
+            auto entry = kernel_cache_->Load(kCacheName);
+            if (entry.has_binary()) {
+                LoadModuleAndFunctions(entry.binary.data(), entry.binary.size());
+                kernels_compiled_ = true;
+                return;
+            }
+        } catch (...) { /* cache miss — компилируем */ }
+    }
+
+    // Шаг 2: Получить arch из backend
+    auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
+    std::string arch = rocm_backend->GetCore().GetArchName();  // "gfx1201"
+    std::string arch_flag = "--offload-arch=" + arch;
+
+    // Шаг 3: Компиляция с флагами
+    const char* opts[] = { "-O3", arch_flag.c_str(), "-DWARP_SIZE=32" };
+    hiprtcCompileProgram(prog, 3, opts);
+
+    // Шаг 4: Сохранить в cache
+    kernel_cache_->Save(kCacheName, src, binary, "", "description");
+}
+```
+
+**Где используется**: `vector_algebra`, `statistics`, `fft_processor`
+**Эффект**: cold start ~100-200мс → ~1-5мс (hot cache)
+
+---
+
+## Паттерн 3: 2D Grid — устранение div/mod
+
+**Проблема**: Целочисленное деление на GPU — ~20 тактов per thread.
+
+```c
+// ❌ ПЛОХО: каждый поток делает 2 дорогих деления
+unsigned int beam_id = gid / nFFT;   // ~20 тактов
+unsigned int pos     = gid % nFFT;   // ~20 тактов
+```
+
+**Решение**: Использовать 2D grid, `blockIdx.y = beam_id`:
+
+```c
+// ✅ ХОРОШО: beam_id из индекса блока — бесплатно
+unsigned int beam_id = blockIdx.y;                             // 0 тактов
+unsigned int pos     = blockIdx.x * blockDim.x + threadIdx.x;  // 1 инструкция
+```
+
+```cpp
+// C++ dispatch:
+unsigned int grid_x = (nFFT + 255) / 256;
+unsigned int grid_y = beam_count;
+hipModuleLaunchKernel(kernel,
+    grid_x, grid_y, 1,    // grid: X=позиции, Y=лучи
+    256, 1, 1,             // block
+    0, stream_, args, nullptr);
+```
+
+**Где используется**: `fft_processor` (pad_data), `fft_maxima` (padding, detect_all_maxima)
+**Эффект**: ~20-30% ускорение при 256 лучах × 65536 точек
+
+**Для OpenCL**:
+```c
+uint beam_id = get_global_id(1);
+uint pos     = get_global_id(0);
+// dispatch: size_t global[2] = { nFFT, beam_count };
+```
+
+---
+
+## Паттерн 4: hipMemsetAsync + simplified kernel
+
+**Проблема**: Thread divergence на границе данных (else branch пишет нули).
+
+**Решение**: Обнулить весь буфер асинхронно, затем ядро копирует только valid данные:
+
+```cpp
+// C++: обнулить весь буфер
+hipMemsetAsync(fft_input_, 0, total_size, stream_);
+
+// Ядро: только копирование (нет else-branch!)
+if (pos >= n_point) return;
+output[beam_id * nFFT + pos] = input[beam_id * n_point + pos];
+```
+
+**Для OpenCL**: `clEnqueueFillBuffer(queue, buffer, &zero, sizeof(float2), 0, total_size, ...)`
+
+**Где используется**: `fft_processor` (pad_data), `fft_maxima` (padding_kernel)
+**Эффект**: устранение divergence + ядро обрабатывает только n_point, а не nFFT элементов
+
+---
+
+## Паттерн 5: Interleaved Output — 1 DtoH вместо 2+
+
+**Проблема**: Несколько отдельных `hipMemcpyDtoH` = несколько PCIe транзакций.
+
+**Решение**: Объединить данные в один interleaved буфер:
+
+```c
+// ✅ Один буфер float2_t: {mag, phase}
+float2_t mp;
+mp.x = __fsqrt_rn(z.x * z.x + z.y * z.y);  // magnitude
+mp.y = __atan2f(z.y, z.x);                   // phase
+mag_phase[gid] = mp;                          // 1 write
+
+// C++: один DtoH
+hipMemcpyDtoH(raw.data(), mag_phase_interleaved_, total * sizeof(float2_t));
+// Разделить на CPU — trivial
+```
+
+**Где используется**: `fft_processor` (complex_to_mag_phase)
+**Эффект**: -40% DtoH latency (1 transfer вместо 2)
+
+Аналогичный паттерн для массовых извлечений:
+```c
+// ✅ extract_medians — 1 DtoH вместо 256
+medians[b] = sorted[b * n_point + n_point / 2];  // GPU kernel
+// Затем 1 hipMemcpyDtoH для beam_count floats
+```
+
+**Где используется**: `statistics` (extract_medians)
+**Эффект**: -90-95% DtoH latency (1 vs 256 транзакций)
+
+---
+
+## Паттерн 6: Warp Shuffle в финальных стадиях reduction
+
+**Проблема**: `__syncthreads()` в последних шагах tree reduction — дорого.
+
+**Решение**: Переключиться на `__shfl_down` когда остаётся ≤ WARP_SIZE элементов:
+
+```c
+// LDS tree reduction (до WARP_SIZE)
+for (unsigned int s = block_size / 2; s >= WARP_SIZE; s >>= 1) {
+    if (tid < s) sdata[tid] += sdata[tid + s];
+    __syncthreads();
+}
+// Warp shuffle (без __syncthreads!)
+if (tid < WARP_SIZE) {
+    float val = sdata[tid];
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+        val += __shfl_down(val, offset);
+    if (tid == 0) result = val;
+}
+```
+
+**WARP_SIZE**: передавать через `-DWARP_SIZE=32` (RDNA4) или `=64` (CDNA2)
+**Где используется**: `statistics` (mean_reduce, welford_fused)
+**Эффект**: ~15-25% ускорение reduction
+
+---
+
+## Паттерн 7: Double-Load Trick
+
+**Проблема**: 1 thread = 1 элемент → много блоков → много partial sums.
+
+**Решение**: Каждый поток читает 2 элемента, суммирует в регистрах:
+
+```c
+// block покрывает block_size * 2 элементов
+unsigned int gid1 = base + block_in_beam * (block_size * 2) + tid;
+unsigned int gid2 = gid1 + block_size;
+float v1 = (gid1 < n_point) ? input[gid1] : 0.0f;
+float v2 = (gid2 < n_point) ? input[gid2] : 0.0f;
+sdata[tid] = v1 + v2;  // 2 элемента → 1 LDS entry
+```
+
+**Где используется**: `statistics` (mean_reduce_phase1)
+**Эффект**: вдвое меньше блоков → вдвое меньше partial sums → быстрее phase2
+
+---
+
+## Паттерн 8: LDS +1 Padding (Bank Conflicts)
+
+**Проблема**: При tree reduction потоки попадают в одинаковые LDS банки.
+
+**Решение**: Добавить +1 к размеру LDS массива:
+
+```c
+// ❌ ПЛОХО: bank conflicts при stride reduction
+__local float lds_mag[256];
+
+// ✅ ХОРОШО: +1 padding устраняет conflicts
+__local float lds_mag[256 + 1];
+```
+
+**Для OpenCL**: то же самое через `__local`.
+**Где используется**: `fft_maxima` (post_kernel, prefix_sum)
+**Эффект**: ~10-20% ускорение reduction шагов
+
+---
+
+## Паттерн 9: Cached FFT Plan
+
+**Проблема**: `hipfftDestroy` + `hipfftPlan1d` при изменении batch size — дорого (~мс).
+
+**Решение**: Хранить 2 плана (`plan_` и `plan_last_`), swap при повторном размере:
+
+```cpp
+if (plan_last_ != 0 && plan_last_batch_ == batch_beam_count) {
+    std::swap(plan_, plan_last_);              // мгновенно!
+    std::swap(plan_batch_size_, plan_last_batch_);
+} else {
+    if (plan_last_ != 0) hipfftDestroy(plan_last_);
+    plan_last_ = plan_;                        // сохраняем старый
+    plan_last_batch_ = plan_batch_size_;
+    hipfftPlan1d(&plan_, nFFT_, HIPFFT_C2C, batch_beam_count);
+}
+```
+
+**Где используется**: `fft_processor`
+**Эффект**: устранение Destroy/Create при чередовании batch sizes
+
+---
+
+## Чеклист для нового модуля
+
+При оптимизации нового HIP-модуля проверь:
+
+- [ ] `float2_t` struct вместо `float2` (hiprtc)
+- [ ] `KernelCacheService` + HSACO disk cache
+- [ ] `-O3 --offload-arch=gfxXXXX -DWARP_SIZE=32`
+- [ ] `__launch_bounds__(256)` на всех ядрах
+- [ ] `__restrict__` на всех указателях
+- [ ] FP32 литералы (нет скрытых `0.3` double)
+- [ ] Fast intrinsics: `__fsqrt_rn`, `__atan2f`, `__cosf`, `__sinf`
+- [ ] div/mod устранены (2D grid или bitwise для pow2)
+- [ ] Thread divergence устранён (hipMemsetAsync + simplified kernel)
+- [ ] Warp shuffle в финальных стадиях reduction
+- [ ] LDS +1 padding при tree reduction
+- [ ] Единый DtoH (interleaved output)
+- [ ] Консольный вывод через `console_output`
+- [ ] Профилирование через `GPUProfiler`
+
+---
+
 <div align="center">⁂</div>
 
 [^1]: https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/performance_guidelines.html

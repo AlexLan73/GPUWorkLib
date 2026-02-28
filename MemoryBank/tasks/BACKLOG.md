@@ -43,7 +43,7 @@
 
 | Задача | Описание |
 |--------|----------|
-| Statistics модуль | mean, std, variance на GPU |
+| ~~Statistics модуль~~ | ~~mean, std, variance на GPU~~ **РЕАЛИЗОВАНО** (ROCm) — см. `modules/statistics/` |
 | Heterodyne NCO/MixDown | Планируется (LFM Dechirp уже реализован) |
 | Overlap-Save/Add | Длинные FIR через FFT |
 | AI-003 | Multi-step AI pipeline (LangChain/AutoGen) |

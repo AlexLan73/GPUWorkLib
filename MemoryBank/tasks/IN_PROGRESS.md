@@ -8,6 +8,7 @@
 ## В работе
 
 - **ROCm Backend** — см. [PLAN_AMD_Radeon_9070_ROCm.md](PLAN_AMD_Radeon_9070_ROCm.md)
+- **Аудит модулей** — Python тесты FFTProcessor, документация Statistics/FFTProcessor — см. [PLAN_modules_audit_2026-02-28.md](PLAN_modules_audit_2026-02-28.md)
 
 ## Завершено (2026-02-26)
 
@@ -29,4 +30,4 @@
 
 ---
 
-*Последнее обновление: 2026-02-26*
+*Последнее обновление: 2026-02-28*

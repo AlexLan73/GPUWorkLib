@@ -12,7 +12,7 @@
  * - welford_fused:  TASK-1 one-pass stats, no magnitudes buffer
  * - extract_medians: TASK-2 GPU compact extraction (1 DtoH instead of 256)
  *
- * Optimizations applied (v2):
+ * Optimizations applied (v3):
  *   P0-A: welford_fused   — один pass по данным (нет промежуточного magnitudes buffer)
  *   P0-B: extract_medians — GPU kernel вместо 256 hipMemcpyDtoH
  *   P1-A: Warp shuffle    — финальная стадия reduction без __syncthreads
@@ -20,6 +20,7 @@
  *   P1-C: __launch_bounds__(256) — правильный резерв регистров
  *   P1-D: blocks_per_beam — передаётся как параметр (убран div в ядре)
  *   P2-A: __fsqrt_rn      — fast intrinsic вместо sqrtf
+ *   P2-B: LDS +1 padding  — устранение bank conflicts при tree reduction (v3)
  *
  * WARP_SIZE: передаётся через -DWARP_SIZE=32 при компиляции (RDNA4)
  *
@@ -74,10 +75,11 @@ extern "C" __global__ void compute_magnitudes(
 }
 
 // =========================================================================
-// Kernel 2: mean_reduce_phase1   [TASK-4.1, 4.2, 4.3, 4.4]
+// Kernel 2: mean_reduce_phase1   [TASK-4.1, 4.2, 4.3, 4.4, P2-B]
 // Block-level complex sum with double-load + warp shuffle.
 // Grid: (blocks_per_beam * beam_count, 1, 1)  where
 //   blocks_per_beam = ceil(n_point / (blockDim.x * 2))  -- double-load!
+// P2-B: LDS accessed as float[] with +1 padding to avoid bank conflicts.
 // =========================================================================
 __launch_bounds__(256)
 extern "C" __global__ void mean_reduce_phase1(
@@ -87,7 +89,9 @@ extern "C" __global__ void mean_reduce_phase1(
     unsigned int n_point,
     unsigned int blocks_per_beam)   // TASK-4.2: passed from CPU, avoids intra-kernel div
 {
-    extern __shared__ float2_t sdata[];
+    // P2-B: LDS with +1 padding per row to avoid bank conflicts
+    __shared__ float sdata_x[256 + 1];
+    __shared__ float sdata_y[256 + 1];
 
     unsigned int tid        = threadIdx.x;
     unsigned int block_size = blockDim.x;
@@ -101,7 +105,6 @@ extern "C" __global__ void mean_reduce_phase1(
     unsigned int beam_start = beam_id * n_point;
 
     // TASK-4.3: Double-load — each thread reads 2 elements
-    // Each block covers (block_size * 2) elements in the beam
     unsigned int local1 = block_in_beam * (block_size * 2) + tid;
     unsigned int local2 = local1 + block_size;
 
@@ -109,22 +112,22 @@ extern "C" __global__ void mean_reduce_phase1(
     float2_t v1 = (local1 < n_point) ? input[beam_start + local1] : zero;
     float2_t v2 = (local2 < n_point) ? input[beam_start + local2] : zero;
 
-    sdata[tid].x = v1.x + v2.x;
-    sdata[tid].y = v1.y + v2.y;
+    sdata_x[tid] = v1.x + v2.x;
+    sdata_y[tid] = v1.y + v2.y;
     __syncthreads();
 
     // LDS tree reduction (down to WARP_SIZE elements)
     for (unsigned int s = block_size / 2; s >= WARP_SIZE; s >>= 1) {
         if (tid < s) {
-            sdata[tid].x += sdata[tid + s].x;
-            sdata[tid].y += sdata[tid + s].y;
+            sdata_x[tid] += sdata_x[tid + s];
+            sdata_y[tid] += sdata_y[tid + s];
         }
         __syncthreads();
     }
 
     // TASK-4.4: Warp shuffle — final WARP_SIZE → 1 without __syncthreads
     if (tid < WARP_SIZE) {
-        float vx = sdata[tid].x, vy = sdata[tid].y;
+        float vx = sdata_x[tid], vy = sdata_y[tid];
         for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
             vx += __shfl_down(vx, offset);
             vy += __shfl_down(vy, offset);
@@ -137,8 +140,9 @@ extern "C" __global__ void mean_reduce_phase1(
 }
 
 // =========================================================================
-// Kernel 3: mean_reduce_final   [TASK-4.1, 4.4]
+// Kernel 3: mean_reduce_final   [TASK-4.1, 4.4, P2-B]
 // Reduces partial sums per beam, divides by n_point.
+// P2-B: LDS with +1 padding.
 // =========================================================================
 __launch_bounds__(256)
 extern "C" __global__ void mean_reduce_final(
@@ -148,36 +152,39 @@ extern "C" __global__ void mean_reduce_final(
     unsigned int blocks_per_beam,
     unsigned int n_point)
 {
-    extern __shared__ float2_t sdata[];
+    // P2-B: LDS with +1 padding to avoid bank conflicts
+    __shared__ float sdata_x[256 + 1];
+    __shared__ float sdata_y[256 + 1];
 
     unsigned int beam_id = blockIdx.x;
     unsigned int tid     = threadIdx.x;
 
     if (beam_id >= beam_count) return;
 
-    float2_t sum; sum.x = 0.0f; sum.y = 0.0f;
+    float sum_x = 0.0f, sum_y = 0.0f;
     unsigned int base_offset = beam_id * blocks_per_beam;
 
     for (unsigned int i = tid; i < blocks_per_beam; i += blockDim.x) {
         float2_t ps = partial_sums[base_offset + i];
-        sum.x += ps.x;
-        sum.y += ps.y;
+        sum_x += ps.x;
+        sum_y += ps.y;
     }
-    sdata[tid] = sum;
+    sdata_x[tid] = sum_x;
+    sdata_y[tid] = sum_y;
     __syncthreads();
 
     // LDS tree reduction
     for (unsigned int s = blockDim.x / 2; s >= WARP_SIZE; s >>= 1) {
         if (tid < s) {
-            sdata[tid].x += sdata[tid + s].x;
-            sdata[tid].y += sdata[tid + s].y;
+            sdata_x[tid] += sdata_x[tid + s];
+            sdata_y[tid] += sdata_y[tid + s];
         }
         __syncthreads();
     }
 
     // Warp shuffle final stage
     if (tid < WARP_SIZE) {
-        float vx = sdata[tid].x, vy = sdata[tid].y;
+        float vx = sdata_x[tid], vy = sdata_y[tid];
         for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
             vx += __shfl_down(vx, offset);
             vy += __shfl_down(vy, offset);

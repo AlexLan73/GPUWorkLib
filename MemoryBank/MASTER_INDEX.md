@@ -20,7 +20,7 @@
 | **Filters** | **Active** | **FIR + IIR GPU фильтры (Stage 1 MVP + Stage 3 AI Pipeline DONE)** |
 | **Python Bindings** | Active | pybind11 модуль gpuworklib |
 | **vector_algebra** | **COMPLETED** | Cholesky инверсия матриц (rocBLAS+rocSOLVER). **v2**: SymmetrizeMode (Roundtrip/GpuKernel), hiprtc, RAII CholeskyResult. C++ 23 PASSED, Python 6 PASSED. API: `Doc/Python/vector_algebra_api.md` |
-| **Statistics** | Planned | Статистика. См. `specs/statistics_module.md` |
+| **Statistics** | 🟢 **Active** | ROCm hiprtc: welford_fused, extract_medians, KernelCacheService. C++ тест ✅, Python тест ✅. Нет: `Doc/Python/statistics_api.md` |
 | **Heterodyne** | **Active** | LFM Dechirp (stretch-processing). См. `Doc/Modules/heterodyne/Full.md` |
 
 
@@ -67,4 +67,4 @@ build/python/Release/gpuworklib.cp312-win_amd64.pyd
 
 ---
 
-*Последнее обновление: 2026-02-26*
+*Последнее обновление: 2026-02-28*

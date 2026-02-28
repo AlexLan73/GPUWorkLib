@@ -748,8 +748,8 @@ void StatisticsProcessor::ExecuteMeanReduction(size_t beam_count, size_t n_point
   unsigned int blocks_per_beam = (np + kDoubleLoadElements - 1) / kDoubleLoadElements;
   unsigned int total_blocks    = bc * blocks_per_beam;
 
-  // Shared memory: kBlockSize * sizeof(float2_t) = kBlockSize * 8 bytes
-  size_t shared_mem = kBlockSize * 2 * sizeof(float);
+  // P2-B: LDS is now static __shared__ (256+1 float per component) — no dynamic alloc
+  size_t shared_mem = 0;
 
   // Phase 1: block-level reduction
   // TASK-4.2: Pass blocks_per_beam as kernel parameter
@@ -781,7 +781,8 @@ void StatisticsProcessor::ExecuteMeanReduction(size_t beam_count, size_t n_point
   }
   if (final_block > kBlockSize) final_block = kBlockSize;
 
-  size_t final_shared = final_block * 2 * sizeof(float);
+  // P2-B: LDS is now static __shared__ (256+1 float per component) — no dynamic alloc
+  size_t final_shared = 0;
 
   void* args2[] = {
     &reduce_buf_,
