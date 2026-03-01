@@ -48,6 +48,9 @@
 
 namespace filters {
 
+/// Список событий профилирования OpenCL (имя стадии + cl_event)
+using ProfEvents = std::vector<std::pair<const char*, cl_event>>;
+
 class IirFilter {
 public:
   explicit IirFilter(drv_gpu_lib::IBackend* backend);
@@ -87,11 +90,13 @@ public:
    * @param input_buf cl_mem with [channels * points] complex float (float2)
    * @param channels Number of parallel channels
    * @param points Samples per channel
+   * @param prof_events Optional profiling events collector (nullptr = release events)
    * @return InputData<cl_mem> with filtered signal
    * @note Caller must release result.data via clReleaseMemObject()
    */
   drv_gpu_lib::InputData<cl_mem> Process(
-      cl_mem input_buf, uint32_t channels, uint32_t points);
+      cl_mem input_buf, uint32_t channels, uint32_t points,
+      ProfEvents* prof_events = nullptr);
 
   /**
    * @brief CPU reference implementation
@@ -116,6 +121,15 @@ private:
   void CompileKernel();
   void UploadSosMatrix();
   void ReleaseGpuResources();
+
+  /// Сохранить event для профилирования или освободить
+  static void CollectOrRelease(cl_event ev, const char* name, ProfEvents* pe) {
+    if (pe) {
+      pe->push_back({name, ev});
+    } else {
+      if (ev) clReleaseEvent(ev);
+    }
+  }
 
   /// Get compiled binary from cl_program
   std::vector<uint8_t> GetProgramBinary() const;

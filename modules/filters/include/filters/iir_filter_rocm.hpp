@@ -32,6 +32,7 @@
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
 #include "types/filter_params.hpp"
+#include "DrvGPU/services/profiling_types.hpp"
 
 #include <hip/hip_runtime.h>
 #include <hip/hiprtc.h>
@@ -42,6 +43,9 @@
 #include <cstdint>
 
 namespace filters {
+
+/// Список событий профилирования ROCm (имя стадии + ROCmProfilingData)
+using ROCmProfEvents = std::vector<std::pair<const char*, drv_gpu_lib::ROCmProfilingData>>;
 
 class IirFilterROCm {
 public:
@@ -76,14 +80,16 @@ public:
    * @note input_ptr is NOT freed by this method
    */
   drv_gpu_lib::InputData<void*> Process(
-      void* input_ptr, uint32_t channels, uint32_t points);
+      void* input_ptr, uint32_t channels, uint32_t points,
+      ROCmProfEvents* prof_events = nullptr);
 
   /**
    * @brief Apply IIR filter from CPU data (upload + process + keep on GPU)
    */
   drv_gpu_lib::InputData<void*> ProcessFromCPU(
       const std::vector<std::complex<float>>& data,
-      uint32_t channels, uint32_t points);
+      uint32_t channels, uint32_t points,
+      ROCmProfEvents* prof_events = nullptr);
 
   /**
    * @brief CPU reference implementation (for validation)
@@ -154,12 +160,12 @@ public:
     throw std::runtime_error("IirFilterROCm: ROCm not enabled");
   }
 
-  drv_gpu_lib::InputData<void*> Process(void*, uint32_t, uint32_t) {
+  drv_gpu_lib::InputData<void*> Process(void*, uint32_t, uint32_t, void* = nullptr) {
     throw std::runtime_error("IirFilterROCm: ROCm not enabled");
   }
 
   drv_gpu_lib::InputData<void*> ProcessFromCPU(
-      const std::vector<std::complex<float>>&, uint32_t, uint32_t) {
+      const std::vector<std::complex<float>>&, uint32_t, uint32_t, void* = nullptr) {
     throw std::runtime_error("IirFilterROCm: ROCm not enabled");
   }
 

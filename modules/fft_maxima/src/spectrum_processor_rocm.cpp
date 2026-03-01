@@ -34,11 +34,47 @@
 #include "services/gpu_profiler.hpp"
 #include "services/batch_manager.hpp"
 #include "interface/i_backend.hpp"
+#include "DrvGPU/services/profiling_types.hpp"
 
 #include <stdexcept>
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#include <chrono>
+
+namespace {
+
+/// Helper: hipEvent pair → ROCmProfilingData (для GPU-операций через hipStream)
+drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
+    hipEvent_t ev_start, hipEvent_t ev_end, uint32_t kind, const char* op = "")
+{
+    hipEventSynchronize(ev_end);
+    float ms = 0.0f;
+    hipEventElapsedTime(&ms, ev_start, ev_end);
+    hipEventDestroy(ev_start);
+    hipEventDestroy(ev_end);
+    drv_gpu_lib::ROCmProfilingData d{};
+    uint64_t ns = static_cast<uint64_t>(ms * 1e6f);
+    d.start_ns = 0; d.end_ns = ns; d.complete_ns = ns;
+    d.kind = kind; d.op_string = op;
+    return d;
+}
+
+/// Helper: wall-clock pair → ROCmProfilingData (для синхронных D2H операций)
+drv_gpu_lib::ROCmProfilingData MakeROCmDataFromClock(
+    std::chrono::high_resolution_clock::time_point t0,
+    std::chrono::high_resolution_clock::time_point t1,
+    uint32_t kind, const char* op = "")
+{
+    uint64_t ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+    drv_gpu_lib::ROCmProfilingData d{};
+    d.start_ns = 0; d.end_ns = ns; d.complete_ns = ns;
+    d.kind = kind; d.op_string = op;
+    return d;
+}
+
+}  // namespace
 
 namespace antenna_fft {
 
@@ -123,25 +159,68 @@ void SpectrumProcessorROCm::Initialize(const SpectrumParams& params) {
 std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessBatch(
     const std::vector<std::complex<float>>& input_data,
     size_t start_antenna,
-    size_t batch_antenna_count)
+    size_t batch_antenna_count,
+    ROCmProfEvents* prof_events)
 {
     if (batch_antenna_count > current_batch_size_ || !plan_created_) {
         ReallocateBuffersForBatch(batch_antenna_count);
     }
     actual_batch_size_ = batch_antenna_count;
 
-    // Extract batch slice
     size_t offset = start_antenna * params_.n_point;
-    size_t count = batch_antenna_count * params_.n_point;
+    size_t count  = batch_antenna_count * params_.n_point;
 
-    // Upload → Pad → FFT → PostKernel → Read
+    // ── Upload (H2D) ─────────────────────────────────────────────────────────
+    hipEvent_t ev_up_s = nullptr, ev_up_e = nullptr;
+    if (prof_events) {
+        hipEventCreate(&ev_up_s); hipEventCreate(&ev_up_e);
+        hipEventRecord(ev_up_s, stream_);
+    }
     UploadData(input_data.data() + offset, count);
+    if (prof_events) hipEventRecord(ev_up_e, stream_);
+
+    // ── PadKernel ────────────────────────────────────────────────────────────
+    hipEvent_t ev_pad_s = nullptr, ev_pad_e = nullptr;
+    if (prof_events) {
+        hipEventCreate(&ev_pad_s); hipEventCreate(&ev_pad_e);
+        hipEventRecord(ev_pad_s, stream_);
+    }
     ExecutePadKernel(batch_antenna_count);
+    if (prof_events) hipEventRecord(ev_pad_e, stream_);
+
+    // ── FFT ──────────────────────────────────────────────────────────────────
+    hipEvent_t ev_fft_s = nullptr, ev_fft_e = nullptr;
+    if (prof_events) {
+        hipEventCreate(&ev_fft_s); hipEventCreate(&ev_fft_e);
+        hipEventRecord(ev_fft_s, stream_);
+    }
     ExecuteFFT();
+    if (prof_events) hipEventRecord(ev_fft_e, stream_);
+
+    // ── PostKernel ───────────────────────────────────────────────────────────
+    hipEvent_t ev_post_s = nullptr, ev_post_e = nullptr;
+    if (prof_events) {
+        hipEventCreate(&ev_post_s); hipEventCreate(&ev_post_e);
+        hipEventRecord(ev_post_s, stream_);
+    }
     ExecutePostKernel(batch_antenna_count);
+    if (prof_events) hipEventRecord(ev_post_e, stream_);
+
     hipStreamSynchronize(stream_);
 
+    // ── Download (D2H sync — wall-clock) ─────────────────────────────────────
+    auto t_dl_s = std::chrono::high_resolution_clock::now();
     auto results = ReadResults(batch_antenna_count);
+    auto t_dl_e = std::chrono::high_resolution_clock::now();
+
+    // ── Собрать события ──────────────────────────────────────────────────────
+    if (prof_events) {
+        prof_events->push_back({"Upload",     MakeROCmDataFromEvents(ev_up_s,   ev_up_e,   1, "H2D")});
+        prof_events->push_back({"PadKernel",  MakeROCmDataFromEvents(ev_pad_s,  ev_pad_e,  0, "pad_kernel")});
+        prof_events->push_back({"FFT",        MakeROCmDataFromEvents(ev_fft_s,  ev_fft_e,  0, "hipfftExecC2C")});
+        prof_events->push_back({"PostKernel", MakeROCmDataFromEvents(ev_post_s, ev_post_e, 0, "post_kernel")});
+        prof_events->push_back({"Download",   MakeROCmDataFromClock(t_dl_s,     t_dl_e,    1, "D2H")});
+    }
 
     for (auto& result : results) {
         result.antenna_id += static_cast<uint32_t>(start_antenna);
@@ -151,7 +230,8 @@ std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessBatch(
 }
 
 std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessFromCPU(
-    const std::vector<std::complex<float>>& data)
+    const std::vector<std::complex<float>>& data,
+    ROCmProfEvents* prof_events)
 {
     if (!initialized_) {
         throw std::runtime_error("SpectrumProcessorROCm::ProcessFromCPU: not initialized");
@@ -169,7 +249,7 @@ std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessFromCPU(
 
     if (drv_gpu_lib::BatchManager::AllItemsFit(backend_, params_.antenna_count,
                                                 bytes_per_antenna, params_.memory_limit)) {
-        return ProcessBatch(data, 0, params_.antenna_count);
+        return ProcessBatch(data, 0, params_.antenna_count, prof_events);
     }
 
     // Batch processing
@@ -188,7 +268,7 @@ std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessFromCPU(
     all_results.reserve(params_.antenna_count);
 
     for (const auto& batch : batches) {
-        auto batch_results = ProcessBatch(data, batch.start, batch.count);
+        auto batch_results = ProcessBatch(data, batch.start, batch.count, prof_events);
         all_results.insert(all_results.end(), batch_results.begin(), batch_results.end());
     }
 
@@ -290,7 +370,8 @@ std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessBatchFromGPU(
 
 AllMaximaResult SpectrumProcessorROCm::FindAllMaximaFromCPU(
     const std::vector<std::complex<float>>& data,
-    OutputDestination dest, uint32_t search_start, uint32_t search_end)
+    OutputDestination dest, uint32_t search_start, uint32_t search_end,
+    ROCmProfEvents* prof_events)
 {
     if (!initialized_) {
         throw std::runtime_error("SpectrumProcessorROCm::FindAllMaximaFromCPU: not initialized");
@@ -322,19 +403,70 @@ AllMaximaResult SpectrumProcessorROCm::FindAllMaximaFromCPU(
 
     if (!kernels_compiled_) CompileKernels();
 
-    // Upload → Pad → FFT → ComputeMagnitudes → pipeline
-    UploadData(data.data(), data.size());
-    ExecutePadKernel(params_.antenna_count);
-    ExecuteFFT();
-
     size_t total_elements = static_cast<size_t>(params_.antenna_count) * params_.nFFT;
+
+    // ── Upload (H2D) ─────────────────────────────────────────────────────────
+    hipEvent_t ev_up_s = nullptr, ev_up_e = nullptr;
+    if (prof_events) {
+        hipEventCreate(&ev_up_s); hipEventCreate(&ev_up_e);
+        hipEventRecord(ev_up_s, stream_);
+    }
+    UploadData(data.data(), data.size());
+    if (prof_events) hipEventRecord(ev_up_e, stream_);
+
+    // ── PadKernel ────────────────────────────────────────────────────────────
+    hipEvent_t ev_pad_s = nullptr, ev_pad_e = nullptr;
+    if (prof_events) {
+        hipEventCreate(&ev_pad_s); hipEventCreate(&ev_pad_e);
+        hipEventRecord(ev_pad_s, stream_);
+    }
+    ExecutePadKernel(params_.antenna_count);
+    if (prof_events) hipEventRecord(ev_pad_e, stream_);
+
+    // ── FFT ──────────────────────────────────────────────────────────────────
+    hipEvent_t ev_fft_s = nullptr, ev_fft_e = nullptr;
+    if (prof_events) {
+        hipEventCreate(&ev_fft_s); hipEventCreate(&ev_fft_e);
+        hipEventRecord(ev_fft_s, stream_);
+    }
+    ExecuteFFT();
+    if (prof_events) hipEventRecord(ev_fft_e, stream_);
+
+    // ── ComputeMagnitudes ────────────────────────────────────────────────────
+    hipEvent_t ev_mag_s = nullptr, ev_mag_e = nullptr;
+    if (prof_events) {
+        hipEventCreate(&ev_mag_s); hipEventCreate(&ev_mag_e);
+        hipEventRecord(ev_mag_s, stream_);
+    }
     ExecuteComputeMagnitudes(total_elements);
+    if (prof_events) hipEventRecord(ev_mag_e, stream_);
+
+    // ── Pipeline (Detect+Scan+Compact) ───────────────────────────────────────
+    hipEvent_t ev_pipe_s = nullptr, ev_pipe_e = nullptr;
+    if (prof_events) {
+        hipEventCreate(&ev_pipe_s); hipEventCreate(&ev_pipe_e);
+        hipEventRecord(ev_pipe_s, stream_);
+    }
     hipStreamSynchronize(stream_);
 
-    return pipeline_->Execute(
+    AllMaximaResult result = pipeline_->Execute(
         magnitudes_buffer_, fft_output_,
         params_.antenna_count, params_.nFFT, params_.sample_rate,
         dest, search_start, search_end);
+
+    if (prof_events) hipEventRecord(ev_pipe_e, stream_);
+
+    // ── Собрать события ──────────────────────────────────────────────────────
+    if (prof_events) {
+        hipStreamSynchronize(stream_);
+        prof_events->push_back({"Upload",            MakeROCmDataFromEvents(ev_up_s,   ev_up_e,   1, "H2D")});
+        prof_events->push_back({"PadKernel",         MakeROCmDataFromEvents(ev_pad_s,  ev_pad_e,  0, "pad_kernel")});
+        prof_events->push_back({"FFT",               MakeROCmDataFromEvents(ev_fft_s,  ev_fft_e,  0, "hipfftExecC2C")});
+        prof_events->push_back({"ComputeMagnitudes", MakeROCmDataFromEvents(ev_mag_s,  ev_mag_e,  0, "compute_mag")});
+        prof_events->push_back({"Pipeline",          MakeROCmDataFromEvents(ev_pipe_s, ev_pipe_e, 0, "detect+scan+compact")});
+    }
+
+    return result;
 }
 
 AllMaximaResult SpectrumProcessorROCm::FindAllMaximaFromGPUPipeline(

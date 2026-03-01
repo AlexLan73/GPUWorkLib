@@ -75,6 +75,7 @@
 #include <clFFT.h>
 #include <complex>
 #include <vector>
+#include <utility>
 #include <string>
 #include <memory>
 #include <cstdint>
@@ -116,6 +117,13 @@ namespace antenna_fft {
  */
 class SpectrumMaximaFinder {
 public:
+    // ═══════════════════════════════════════════════════════════════════════
+    // Тип для сбора OpenCL timing events (profiling)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Список пар (имя_стадии, cl_event) — заполняется при prof_events != nullptr
+    using ProfEvents = std::vector<std::pair<const char*, cl_event>>;
+
     // ═══════════════════════════════════════════════════════════════════════
     // Конструктор / Деструктор
     // ═══════════════════════════════════════════════════════════════════════
@@ -216,7 +224,8 @@ public:
     std::vector<SpectrumResult> Process(
         const InputData<T>& input,
         PeakSearchMode mode = PeakSearchMode::ONE_PEAK,
-        DriverType driver = DriverType::ROCm);
+        DriverType driver = DriverType::ROCm,
+        ProfEvents* prof_events = nullptr);
 
     // ═══════════════════════════════════════════════════════════════════════
     // FindAllMaxima — поиск ВСЕХ локальных максимумов
@@ -255,7 +264,8 @@ public:
         OutputDestination dest = OutputDestination::CPU,
         DriverType driver = DriverType::OPENCL,
         uint32_t search_start = 0,
-        uint32_t search_end = 0);
+        uint32_t search_end = 0,
+        ProfEvents* prof_events = nullptr);
 
     /**
      * @brief Поиск ВСЕХ максимумов в готовых FFT данных (без FFT)
@@ -294,7 +304,8 @@ public:
         OutputDestination dest = OutputDestination::CPU,
         DriverType driver = DriverType::OPENCL,
         uint32_t search_start = 0,
-        uint32_t search_end = 0);
+        uint32_t search_end = 0,
+        ProfEvents* prof_events = nullptr);
 
     /**
      * @brief Найти все максимумы в уже готовом FFT спектре на GPU
@@ -321,7 +332,8 @@ public:
         uint32_t search_end = 0,
         uint32_t beam_offset = 0,
         cl_mem external_out_maxima = nullptr,
-        cl_mem external_out_counts = nullptr);
+        cl_mem external_out_counts = nullptr,
+        ProfEvents* prof_events = nullptr);
 
     /**
      * @brief Получить данные профилирования (из GPUProfiler для модуля SpectrumMaxima)
@@ -354,18 +366,20 @@ private:
 
     /// Обработка CPU данных (vector)
     std::vector<SpectrumResult> ProcessFromCPU(
-        const std::vector<std::complex<float>>& data);
+        const std::vector<std::complex<float>>& data,
+        ProfEvents* pe = nullptr);
 
     /// Обработка GPU данных (cl_mem) — БЕЗ upload, только GPU→GPU копирование!
     /// @param gpu_memory_bytes Реальный размер буфера на GPU (для расчёта batch size)
     std::vector<SpectrumResult> ProcessFromGPU(
         cl_mem gpu_data, size_t antenna_count, size_t n_point,
-        size_t gpu_memory_bytes = 0);
+        size_t gpu_memory_bytes = 0, ProfEvents* pe = nullptr);
 
     /// Обработка одного batch из GPU буфера
     std::vector<SpectrumResult> ProcessBatchFromGPU(
         cl_mem gpu_data, size_t src_offset_bytes,
-        size_t start_antenna, size_t batch_antenna_count);
+        size_t start_antenna, size_t batch_antenna_count,
+        ProfEvents* pe = nullptr);
     // ═══════════════════════════════════════════════════════════════════════
     // Приватные методы
     // ═══════════════════════════════════════════════════════════════════════
@@ -398,7 +412,7 @@ private:
     cl_event ExecutePostKernel(cl_event wait_event);
 
     /// Прочитать результаты (8 MaxValue на луч → vector<SpectrumResult>)
-    std::vector<SpectrumResult> ReadResults(cl_event wait_event);
+    std::vector<SpectrumResult> ReadResults(cl_event wait_event, ProfEvents* pe = nullptr);
 
     /// Освободить ресурсы
     void ReleaseResources();
@@ -411,7 +425,8 @@ private:
     std::vector<SpectrumResult> ProcessBatch(
         const std::vector<std::complex<float>>& input_data,
         size_t start_antenna,
-        size_t batch_antenna_count);
+        size_t batch_antenna_count,
+        ProfEvents* pe = nullptr);
 
     /// Перевыделить буферы под новый размер batch
     void ReallocateBuffersForBatch(size_t batch_antenna_count);
@@ -502,22 +517,32 @@ private:
     /// Полный pipeline из CPU данных: Upload → FFT → Detect → Scan → Compact
     AllMaximaResult FindAllMaximaFromCPU(
         const std::vector<std::complex<float>>& data,
-        OutputDestination dest, uint32_t search_start, uint32_t search_end);
+        OutputDestination dest, uint32_t search_start, uint32_t search_end,
+        ProfEvents* pe = nullptr);
 
     /// Полный pipeline из GPU данных: Copy → FFT → Detect → Scan → Compact
     AllMaximaResult FindAllMaximaFromGPUPipeline(
         cl_mem gpu_data, size_t antenna_count, size_t n_point,
         size_t gpu_memory_bytes,
-        OutputDestination dest, uint32_t search_start, uint32_t search_end);
+        OutputDestination dest, uint32_t search_start, uint32_t search_end,
+        ProfEvents* pe = nullptr);
 
     /// AllMaxima из CPU FFT данных: Upload → ComputeMag → Detect → Scan → Compact
     AllMaximaResult AllMaximaFromCPU(
         const std::vector<std::complex<float>>& fft_data,
         uint32_t beam_count, uint32_t nFFT, float sample_rate,
-        OutputDestination dest, uint32_t search_start, uint32_t search_end);
+        OutputDestination dest, uint32_t search_start, uint32_t search_end,
+        ProfEvents* pe = nullptr);
 
     /// Освободить AllMaxima ресурсы
     void ReleaseAllMaximaResources();
+
+    /// Сохранить cl_event в prof_events (если не nullptr) или освободить его
+    static void CollectOrRelease(cl_event ev, const char* name, ProfEvents* prof_events) {
+        if (!ev) return;
+        if (prof_events) { prof_events->push_back({name, ev}); }
+        else             { clReleaseEvent(ev); }
+    }
 
     // AllMaxima kernel'ы
     cl_program all_maxima_program_ = nullptr;
@@ -563,7 +588,8 @@ template<typename T>
 std::vector<SpectrumResult> SpectrumMaximaFinder::Process(
     const InputData<T>& input,
     PeakSearchMode mode,
-    DriverType driver)
+    DriverType driver,
+    ProfEvents* prof_events)
 {
     // 1. Создать временный ProcessingParams из полей InputData
     ProcessingParams proc_params{
@@ -582,14 +608,14 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::Process(
         if (!initialized_) {
             Initialize();
         }
-        return ProcessFromCPU(input.data);
+        return ProcessFromCPU(input.data, prof_events);
     }
     else if constexpr (std::is_same_v<T, cl_mem>) {
         // GPU данные (cl_mem) — НЕ вызываем Initialize()!
         // ProcessFromGPU() сам управляет буферами с учётом уже занятой памяти.
         // Это позволяет правильно рассчитать batch size когда данные УЖЕ на GPU.
         return ProcessFromGPU(input.data, input.antenna_count, input.n_point,
-                              input.ActualGpuMemory());
+                              input.ActualGpuMemory(), prof_events);
     }
     else if constexpr (is_svm_pointer_v<T>) {
         // SVM данные — TODO: реализовать позже
@@ -616,7 +642,8 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
     OutputDestination dest,
     DriverType driver,
     uint32_t search_start,
-    uint32_t search_end)
+    uint32_t search_end,
+    ProfEvents* prof_events)
 {
     (void)driver;  // TODO: ROCm backend
 
@@ -636,12 +663,13 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
         if (!initialized_) {
             Initialize();
         }
-        return FindAllMaximaFromCPU(input.data, dest, search_start, search_end);
+        return FindAllMaximaFromCPU(input.data, dest, search_start, search_end, prof_events);
     }
     else if constexpr (std::is_same_v<T, cl_mem>) {
         // GPU данные (cl_mem) — copy → FFT → AllMaxima
         return FindAllMaximaFromGPUPipeline(input.data, input.antenna_count, input.n_point,
-                                             input.ActualGpuMemory(), dest, search_start, search_end);
+                                             input.ActualGpuMemory(), dest,
+                                             search_start, search_end, prof_events);
     }
     else if constexpr (is_svm_pointer_v<T>) {
         throw std::runtime_error("SVM input not implemented yet for FindAllMaxima");
@@ -663,7 +691,8 @@ AllMaximaResult SpectrumMaximaFinder::AllMaxima(
     OutputDestination dest,
     DriverType driver,
     uint32_t search_start,
-    uint32_t search_end)
+    uint32_t search_end,
+    ProfEvents* prof_events)
 {
     (void)driver;  // TODO: ROCm backend
 
@@ -675,12 +704,13 @@ AllMaximaResult SpectrumMaximaFinder::AllMaxima(
     if constexpr (is_cpu_vector_v<T>) {
         // CPU FFT данные — upload → ComputeMag → Detect → Scan → Compact
         return AllMaximaFromCPU(input.data, beam_count, nFFT,
-                                sample_rate, dest, search_start, search_end);
+                                sample_rate, dest, search_start, search_end, prof_events);
     }
     else if constexpr (std::is_same_v<T, cl_mem>) {
         // GPU FFT данные — прямой вызов (данные уже на GPU)
         return FindAllMaxima(input.data, beam_count, nFFT,
-                             sample_rate, dest, search_start, search_end);
+                             sample_rate, dest, search_start, search_end,
+                             0, nullptr, nullptr, prof_events);
     }
     else if constexpr (is_svm_pointer_v<T>) {
         throw std::runtime_error("SVM input not implemented yet for AllMaxima");

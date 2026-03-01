@@ -13,8 +13,6 @@
 #include "kernels/fir_kernels.hpp"
 
 #include "common/backend_type.hpp"
-#include "services/gpu_profiler.hpp"
-#include "backends/opencl/opencl_profiling.hpp"
 
 #include <stdexcept>
 #include <cstring>
@@ -114,7 +112,8 @@ void FirFilter::SetCoefficients(const std::vector<float>& coeffs) {
 // ════════════════════════════════════════════════════════════════════════════
 
 drv_gpu_lib::InputData<cl_mem>
-FirFilter::Process(cl_mem input_buf, uint32_t channels, uint32_t points) {
+FirFilter::Process(cl_mem input_buf, uint32_t channels, uint32_t points,
+                   ProfEvents* prof_events) {
   if (channels == 0 || points == 0) {
     throw std::runtime_error("FirFilter::Process: channels or points is 0");
   }
@@ -189,12 +188,7 @@ FirFilter::Process(cl_mem input_buf, uint32_t channels, uint32_t points) {
 
   clFinish(queue_);
 
-  // GPUProfiler: record kernel timing
-  int gpu_id = backend_->GetDeviceIndex();
-  if (gpu_id < 0) gpu_id = 0;
-  drv_gpu_lib::RecordProfilingEvent(
-      kernel_event, gpu_id, "FirFilter", kernel_name);
-  if (kernel_event) clReleaseEvent(kernel_event);
+  CollectOrRelease(kernel_event, "Kernel", prof_events);
 
   // Build result
   drv_gpu_lib::InputData<cl_mem> result;

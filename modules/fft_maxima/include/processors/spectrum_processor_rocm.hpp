@@ -22,6 +22,7 @@
 #include "interface/spectrum_maxima_types.h"
 #include "interface/i_backend.hpp"
 #include "pipelines/all_maxima_pipeline_rocm.hpp"
+#include "DrvGPU/services/profiling_types.hpp"
 
 #include <hip/hip_runtime.h>
 #include <hipfft/hipfft.h>
@@ -34,6 +35,9 @@
 #include <cstddef>
 
 namespace antenna_fft {
+
+/// ROCm profiling events: (name, ROCmProfilingData) pairs collected during processing
+using ROCmProfEvents = std::vector<std::pair<const char*, drv_gpu_lib::ROCmProfilingData>>;
 
 /**
  * @class SpectrumProcessorROCm
@@ -61,7 +65,8 @@ public:
     bool IsInitialized() const override { return initialized_; }
 
     std::vector<SpectrumResult> ProcessFromCPU(
-        const std::vector<std::complex<float>>& data) override;
+        const std::vector<std::complex<float>>& data,
+        ROCmProfEvents* prof_events = nullptr);
 
     std::vector<SpectrumResult> ProcessFromGPU(
         void* gpu_data, size_t antenna_count, size_t n_point,
@@ -70,7 +75,8 @@ public:
     std::vector<SpectrumResult> ProcessBatch(
         const std::vector<std::complex<float>>& batch_data,
         size_t start_antenna,
-        size_t batch_antenna_count) override;
+        size_t batch_antenna_count,
+        ROCmProfEvents* prof_events = nullptr);
 
     std::vector<SpectrumResult> ProcessBatchFromGPU(
         void* gpu_data, size_t src_offset_bytes,
@@ -78,7 +84,8 @@ public:
 
     AllMaximaResult FindAllMaximaFromCPU(
         const std::vector<std::complex<float>>& data,
-        OutputDestination dest, uint32_t search_start, uint32_t search_end) override;
+        OutputDestination dest, uint32_t search_start, uint32_t search_end,
+        ROCmProfEvents* prof_events = nullptr);
 
     AllMaximaResult FindAllMaximaFromGPUPipeline(
         void* gpu_data, size_t antenna_count, size_t n_point,

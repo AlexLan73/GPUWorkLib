@@ -26,8 +26,12 @@
 
 ## Текущий статус
 
-**В работе**: ROCm Backend — см. [tasks/PLAN_AMD_Radeon_9070_ROCm.md](tasks/PLAN_AMD_Radeon_9070_ROCm.md)
-**Завершено**: SpectrumMaximaFinder — OpenCL kernel optimizations (все 9 TASK) → [tasks/fft_maxima_optimization_plan.md](tasks/fft_maxima_optimization_plan.md)
+**В работе**:
+- ROCm Backend — см. [tasks/PLAN_AMD_Radeon_9070_ROCm.md](tasks/PLAN_AMD_Radeon_9070_ROCm.md)
+- **filters профилирование (OpenCL + ROCm)** — TASK 1–14 → [tasks/TASK_filters_profiling.md](tasks/TASK_filters_profiling.md)
+**Завершено**:
+- **fft_maxima профилирование (OpenCL + ROCm)** — TASK 1–14 DONE → [tasks/TASK_fft_maxima_profiling_opencl.md](tasks/TASK_fft_maxima_profiling_opencl.md)
+- SpectrumMaximaFinder — OpenCL kernel optimizations → [tasks/fft_maxima_optimization_plan.md](tasks/fft_maxima_optimization_plan.md)
 
 ---
 
@@ -67,4 +71,4 @@ build/python/Release/gpuworklib.cp312-win_amd64.pyd
 
 ---
 
-*Последнее обновление: 2026-02-28*
+*Последнее обновление: 2026-03-01*

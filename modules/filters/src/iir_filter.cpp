@@ -14,8 +14,6 @@
 #include "kernels/iir_kernels.hpp"
 
 #include "common/backend_type.hpp"
-#include "services/gpu_profiler.hpp"
-#include "backends/opencl/opencl_profiling.hpp"
 
 #include <stdexcept>
 #include <cstring>
@@ -111,7 +109,8 @@ void IirFilter::SetBiquadSections(const std::vector<BiquadSection>& sections) {
 // ════════════════════════════════════════════════════════════════════════════
 
 drv_gpu_lib::InputData<cl_mem>
-IirFilter::Process(cl_mem input_buf, uint32_t channels, uint32_t points) {
+IirFilter::Process(cl_mem input_buf, uint32_t channels, uint32_t points,
+                   ProfEvents* prof_events) {
   if (channels == 0 || points == 0) {
     throw std::runtime_error("IirFilter::Process: channels or points is 0");
   }
@@ -178,12 +177,7 @@ IirFilter::Process(cl_mem input_buf, uint32_t channels, uint32_t points) {
 
   clFinish(queue_);
 
-  // GPUProfiler
-  int gpu_id = backend_->GetDeviceIndex();
-  if (gpu_id < 0) gpu_id = 0;
-  drv_gpu_lib::RecordProfilingEvent(
-      kernel_event, gpu_id, "IirFilter", "iir_biquad_cascade_cf32");
-  if (kernel_event) clReleaseEvent(kernel_event);
+  CollectOrRelease(kernel_event, "Kernel", prof_events);
 
   // Build result
   drv_gpu_lib::InputData<cl_mem> result;

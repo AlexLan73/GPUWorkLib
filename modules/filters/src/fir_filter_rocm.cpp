@@ -19,6 +19,27 @@
 #include <cstring>
 #include <algorithm>
 
+namespace {
+
+/// Helper: hipEvent → elapsed → ROCmProfilingData (уничтожает events)
+drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
+    hipEvent_t ev_start, hipEvent_t ev_end,
+    uint32_t kind = 0, const char* op = "")
+{
+    hipEventSynchronize(ev_end);
+    float ms = 0.0f;
+    hipEventElapsedTime(&ms, ev_start, ev_end);
+    hipEventDestroy(ev_start);
+    hipEventDestroy(ev_end);
+    drv_gpu_lib::ROCmProfilingData d{};
+    uint64_t ns = static_cast<uint64_t>(ms * 1e6f);
+    d.start_ns = 0; d.end_ns = ns; d.complete_ns = ns;
+    d.kind = kind; d.op_string = op;
+    return d;
+}
+
+}  // namespace
+
 namespace filters {
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -109,7 +130,8 @@ void FirFilterROCm::SetCoefficients(const std::vector<float>& coeffs) {
 // ════════════════════════════════════════════════════════════════════════════
 
 drv_gpu_lib::InputData<void*>
-FirFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points) {
+FirFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points,
+                       ROCmProfEvents* prof_events) {
   if (!input_ptr) {
     throw std::invalid_argument("FirFilterROCm::Process: input_ptr is null");
   }
@@ -151,6 +173,13 @@ FirFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points) {
   unsigned int grid_size = static_cast<unsigned int>(
       (total_points + kBlockSize - 1) / kBlockSize);
 
+  hipEvent_t ev_k_s = nullptr, ev_k_e = nullptr;
+  if (prof_events) {
+    hipEventCreate(&ev_k_s);
+    hipEventCreate(&ev_k_e);
+    hipEventRecord(ev_k_s, stream_);
+  }
+
   err = hipModuleLaunchKernel(
       kernel_,
       grid_size, 1, 1,
@@ -158,7 +187,12 @@ FirFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points) {
       0, stream_,
       args, nullptr);
 
+  if (prof_events) {
+    hipEventRecord(ev_k_e, stream_);
+  }
+
   if (err != hipSuccess) {
+    if (ev_k_s) { hipEventDestroy(ev_k_s); hipEventDestroy(ev_k_e); }
     (void)hipFree(output_ptr);
     throw std::runtime_error(
         "FirFilterROCm::Process: hipModuleLaunchKernel failed: " +
@@ -166,6 +200,11 @@ FirFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points) {
   }
 
   (void)hipStreamSynchronize(stream_);
+
+  if (prof_events) {
+    prof_events->push_back({"Kernel",
+        MakeROCmDataFromEvents(ev_k_s, ev_k_e, 0, "fir_filter")});
+  }
 
   drv_gpu_lib::InputData<void*> result;
   result.antenna_count = channels;
@@ -178,7 +217,8 @@ FirFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points) {
 drv_gpu_lib::InputData<void*>
 FirFilterROCm::ProcessFromCPU(
     const std::vector<std::complex<float>>& data,
-    uint32_t channels, uint32_t points)
+    uint32_t channels, uint32_t points,
+    ROCmProfEvents* prof_events)
 {
   size_t expected = static_cast<size_t>(channels) * points;
   if (data.size() < expected) {
@@ -196,17 +236,36 @@ FirFilterROCm::ProcessFromCPU(
         "FirFilterROCm::ProcessFromCPU: hipMalloc(input) failed");
   }
 
+  // H2D Upload timing
+  hipEvent_t ev_up_s = nullptr, ev_up_e = nullptr;
+  if (prof_events) {
+    hipEventCreate(&ev_up_s);
+    hipEventCreate(&ev_up_e);
+    hipEventRecord(ev_up_s, stream_);
+  }
+
   err = hipMemcpyHtoDAsync(input_ptr,
                             const_cast<std::complex<float>*>(data.data()),
                             data_size, stream_);
+
+  if (prof_events) {
+    hipEventRecord(ev_up_e, stream_);
+  }
+
   if (err != hipSuccess) {
+    if (ev_up_s) { hipEventDestroy(ev_up_s); hipEventDestroy(ev_up_e); }
     (void)hipFree(input_ptr);
     throw std::runtime_error(
         "FirFilterROCm::ProcessFromCPU: hipMemcpyHtoDAsync(input) failed");
   }
   (void)hipStreamSynchronize(stream_);
 
-  auto result = Process(input_ptr, channels, points);
+  if (prof_events) {
+    prof_events->push_back({"Upload",
+        MakeROCmDataFromEvents(ev_up_s, ev_up_e, 0, "H2D")});
+  }
+
+  auto result = Process(input_ptr, channels, points, prof_events);
 
   (void)hipFree(input_ptr);
   return result;

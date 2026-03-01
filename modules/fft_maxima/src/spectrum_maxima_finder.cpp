@@ -25,8 +25,6 @@
  */
 
 #include "spectrum_maxima_finder.h"
-#include "backends/opencl/opencl_profiling.hpp"
-#include "services/gpu_profiler.hpp"
 #include "services/console_output.hpp"
 #include <stdexcept>
 #include <cstring>
@@ -277,7 +275,8 @@ void SpectrumMaximaFinder::Initialize() {
 std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatch(
     const std::vector<std::complex<float>>& input_data,
     size_t start_antenna,
-    size_t batch_antenna_count) {
+    size_t batch_antenna_count,
+    ProfEvents* prof_events) {
 
     // Перевыделить буферы под текущий batch (если нужно)
     // current_batch_size_ — размер буферов, actual_batch_size_ — реальный batch
@@ -285,8 +284,6 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatch(
         ReallocateBuffersForBatch(batch_antenna_count);
     }
     actual_batch_size_ = batch_antenna_count;  // Запоминаем реальный размер batch
-
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
 
     // Извлечь срез данных для текущего batch
     size_t offset = start_antenna * params_.n_point;
@@ -297,21 +294,18 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatch(
 
     // 1. Загрузить данные batch на GPU
     cl_event upload_event = UploadData(batch_data);
-    drv_gpu_lib::RecordProfilingEvent(upload_event, gpu_id, "SpectrumMaxima", "Upload");
 
-    // 2. Выполнить FFT
+    // 2. Выполнить FFT (upload_event — wait, потом освободить/собрать)
     cl_event fft_event = ExecuteFFT(upload_event);
-    clReleaseEvent(upload_event);
-    drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "SpectrumMaxima", "FFT");
+    CollectOrRelease(upload_event, "Upload", prof_events);
 
-    // 3. Выполнить post-kernel
+    // 3. Выполнить post-kernel (fft_event — wait, потом освободить/собрать)
     cl_event post_event = ExecutePostKernel(fft_event);
-    clReleaseEvent(fft_event);
-    drv_gpu_lib::RecordProfilingEvent(post_event, gpu_id, "SpectrumMaxima", "PostKernel");
+    CollectOrRelease(fft_event, "FFT", prof_events);
 
-    // 4. Прочитать результаты batch
-    std::vector<SpectrumResult> batch_results = ReadResults(post_event);
-    clReleaseEvent(post_event);
+    // 4. Прочитать результаты batch (post_event — wait; Download записывается внутри)
+    std::vector<SpectrumResult> batch_results = ReadResults(post_event, prof_events);
+    CollectOrRelease(post_event, "PostKernel", prof_events);
 
     // Скорректировать antenna_id для результатов (добавить start_antenna)
     for (auto& result : batch_results) {
@@ -893,7 +887,7 @@ cl_event SpectrumMaximaFinder::ExecutePostKernel(cl_event wait_event) {
     return event;
 }
 
-std::vector<SpectrumResult> SpectrumMaximaFinder::ReadResults(cl_event wait_event) {
+std::vector<SpectrumResult> SpectrumMaximaFinder::ReadResults(cl_event wait_event, ProfEvents* pe) {
     // Количество MaxValue зависит от режима: ONE_PEAK=4, TWO_PEAKS=8
     // Используем actual_batch_size_ — реальный размер текущего batch (не размер буферов!)
     size_t antenna_count_to_read = (actual_batch_size_ > 0) ? actual_batch_size_ : params_.antenna_count;
@@ -917,9 +911,8 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ReadResults(cl_event wait_even
         throw std::runtime_error("ReadResults failed: " + std::to_string(err));
     }
 
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-    drv_gpu_lib::RecordProfilingEvent(read_event, gpu_id, "SpectrumMaxima", "Download");
-    clReleaseEvent(read_event);
+    clWaitForEvents(1, &read_event);  // ожидаем завершения D2H (CL_FALSE выше)
+    CollectOrRelease(read_event, "Download", pe);
 
     // Преобразуем в vector<SpectrumResult>
     std::vector<SpectrumResult> results;

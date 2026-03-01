@@ -15,6 +15,10 @@
 #include "test_fir_basic.hpp"
 #include "test_iir_basic.hpp"
 #include "test_filters_rocm.hpp"
+#include "test_filters_benchmark.hpp"
+#if ENABLE_ROCM
+#include "test_filters_benchmark_rocm.hpp"
+#endif
 
 namespace filters_all_test {
 
@@ -22,6 +26,14 @@ inline void run() {
   filters::tests::run_fir_basic();
   filters::tests::run_iir_basic();
   test_filters_rocm::run();  // ROCm — Linux only, uncomment on AMD GPU
+
+  // BENCHMARK: FirFilter + IirFilter (OpenCL, GpuBenchmarkBase)
+  // test_filters_benchmark::run();
+
+  // BENCHMARK: FirFilterROCm + IirFilterROCm (ROCm, GpuBenchmarkBase)
+#if ENABLE_ROCM
+//  test_filters_benchmark_rocm::run();
+#endif
 }
 
 }  // namespace filters_all_test

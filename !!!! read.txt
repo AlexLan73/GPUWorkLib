@@ -12,3 +12,8 @@
 отладка 
 DAP Proxy Monitor интересно
 
+Привет) нужно переделать профилирование как сделано в  modules\fft_processor
+инструкция Doc_Addition\GPU_Profiling_Mechanism.md
+нужно передалать modules\fft_maxima
+Пожалуйста сформируй план и таски запиши я почитаю пиши все очень подробно
+для OpenCl & ROCm

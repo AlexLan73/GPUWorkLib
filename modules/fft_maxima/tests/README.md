@@ -83,12 +83,63 @@
 ### test_benchmark_all_maxima.hpp
 **Пространство имён**: `test_benchmark_all_maxima`
 **Дата**: 2026-02-14
+**⚠️ DEPRECATED** — заменён `test_fft_maxima_benchmark.hpp` (GpuBenchmarkBase)
 
-Бенчмарк производительности FindAllMaxima:
+Бенчмарк производительности FindAllMaxima (старый стиль):
 - **10 лучей x 500 000 точек**, Fs=100 кГц
 - Интеграция GPUProfiler с полным отчётом
 - ConsoleOutput для мультиGPU-безопасного вывода
 - Экспорт профилирования: `Results/Profiler/GPU_00_Profiler/benchmark_all_maxima_*.{md,json}`
+
+### fft_maxima_benchmark.hpp
+**Пространство имён**: `test_fft_maxima`
+**Дата**: 2026-03-01
+
+Benchmark-классы наследники `GpuBenchmarkBase` (новый стиль):
+
+| Класс | Метод | Стадии | Результаты |
+|-------|-------|--------|------------|
+| `SpectrumMaximaFinderBenchmark` | `Process(ONE_PEAK)` | Upload, FFT, PostKernel | `Results/Profiler/GPU_00_SpectrumMaxima_Process/` |
+| `SpectrumMaximaAllMaximaBenchmark` | `FindAllMaxima` | Upload, FFT, Detect, Scan, Compact | `Results/Profiler/GPU_00_SpectrumMaxima_AllMaxima/` |
+
+- `ExecuteKernel()` — warmup без timing (prof_events = nullptr)
+- `ExecuteKernelTimed()` — с ProfEvents → RecordEvent → GPUProfiler (min/max/avg автоматически)
+
+### test_fft_maxima_benchmark.hpp
+**Пространство имён**: `test_fft_maxima_benchmark`
+**Дата**: 2026-03-01
+
+Test runner для двух бенчмарков:
+- **10 лучей x 8192 точек**, Fs=100 кГц, комплексные синусоиды
+- OpenCL init с `CL_QUEUE_PROFILING_ENABLE` (обязательно для cl_event timing)
+- 5 прогревочных прогонов + 20 замерных → PrintReport + ExportJSON + ExportMarkdown
+- Если `is_prof=false` в configGPU.json — выводит `[SKIP]`, не падает
+
+### fft_maxima_benchmark_rocm.hpp
+**Пространство имён**: `test_fft_maxima_rocm`
+**Дата**: 2026-03-01
+**Условие компиляции**: `#if ENABLE_ROCM`
+
+ROCm benchmark-классы наследники `GpuBenchmarkBase`:
+
+| Класс | Метод | Стадии | Результаты |
+|-------|-------|--------|------------|
+| `SpectrumProcessorROCmBenchmark` | `ProcessFromCPU(ONE_PEAK)` | Upload(H2D), PadKernel, FFT, PostKernel, Download(D2H) | `Results/Profiler/GPU_00_SpectrumMaxima_ROCm_Process/` |
+| `SpectrumProcessorROCmAllMaximaBenchmark` | `FindAllMaximaFromCPU` | Upload(H2D), PadKernel, FFT, ComputeMagnitudes, Pipeline | `Results/Profiler/GPU_00_SpectrumMaxima_ROCm_AllMaxima/` |
+
+- Timing через `hipEvent_t` (GPU) и `std::chrono` (D2H sync)
+- `ExecuteKernel()` — warmup без overhead (prof_events = nullptr)
+- `ExecuteKernelTimed()` — с ROCmProfEvents → RecordROCmEvent → GPUProfiler
+
+### test_fft_maxima_benchmark_rocm.hpp
+**Пространство имён**: `test_fft_maxima_benchmark_rocm`
+**Дата**: 2026-03-01
+**Условие компиляции**: `#if ENABLE_ROCM`
+
+Test runner для двух ROCm бенчмарков:
+- **10 лучей x 8192 точек**, Fs=100 кГц
+- ROCmBackend init → если нет AMD GPU — выводит `[SKIP]`, не падает
+- 5 прогревочных + 20 замерных прогонов → PrintReport + ExportJSON + ExportMarkdown
 
 ### cpu_fft_reference.hpp
 

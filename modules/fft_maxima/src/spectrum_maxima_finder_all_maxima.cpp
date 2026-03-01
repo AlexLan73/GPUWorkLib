@@ -20,8 +20,6 @@
  */
 
 #include "spectrum_maxima_finder.h"
-#include "backends/opencl/opencl_profiling.hpp"
-#include "services/gpu_profiler.hpp"
 #include "services/console_output.hpp"
 #include "kernels/all_maxima_kernel_sources.hpp"
 #include <iostream>
@@ -178,7 +176,8 @@ cl_event SpectrumMaximaFinder::ExecuteAllMaximaFFT(cl_event wait_event) {
 
 AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromCPU(
     const std::vector<std::complex<float>>& data,
-    OutputDestination dest, uint32_t search_start, uint32_t search_end)
+    OutputDestination dest, uint32_t search_start, uint32_t search_end,
+    ProfEvents* prof_events)
 {
     if (!initialized_) {
         throw std::runtime_error("FindAllMaximaFromCPU: not initialized");
@@ -210,20 +209,16 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromCPU(
         actual_batch_size_ = params_.antenna_count;
         CreateAllMaximaFFTPlan(params_.antenna_count);
 
-        const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-
         cl_event upload_event = UploadData(data);
-        drv_gpu_lib::RecordProfilingEvent(upload_event, gpu_id, "AllMaxima", "Upload");
-
         cl_event fft_event = ExecuteAllMaximaFFT(upload_event);
-        clReleaseEvent(upload_event);
-        drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "AllMaxima", "FFT+PostCallback");
+        CollectOrRelease(upload_event, "Upload", prof_events);
 
         AllMaximaResult result = FindAllMaxima(
             fft_output_, params_.antenna_count, params_.nFFT,
-            params_.sample_rate, dest, search_start, search_end);
+            params_.sample_rate, dest, search_start, search_end,
+            0, nullptr, nullptr, prof_events);
 
-        clReleaseEvent(fft_event);
+        CollectOrRelease(fft_event, "FFT+PostCallback", prof_events);
         return result;
     }
 
@@ -268,8 +263,6 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromCPU(
         }
     }
 
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-
     // Обрабатываем каждый batch
     for (const auto& batch : batches) {
         con.Print(0, "AllMaxima", "  Processing batch: beams [" +
@@ -287,11 +280,8 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromCPU(
         CreateAllMaximaFFTPlan(batch.count);
 
         cl_event upload_event = UploadData(batch_data);
-        drv_gpu_lib::RecordProfilingEvent(upload_event, gpu_id, "AllMaxima", "Upload_Batch");
-
         cl_event fft_event = ExecuteAllMaximaFFT(upload_event);
-        clReleaseEvent(upload_event);
-        drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "AllMaxima", "FFT_Batch");
+        CollectOrRelease(upload_event, "Upload", prof_events);
 
         // FindAllMaxima с beam_offset и внешними буферами (для Dest=GPU)
         AllMaximaResult batch_result = FindAllMaxima(
@@ -299,9 +289,9 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromCPU(
             params_.sample_rate, dest, search_start, search_end,
             static_cast<uint32_t>(batch.start),  // beam_offset
             combined_out_maxima,                  // external buffers (nullptr для CPU)
-            combined_out_counts);
+            combined_out_counts, prof_events);
 
-        clReleaseEvent(fft_event);
+        CollectOrRelease(fft_event, "FFT", prof_events);
 
         // Мерж результатов
         for (auto& beam : batch_result.beams) {
@@ -333,7 +323,8 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromCPU(
 AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline(
     cl_mem gpu_data, size_t antenna_count, size_t n_point,
     size_t gpu_memory_bytes,
-    OutputDestination dest, uint32_t search_start, uint32_t search_end)
+    OutputDestination dest, uint32_t search_start, uint32_t search_end,
+    ProfEvents* prof_events)
 {
     if (!gpu_data) {
         throw std::invalid_argument("FindAllMaximaFromGPUPipeline: gpu_data cannot be null");
@@ -367,8 +358,6 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline(
         actual_batch_size_ = antenna_count;
         CreateAllMaximaFFTPlan(antenna_count);
 
-        const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-
         size_t data_size = antenna_count * n_point * sizeof(std::complex<float>);
         cl_event copy_event = nullptr;
         cl_int err = clEnqueueCopyBuffer(queue_,
@@ -380,17 +369,15 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline(
             throw std::runtime_error("FindAllMaximaFromGPUPipeline: CopyBuffer failed");
         }
 
-        drv_gpu_lib::RecordProfilingEvent(copy_event, gpu_id, "AllMaxima", "GPU→GPU Copy");
-
         cl_event fft_event = ExecuteAllMaximaFFT(copy_event);
-        clReleaseEvent(copy_event);
-        drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "AllMaxima", "FFT+PostCallback");
+        CollectOrRelease(copy_event, "GPU→GPU Copy", prof_events);
 
         AllMaximaResult result = FindAllMaxima(
             fft_output_, static_cast<uint32_t>(antenna_count), params_.nFFT,
-            params_.sample_rate, dest, search_start, search_end);
+            params_.sample_rate, dest, search_start, search_end,
+            0, nullptr, nullptr, prof_events);
 
-        clReleaseEvent(fft_event);
+        CollectOrRelease(fft_event, "FFT+PostCallback", prof_events);
         return result;
     }
 
@@ -432,8 +419,6 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline(
         }
     }
 
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-
     // Обрабатываем каждый batch
     for (const auto& batch : batches) {
         con.Print(0, "AllMaxima", "  Processing batch: beams [" +
@@ -456,11 +441,8 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline(
             throw std::runtime_error("FindAllMaximaFromGPUPipeline(batch): CopyBuffer failed");
         }
 
-        drv_gpu_lib::RecordProfilingEvent(copy_event, gpu_id, "AllMaxima", "GPU→GPU Copy_Batch");
-
         cl_event fft_event = ExecuteAllMaximaFFT(copy_event);
-        clReleaseEvent(copy_event);
-        drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "AllMaxima", "FFT_Batch");
+        CollectOrRelease(copy_event, "GPU→GPU Copy", prof_events);
 
         // Detect → Scan → Compact с beam_offset и внешними буферами
         AllMaximaResult batch_result = FindAllMaxima(
@@ -468,9 +450,9 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline(
             params_.sample_rate, dest, search_start, search_end,
             static_cast<uint32_t>(batch.start),  // beam_offset
             combined_out_maxima,                  // external buffers (nullptr для CPU)
-            combined_out_counts);
+            combined_out_counts, prof_events);
 
-        clReleaseEvent(fft_event);
+        CollectOrRelease(fft_event, "FFT", prof_events);
 
         // Мерж результатов
         for (auto& beam : batch_result.beams) {
@@ -503,7 +485,8 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline(
 AllMaximaResult SpectrumMaximaFinder::AllMaximaFromCPU(
     const std::vector<std::complex<float>>& fft_data,
     uint32_t beam_count, uint32_t nFFT, float sample_rate,
-    OutputDestination dest, uint32_t search_start, uint32_t search_end)
+    OutputDestination dest, uint32_t search_start, uint32_t search_end,
+    ProfEvents* prof_events)
 {
     size_t expected_size = static_cast<size_t>(beam_count) * nFFT;
     if (fft_data.size() != expected_size) {
@@ -516,10 +499,6 @@ AllMaximaResult SpectrumMaximaFinder::AllMaximaFromCPU(
     con.Print(0, "AllMaxima", "AllMaximaFromCPU: " +
         std::to_string(beam_count) + " beams, nFFT=" + std::to_string(nFFT));
 
-    const int gpu_id = 0;
-    auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
-    const bool do_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(gpu_id);
-
     // Upload FFT данных на GPU
     cl_int err;
     size_t data_bytes = expected_size * sizeof(std::complex<float>);
@@ -531,7 +510,8 @@ AllMaximaResult SpectrumMaximaFinder::AllMaximaFromCPU(
 
     // Вызываем пайплайн для GPU FFT данных
     AllMaximaResult result = FindAllMaxima(gpu_fft, beam_count, nFFT,
-                                            sample_rate, dest, search_start, search_end);
+                                            sample_rate, dest, search_start, search_end,
+                                            0, nullptr, nullptr, prof_events);
 
     clReleaseMemObject(gpu_fft);
     return result;
@@ -795,7 +775,8 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
     uint32_t search_end,
     uint32_t beam_offset,
     cl_mem external_out_maxima,
-    cl_mem external_out_counts)
+    cl_mem external_out_counts,
+    ProfEvents* prof_events)
 {
     if (!fft_data)
         throw std::invalid_argument("FindAllMaxima: fft_data cannot be null");
@@ -816,8 +797,6 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
 
     cl_int err;
     const size_t total_elements = static_cast<size_t>(beam_count) * nFFT;
-
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
 
     // ═══════════════════════════════════════════════════════════════════════
     // 0. Обеспечить magnitudes_buffer_ (pre-computed |FFT[i]|)
@@ -847,8 +826,6 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
             &global_size, &local_size, 0, nullptr, &mag_event);
         if (err != CL_SUCCESS)
             throw std::runtime_error("FindAllMaxima: compute_magnitudes NDRange failed: " + std::to_string(err));
-
-        drv_gpu_lib::RecordProfilingEvent(mag_event, gpu_id, "AllMaxima", "ComputeMagnitudes");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -930,17 +907,13 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
             clReleaseMemObject(out_beam_counts);
             throw std::runtime_error("FindAllMaxima: detect NDRange failed: " + std::to_string(err));
         }
-        if (mag_event) clReleaseEvent(mag_event);
-
-        drv_gpu_lib::RecordProfilingEvent(detect_event, gpu_id, "AllMaxima", "Detect");
+        CollectOrRelease(mag_event, "ComputeMagnitudes", prof_events);
 
     // ═══════════════════════════════════════════════════════════════════════
     // 3. Beam-aware Parallel Prefix Sum
     // ═══════════════════════════════════════════════════════════════════════
         cl_event scan_all_event = ExecutePrefixSum(
             flags_buf, scan_buf, nFFT, beam_count, detect_event);
-
-        drv_gpu_lib::RecordProfilingEvent(scan_all_event, gpu_id, "AllMaxima", "Scan");
 
     // ═══════════════════════════════════════════════════════════════════════
     // 4. Compaction kernel (reads float* magnitudes_buffer_)
@@ -966,8 +939,8 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
         err = clEnqueueNDRangeKernel(queue_, compact_kernel_, 1, nullptr,
             &compact_global, &compact_local,
             1, &scan_all_event, &compact_event);
-        clReleaseEvent(scan_all_event);
-        clReleaseEvent(detect_event);
+        CollectOrRelease(scan_all_event, "Scan", prof_events);
+        CollectOrRelease(detect_event, "Detect", prof_events);
 
         if (err != CL_SUCCESS) {
             clReleaseMemObject(flags_buf);
@@ -976,8 +949,6 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
             clReleaseMemObject(out_beam_counts);
             throw std::runtime_error("FindAllMaxima: compact NDRange failed: " + std::to_string(err));
         }
-
-        drv_gpu_lib::RecordProfilingEvent(compact_event, gpu_id, "AllMaxima", "Compact");
 
     // ═══════════════════════════════════════════════════════════════════════
     // 5. Читаем beam_counts
@@ -989,7 +960,7 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
             1, &compact_event, &read_counts_event);
         clWaitForEvents(1, &read_counts_event);
         clReleaseEvent(read_counts_event);
-        clReleaseEvent(compact_event);
+        CollectOrRelease(compact_event, "Compact", prof_events);
 
     // ═══════════════════════════════════════════════════════════════════════
     // 6. Формируем результат

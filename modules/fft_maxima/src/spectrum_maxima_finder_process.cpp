@@ -15,8 +15,6 @@
  */
 
 #include "spectrum_maxima_finder.h"
-#include "backends/opencl/opencl_profiling.hpp"
-#include "services/gpu_profiler.hpp"
 #include "services/console_output.hpp"
 #include <iostream>
 #include <stdexcept>
@@ -55,7 +53,7 @@ void SpectrumMaximaFinder::PrepareParams(
 // ════════════════════════════════════════════════════════════════════════════
 
 std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromCPU(
-    const std::vector<std::complex<float>>& data)
+    const std::vector<std::complex<float>>& data, ProfEvents* prof_events)
 {
     // Проверка: инициализирован ли объект
     if (!initialized_) {
@@ -84,7 +82,7 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromCPU(
         auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
         con.Print(0, "SpectrumMaxima", "Все " + std::to_string(params_.antenna_count) +
             " антенн помещаются в память — batch не нужен");
-        return ProcessBatch(data, 0, params_.antenna_count);
+        return ProcessBatch(data, 0, params_.antenna_count, prof_events);
     }
 
     auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
@@ -108,7 +106,7 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromCPU(
             ": antennas [" + std::to_string(batch.start) + ".." +
             std::to_string(batch.start + batch.count - 1) + "]");
 
-        auto batch_results = ProcessBatch(data, batch.start, batch.count);
+        auto batch_results = ProcessBatch(data, batch.start, batch.count, prof_events);
         all_results.insert(all_results.end(), batch_results.begin(), batch_results.end());
     }
 
@@ -123,7 +121,7 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromCPU(
 
 std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromGPU(
     cl_mem gpu_data, size_t antenna_count, size_t n_point,
-    size_t gpu_memory_bytes)
+    size_t gpu_memory_bytes, ProfEvents* prof_events)
 {
     if (!gpu_data) {
         throw std::invalid_argument("ProcessFromGPU: gpu_data cannot be null");
@@ -182,19 +180,14 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromGPU(
             throw std::runtime_error("ProcessFromGPU: clEnqueueCopyBuffer failed: " + std::to_string(err));
         }
 
-        const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-        drv_gpu_lib::RecordProfilingEvent(copy_event, gpu_id, "SpectrumMaxima", "GPU→GPU Copy");
-
         cl_event fft_event = ExecuteFFT(copy_event);
-        clReleaseEvent(copy_event);
-        drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "SpectrumMaxima", "FFT");
+        CollectOrRelease(copy_event, "GPU\u2192GPU Copy", prof_events);
 
         cl_event post_event = ExecutePostKernel(fft_event);
-        clReleaseEvent(fft_event);
-        drv_gpu_lib::RecordProfilingEvent(post_event, gpu_id, "SpectrumMaxima", "PostKernel");
+        CollectOrRelease(fft_event, "FFT", prof_events);
 
-        auto results = ReadResults(post_event);
-        clReleaseEvent(post_event);
+        auto results = ReadResults(post_event, prof_events);
+        CollectOrRelease(post_event, "PostKernel", prof_events);
 
         return results;
     }
@@ -215,7 +208,7 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromGPU(
 
         size_t src_offset = batch.start * n_point * sizeof(std::complex<float>);
         auto batch_results = ProcessBatchFromGPU(gpu_data, src_offset,
-                                                  batch.start, batch.count);
+                                                  batch.start, batch.count, prof_events);
 
         for (auto& r : batch_results) {
             all_results.push_back(std::move(r));
@@ -232,7 +225,7 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromGPU(
 
 std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatchFromGPU(
     cl_mem gpu_data, size_t src_offset_bytes,
-    size_t start_antenna, size_t batch_antenna_count)
+    size_t start_antenna, size_t batch_antenna_count, ProfEvents* prof_events)
 {
     // Перевыделить буферы если нужно (с переиспользованием FFT плана)
     if (batch_antenna_count > current_batch_size_ || !plan_created_) {
@@ -242,8 +235,6 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatchFromGPU(
 
     // Обновить заголовок pre-callback
     WritePreCallbackHeader(batch_antenna_count);
-
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
 
     // Копируем данные GPU→GPU (из внешнего буфера в наш pre_callback_userdata_)
     size_t data_size = batch_antenna_count * params_.n_point * sizeof(std::complex<float>);
@@ -258,18 +249,14 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatchFromGPU(
         throw std::runtime_error("ProcessBatchFromGPU: clEnqueueCopyBuffer failed: " + std::to_string(err));
     }
 
-    drv_gpu_lib::RecordProfilingEvent(copy_event, gpu_id, "SpectrumMaxima", "GPU→GPU Copy");
-
     cl_event fft_event = ExecuteFFT(copy_event);
-    clReleaseEvent(copy_event);
-    drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "SpectrumMaxima", "FFT");
+    CollectOrRelease(copy_event, "GPU\u2192GPU Copy", prof_events);
 
     cl_event post_event = ExecutePostKernel(fft_event);
-    clReleaseEvent(fft_event);
-    drv_gpu_lib::RecordProfilingEvent(post_event, gpu_id, "SpectrumMaxima", "PostKernel");
+    CollectOrRelease(fft_event, "FFT", prof_events);
 
-    auto results = ReadResults(post_event);
-    clReleaseEvent(post_event);
+    auto results = ReadResults(post_event, prof_events);
+    CollectOrRelease(post_event, "PostKernel", prof_events);
 
     for (size_t i = 0; i < results.size(); ++i) {
         results[i].antenna_id = static_cast<uint32_t>(start_antenna + i);
