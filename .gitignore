@@ -31,7 +31,11 @@ CMakeUserPresets.json
 *~
 .cache/
 
-.claude/
+.claude/*
+!.claude/agents/
+!.claude/agents/*
+!.claude/commands/
+!.claude/commands/*
 
 # Compiled Object files
 *.slo
