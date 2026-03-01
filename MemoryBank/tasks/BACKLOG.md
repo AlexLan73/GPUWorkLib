@@ -7,6 +7,23 @@
 
 ## Перспективные задачи
 
+### Единый механизм профилирования GPU (Средний приоритет) ← НОВЫЙ
+
+**Цель**: Стандартизировать профилирование через `GpuBenchmarkBase` + Template Method Pattern
+
+| Задача | Описание |
+|--------|----------|
+| **PROF-001** | Реализовать `GpuBenchmarkBase` + `FFTProcessorBenchmark` (OpenCL) — [подробнее](TASK_profiling_fftprocessor.md) |
+| PROF-002 | Statistics → `StatisticsBenchmark` (ROCm) |
+| PROF-003 | Filters → `FiltersBenchmark` (OpenCL) |
+| PROF-004 | Heterodyne → `HeterodyneBenchmark` (OpenCL) |
+| PROF-005 | `Doc/Profiling_Migration_Guide.md` — гайд для новых модулей |
+
+**Спека**: `specs/Profil_GPU.md`
+**Начать с**: PROF-001 — `modules/fft_processor`
+
+---
+
 ### ROCm Backend (Средний приоритет) — **В РАБОТЕ**
 
 **Цель**: Добавить поддержку AMD GPU через ROCm/HIP

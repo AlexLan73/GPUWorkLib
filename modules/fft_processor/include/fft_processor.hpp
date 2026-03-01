@@ -33,7 +33,16 @@
  * // Обработка GPU данных (cl_mem)
  * cl_mem gpu_data = ...;
  * auto results3 = fft.ProcessComplex(gpu_data, params);
+ *
+ * // Обработка с профилированием (benchmark):
+ * std::vector<std::pair<const char*, cl_event>> events;
+ * auto results4 = fft.ProcessComplex(data, params, &events);
+ * // events содержит {"Upload", ev1}, {"FFT", ev2}, {"Download", ev3}
  * @endcode
+ *
+ * @note Production-код — ЧИСТЫЙ. Профилирование опционально через prof_events.
+ *       Без prof_events — ноль overhead, cl_event освобождаются внутри.
+ *       С prof_events — события собираются для внешнего профилирования.
  *
  * @author Кодо (AI Assistant)
  * @date 2026-02-13
@@ -49,6 +58,7 @@
 #include <clFFT.h>
 #include <complex>
 #include <vector>
+#include <utility>
 #include <cstdint>
 
 namespace fft_processor {
@@ -83,23 +93,28 @@ public:
      * @brief FFT с комплексным выводом (CPU данные)
      * @param data Входные данные: beam_count * n_point complex<float>
      * @param params Параметры FFT
+     * @param prof_events Если != nullptr — собирает cl_event'ы для профилирования
+     *        (вызывающий отвечает за clReleaseEvent). nullptr = без профилирования.
      * @return Вектор FFTComplexResult (один на луч)
      */
     std::vector<FFTComplexResult> ProcessComplex(
         const std::vector<std::complex<float>>& data,
-        const FFTProcessorParams& params);
+        const FFTProcessorParams& params,
+        std::vector<std::pair<const char*, cl_event>>* prof_events = nullptr);
 
     /**
      * @brief FFT с комплексным выводом (GPU данные)
      * @param gpu_data OpenCL буфер с данными
      * @param params Параметры FFT
      * @param gpu_memory_bytes Размер буфера на GPU (0 = auto)
+     * @param prof_events Если != nullptr — собирает cl_event'ы для профилирования
      * @return Вектор FFTComplexResult (один на луч)
      */
     std::vector<FFTComplexResult> ProcessComplex(
         cl_mem gpu_data,
         const FFTProcessorParams& params,
-        size_t gpu_memory_bytes = 0);
+        size_t gpu_memory_bytes = 0,
+        std::vector<std::pair<const char*, cl_event>>* prof_events = nullptr);
 
     // ═══════════════════════════════════════════════════════════════════════
     // Публичный API — Magnitude + Phase output
@@ -109,23 +124,27 @@ public:
      * @brief FFT с выводом magnitude + phase (CPU данные)
      * @param data Входные данные: beam_count * n_point complex<float>
      * @param params Параметры FFT (output_mode определяет наличие freq)
+     * @param prof_events Если != nullptr — собирает cl_event'ы для профилирования
      * @return Вектор FFTMagPhaseResult (один на луч)
      */
     std::vector<FFTMagPhaseResult> ProcessMagPhase(
         const std::vector<std::complex<float>>& data,
-        const FFTProcessorParams& params);
+        const FFTProcessorParams& params,
+        std::vector<std::pair<const char*, cl_event>>* prof_events = nullptr);
 
     /**
      * @brief FFT с выводом magnitude + phase (GPU данные)
      * @param gpu_data OpenCL буфер с данными
      * @param params Параметры FFT
      * @param gpu_memory_bytes Размер буфера на GPU (0 = auto)
+     * @param prof_events Если != nullptr — собирает cl_event'ы для профилирования
      * @return Вектор FFTMagPhaseResult (один на луч)
      */
     std::vector<FFTMagPhaseResult> ProcessMagPhase(
         cl_mem gpu_data,
         const FFTProcessorParams& params,
-        size_t gpu_memory_bytes = 0);
+        size_t gpu_memory_bytes = 0,
+        std::vector<std::pair<const char*, cl_event>>* prof_events = nullptr);
 
     // ═══════════════════════════════════════════════════════════════════════
     // Информация
@@ -181,12 +200,33 @@ private:
     /// Прочитать комплексные результаты
     std::vector<FFTComplexResult> ReadComplexResults(
         cl_event wait_event, size_t beam_count, size_t start_beam,
-        float sample_rate);
+        float sample_rate,
+        std::vector<std::pair<const char*, cl_event>>* prof_events = nullptr);
 
     /// Прочитать magnitude+phase результаты
     std::vector<FFTMagPhaseResult> ReadMagPhaseResults(
         cl_event wait_event, size_t beam_count, size_t start_beam,
-        float sample_rate, bool include_freq);
+        float sample_rate, bool include_freq,
+        std::vector<std::pair<const char*, cl_event>>* prof_events = nullptr);
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Вспомогательный метод — сохранить или освободить cl_event
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * @brief Если prof_events != nullptr — сохранить cl_event.
+     *        Иначе — освободить (clReleaseEvent).
+     */
+    static void CollectOrRelease(cl_event ev, const char* name,
+        std::vector<std::pair<const char*, cl_event>>* prof_events)
+    {
+        if (!ev) return;
+        if (prof_events) {
+            prof_events->push_back({name, ev});
+        } else {
+            clReleaseEvent(ev);
+        }
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // Поля

@@ -183,6 +183,7 @@ public:
             return; // Сервис не запущен — отбрасываем сообщение
         }
 
+        pending_count_.fetch_add(1, std::memory_order_relaxed);
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
             queue_.push(std::move(msg));
@@ -205,6 +206,7 @@ public:
             return;
         }
 
+        pending_count_.fetch_add(messages.size(), std::memory_order_relaxed);
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
             for (auto& msg : messages) {
@@ -230,6 +232,21 @@ public:
      */
     uint64_t GetProcessedCount() const {
         return processed_count_.load(std::memory_order_acquire);
+    }
+
+    /**
+     * @brief Дождаться обработки всех поставленных в очередь сообщений
+     *
+     * Блокирует вызывающий поток до тех пор, пока все ранее отправленные
+     * через Enqueue/EnqueueBatch сообщения не будут обработаны ProcessMessage().
+     *
+     * Используется перед чтением результатов (напр. PrintReport),
+     * чтобы гарантировать полноту данных.
+     */
+    void WaitEmpty() const {
+        while (pending_count_.load(std::memory_order_acquire) > 0) {
+            std::this_thread::yield();
+        }
     }
 
 protected:
@@ -311,6 +328,7 @@ private:
             for (const auto& msg : batch) {
                 ProcessMessage(msg);
                 processed_count_.fetch_add(1, std::memory_order_relaxed);
+                pending_count_.fetch_sub(1, std::memory_order_release);
             }
 
             // Check if we should stop (after processing remaining messages)
@@ -327,6 +345,7 @@ private:
                 for (const auto& msg : final_batch) {
                     ProcessMessage(msg);
                     processed_count_.fetch_add(1, std::memory_order_relaxed);
+                    pending_count_.fetch_sub(1, std::memory_order_release);
                 }
                 break;
             }
@@ -357,6 +376,10 @@ private:
 
     /// Counter of processed messages (for diagnostics)
     std::atomic<uint64_t> processed_count_{0};
+
+    /// Counter of pending (enqueued but not yet processed) messages
+    /// Used by WaitEmpty() to block until all messages are processed
+    mutable std::atomic<uint64_t> pending_count_{0};
 };
 
 } // namespace drv_gpu_lib

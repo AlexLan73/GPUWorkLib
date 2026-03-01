@@ -378,8 +378,8 @@ public:
 
                     file << "        {\n";
                     file << "          \"name\": \"" << mod_name << "\",\n";
-                    file << "          \"total_calls\": " << mod_stats.GetTotalCalls() << ",\n";
-                    file << "          \"total_time_ms\": " << fmtD(mod_stats.GetTotalTimeMs()) << ",\n";
+                    file << "          \"run_count\": " << mod_stats.GetRunCount() << ",\n";
+                    file << "          \"avg_run_time_ms\": " << fmtD(mod_stats.GetAvgRunTimeMs()) << ",\n";
 
                     // Events
                     file << "          \"events\": [\n";
@@ -590,8 +590,9 @@ public:
                     }
 
                     // Промежуточный итог по модулю (ROCm)
+                    // N = число прогонов; Время = среднее одного прогона (сумма avg по событиям)
                     std::cout << "| " << std::left << std::setw(16) << "--- ИТОГО ---"
-                              << "| " << std::right << std::setw(4) << mod_stats.GetTotalCalls() << " "
+                              << "| " << std::right << std::setw(4) << mod_stats.GetRunCount() << " "
                               << "| " << std::string(5, ' ') << " "
                               << "| " << std::string(4, ' ') << " "
                               << "| " << std::string(4, ' ') << " "
@@ -600,7 +601,7 @@ public:
                               << "| " << std::string(9, ' ') << " "
                               << "| " << std::string(9, ' ') << " "
                               << "| " << std::string(9, ' ') << " "
-                              << "| " << std::setw(9) << fmtD(mod_stats.GetTotalTimeMs(), 2) << " "
+                              << "| " << std::setw(9) << fmtD(mod_stats.GetAvgRunTimeMs(), 3) << " "
                               << "|\n";
                     std::cout << "+" << std::string(W - 2, '-') << "+\n";
 
@@ -640,13 +641,14 @@ public:
                     }
 
                     // Промежуточный итог по модулю (OpenCL)
+                    // N = число прогонов; Всего = среднее время одного прогона (сумма avg по событиям)
                     std::cout << "| " << std::left << std::setw(16) << "--- ИТОГО ---"
-                              << "| " << std::right << std::setw(4) << mod_stats.GetTotalCalls() << " "
+                              << "| " << std::right << std::setw(4) << mod_stats.GetRunCount() << " "
                               << "| " << std::string(11, ' ') << " "
                               << "| " << std::string(11, ' ') << " "
                               << "| " << std::string(11, ' ') << " "
                               << "| " << std::string(11, ' ') << " "
-                              << "| " << std::setw(11) << fmtD(mod_stats.GetTotalTimeMs(), 2) << " "
+                              << "| " << std::setw(11) << fmtD(mod_stats.GetAvgRunTimeMs(), 3) << " "
                               << "|\n";
                     std::cout << "+" << std::string(W - 2, '-') << "+\n";
                 }
@@ -670,7 +672,9 @@ public:
         std::cout << "| Запуск        | Задержка запуска на GPU (start - submit)                   |\n";
         std::cout << "| Выполн.       | Время выполнения кернела (end - start)                     |\n";
         std::cout << "| Заверш.       | Задержка завершения (complete - end)                       |\n";
-        std::cout << "| Всего         | Общее время операции (end - start)                         |\n";
+        std::cout << "| Всего         | Среднее время операции (end - start) на один вызов         |\n";
+        std::cout << "| ИТОГО N       | Число прогонов бенчмарка                                   |\n";
+        std::cout << "| ИТОГО Всего   | Среднее время одного прогона (сумма Всего по событиям)     |\n";
         std::cout << "+---------------+------------------------------------------------------------+\n";
 
         // ROCm легенда (показываем если есть ROCm данные)
@@ -772,8 +776,8 @@ public:
                              << " |\n";
                         first_event = false;
                     }
-                    file << "| | **ИТОГО** | " << mod_stats.GetTotalCalls()
-                         << " | | | | | " << std::fixed << std::setprecision(2) << mod_stats.GetTotalTimeMs()
+                    file << "| | **ИТОГО** | " << mod_stats.GetRunCount()
+                         << " | | | | | " << std::fixed << std::setprecision(3) << mod_stats.GetAvgRunTimeMs()
                          << " |\n";
                 }
 

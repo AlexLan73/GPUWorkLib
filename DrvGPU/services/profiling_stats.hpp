@@ -204,11 +204,21 @@ struct ModuleStats {
     /// Per-event statistics: event_name -> EventStats
     std::map<std::string, EventStats> events;
 
-    /// Total time across all events
+    /// Total accumulated time across all events (сумма всех замеров)
     double GetTotalTimeMs() const {
         double total = 0.0;
         for (const auto& [name, stats] : events) {
             total += stats.total_time_ms;
+        }
+        return total;
+    }
+
+    /// Average time per one full run = sum of avg times across all events
+    /// Это "сколько в среднем занимает один прогон модуля целиком"
+    double GetAvgRunTimeMs() const {
+        double total = 0.0;
+        for (const auto& [name, stats] : events) {
+            total += stats.GetAvgTimeMs();
         }
         return total;
     }
@@ -220,6 +230,12 @@ struct ModuleStats {
             total += stats.total_calls;
         }
         return total;
+    }
+
+    /// Number of benchmark runs (calls per individual event, assuming all equal)
+    uint64_t GetRunCount() const {
+        if (events.empty()) return 0;
+        return events.begin()->second.total_calls;
     }
 };
 

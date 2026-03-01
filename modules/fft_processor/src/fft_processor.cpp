@@ -12,14 +12,15 @@
  * ЧАСТЬ 4: GPU операции (Upload, FFT, PostKernel, Read)
  * ЧАСТЬ 5: Утилиты (NextPowerOf2, CalculateNFFT, Profiling)
  *
+ * @note Production-код — ЧИСТЫЙ. Нет RecordProfilingEvent внутри.
+ *       Профилирование — опционально через prof_events (benchmark-класс).
+ *
  * @author Кодо (AI Assistant)
  * @date 2026-02-13
  */
 
 #include "fft_processor.hpp"
-#include "backends/opencl/opencl_profiling.hpp"
 #include "services/gpu_profiler.hpp"
-#include <iostream>
 #include <stdexcept>
 #include <cstring>
 #include <cmath>
@@ -141,10 +142,9 @@ FFTProcessor& FFTProcessor::operator=(FFTProcessor&& other) noexcept {
 
 std::vector<FFTComplexResult> FFTProcessor::ProcessComplex(
     const std::vector<std::complex<float>>& data,
-    const FFTProcessorParams& params)
+    const FFTProcessorParams& params,
+    std::vector<std::pair<const char*, cl_event>>* prof_events)
 {
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-
     // Валидация
     size_t expected = static_cast<size_t>(params.beam_count) * params.n_point;
     if (data.size() != expected) {
@@ -175,17 +175,16 @@ std::vector<FFTComplexResult> FFTProcessor::ProcessComplex(
         const auto* batch_data = data.data() + batch.start * params.n_point;
         cl_event upload_event = UploadData(batch_data, batch.count * params.n_point);
         clFinish(queue_);
-        drv_gpu_lib::RecordProfilingEvent(upload_event, gpu_id, "FFTProcessor", "Upload");
 
         // FFT
         cl_event fft_event = ExecuteFFT(upload_event);
-        clReleaseEvent(upload_event);
+        CollectOrRelease(upload_event, "Upload", prof_events);
         clFinish(queue_);
-        drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "FFTProcessor", "FFT");
 
         // Read complex results
-        auto batch_results = ReadComplexResults(fft_event, batch.count, batch.start, params.sample_rate);
-        clReleaseEvent(fft_event);
+        auto batch_results = ReadComplexResults(fft_event, batch.count, batch.start,
+                                                 params.sample_rate, prof_events);
+        CollectOrRelease(fft_event, "FFT", prof_events);
 
         for (auto& r : batch_results) {
             all_results.push_back(std::move(r));
@@ -198,10 +197,9 @@ std::vector<FFTComplexResult> FFTProcessor::ProcessComplex(
 std::vector<FFTComplexResult> FFTProcessor::ProcessComplex(
     cl_mem gpu_data,
     const FFTProcessorParams& params,
-    size_t gpu_memory_bytes)
+    size_t gpu_memory_bytes,
+    std::vector<std::pair<const char*, cl_event>>* prof_events)
 {
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-
     if (!gpu_data) {
         throw std::invalid_argument("ProcessComplex: gpu_data is null");
     }
@@ -228,14 +226,15 @@ std::vector<FFTComplexResult> FFTProcessor::ProcessComplex(
 
         size_t src_offset = batch.start * params.n_point * sizeof(std::complex<float>);
         cl_event copy_event = CopyGpuData(gpu_data, src_offset, batch.count * params.n_point);
-        drv_gpu_lib::RecordProfilingEvent(copy_event, gpu_id, "FFTProcessor", "GPU→GPU Copy");
+        clFinish(queue_);
 
         cl_event fft_event = ExecuteFFT(copy_event);
-        clReleaseEvent(copy_event);
-        drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "FFTProcessor", "FFT");
+        CollectOrRelease(copy_event, "GPU_Copy", prof_events);
+        clFinish(queue_);
 
-        auto batch_results = ReadComplexResults(fft_event, batch.count, batch.start, params.sample_rate);
-        clReleaseEvent(fft_event);
+        auto batch_results = ReadComplexResults(fft_event, batch.count, batch.start,
+                                                 params.sample_rate, prof_events);
+        CollectOrRelease(fft_event, "FFT", prof_events);
 
         for (auto& r : batch_results) {
             all_results.push_back(std::move(r));
@@ -247,10 +246,9 @@ std::vector<FFTComplexResult> FFTProcessor::ProcessComplex(
 
 std::vector<FFTMagPhaseResult> FFTProcessor::ProcessMagPhase(
     const std::vector<std::complex<float>>& data,
-    const FFTProcessorParams& params)
+    const FFTProcessorParams& params,
+    std::vector<std::pair<const char*, cl_event>>* prof_events)
 {
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-
     size_t expected = static_cast<size_t>(params.beam_count) * params.n_point;
     if (data.size() != expected) {
         throw std::invalid_argument("ProcessMagPhase: input size mismatch");
@@ -281,21 +279,18 @@ std::vector<FFTMagPhaseResult> FFTProcessor::ProcessMagPhase(
         const auto* batch_data = data.data() + batch.start * params.n_point;
         cl_event upload_event = UploadData(batch_data, batch.count * params.n_point);
         clFinish(queue_);
-        drv_gpu_lib::RecordProfilingEvent(upload_event, gpu_id, "FFTProcessor", "Upload");
 
         cl_event fft_event = ExecuteFFT(upload_event);
-        clReleaseEvent(upload_event);
+        CollectOrRelease(upload_event, "Upload", prof_events);
         clFinish(queue_);
-        drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "FFTProcessor", "FFT");
 
         cl_event post_event = ExecuteMagPhaseKernel(fft_event, batch.count);
-        clReleaseEvent(fft_event);
+        CollectOrRelease(fft_event, "FFT", prof_events);
         clFinish(queue_);
-        drv_gpu_lib::RecordProfilingEvent(post_event, gpu_id, "FFTProcessor", "PostProcessing");
 
         auto batch_results = ReadMagPhaseResults(post_event, batch.count, batch.start,
-                                                  params.sample_rate, include_freq);
-        clReleaseEvent(post_event);
+                                                  params.sample_rate, include_freq, prof_events);
+        CollectOrRelease(post_event, "PostProcessing", prof_events);
 
         for (auto& r : batch_results) {
             all_results.push_back(std::move(r));
@@ -308,10 +303,9 @@ std::vector<FFTMagPhaseResult> FFTProcessor::ProcessMagPhase(
 std::vector<FFTMagPhaseResult> FFTProcessor::ProcessMagPhase(
     cl_mem gpu_data,
     const FFTProcessorParams& params,
-    size_t gpu_memory_bytes)
+    size_t gpu_memory_bytes,
+    std::vector<std::pair<const char*, cl_event>>* prof_events)
 {
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-
     if (!gpu_data) {
         throw std::invalid_argument("ProcessMagPhase: gpu_data is null");
     }
@@ -344,19 +338,19 @@ std::vector<FFTMagPhaseResult> FFTProcessor::ProcessMagPhase(
 
         size_t src_offset = batch.start * params.n_point * sizeof(std::complex<float>);
         cl_event copy_event = CopyGpuData(gpu_data, src_offset, batch.count * params.n_point);
-        drv_gpu_lib::RecordProfilingEvent(copy_event, gpu_id, "FFTProcessor", "GPU→GPU Copy");
+        clFinish(queue_);
 
         cl_event fft_event = ExecuteFFT(copy_event);
-        clReleaseEvent(copy_event);
-        drv_gpu_lib::RecordProfilingEvent(fft_event, gpu_id, "FFTProcessor", "FFT");
+        CollectOrRelease(copy_event, "GPU_Copy", prof_events);
+        clFinish(queue_);
 
         cl_event post_event = ExecuteMagPhaseKernel(fft_event, batch.count);
-        clReleaseEvent(fft_event);
-        drv_gpu_lib::RecordProfilingEvent(post_event, gpu_id, "FFTProcessor", "PostProcessing");
+        CollectOrRelease(fft_event, "FFT", prof_events);
+        clFinish(queue_);
 
         auto batch_results = ReadMagPhaseResults(post_event, batch.count, batch.start,
-                                                  params.sample_rate, include_freq);
-        clReleaseEvent(post_event);
+                                                  params.sample_rate, include_freq, prof_events);
+        CollectOrRelease(post_event, "PostProcessing", prof_events);
 
         for (auto& r : batch_results) {
             all_results.push_back(std::move(r));
@@ -522,7 +516,6 @@ void FFTProcessor::CompileMagPhaseKernel() {
         clGetProgramBuildInfo(mag_phase_program_, device_, CL_PROGRAM_BUILD_LOG, 0, nullptr, &log_size);
         std::vector<char> log(log_size);
         clGetProgramBuildInfo(mag_phase_program_, device_, CL_PROGRAM_BUILD_LOG, log_size, log.data(), nullptr);
-        std::cerr << "Kernel build log:\n" << log.data() << "\n";
         clReleaseProgram(mag_phase_program_);
         mag_phase_program_ = nullptr;
         throw std::runtime_error("CompileMagPhaseKernel: build failed: " + std::to_string(err));
@@ -665,7 +658,9 @@ cl_event FFTProcessor::ExecuteMagPhaseKernel(cl_event wait_event, size_t beam_co
 }
 
 std::vector<FFTComplexResult> FFTProcessor::ReadComplexResults(
-    cl_event wait_event, size_t beam_count, size_t start_beam, float sample_rate)
+    cl_event wait_event, size_t beam_count, size_t start_beam,
+    float sample_rate,
+    std::vector<std::pair<const char*, cl_event>>* prof_events)
 {
     size_t total = beam_count * nFFT_;
     std::vector<std::complex<float>> raw(total);
@@ -683,9 +678,7 @@ std::vector<FFTComplexResult> FFTProcessor::ReadComplexResults(
     }
 
     clFinish(queue_);
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-    drv_gpu_lib::RecordProfilingEvent(read_event, gpu_id, "FFTProcessor", "Download");
-    clReleaseEvent(read_event);
+    CollectOrRelease(read_event, "Download", prof_events);
 
     // Разбить на лучи
     std::vector<FFTComplexResult> results;
@@ -707,7 +700,8 @@ std::vector<FFTComplexResult> FFTProcessor::ReadComplexResults(
 
 std::vector<FFTMagPhaseResult> FFTProcessor::ReadMagPhaseResults(
     cl_event wait_event, size_t beam_count, size_t start_beam,
-    float sample_rate, bool include_freq)
+    float sample_rate, bool include_freq,
+    std::vector<std::pair<const char*, cl_event>>* prof_events)
 {
     size_t total = beam_count * nFFT_;
 
@@ -733,11 +727,8 @@ std::vector<FFTMagPhaseResult> FFTProcessor::ReadMagPhaseResults(
 
     // Ждём оба
     clFinish(queue_);
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-    drv_gpu_lib::RecordProfilingEvent(mag_event, gpu_id, "FFTProcessor", "Download");
-    drv_gpu_lib::RecordProfilingEvent(phase_event, gpu_id, "FFTProcessor", "Download");
-    clReleaseEvent(mag_event);
-    clReleaseEvent(phase_event);
+    CollectOrRelease(mag_event, "Download", prof_events);
+    CollectOrRelease(phase_event, "Download", prof_events);
 
     // Разбить на лучи
     std::vector<FFTMagPhaseResult> results;
@@ -821,7 +812,7 @@ FFTProfilingData FFTProcessor::GetProfilingData() const {
         auto e = mod.events.find(name);
         return (e != mod.events.end()) ? e->second.GetAvgTimeMs() : 0.0;
     };
-    out.upload_time_ms = ev("Upload") + ev("GPU→GPU Copy");
+    out.upload_time_ms = ev("Upload") + ev("GPU_Copy");
     out.fft_time_ms = ev("FFT");
     out.post_processing_time_ms = ev("PostProcessing");
     out.download_time_ms = ev("Download");
