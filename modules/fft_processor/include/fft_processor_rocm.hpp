@@ -35,12 +35,19 @@
 #include <complex>
 #include <memory>
 #include <vector>
+#include <utility>
 #include <cstdint>
 #include <string>
 #include <mutex>
 
 // Forward declaration — full header included in .cpp only
 namespace drv_gpu_lib { class KernelCacheService; }
+
+namespace fft_processor {
+/// Тип для сбора ROCm-тайминга из методов Process*
+/// name → ROCmProfilingData (Upload, Pad, FFT, Download)
+using ROCmProfEvents = std::vector<std::pair<const char*, drv_gpu_lib::ROCmProfilingData>>;
+}  // namespace fft_processor
 
 namespace fft_processor {
 
@@ -74,11 +81,14 @@ public:
      * @brief FFT with complex output (CPU data)
      * @param data Input: beam_count * n_point complex<float>
      * @param params FFT parameters
+     * @param prof_events Optional: collect per-stage ROCm timing (nullptr = production, no overhead)
+     *   Stages recorded: "Upload", "Pad", "FFT", "Download"
      * @return Vector of FFTComplexResult (one per beam)
      */
     std::vector<FFTComplexResult> ProcessComplex(
         const std::vector<std::complex<float>>& data,
-        const FFTProcessorParams& params);
+        const FFTProcessorParams& params,
+        ROCmProfEvents* prof_events = nullptr);
 
     /**
      * @brief FFT with complex output (GPU data)
@@ -98,10 +108,13 @@ public:
 
     /**
      * @brief FFT with magnitude + phase output (CPU data)
+     * @param prof_events Optional: collect per-stage ROCm timing (nullptr = no overhead)
+     *   Stages recorded: "Upload", "Pad", "FFT", "MagPhase", "Download"
      */
     std::vector<FFTMagPhaseResult> ProcessMagPhase(
         const std::vector<std::complex<float>>& data,
-        const FFTProcessorParams& params);
+        const FFTProcessorParams& params,
+        ROCmProfEvents* prof_events = nullptr);
 
     /**
      * @brief FFT with magnitude + phase output (GPU data)

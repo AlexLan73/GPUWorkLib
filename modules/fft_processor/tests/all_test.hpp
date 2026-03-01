@@ -17,6 +17,7 @@
 #if ENABLE_ROCM
 #include "test_fft_processor_rocm.hpp"
 #include "test_complex_to_mag_phase_rocm.hpp"
+#include "test_fft_benchmark_rocm.hpp"
 #endif
 
 namespace fft_processor_all_test {
@@ -40,6 +41,11 @@ inline void run() {
     // ComplexToMagPhaseROCm: direct complex->mag+phase (ROCm only)
 #if ENABLE_ROCM
     test_complex_to_mag_phase_rocm::run();
+#endif
+
+    // FFTProcessorROCm Benchmark (GpuBenchmarkBase — hipFFT timing)
+#if ENABLE_ROCM
+//    test_fft_benchmark_rocm::run();
 #endif
 }
 

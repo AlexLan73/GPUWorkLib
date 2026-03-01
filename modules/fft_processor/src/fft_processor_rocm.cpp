@@ -31,8 +31,57 @@
 #include <cstring>
 #include <cmath>
 #include <iostream>
+#include <chrono>
 
 namespace fft_processor {
+
+// =========================================================================
+// Helper: create ROCmProfilingData from hipEvent timing
+// =========================================================================
+
+/// Extract elapsed time from hipEvent pair → ROCmProfilingData, destroy events.
+static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
+    hipEvent_t ev_start, hipEvent_t ev_end, uint32_t kind,
+    const char* op_string = "")
+{
+    float elapsed_ms = 0.0f;
+    hipEventElapsedTime(&elapsed_ms, ev_start, ev_end);
+    hipEventDestroy(ev_start);
+    hipEventDestroy(ev_end);
+
+    drv_gpu_lib::ROCmProfilingData d;
+    uint64_t elapsed_ns = static_cast<uint64_t>(elapsed_ms * 1e6f);
+    // Синтетические абсолютные метки: start=0, end=elapsed
+    // exec_time (end-start) = elapsed_ns → корректное значение в профайлере
+    d.queued_ns   = 0;
+    d.submit_ns   = 0;
+    d.start_ns    = 0;
+    d.end_ns      = elapsed_ns;
+    d.complete_ns = elapsed_ns;
+    d.kind        = kind;
+    d.op_string   = op_string;
+    return d;
+}
+
+/// Extract elapsed time from wall-clock pair → ROCmProfilingData (для синхронных DtoH).
+static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromClock(
+    std::chrono::high_resolution_clock::time_point t_start,
+    std::chrono::high_resolution_clock::time_point t_end,
+    uint32_t kind, const char* op_string = "")
+{
+    uint64_t elapsed_ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t_end - t_start).count());
+
+    drv_gpu_lib::ROCmProfilingData d;
+    d.queued_ns   = 0;
+    d.submit_ns   = 0;
+    d.start_ns    = 0;
+    d.end_ns      = elapsed_ns;
+    d.complete_ns = elapsed_ns;
+    d.kind        = kind;
+    d.op_string   = op_string;
+    return d;
+}
 
 // =========================================================================
 // PART 1: Constructor / Destructor / Move Semantics
@@ -156,7 +205,8 @@ FFTProcessorROCm& FFTProcessorROCm::operator=(FFTProcessorROCm&& other) noexcept
 
 std::vector<FFTComplexResult> FFTProcessorROCm::ProcessComplex(
     const std::vector<std::complex<float>>& data,
-    const FFTProcessorParams& params)
+    const FFTProcessorParams& params,
+    ROCmProfEvents* prof_events)
 {
     const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
 
@@ -188,21 +238,54 @@ std::vector<FFTComplexResult> FFTProcessorROCm::ProcessComplex(
         AllocateBuffers(batch.count, FFTOutputMode::COMPLEX);
         CreateFFTPlan(batch.count);
 
-        // Upload batch data
+        // ── HIP events для async-операций (Upload, Pad, FFT) ────────────
+        hipEvent_t ev_upload_start = nullptr, ev_upload_end = nullptr;
+        hipEvent_t ev_pad_start    = nullptr, ev_pad_end    = nullptr;
+        hipEvent_t ev_fft_start    = nullptr, ev_fft_end    = nullptr;
+        if (prof_events) {
+            hipEventCreate(&ev_upload_start); hipEventCreate(&ev_upload_end);
+            hipEventCreate(&ev_pad_start);    hipEventCreate(&ev_pad_end);
+            hipEventCreate(&ev_fft_start);    hipEventCreate(&ev_fft_end);
+        }
+
+        // Upload
         const auto* batch_data = data.data() + batch.start * params.n_point;
+        if (prof_events) hipEventRecord(ev_upload_start, stream_);
         UploadData(batch_data, batch.count * params.n_point);
+        if (prof_events) hipEventRecord(ev_upload_end, stream_);
 
         // Pad: input_buffer_ -> fft_input_
+        if (prof_events) hipEventRecord(ev_pad_start, stream_);
         ExecutePadKernel(batch.count);
+        if (prof_events) hipEventRecord(ev_pad_end, stream_);
 
         // FFT: fft_input_ -> fft_output_
+        if (prof_events) hipEventRecord(ev_fft_start, stream_);
         ExecuteFFT();
+        if (prof_events) hipEventRecord(ev_fft_end, stream_);
 
-        // Synchronize
+        // Sync — ждём завершения всех GPU-операций (и events)
         hipStreamSynchronize(stream_);
 
-        // Read results
+        // Извлечь GPU-тайминги после sync
+        if (prof_events) {
+            prof_events->push_back({"Upload", MakeROCmDataFromEvents(
+                ev_upload_start, ev_upload_end, 1, "H2D copy")});
+            prof_events->push_back({"Pad", MakeROCmDataFromEvents(
+                ev_pad_start, ev_pad_end, 0, "pad kernel")});
+            prof_events->push_back({"FFT", MakeROCmDataFromEvents(
+                ev_fft_start, ev_fft_end, 0, "hipfftExecC2C")});
+        }
+
+        // Download (синхронный DtoH — измеряем wall-clock)
+        auto t_dl_start = std::chrono::high_resolution_clock::now();
         auto batch_results = ReadComplexResults(batch.count, batch.start, params.sample_rate);
+        auto t_dl_end = std::chrono::high_resolution_clock::now();
+        if (prof_events) {
+            prof_events->push_back({"Download", MakeROCmDataFromClock(
+                t_dl_start, t_dl_end, 1, "D2H copy")});
+        }
+
         for (auto& r : batch_results) {
             all_results.push_back(std::move(r));
         }
@@ -266,7 +349,8 @@ std::vector<FFTComplexResult> FFTProcessorROCm::ProcessComplex(
 
 std::vector<FFTMagPhaseResult> FFTProcessorROCm::ProcessMagPhase(
     const std::vector<std::complex<float>>& data,
-    const FFTProcessorParams& params)
+    const FFTProcessorParams& params,
+    ROCmProfEvents* prof_events)
 {
     const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
 
@@ -297,19 +381,62 @@ std::vector<FFTMagPhaseResult> FFTProcessorROCm::ProcessMagPhase(
         AllocateBuffers(batch.count, params.output_mode);
         CreateFFTPlan(batch.count);
 
+        // ── HIP events ───────────────────────────────────────────────────
+        hipEvent_t ev_upload_start = nullptr, ev_upload_end   = nullptr;
+        hipEvent_t ev_pad_start    = nullptr, ev_pad_end      = nullptr;
+        hipEvent_t ev_fft_start    = nullptr, ev_fft_end      = nullptr;
+        hipEvent_t ev_mag_start    = nullptr, ev_mag_end      = nullptr;
+        if (prof_events) {
+            hipEventCreate(&ev_upload_start); hipEventCreate(&ev_upload_end);
+            hipEventCreate(&ev_pad_start);    hipEventCreate(&ev_pad_end);
+            hipEventCreate(&ev_fft_start);    hipEventCreate(&ev_fft_end);
+            hipEventCreate(&ev_mag_start);    hipEventCreate(&ev_mag_end);
+        }
+
         // Upload
         const auto* batch_data = data.data() + batch.start * params.n_point;
+        if (prof_events) hipEventRecord(ev_upload_start, stream_);
         UploadData(batch_data, batch.count * params.n_point);
+        if (prof_events) hipEventRecord(ev_upload_end, stream_);
 
-        // Pad -> FFT -> MagPhase
+        // Pad
+        if (prof_events) hipEventRecord(ev_pad_start, stream_);
         ExecutePadKernel(batch.count);
+        if (prof_events) hipEventRecord(ev_pad_end, stream_);
+
+        // FFT
+        if (prof_events) hipEventRecord(ev_fft_start, stream_);
         ExecuteFFT();
+        if (prof_events) hipEventRecord(ev_fft_end, stream_);
+
+        // MagPhase kernel
+        if (prof_events) hipEventRecord(ev_mag_start, stream_);
         ExecuteMagPhaseKernel(batch.count);
+        if (prof_events) hipEventRecord(ev_mag_end, stream_);
+
         hipStreamSynchronize(stream_);
 
-        // Read
+        if (prof_events) {
+            prof_events->push_back({"Upload", MakeROCmDataFromEvents(
+                ev_upload_start, ev_upload_end, 1, "H2D copy")});
+            prof_events->push_back({"Pad", MakeROCmDataFromEvents(
+                ev_pad_start, ev_pad_end, 0, "pad kernel")});
+            prof_events->push_back({"FFT", MakeROCmDataFromEvents(
+                ev_fft_start, ev_fft_end, 0, "hipfftExecC2C")});
+            prof_events->push_back({"MagPhase", MakeROCmDataFromEvents(
+                ev_mag_start, ev_mag_end, 0, "mag_phase kernel")});
+        }
+
+        // Download (синхронный — wall-clock)
+        auto t_dl_start = std::chrono::high_resolution_clock::now();
         auto batch_results = ReadMagPhaseResults(batch.count, batch.start,
                                                   params.sample_rate, include_freq);
+        auto t_dl_end = std::chrono::high_resolution_clock::now();
+        if (prof_events) {
+            prof_events->push_back({"Download", MakeROCmDataFromClock(
+                t_dl_start, t_dl_end, 1, "D2H copy")});
+        }
+
         for (auto& r : batch_results) {
             all_results.push_back(std::move(r));
         }
