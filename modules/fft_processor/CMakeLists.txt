@@ -57,6 +57,7 @@ target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
 if(ROCM_ENABLED AND HIPFFT_FOUND)
     target_sources(${MODULE_NAME} PRIVATE
         src/fft_processor_rocm.cpp
+        src/complex_to_mag_phase_rocm.cpp
     )
     if(hipfft_FOUND)
         target_link_libraries(${MODULE_NAME} PUBLIC hip::hipfft)

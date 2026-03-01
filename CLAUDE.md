@@ -142,7 +142,7 @@ obj.sample_rate = 1e6
   - 📊 Профилирование только через механизм DrvGPU (GPUProfiler)
   - 🖥️ Вывод на консоль только через `console_output` из DrvGPU (у нас 10 GPU — без порядка будет бардак)
   - **🚫 ВЫВОД ПРОФИЛИРОВАНИЯ**: ТОЛЬКО через GPUProfiler! `PrintReport()`, `ExportMarkdown()`, `ExportJSON()`. ЗАПРЕЩЕНО вручную выводить GetStats()+con.Print или std::cout.
-  - 📖 **Инструкция по оптимизации HIP/ROCm ядер**: [`Doc_Addition/Roc hip kernel оптимизация.md`](Doc_Addition/Roc%20hip%20kernel%20оптимизация.md) — теория + проверенные паттерны GPUWorkLib (чеклист для новых модулей)
+  - 📖 **Инструкция по оптимизации HIP/ROCm ядер**: [`Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md`](Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md) — теория + проверенные паттерны GPUWorkLib (чеклист для новых модулей)
 - **Исследования**: Пробовать → Сравнивать с эталоном → Записывать в `research/` → После внедрения удалять черновики
 - **Debugging**: Логи (plog, per-GPU) → Python визуализация → Анализ
 
@@ -237,7 +237,7 @@ src/main.cpp
 - **Doc_Addition/**: Вся дополнительная документация не относящаяся к описанию проекта
   - `Doc_Addition/Info_*` — Исследования и документация API
   - `Doc_Addition/PLAN/` — Планы рефакторинга (Ref01, Ref02, ...)
-  - [`Doc_Addition/Roc hip kernel оптимизация.md`](Doc_Addition/Roc%20hip%20kernel%20оптимизация.md) — **Инструкция по оптимизации HIP/ROCm** (теория + наши проверенные паттерны + чеклист)
+  - [`Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md`](Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md) — **Инструкция по оптимизации HIP/ROCm** (теория + наши проверенные паттерны + чеклист)
 - **Python_test/**: Python тесты по модулям (`Python_test/{module}/test_*.py`)
 - **Results/Plots/{module}/**: Графики из Python тестов — путь `Results/Plots/[название_модуля]/` (fft_maxima, filters, signal_generators, lch_farrow, integration). Для signal_generators — подпапки FormSignal, DelayedFormSignal, LfmAnalyticalDelay.
 - **Results/JSON**: Результаты тестов (JSON)
