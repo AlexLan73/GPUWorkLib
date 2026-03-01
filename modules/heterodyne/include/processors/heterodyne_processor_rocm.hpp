@@ -26,11 +26,17 @@
 
 #include "../i_heterodyne_processor.hpp"
 #include "interface/i_backend.hpp"
+#include "DrvGPU/services/profiling_types.hpp"
 
 #include <hip/hip_runtime.h>
 #include <hip/hiprtc.h>
+#include <utility>
+#include <vector>
 
 namespace drv_gpu_lib {
+
+using HeterodyneROCmProfEvents =
+    std::vector<std::pair<const char*, drv_gpu_lib::ROCmProfilingData>>;
 
 class HeterodyneProcessorROCm : public IHeterodyneProcessor {
 public:
@@ -49,25 +55,57 @@ public:
   std::vector<std::complex<float>> Dechirp(
       const std::vector<std::complex<float>>& rx_data,
       const std::vector<std::complex<float>>& ref_data,
-      const HeterodyneParams& params) override;
+      const HeterodyneParams& params) override {
+    return Dechirp(rx_data, ref_data, params, nullptr);
+  }
+
+  std::vector<std::complex<float>> Dechirp(
+      const std::vector<std::complex<float>>& rx_data,
+      const std::vector<std::complex<float>>& ref_data,
+      const HeterodyneParams& params,
+      HeterodyneROCmProfEvents* prof_events);
 
   /** Frequency correction: multiply by exp(j * phase_step * n) */
   std::vector<std::complex<float>> Correct(
       const std::vector<std::complex<float>>& dc_data,
       const std::vector<float>& f_beat_hz,
-      const HeterodyneParams& params) override;
+      const HeterodyneParams& params) override {
+    return Correct(dc_data, f_beat_hz, params, nullptr);
+  }
+
+  std::vector<std::complex<float>> Correct(
+      const std::vector<std::complex<float>>& dc_data,
+      const std::vector<float>& f_beat_hz,
+      const HeterodyneParams& params,
+      HeterodyneROCmProfEvents* prof_events);
 
   /** Dechirp from external GPU buffer (void* = hipDeviceptr_t) */
   std::vector<std::complex<float>> DechirpFromGPU(
       void* rx_gpu_ptr,
       const std::vector<std::complex<float>>& ref_data,
-      const HeterodyneParams& params) override;
+      const HeterodyneParams& params) override {
+    return DechirpFromGPU(rx_gpu_ptr, ref_data, params, nullptr);
+  }
+
+  std::vector<std::complex<float>> DechirpFromGPU(
+      void* rx_gpu_ptr,
+      const std::vector<std::complex<float>>& ref_data,
+      const HeterodyneParams& params,
+      HeterodyneROCmProfEvents* prof_events);
 
   /** OPT-3: Both rx and ref already on GPU */
   std::vector<std::complex<float>> DechirpWithGPURef(
       void* rx_gpu_ptr,
       void* ref_gpu_ptr,
-      const HeterodyneParams& params) override;
+      const HeterodyneParams& params) override {
+    return DechirpWithGPURef(rx_gpu_ptr, ref_gpu_ptr, params, nullptr);
+  }
+
+  std::vector<std::complex<float>> DechirpWithGPURef(
+      void* rx_gpu_ptr,
+      void* ref_gpu_ptr,
+      const HeterodyneParams& params,
+      HeterodyneROCmProfEvents* prof_events);
 
 private:
   void CompileKernels();

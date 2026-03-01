@@ -24,6 +24,18 @@
 #endif
 
 namespace signal_gen {
+namespace {
+
+// Сохранить cl_event для профилирования или освободить (production path).
+// Ключевое правило: вызывать ПОСЛЕ того как event использован как wait-dependency.
+void CollectOrRelease(cl_event ev, const char* name,
+                      LfmConjugateGenerator::ProfEvents* prof_events) {
+    if (!ev) return;
+    if (prof_events) prof_events->push_back({name, ev});
+    else clReleaseEvent(ev);
+}
+
+}  // namespace
 
 // ════════════════════════════════════════════════════════════════════════════
 // Constructor / Destructor
@@ -82,6 +94,10 @@ LfmConjugateGenerator& LfmConjugateGenerator::operator=(
 // ════════════════════════════════════════════════════════════════════════════
 
 cl_mem LfmConjugateGenerator::GenerateToGpu() {
+  return GenerateToGpu(nullptr);
+}
+
+cl_mem LfmConjugateGenerator::GenerateToGpu(ProfEvents* prof_events) {
   uint32_t points = static_cast<uint32_t>(system_.length);
 
   if (points == 0) {
@@ -138,9 +154,10 @@ cl_mem LfmConjugateGenerator::GenerateToGpu() {
   size_t global_size =
       ((static_cast<size_t>(points) + local_size - 1) / local_size) * local_size;
 
+  cl_event ev_kernel = nullptr;
   err = clEnqueueNDRangeKernel(
       queue_, k, 1, nullptr,
-      &global_size, &local_size, 0, nullptr, nullptr);
+      &global_size, &local_size, 0, nullptr, prof_events ? &ev_kernel : nullptr);
 
   clReleaseKernel(k);
 
@@ -150,6 +167,8 @@ cl_mem LfmConjugateGenerator::GenerateToGpu() {
         "LfmConjugateGenerator: enqueue failed: "
         + std::to_string(err));
   }
+
+  CollectOrRelease(ev_kernel, "Kernel", prof_events);
 
   clFinish(queue_);
   return output_buf;

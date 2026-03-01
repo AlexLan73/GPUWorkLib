@@ -271,7 +271,7 @@ src/main.cpp
 | ScriptGenerator | 🟢 Active | ✅ ScriptGenerator | Text DSL → OpenCL kernel compiler |
 | FFTProcessor | 🟢 Active | ✅ FFTProcessor | FFT с режимами Complex/MagPhase |
 | SpectrumMaximaFinder | 🟢 Active | 🔶 Partial | Поиск максимума спектра FFT |
-| **Statistics** | 🟡 **В разработке** | ⚪ Planned | mean, std, variance на GPU |
+| **Statistics** | 🟢 Active | ✅ StatisticsProcessor | ROCm: welford_fused, extract_medians, radix sort. C++ тест ✅, Python тест ✅ |
 | **Heterodyne** | 🟢 Active | ✅ HeterodyneDechirp | LFM Dechirp (7 C++ тестов, 3 Python теста) |
 | Filters | ⚪ Planned | ⚪ Planned | FIR, IIR фильтры на GPU |
 

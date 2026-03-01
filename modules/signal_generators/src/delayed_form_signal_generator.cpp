@@ -28,6 +28,18 @@
 #endif
 
 namespace signal_gen {
+namespace {
+
+// Сохранить cl_event для профилирования или освободить (production path).
+// Ключевое правило: вызывать ПОСЛЕ того как event использован как wait-dependency.
+void CollectOrRelease(cl_event ev, const char* name,
+                      DelayedFormSignalGenerator::ProfEvents* prof_events) {
+  if (!ev) return;
+  if (prof_events) prof_events->push_back({name, ev});
+  else clReleaseEvent(ev);
+}
+
+}  // namespace
 
 // ════════════════════════════════════════════════════════════════════════════
 // Встроенная матрица Lagrange 48×5 (из lagrange_matrix_48x5.json)
@@ -275,6 +287,11 @@ void DelayedFormSignalGenerator::LoadMatrix(const std::string& json_path) {
 
 drv_gpu_lib::InputData<cl_mem>
 DelayedFormSignalGenerator::GenerateInputData() {
+  return GenerateInputData(nullptr);
+}
+
+drv_gpu_lib::InputData<cl_mem>
+DelayedFormSignalGenerator::GenerateInputData(ProfEvents* prof_events) {
   if (params_.antennas == 0 || params_.points == 0) {
     throw std::runtime_error(
         "DelayedFormSignalGenerator::GenerateInputData: antennas or points is 0");
@@ -294,6 +311,7 @@ DelayedFormSignalGenerator::GenerateInputData() {
   }
 
   // ── Шаг 1: Генерация чистого сигнала (noise=0) ──
+  // prof_events пробрасывается: FormSignalGenerator добавит "Kernel" (FormSignal stage)
   FormParams clean_params = params_;
   clean_params.noise_amplitude = 0.0;
   clean_params.tau_base = 0.0;
@@ -302,7 +320,7 @@ DelayedFormSignalGenerator::GenerateInputData() {
   clean_params.tau_max = 0.0;
   signal_gen_.SetParams(clean_params);
 
-  auto clean_signal = signal_gen_.GenerateInputData();
+  auto clean_signal = signal_gen_.GenerateInputData(prof_events);
   cl_mem input_buf = clean_signal.data;
 
   // ── Шаг 2: Применение задержки + шум ──
@@ -321,7 +339,7 @@ DelayedFormSignalGenerator::GenerateInputData() {
         + std::to_string(err));
   }
 
-  // Загрузить delay_us на GPU
+  // Загрузить delay_us на GPU (CL_MEM_COPY_HOST_PTR — синхронный, event не нужен)
   cl_mem delay_buf = clCreateBuffer(
       context_, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
       delay_us_.size() * sizeof(float),
@@ -385,9 +403,10 @@ DelayedFormSignalGenerator::GenerateInputData() {
   size_t global_size =
       ((total_points + local_size - 1) / local_size) * local_size;
 
+  cl_event ev_delay = nullptr;
   err = clEnqueueNDRangeKernel(
       queue_, k, 1, nullptr,
-      &global_size, &local_size, 0, nullptr, nullptr);
+      &global_size, &local_size, 0, nullptr, prof_events ? &ev_delay : nullptr);
 
   clReleaseKernel(k);
   clReleaseMemObject(input_buf);
@@ -399,6 +418,8 @@ DelayedFormSignalGenerator::GenerateInputData() {
         "DelayedFormSignalGenerator: enqueue failed: "
         + std::to_string(err));
   }
+
+  CollectOrRelease(ev_delay, "FarrowDelay", prof_events);
 
   clFinish(queue_);
 

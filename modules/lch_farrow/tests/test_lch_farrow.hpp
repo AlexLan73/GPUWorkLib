@@ -15,13 +15,11 @@
 
 #include "lch_farrow.hpp"
 #include "DrvGPU/backends/opencl/opencl_backend.hpp"
-#include "DrvGPU/services/gpu_profiler.hpp"
 #include "DrvGPU/services/console_output.hpp"
 
 #include <CL/cl.h>
 #include <iostream>
 #include <sstream>
-#include <filesystem>
 #include <vector>
 #include <complex>
 #include <cmath>
@@ -58,10 +56,6 @@ inline void run() {
   // Initialize OpenCL backend
   auto backend = std::make_unique<drv_gpu_lib::OpenCLBackend>();
   backend->Initialize(0);
-
-  // GPUProfiler: Start before Process (SetGPUInfo + Record in LchFarrow::Process)
-  auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
-  profiler.Start();
 
   lch_farrow::LchFarrow processor(backend.get());
 
@@ -168,22 +162,6 @@ inline void run() {
   }
 
   clReleaseMemObject(input_buf);
-
-  profiler.Stop();  // Wait for queue drain (Record messages processed)
-
-  // Вывод профилирования ТОЛЬКО через GPUProfiler (CLAUDE.md)
-  profiler.PrintReport();
-
-  std::string profiler_dir = "Results/Profiler";
-  std::filesystem::create_directories(profiler_dir);
-  std::string ts = drv_gpu_lib::GPUProfiler::GetCurrentDateTimeString();
-  for (auto& c : ts) {
-    if (c == ' ') c = '_';
-    else if (c == ':') c = '-';
-  }
-  std::string base_path = profiler_dir + "/lch_farrow_" + ts;
-  profiler.ExportMarkdown(base_path + ".md");
-  profiler.ExportJSON(base_path + ".json");
 
   con.Print(gpu_id, "LchFarrow", "All tests completed.");
 }

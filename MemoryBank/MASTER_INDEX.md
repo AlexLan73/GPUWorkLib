@@ -28,9 +28,12 @@
 
 **В работе**:
 - ROCm Backend — см. [tasks/PLAN_AMD_Radeon_9070_ROCm.md](tasks/PLAN_AMD_Radeon_9070_ROCm.md)
-- **filters профилирование (OpenCL + ROCm)** — TASK 1–14 → [tasks/TASK_filters_profiling.md](tasks/TASK_filters_profiling.md)
+- **heterodyne профилирование (OpenCL + ROCm)** — 14 тасков 📋 PLAN → [tasks/TASK_heterodyne_profiling.md](tasks/TASK_heterodyne_profiling.md)
+- **signal_generators профилирование (OpenCL + ROCm)** — 17 тасков 📋 PLAN → [tasks/TASK_signal_generators_profiling.md](tasks/TASK_signal_generators_profiling.md)
+- **lch_farrow профилирование (OpenCL + ROCm)** — 12 тасков 📋 PLAN → [tasks/TASK_lch_farrow_profiling.md](tasks/TASK_lch_farrow_profiling.md)
 **Завершено**:
 - **fft_maxima профилирование (OpenCL + ROCm)** — TASK 1–14 DONE → [tasks/TASK_fft_maxima_profiling_opencl.md](tasks/TASK_fft_maxima_profiling_opencl.md)
+- **filters профилирование (OpenCL + ROCm)** — TASK 1–14 DONE → [tasks/TASK_filters_profiling.md](tasks/TASK_filters_profiling.md)
 - SpectrumMaximaFinder — OpenCL kernel optimizations → [tasks/fft_maxima_optimization_plan.md](tasks/fft_maxima_optimization_plan.md)
 
 ---
@@ -53,6 +56,7 @@ build/python/Release/gpuworklib.cp312-win_amd64.pyd
 - `FirFilter(ctx)` — FIR фильтр (GPU, scipy-коэффициенты) **NEW**
 - `IirFilter(ctx)` — IIR фильтр (biquad cascade, GPU)
 - `CholeskyInverterROCm(ctx, mode)` — Инверсия матриц (Cholesky, ROCm). SymmetrizeMode: Roundtrip/GpuKernel **v2**
+- `StatisticsProcessor(ctx)` — mean/median/variance/std per beam (ROCm). `compute_mean()`, `compute_median()`, `compute_statistics()`
 
 ### Тесты: `Python_test/test_*.py`
 

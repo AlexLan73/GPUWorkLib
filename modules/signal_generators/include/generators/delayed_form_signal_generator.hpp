@@ -26,6 +26,7 @@
 #include <vector>
 #include <complex>
 #include <string>
+#include <utility>
 
 namespace signal_gen {
 
@@ -58,6 +59,9 @@ namespace signal_gen {
  */
 class DelayedFormSignalGenerator {
 public:
+  /// Тип для сбора OpenCL событий профилирования (имя → cl_event)
+  using ProfEvents = std::vector<std::pair<const char*, cl_event>>;
+
   explicit DelayedFormSignalGenerator(drv_gpu_lib::IBackend* backend);
   ~DelayedFormSignalGenerator();
 
@@ -96,6 +100,14 @@ public:
    * @note Вызывающий код освобождает result.data через clReleaseMemObject()
    */
   drv_gpu_lib::InputData<cl_mem> GenerateInputData();
+
+  /**
+   * @brief Генерация на GPU с опциональным сбором событий профилирования
+   * @param prof_events nullptr → production (zero overhead); &vec → benchmark
+   *
+   * Собирает события: "FormSignal" (form_signal.cl), "FarrowDelay" (delayed_form_signal.cl)
+   */
+  drv_gpu_lib::InputData<cl_mem> GenerateInputData(ProfEvents* prof_events);
 
   /**
    * @brief Генерация с возвратом на CPU

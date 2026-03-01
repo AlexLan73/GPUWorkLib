@@ -26,6 +26,7 @@
 #include <string>
 #include <cstdint>
 #include <memory>
+#include <utility>
 
 namespace signal_gen {
 
@@ -70,6 +71,9 @@ struct KernelManifestEntry {
  */
 class FormScriptGenerator {
 public:
+  /// Тип для сбора OpenCL событий профилирования (имя → cl_event)
+  using ProfEvents = std::vector<std::pair<const char*, cl_event>>;
+
   explicit FormScriptGenerator(drv_gpu_lib::IBackend* backend);
   ~FormScriptGenerator();
 
@@ -137,6 +141,14 @@ public:
    * @note Вызывающий код должен освободить input.data через clReleaseMemObject()
    */
   drv_gpu_lib::InputData<cl_mem> GenerateInputData();
+
+  /**
+   * @brief Генерация на GPU с опциональным сбором событий профилирования
+   * @param prof_events nullptr → production (zero overhead); &vec → benchmark
+   *
+   * Собирает события: "Kernel" (form_script_signal kernel)
+   */
+  drv_gpu_lib::InputData<cl_mem> GenerateInputData(ProfEvents* prof_events);
 
   /**
    * @brief Генерация с возвратом на CPU (по каналам)

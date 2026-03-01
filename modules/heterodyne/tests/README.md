@@ -35,3 +35,38 @@ antennas = 5
 
 - f_beat: +/- 10 kHz
 - After correction: peak at bin 0-3
+
+---
+
+## Benchmark Tests (GpuBenchmarkBase)
+
+| # | File | Class | Method | Стадии профилирования |
+|---|------|-------|--------|----------------------|
+| B1 | heterodyne_benchmark.hpp | HeterodyneDechirpBenchmark | Dechirp() | Upload_Rx, Upload_Ref, Kernel_Multiply, Download |
+| B2 | heterodyne_benchmark.hpp | HeterodyneCorrectBenchmark | Correct() | Upload_DC, Upload_PhaseStep, Kernel_Correct, Download |
+| B3 | heterodyne_benchmark_rocm.hpp | HeterodyneDechirpBenchmarkROCm | Dechirp() | Upload_Rx, Upload_Ref, Kernel_Multiply, Download |
+| B4 | heterodyne_benchmark_rocm.hpp | HeterodyneCorrectBenchmarkROCm | Correct() | Upload_DC, Upload_PhaseStep, Kernel_Correct, Download |
+
+### Параметры бенчмарка
+
+```
+num_antennas = 5
+num_samples  = 4000
+sample_rate  = 12 MHz
+n_warmup = 5,  n_runs = 20
+```
+
+### Результаты
+
+```
+Results/Profiler/GPU_00_Heterodyne/         ← OpenCL
+Results/Profiler/GPU_00_Heterodyne_ROCm/    ← ROCm
+```
+
+### Запуск
+
+Раскомментировать в `all_test.hpp`:
+```cpp
+// test_heterodyne_benchmark::run();
+// test_heterodyne_benchmark_rocm::run();
+```

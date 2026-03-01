@@ -16,11 +16,16 @@
 
 #include <CL/cl.h>
 #include <cstring>
+#include <utility>
+#include <vector>
 
 namespace signal_gen {
 
 class NoiseGenerator : public ISignalGenerator {
 public:
+    /// Тип для сбора OpenCL событий профилирования (имя → cl_event)
+    using ProfEvents = std::vector<std::pair<const char*, cl_event>>;
+
     NoiseGenerator(drv_gpu_lib::IBackend* backend, const NoiseParams& params);
     ~NoiseGenerator() override;
 
@@ -34,6 +39,16 @@ public:
 
     cl_mem GenerateToGpu(const SystemSampling& system,
                          size_t beam_count = 1) override;
+
+    /**
+     * @brief Генерация на GPU с опциональным сбором событий профилирования
+     * @param prof_events nullptr → production (zero overhead); &vec → benchmark
+     *
+     * Собирает события: "Kernel" (noise_kernel / Philox+BoxMuller)
+     */
+    cl_mem GenerateToGpu(const SystemSampling& system,
+                         size_t beam_count,
+                         ProfEvents* prof_events);
 
     SignalKind Kind() const override { return SignalKind::NOISE; }
 

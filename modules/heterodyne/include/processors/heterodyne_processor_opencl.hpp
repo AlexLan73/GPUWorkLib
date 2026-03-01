@@ -12,8 +12,12 @@
 #include "interface/i_backend.hpp"
 
 #include <CL/cl.h>
+#include <utility>
+#include <vector>
 
 namespace drv_gpu_lib {
+
+using HeterodyneOCLProfEvents = std::vector<std::pair<const char*, cl_event>>;
 
 class HeterodyneProcessorOpenCL : public IHeterodyneProcessor {
 public:
@@ -26,23 +30,55 @@ public:
   std::vector<std::complex<float>> Dechirp(
       const std::vector<std::complex<float>>& rx_data,
       const std::vector<std::complex<float>>& ref_data,
-      const HeterodyneParams& params) override;
+      const HeterodyneParams& params) override {
+    return Dechirp(rx_data, ref_data, params, nullptr);
+  }
+
+  std::vector<std::complex<float>> Dechirp(
+      const std::vector<std::complex<float>>& rx_data,
+      const std::vector<std::complex<float>>& ref_data,
+      const HeterodyneParams& params,
+      HeterodyneOCLProfEvents* prof_events);
 
   std::vector<std::complex<float>> Correct(
       const std::vector<std::complex<float>>& dc_data,
       const std::vector<float>& f_beat_hz,
-      const HeterodyneParams& params) override;
+      const HeterodyneParams& params) override {
+    return Correct(dc_data, f_beat_hz, params, nullptr);
+  }
+
+  std::vector<std::complex<float>> Correct(
+      const std::vector<std::complex<float>>& dc_data,
+      const std::vector<float>& f_beat_hz,
+      const HeterodyneParams& params,
+      HeterodyneOCLProfEvents* prof_events);
 
   std::vector<std::complex<float>> DechirpFromGPU(
       void* rx_cl_mem,
       const std::vector<std::complex<float>>& ref_data,
-      const HeterodyneParams& params) override;
+      const HeterodyneParams& params) override {
+    return DechirpFromGPU(rx_cl_mem, ref_data, params, nullptr);
+  }
+
+  std::vector<std::complex<float>> DechirpFromGPU(
+      void* rx_cl_mem,
+      const std::vector<std::complex<float>>& ref_data,
+      const HeterodyneParams& params,
+      HeterodyneOCLProfEvents* prof_events);
 
   /** OPT-3: Dechirp with GPU-resident reference (no PCIe for ref) */
   std::vector<std::complex<float>> DechirpWithGPURef(
       void* rx_cl_mem,
       void* ref_cl_mem,
-      const HeterodyneParams& params);
+      const HeterodyneParams& params) {
+    return DechirpWithGPURef(rx_cl_mem, ref_cl_mem, params, nullptr);
+  }
+
+  std::vector<std::complex<float>> DechirpWithGPURef(
+      void* rx_cl_mem,
+      void* ref_cl_mem,
+      const HeterodyneParams& params,
+      HeterodyneOCLProfEvents* prof_events);
 
 private:
   void CompileKernels();

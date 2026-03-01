@@ -1,14 +1,24 @@
 # IN PROGRESS — Текущие задачи
 
-> **Обновлено**: 2026-02-26
-> **Фокус**: ROCm Backend — Оптимизация
+> **Обновлено**: 2026-03-01
+> **Фокус**: Аудит модулей (statistics, fft_processor)
 
 ---
 
 ## В работе
 
-- **ROCm Backend** — см. [PLAN_AMD_Radeon_9070_ROCm.md](PLAN_AMD_Radeon_9070_ROCm.md)
 - **Аудит модулей** — Python тесты FFTProcessor, документация Statistics/FFTProcessor — см. [PLAN_modules_audit_2026-02-28.md](PLAN_modules_audit_2026-02-28.md)
+- **ROCm Backend** — см. [PLAN_AMD_Radeon_9070_ROCm.md](PLAN_AMD_Radeon_9070_ROCm.md)
+
+## Завершено (2026-03-01)
+
+- ✅ **heterodyne профилирование (OpenCL + ROCm)** — 14/14 тасков
+  - `MemoryBank/tasks/TASK_heterodyne_profiling.md`
+  - Production-классы чистые, бенчмарки изолированы в tests/*.hpp
+
+- ✅ **lch_farrow профилирование (OpenCL + ROCm)** — 12/12 тасков
+  - `MemoryBank/tasks/TASK_lch_farrow_profiling.md`
+  - Production-классы чистые, профилирование изолировано в tests/*.hpp
 
 ## Завершено (2026-02-26)
 

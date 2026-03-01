@@ -14,10 +14,6 @@
 
 #include "lch_farrow.hpp"
 
-#include "common/backend_type.hpp"
-#include "services/gpu_profiler.hpp"
-#include "backends/opencl/opencl_profiling.hpp"
-
 #include <stdexcept>
 #include <cmath>
 #include <chrono>
@@ -394,8 +390,22 @@ void LchFarrow::LoadMatrix(const std::string& json_path) {
 // GPU Processing
 // ════════════════════════════════════════════════════════════════════════════
 
+// Helper: сохранить cl_event в prof_events или освободить (ноль overhead в production)
+// Вызывать ПОСЛЕ того как event использован как wait в следующей операции
+static void CollectOrRelease(cl_event ev, const char* name,
+    lch_farrow::ProfEvents* prof_events)
+{
+  if (!ev) return;
+  if (prof_events) {
+    prof_events->push_back({name, ev});
+  } else {
+    clReleaseEvent(ev);
+  }
+}
+
 drv_gpu_lib::InputData<cl_mem>
-LchFarrow::Process(cl_mem input_buf, uint32_t antennas, uint32_t points) {
+LchFarrow::Process(cl_mem input_buf, uint32_t antennas, uint32_t points,
+                   ProfEvents* prof_events) {
   if (antennas == 0 || points == 0) {
     throw std::runtime_error("LchFarrow::Process: antennas or points is 0");
   }
@@ -414,25 +424,6 @@ LchFarrow::Process(cl_mem input_buf, uint32_t antennas, uint32_t points) {
   size_t buffer_size = total_points * sizeof(std::complex<float>);
 
   cl_int err;
-
-  // GPUProfiler: SetGPUInfo before Record (ref: Examples/GPUProfiler_SetGPUInfo.md)
-  int gpu_id = backend_->GetDeviceIndex();
-  if (gpu_id < 0) gpu_id = 0;
-  auto device_info = backend_->GetDeviceInfo();
-  drv_gpu_lib::GPUReportInfo gpu_info;
-  gpu_info.gpu_name = device_info.name.empty() ? "Unknown" : device_info.name;
-  gpu_info.backend_type = drv_gpu_lib::BackendType::OPENCL;
-  gpu_info.global_mem_mb = device_info.global_memory_size / (1024 * 1024);
-  std::map<std::string, std::string> opencl_driver;
-  opencl_driver["driver_type"] = "OpenCL";
-  opencl_driver["version"] = device_info.opencl_version;
-  opencl_driver["driver_version"] = device_info.driver_version;
-  opencl_driver["vendor"] = device_info.vendor;
-  gpu_info.drivers.push_back(opencl_driver);
-  drv_gpu_lib::GPUProfiler::GetInstance().SetGPUInfo(gpu_id, gpu_info);
-  if (backend_->GetDeviceIndex() < 0) {
-    drv_gpu_lib::GPUProfiler::GetInstance().SetGPUInfo(-1, gpu_info);
-  }
 
   // Output buffer
   cl_mem output_buf = clCreateBuffer(
@@ -525,13 +516,11 @@ LchFarrow::Process(cl_mem input_buf, uint32_t antennas, uint32_t points) {
         "LchFarrow: enqueue failed: " + std::to_string(err));
   }
 
-  clFinish(queue_);
+  // upload_event уже использован как wait в clEnqueueNDRangeKernel — теперь можно собрать/освободить
+  CollectOrRelease(upload_event, "Upload_delay", prof_events);
+  CollectOrRelease(kernel_event, "Kernel", prof_events);
 
-  // GPUProfiler: Record Upload and Kernel
-  drv_gpu_lib::RecordProfilingEvent(upload_event, gpu_id, "LchFarrow", "Upload_delay_us");
-  drv_gpu_lib::RecordProfilingEvent(kernel_event, gpu_id, "LchFarrow", "lch_farrow_delay");
-  if (upload_event) clReleaseEvent(upload_event);
-  if (kernel_event) clReleaseEvent(kernel_event);
+  clFinish(queue_);
 
   drv_gpu_lib::InputData<cl_mem> result;
   result.antenna_count = antennas;

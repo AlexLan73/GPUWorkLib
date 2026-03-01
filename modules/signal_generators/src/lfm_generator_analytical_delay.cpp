@@ -28,6 +28,18 @@
 #endif
 
 namespace signal_gen {
+namespace {
+
+// Сохранить cl_event для профилирования или освободить (production path).
+// Ключевое правило: вызывать ПОСЛЕ того как event использован как wait-dependency.
+void CollectOrRelease(cl_event ev, const char* name,
+                      LfmGeneratorAnalyticalDelay::ProfEvents* prof_events) {
+  if (!ev) return;
+  if (prof_events) prof_events->push_back({name, ev});
+  else clReleaseEvent(ev);
+}
+
+}  // namespace
 
 // ════════════════════════════════════════════════════════════════════════════
 // Constructor / Destructor
@@ -97,6 +109,11 @@ void LfmGeneratorAnalyticalDelay::SetDelays(const std::vector<float>& delay_us) 
 
 drv_gpu_lib::InputData<cl_mem>
 LfmGeneratorAnalyticalDelay::GenerateToGpu() {
+  return GenerateToGpu(nullptr);
+}
+
+drv_gpu_lib::InputData<cl_mem>
+LfmGeneratorAnalyticalDelay::GenerateToGpu(ProfEvents* prof_events) {
   uint32_t antennas = GetAntennas();
   uint32_t points = static_cast<uint32_t>(system_.length);
 
@@ -119,7 +136,7 @@ LfmGeneratorAnalyticalDelay::GenerateToGpu() {
         + std::to_string(err));
   }
 
-  // Upload delays
+  // Upload delays (CL_MEM_COPY_HOST_PTR — synchronous, no event needed)
   cl_mem delay_buf = clCreateBuffer(
       context_, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
       delay_us_.size() * sizeof(float),
@@ -176,9 +193,10 @@ LfmGeneratorAnalyticalDelay::GenerateToGpu() {
   size_t global_size =
       ((total_points + local_size - 1) / local_size) * local_size;
 
+  cl_event ev_kernel = nullptr;
   err = clEnqueueNDRangeKernel(
       queue_, k, 1, nullptr,
-      &global_size, &local_size, 0, nullptr, nullptr);
+      &global_size, &local_size, 0, nullptr, prof_events ? &ev_kernel : nullptr);
 
   clReleaseKernel(k);
   clReleaseMemObject(delay_buf);
@@ -190,14 +208,16 @@ LfmGeneratorAnalyticalDelay::GenerateToGpu() {
         + std::to_string(err));
   }
 
+  CollectOrRelease(ev_kernel, "Kernel", prof_events);
+
   clFinish(queue_);
 
   drv_gpu_lib::InputData<cl_mem> result;
-  result.antenna_count = antennas;
-  result.n_point       = points;
-  result.data          = output_buf;
+  result.antenna_count    = antennas;
+  result.n_point          = points;
+  result.data             = output_buf;
   result.gpu_memory_bytes = buffer_size;
-  result.sample_rate   = static_cast<float>(system_.fs);
+  result.sample_rate      = static_cast<float>(system_.fs);
   return result;
 }
 
@@ -254,7 +274,6 @@ LfmGeneratorAnalyticalDelay::GenerateToCpu() {
 // ════════════════════════════════════════════════════════════════════════════
 
 void LfmGeneratorAnalyticalDelay::CompileKernel() {
-  // Load kernel from .cl file (no PRNG needed)
   std::string source = LoadKernelFile("lfm_analytical_delay.cl");
   const char* src_ptr = source.c_str();
   size_t source_len = source.size();

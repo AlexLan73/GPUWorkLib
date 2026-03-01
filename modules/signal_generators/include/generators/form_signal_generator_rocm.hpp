@@ -35,13 +35,18 @@
 
 #include <hip/hip_runtime.h>
 #include <hip/hiprtc.h>
+#include "DrvGPU/services/profiling_types.hpp"
 
 #include <vector>
 #include <complex>
 #include <string>
 #include <cstdint>
+#include <utility>
 
 namespace signal_gen {
+
+/// Список событий профилирования ROCm (имя стадии + ROCmProfilingData)
+using ROCmProfEvents = std::vector<std::pair<const char*, drv_gpu_lib::ROCmProfilingData>>;
 
 class FormSignalGeneratorROCm {
 public:
@@ -74,6 +79,14 @@ public:
    * @return InputData<void*> with generated signal (caller must hipFree result.data)
    */
   drv_gpu_lib::InputData<void*> GenerateInputData();
+
+  /**
+   * @brief Генерация на GPU с опциональным сбором событий профилирования (ROCm)
+   * @param prof_events nullptr → production (zero overhead); &vec → benchmark
+   *
+   * Собирает события: "Kernel" (generate_form_signal HIP kernel)
+   */
+  drv_gpu_lib::InputData<void*> GenerateInputData(ROCmProfEvents* prof_events);
 
   /**
    * @brief Generate signal on GPU, read back to CPU

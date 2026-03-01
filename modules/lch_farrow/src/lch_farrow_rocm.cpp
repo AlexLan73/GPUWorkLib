@@ -28,6 +28,7 @@
 #include "lch_farrow_rocm.hpp"
 #include "kernels/lch_farrow_kernels_rocm.hpp"
 #include "services/console_output.hpp"
+#include "DrvGPU/services/profiling_types.hpp"
 
 #include <stdexcept>
 #include <cmath>
@@ -295,8 +296,50 @@ void LchFarrowROCm::LoadMatrix(const std::string& json_path) {
 // PART 4: GPU Processing
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Helper A: для async GPU операций (hipEvent → hipEventElapsedTime)
+// kind: 0=kernel, 1=copy, 2=barrier
+static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
+    hipEvent_t ev_start, hipEvent_t ev_end,
+    uint32_t kind, const char* op_string = "")
+{
+  hipEventSynchronize(ev_end);
+  float elapsed_ms = 0.0f;
+  hipEventElapsedTime(&elapsed_ms, ev_start, ev_end);
+  hipEventDestroy(ev_start);
+  hipEventDestroy(ev_end);
+
+  drv_gpu_lib::ROCmProfilingData d{};
+  uint64_t elapsed_ns = static_cast<uint64_t>(elapsed_ms * 1e6f);
+  d.start_ns    = 0;
+  d.end_ns      = elapsed_ns;
+  d.complete_ns = elapsed_ns;
+  d.kind        = kind;
+  d.op_string   = op_string;
+  return d;
+}
+
+// Helper B: для sync CPU/GPU операций (wall-clock через std::chrono)
+static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromClock(
+    std::chrono::high_resolution_clock::time_point t_start,
+    std::chrono::high_resolution_clock::time_point t_end,
+    uint32_t kind, const char* op_string = "")
+{
+  uint64_t elapsed_ns = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          t_end - t_start).count());
+
+  drv_gpu_lib::ROCmProfilingData d{};
+  d.start_ns    = 0;
+  d.end_ns      = elapsed_ns;
+  d.complete_ns = elapsed_ns;
+  d.kind        = kind;
+  d.op_string   = op_string;
+  return d;
+}
+
 drv_gpu_lib::InputData<void*>
-LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points) {
+LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points,
+                        ROCmProfEvents* prof_events) {
   if (!input_ptr) {
     throw std::invalid_argument("LchFarrowROCm::Process: input_ptr is null");
   }
@@ -341,15 +384,28 @@ LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points) {
         "LchFarrowROCm::Process: hipMalloc(delay) failed");
   }
 
+  // ── Upload_delay (async) ─────────────────────────────────────────
+  hipEvent_t ev_up_start = nullptr, ev_up_end = nullptr;
+  if (prof_events) {
+    hipEventCreate(&ev_up_start);
+    hipEventCreate(&ev_up_end);
+    hipEventRecord(ev_up_start, stream_);
+  }
+
   err = hipMemcpyHtoDAsync(delay_buf, delay_us_.data(), delay_size, stream_);
   if (err != hipSuccess) {
+    if (ev_up_start) { hipEventDestroy(ev_up_start); hipEventDestroy(ev_up_end); }
     (void)hipFree(output_ptr);
     (void)hipFree(delay_buf);
     throw std::runtime_error(
         "LchFarrowROCm::Process: hipMemcpyHtoDAsync(delay) failed");
   }
 
-  // Kernel arguments
+  if (prof_events) {
+    hipEventRecord(ev_up_end, stream_);
+  }
+
+  // ── Kernel arguments ──────────────────────────────────────────────
   unsigned int ant = antennas;
   unsigned int pts = points;
   float sr = sample_rate_;
@@ -375,7 +431,14 @@ LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points) {
     &ns
   };
 
-  // Launch kernel
+  // ── Kernel (async) ────────────────────────────────────────────────
+  hipEvent_t ev_k_start = nullptr, ev_k_end = nullptr;
+  if (prof_events) {
+    hipEventCreate(&ev_k_start);
+    hipEventCreate(&ev_k_end);
+    hipEventRecord(ev_k_start, stream_);
+  }
+
   unsigned int grid_size = static_cast<unsigned int>(
       (total_points + kBlockSize - 1) / kBlockSize);
 
@@ -387,6 +450,8 @@ LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points) {
       args, nullptr);
 
   if (err != hipSuccess) {
+    if (ev_up_start) { hipEventDestroy(ev_up_start); hipEventDestroy(ev_up_end); }
+    if (ev_k_start)  { hipEventDestroy(ev_k_start);  hipEventDestroy(ev_k_end);  }
     (void)hipFree(output_ptr);
     (void)hipFree(delay_buf);
     throw std::runtime_error(
@@ -394,10 +459,22 @@ LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points) {
         std::string(hipGetErrorString(err)));
   }
 
+  if (prof_events) {
+    hipEventRecord(ev_k_end, stream_);
+  }
+
   (void)hipStreamSynchronize(stream_);
 
   // Free temporary delay buffer
   (void)hipFree(delay_buf);
+
+  // ── Собрать prof_events (stream синхронизирован — данные готовы) ──
+  if (prof_events) {
+    prof_events->push_back({"Upload_delay",
+        MakeROCmDataFromEvents(ev_up_start, ev_up_end, 1, "H2D_delay")});
+    prof_events->push_back({"Kernel",
+        MakeROCmDataFromEvents(ev_k_start, ev_k_end, 0, "lch_farrow_delay")});
+  }
 
   drv_gpu_lib::InputData<void*> result;
   result.antenna_count = antennas;
@@ -411,7 +488,8 @@ LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points) {
 drv_gpu_lib::InputData<void*>
 LchFarrowROCm::ProcessFromCPU(
     const std::vector<std::complex<float>>& data,
-    uint32_t antennas, uint32_t points)
+    uint32_t antennas, uint32_t points,
+    ROCmProfEvents* prof_events)
 {
   size_t expected = static_cast<size_t>(antennas) * points;
   if (data.size() != expected) {
@@ -430,18 +508,37 @@ LchFarrowROCm::ProcessFromCPU(
         "LchFarrowROCm::ProcessFromCPU: hipMalloc(input) failed");
   }
 
+  // ── Upload_input (async) ─────────────────────────────────────────
+  hipEvent_t ev_in_start = nullptr, ev_in_end = nullptr;
+  if (prof_events) {
+    hipEventCreate(&ev_in_start);
+    hipEventCreate(&ev_in_end);
+    hipEventRecord(ev_in_start, stream_);
+  }
+
   err = hipMemcpyHtoDAsync(input_ptr,
                             const_cast<std::complex<float>*>(data.data()),
                             data_size, stream_);
   if (err != hipSuccess) {
+    if (ev_in_start) { hipEventDestroy(ev_in_start); hipEventDestroy(ev_in_end); }
     (void)hipFree(input_ptr);
     throw std::runtime_error(
         "LchFarrowROCm::ProcessFromCPU: hipMemcpyHtoDAsync(input) failed");
   }
-  (void)hipStreamSynchronize(stream_);
 
-  // Process on GPU
-  auto result = Process(input_ptr, antennas, points);
+  if (prof_events) {
+    hipEventRecord(ev_in_end, stream_);
+  }
+
+  // Process on GPU (Upload_delay + Kernel — добавляются в prof_events через Process)
+  auto result = Process(input_ptr, antennas, points, prof_events);
+  // Process() вызывает hipStreamSynchronize(stream_) — stream синхронизирован
+
+  // ── Собрать Upload_input (stream уже синхронизирован Process'ом) ──
+  if (prof_events) {
+    prof_events->push_back({"Upload_input",
+        MakeROCmDataFromEvents(ev_in_start, ev_in_end, 1, "H2D_input")});
+  }
 
   // Free the temporary input buffer
   (void)hipFree(input_ptr);

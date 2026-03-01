@@ -19,6 +19,7 @@
 
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
+#include "DrvGPU/services/profiling_types.hpp"
 
 #include <hip/hip_runtime.h>
 #include <hip/hiprtc.h>
@@ -27,8 +28,14 @@
 #include <complex>
 #include <string>
 #include <cstdint>
+#include <utility>
 
 namespace lch_farrow {
+
+/// ROCm profiling events collected during Process() / ProcessFromCPU() (optional)
+/// Pass non-null to benchmark; null = production (zero overhead)
+using ROCmProfEvents =
+    std::vector<std::pair<const char*, drv_gpu_lib::ROCmProfilingData>>;
 
 /**
  * @class LchFarrowROCm
@@ -78,25 +85,34 @@ public:
 
   /**
    * @brief Apply fractional delay on GPU (ROCm)
-   * @param input_ptr HIP device pointer with complex signal [antennas * points]
-   * @param antennas Number of antennas/channels
-   * @param points Samples per antenna
+   * @param input_ptr  HIP device pointer with complex signal [antennas * points]
+   * @param antennas   Number of antennas/channels
+   * @param points     Samples per antenna
+   * @param prof_events Optional: collect ROCm events for profiling (null = production)
+   *   - "Upload_delay" : hipMemcpyHtoDAsync (delay_us array)
+   *   - "Kernel"       : lch_farrow_delay (hipModuleLaunchKernel)
    * @return InputData<void*> with delayed signal (caller must hipFree result.data)
    * @note input_ptr is NOT freed by this method
    */
   drv_gpu_lib::InputData<void*> Process(
-      void* input_ptr, uint32_t antennas, uint32_t points);
+      void* input_ptr, uint32_t antennas, uint32_t points,
+      ROCmProfEvents* prof_events = nullptr);
 
   /**
    * @brief Apply fractional delay from CPU data (upload + process + keep on GPU)
-   * @param data Flat complex signal: antennas * points elements
-   * @param antennas Number of antennas
-   * @param points Samples per antenna
+   * @param data       Flat complex signal: antennas * points elements
+   * @param antennas   Number of antennas
+   * @param points     Samples per antenna
+   * @param prof_events Optional: collect ROCm events for profiling (null = production)
+   *   - "Upload_input" : hipMemcpyHtoDAsync (input signal)
+   *   - "Upload_delay" : hipMemcpyHtoDAsync (delay_us array)    [via Process()]
+   *   - "Kernel"       : lch_farrow_delay                        [via Process()]
    * @return InputData<void*> with delayed signal on GPU
    */
   drv_gpu_lib::InputData<void*> ProcessFromCPU(
       const std::vector<std::complex<float>>& data,
-      uint32_t antennas, uint32_t points);
+      uint32_t antennas, uint32_t points,
+      ROCmProfEvents* prof_events = nullptr);
 
   /**
    * @brief Apply fractional delay on CPU (reference)
@@ -173,11 +189,13 @@ public:
     throw std::runtime_error("LchFarrowROCm: ROCm not enabled");
   }
 
-  drv_gpu_lib::InputData<void*> Process(void*, uint32_t, uint32_t) {
+  drv_gpu_lib::InputData<void*> Process(void*, uint32_t, uint32_t,
+      void* = nullptr) {
     throw std::runtime_error("LchFarrowROCm: ROCm not enabled");
   }
   drv_gpu_lib::InputData<void*> ProcessFromCPU(
-      const std::vector<std::complex<float>>&, uint32_t, uint32_t) {
+      const std::vector<std::complex<float>>&, uint32_t, uint32_t,
+      void* = nullptr) {
     throw std::runtime_error("LchFarrowROCm: ROCm not enabled");
   }
   std::vector<std::vector<std::complex<float>>> ProcessCpu(

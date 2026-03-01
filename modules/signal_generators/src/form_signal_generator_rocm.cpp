@@ -22,6 +22,26 @@
 #include <vector>
 
 namespace signal_gen {
+namespace {
+
+/// Helper: hipEvent → elapsed → ROCmProfilingData (уничтожает events)
+drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
+    hipEvent_t ev_start, hipEvent_t ev_end,
+    uint32_t kind = 0, const char* op = "")
+{
+  hipEventSynchronize(ev_end);
+  float ms = 0.0f;
+  hipEventElapsedTime(&ms, ev_start, ev_end);
+  hipEventDestroy(ev_start);
+  hipEventDestroy(ev_end);
+  drv_gpu_lib::ROCmProfilingData d{};
+  uint64_t ns = static_cast<uint64_t>(ms * 1e6f);
+  d.start_ns = 0; d.end_ns = ns; d.complete_ns = ns;
+  d.kind = kind; d.op_string = op;
+  return d;
+}
+
+}  // namespace
 
 // ════════════════════════════════════════════════════════════════════════════
 // Constructor / Destructor
@@ -87,6 +107,11 @@ FormSignalGeneratorROCm& FormSignalGeneratorROCm::operator=(
 // ════════════════════════════════════════════════════════════════════════════
 
 drv_gpu_lib::InputData<void*> FormSignalGeneratorROCm::GenerateInputData() {
+  return GenerateInputData(nullptr);
+}
+
+drv_gpu_lib::InputData<void*>
+FormSignalGeneratorROCm::GenerateInputData(ROCmProfEvents* prof_events) {
   size_t total_points = GetTotalSamples();
   size_t buffer_size = total_points * sizeof(std::complex<float>);
 
@@ -151,6 +176,13 @@ drv_gpu_lib::InputData<void*> FormSignalGeneratorROCm::GenerateInputData() {
   unsigned int grid_size = static_cast<unsigned int>(
       (total_points + kBlockSize - 1) / kBlockSize);
 
+  hipEvent_t ev_k_s = nullptr, ev_k_e = nullptr;
+  if (prof_events) {
+    hipEventCreate(&ev_k_s);
+    hipEventCreate(&ev_k_e);
+    hipEventRecord(ev_k_s, stream_);
+  }
+
   err = hipModuleLaunchKernel(
       kernel_,
       grid_size, 1, 1,
@@ -158,7 +190,12 @@ drv_gpu_lib::InputData<void*> FormSignalGeneratorROCm::GenerateInputData() {
       0, stream_,
       args, nullptr);
 
+  if (prof_events) {
+    hipEventRecord(ev_k_e, stream_);
+  }
+
   if (err != hipSuccess) {
+    if (ev_k_s) { hipEventDestroy(ev_k_s); hipEventDestroy(ev_k_e); }
     (void)hipFree(output_ptr);
     throw std::runtime_error(
         "FormSignalGeneratorROCm::GenerateInputData: hipModuleLaunchKernel failed: " +
@@ -166,6 +203,11 @@ drv_gpu_lib::InputData<void*> FormSignalGeneratorROCm::GenerateInputData() {
   }
 
   (void)hipStreamSynchronize(stream_);
+
+  if (prof_events) {
+    prof_events->push_back({"Kernel",
+        MakeROCmDataFromEvents(ev_k_s, ev_k_e, 0, "generate_form_signal")});
+  }
 
   drv_gpu_lib::InputData<void*> result;
   result.antenna_count = params_.antennas;

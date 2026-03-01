@@ -16,6 +16,17 @@
 #endif
 
 namespace signal_gen {
+namespace {
+
+// Сохранить cl_event для профилирования или освободить (production path).
+// Ключевое правило: вызывать ПОСЛЕ того как event использован как wait-dependency.
+void CollectOrRelease(cl_event ev, const char* name, CwGenerator::ProfEvents* prof_events) {
+    if (!ev) return;
+    if (prof_events) prof_events->push_back({name, ev});
+    else clReleaseEvent(ev);
+}
+
+}  // namespace
 
 // ════════════════════════════════════════════════════════════════════════════
 // Конструктор / Деструктор
@@ -102,6 +113,11 @@ void CwGenerator::GenerateToCpu(
 // ════════════════════════════════════════════════════════════════════════════
 
 cl_mem CwGenerator::GenerateToGpu(const SystemSampling& system, size_t beam_count) {
+    return GenerateToGpu(system, beam_count, nullptr);
+}
+
+cl_mem CwGenerator::GenerateToGpu(const SystemSampling& system, size_t beam_count,
+                                    ProfEvents* prof_events) {
     size_t total_points = beam_count * system.length;
     size_t buffer_size = total_points * sizeof(std::complex<float>);
 
@@ -146,15 +162,18 @@ cl_mem CwGenerator::GenerateToGpu(const SystemSampling& system, size_t beam_coun
     size_t local_size = 256;
     size_t global_size = ((total_points + local_size - 1) / local_size) * local_size;
 
+    cl_event ev_kernel = nullptr;
     err = clEnqueueNDRangeKernel(queue_, k, 1, nullptr,
                                   &global_size, &local_size,
-                                  0, nullptr, nullptr);
+                                  0, nullptr, prof_events ? &ev_kernel : nullptr);
     clReleaseKernel(k);
 
     if (err != CL_SUCCESS) {
         clReleaseMemObject(output);
         throw std::runtime_error("CwGenerator::GenerateToGpu: clEnqueueNDRangeKernel failed: " + std::to_string(err));
     }
+
+    CollectOrRelease(ev_kernel, "Kernel", prof_events);
 
     clFinish(queue_);
     return output;

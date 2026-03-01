@@ -24,6 +24,7 @@
 #include <vector>
 #include <complex>
 #include <cstdint>
+#include <utility>
 
 namespace signal_gen {
 
@@ -47,6 +48,9 @@ namespace signal_gen {
  */
 class LfmGeneratorAnalyticalDelay {
 public:
+  /// Тип для сбора OpenCL событий профилирования (имя → cl_event)
+  using ProfEvents = std::vector<std::pair<const char*, cl_event>>;
+
   LfmGeneratorAnalyticalDelay(drv_gpu_lib::IBackend* backend,
                                const LfmParams& params);
   ~LfmGeneratorAnalyticalDelay();
@@ -79,6 +83,14 @@ public:
    * @note Caller must release result.data via clReleaseMemObject()
    */
   drv_gpu_lib::InputData<cl_mem> GenerateToGpu();
+
+  /**
+   * @brief Генерация на GPU с опциональным сбором событий профилирования
+   * @param prof_events nullptr → production (zero overhead); &vec → benchmark
+   *
+   * Собирает события: "Kernel" (lfm_analytical_delay.cl)
+   */
+  drv_gpu_lib::InputData<cl_mem> GenerateToGpu(ProfEvents* prof_events);
 
   /**
    * @brief Generate on CPU (reference)

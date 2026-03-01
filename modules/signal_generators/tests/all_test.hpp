@@ -17,6 +17,13 @@
 #include "test_delayed_form_signal.hpp"
 #include "test_lfm_analytical_delay.hpp"
 #include "test_form_signal_rocm.hpp"
+// ── Benchmarks (OpenCL) ──────────────────────────────────────────────────
+#include "test_signal_generators_benchmark.hpp"
+#include "test_form_signal_benchmark.hpp"
+// ── Benchmarks (ROCm) ────────────────────────────────────────────────────
+#if ENABLE_ROCM
+#include "test_signal_generators_benchmark_rocm.hpp"
+#endif
 
 namespace signal_generators_all_test {
 
@@ -38,6 +45,18 @@ inline void run() {
 
     // FormSignalGeneratorROCm: getX on HIP (Linux + AMD GPU only)
     test_form_signal_rocm::run();
+
+    // ── OpenCL Benchmarks (GpuBenchmarkBase) ─────────────────────────────
+    // CW / LFM / LfmConjugate / Noise
+    //   test_signal_generators_benchmark::run();
+
+    // FormSignal / DelayedFormSignal / LfmAnalyticalDelay / FormScript
+    //   test_form_signal_benchmark::run();
+
+    // ── ROCm Benchmarks ───────────────────────────────────────────────────
+#if ENABLE_ROCM
+    //   test_signal_generators_benchmark_rocm::run();
+#endif
 }
 
 }  // namespace signal_generators_all_test

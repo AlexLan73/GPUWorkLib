@@ -25,8 +25,13 @@
 #include <complex>
 #include <string>
 #include <cstdint>
+#include <utility>
 
 namespace lch_farrow {
+
+/// OpenCL profiling events collected during Process() (optional)
+/// Pass non-null to benchmark; null = production (zero overhead)
+using ProfEvents = std::vector<std::pair<const char*, cl_event>>;
 
 /**
  * @class LchFarrow
@@ -80,15 +85,19 @@ public:
 
   /**
    * @brief Apply fractional delay on GPU
-   * @param input_buf cl_mem with complex signal [antennas * points]
-   * @param antennas Number of antennas/channels
-   * @param points Samples per antenna
+   * @param input_buf  cl_mem with complex signal [antennas * points]
+   * @param antennas   Number of antennas/channels
+   * @param points     Samples per antenna
+   * @param prof_events Optional: collect cl_events for profiling (null = production)
+   *   - "Upload_delay" : clEnqueueWriteBuffer  (delay_us array)
+   *   - "Kernel"       : lch_farrow_delay kernel
    * @return InputData<cl_mem> with delayed signal
    * @note Caller must release result.data via clReleaseMemObject()
    * @note input_buf is NOT released by this method
    */
   drv_gpu_lib::InputData<cl_mem> Process(
-      cl_mem input_buf, uint32_t antennas, uint32_t points);
+      cl_mem input_buf, uint32_t antennas, uint32_t points,
+      ProfEvents* prof_events = nullptr);
 
   /**
    * @brief Apply fractional delay on CPU (reference)

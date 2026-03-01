@@ -33,6 +33,21 @@
 namespace drv_gpu_lib {
 
 // ════════════════════════════════════════════════════════════════════════════
+// Profiling helper
+// ════════════════════════════════════════════════════════════════════════════
+
+static void CollectOrRelease(cl_event ev, const char* name,
+    HeterodyneOCLProfEvents* prof_events)
+{
+  if (!ev) return;
+  if (prof_events) {
+    prof_events->push_back({name, ev});
+  } else {
+    clReleaseEvent(ev);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Constructor / Destructor
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -124,7 +139,8 @@ void HeterodyneProcessorOpenCL::EnsureBuffers(int total_samples, int num_samples
 std::vector<std::complex<float>> HeterodyneProcessorOpenCL::Dechirp(
     const std::vector<std::complex<float>>& rx_data,
     const std::vector<std::complex<float>>& ref_data,
-    const HeterodyneParams& params) {
+    const HeterodyneParams& params,
+    HeterodyneOCLProfEvents* prof_events) {
 
   int total = params.num_antennas * params.num_samples;
   if (static_cast<int>(rx_data.size()) != total) {
@@ -146,19 +162,23 @@ std::vector<std::complex<float>> HeterodyneProcessorOpenCL::Dechirp(
 
   cl_int err;
 
-  // Upload data to cached buffers
+  // Upload rx
+  cl_event ev_rx = nullptr;
   err = clEnqueueWriteBuffer(queue_, buf_rx_, CL_FALSE, 0, rx_bytes,
-                              rx_data.data(), 0, nullptr, nullptr);
+                              rx_data.data(), 0, nullptr, &ev_rx);
   if (err != CL_SUCCESS)
     throw std::runtime_error("Dechirp: rx upload failed: " + std::to_string(err));
+  CollectOrRelease(ev_rx, "Upload_Rx", prof_events);
 
+  // Upload ref
+  cl_event ev_ref = nullptr;
   err = clEnqueueWriteBuffer(queue_, buf_ref_, CL_FALSE, 0, ref_bytes,
-                              ref_data.data(), 0, nullptr, nullptr);
+                              ref_data.data(), 0, nullptr, &ev_ref);
   if (err != CL_SUCCESS)
     throw std::runtime_error("Dechirp: ref upload failed: " + std::to_string(err));
+  CollectOrRelease(ev_ref, "Upload_Ref", prof_events);
 
   // OPT-1: Use cached kernel
-  int n_ant = params.num_antennas;
   int n_pts = params.num_samples;
 
   err  = clSetKernelArg(kernel_multiply_, 0, sizeof(cl_mem), &buf_rx_);
@@ -172,17 +192,21 @@ std::vector<std::complex<float>> HeterodyneProcessorOpenCL::Dechirp(
   // OPT-5: 1D launch
   size_t global = static_cast<size_t>(total);
 
+  cl_event ev_k = nullptr;
   err = clEnqueueNDRangeKernel(queue_, kernel_multiply_, 1, nullptr, &global,
-                                nullptr, 0, nullptr, nullptr);
+                                nullptr, 0, nullptr, &ev_k);
   if (err != CL_SUCCESS)
     throw std::runtime_error("Dechirp: enqueue failed: " + std::to_string(err));
+  CollectOrRelease(ev_k, "Kernel_Multiply", prof_events);
 
   // Read result
   std::vector<std::complex<float>> result(total);
+  cl_event ev_dl = nullptr;
   err = clEnqueueReadBuffer(queue_, buf_dc_, CL_TRUE, 0, rx_bytes,
-                             result.data(), 0, nullptr, nullptr);
+                             result.data(), 0, nullptr, &ev_dl);
   if (err != CL_SUCCESS)
     throw std::runtime_error("Dechirp: read failed: " + std::to_string(err));
+  CollectOrRelease(ev_dl, "Download", prof_events);
 
   return result;
 }
@@ -195,7 +219,8 @@ std::vector<std::complex<float>> HeterodyneProcessorOpenCL::Dechirp(
 std::vector<std::complex<float>> HeterodyneProcessorOpenCL::Correct(
     const std::vector<std::complex<float>>& dc_data,
     const std::vector<float>& f_beat_hz,
-    const HeterodyneParams& params) {
+    const HeterodyneParams& params,
+    HeterodyneOCLProfEvents* prof_events) {
 
   int total = params.num_antennas * params.num_samples;
   if (static_cast<int>(dc_data.size()) != total) {
@@ -211,11 +236,13 @@ std::vector<std::complex<float>> HeterodyneProcessorOpenCL::Correct(
 
   cl_int err;
 
-  // Upload dc data
+  // Upload DC data
+  cl_event ev_dc = nullptr;
   err = clEnqueueWriteBuffer(queue_, buf_dc_, CL_FALSE, 0, data_bytes,
-                              dc_data.data(), 0, nullptr, nullptr);
+                              dc_data.data(), 0, nullptr, &ev_dc);
   if (err != CL_SUCCESS)
     throw std::runtime_error("Correct: dc upload failed");
+  CollectOrRelease(ev_dc, "Upload_DC", prof_events);
 
   // OPT-6: Precompute phase_step on CPU: phase_step[ant] = -2*pi*f_beat/fs
   std::vector<float> phase_step(params.num_antennas);
@@ -224,10 +251,12 @@ std::vector<std::complex<float>> HeterodyneProcessorOpenCL::Correct(
   }
 
   size_t freq_bytes = static_cast<size_t>(params.num_antennas) * sizeof(float);
+  cl_event ev_ps = nullptr;
   err = clEnqueueWriteBuffer(queue_, buf_freq_, CL_FALSE, 0, freq_bytes,
-                              phase_step.data(), 0, nullptr, nullptr);
+                              phase_step.data(), 0, nullptr, &ev_ps);
   if (err != CL_SUCCESS)
     throw std::runtime_error("Correct: phase_step upload failed");
+  CollectOrRelease(ev_ps, "Upload_PhaseStep", prof_events);
 
   // OPT-1: Use cached kernel
   int n_pts = params.num_samples;
@@ -243,16 +272,20 @@ std::vector<std::complex<float>> HeterodyneProcessorOpenCL::Correct(
   // OPT-5: 1D launch
   size_t global = static_cast<size_t>(total);
 
+  cl_event ev_k = nullptr;
   err = clEnqueueNDRangeKernel(queue_, kernel_correct_, 1, nullptr, &global,
-                                nullptr, 0, nullptr, nullptr);
+                                nullptr, 0, nullptr, &ev_k);
   if (err != CL_SUCCESS)
     throw std::runtime_error("Correct: enqueue failed: " + std::to_string(err));
+  CollectOrRelease(ev_k, "Kernel_Correct", prof_events);
 
   std::vector<std::complex<float>> result(total);
+  cl_event ev_dl = nullptr;
   err = clEnqueueReadBuffer(queue_, buf_corr_, CL_TRUE, 0, data_bytes,
-                             result.data(), 0, nullptr, nullptr);
+                             result.data(), 0, nullptr, &ev_dl);
   if (err != CL_SUCCESS)
     throw std::runtime_error("Correct: read failed");
+  CollectOrRelease(ev_dl, "Download", prof_events);
 
   return result;
 }
@@ -264,7 +297,8 @@ std::vector<std::complex<float>> HeterodyneProcessorOpenCL::Correct(
 std::vector<std::complex<float>> HeterodyneProcessorOpenCL::DechirpFromGPU(
     void* rx_cl_mem,
     const std::vector<std::complex<float>>& ref_data,
-    const HeterodyneParams& params) {
+    const HeterodyneParams& params,
+    HeterodyneOCLProfEvents* prof_events) {
 
   if (!rx_cl_mem) {
     throw std::runtime_error("DechirpFromGPU: rx_cl_mem is null");
@@ -280,10 +314,12 @@ std::vector<std::complex<float>> HeterodyneProcessorOpenCL::DechirpFromGPU(
   cl_mem rx_buf = static_cast<cl_mem>(rx_cl_mem);  // external, DO NOT release
 
   // Upload ref to cached buffer
+  cl_event ev_ref = nullptr;
   err = clEnqueueWriteBuffer(queue_, buf_ref_, CL_FALSE, 0, ref_bytes,
-                              ref_data.data(), 0, nullptr, nullptr);
+                              ref_data.data(), 0, nullptr, &ev_ref);
   if (err != CL_SUCCESS)
     throw std::runtime_error("DechirpFromGPU: ref upload failed");
+  CollectOrRelease(ev_ref, "Upload_Ref", prof_events);
 
   int n_pts = params.num_samples;
 
@@ -298,16 +334,20 @@ std::vector<std::complex<float>> HeterodyneProcessorOpenCL::DechirpFromGPU(
   // OPT-5: 1D launch
   size_t global = static_cast<size_t>(total);
 
+  cl_event ev_k = nullptr;
   err = clEnqueueNDRangeKernel(queue_, kernel_multiply_, 1, nullptr, &global,
-                                nullptr, 0, nullptr, nullptr);
+                                nullptr, 0, nullptr, &ev_k);
   if (err != CL_SUCCESS)
     throw std::runtime_error("DechirpFromGPU: enqueue failed");
+  CollectOrRelease(ev_k, "Kernel_Multiply", prof_events);
 
   std::vector<std::complex<float>> result(total);
+  cl_event ev_dl = nullptr;
   err = clEnqueueReadBuffer(queue_, buf_dc_, CL_TRUE, 0, rx_bytes,
-                             result.data(), 0, nullptr, nullptr);
+                             result.data(), 0, nullptr, &ev_dl);
   if (err != CL_SUCCESS)
     throw std::runtime_error("DechirpFromGPU: read failed");
+  CollectOrRelease(ev_dl, "Download", prof_events);
 
   return result;
 }
@@ -319,7 +359,8 @@ std::vector<std::complex<float>> HeterodyneProcessorOpenCL::DechirpFromGPU(
 std::vector<std::complex<float>> HeterodyneProcessorOpenCL::DechirpWithGPURef(
     void* rx_cl_mem,
     void* ref_cl_mem,
-    const HeterodyneParams& params) {
+    const HeterodyneParams& params,
+    HeterodyneOCLProfEvents* prof_events) {
 
   if (!rx_cl_mem || !ref_cl_mem) {
     throw std::runtime_error("DechirpWithGPURef: null cl_mem");
@@ -345,16 +386,20 @@ std::vector<std::complex<float>> HeterodyneProcessorOpenCL::DechirpWithGPURef(
     throw std::runtime_error("DechirpWithGPURef: clSetKernelArg failed");
 
   size_t global = static_cast<size_t>(total);
+  cl_event ev_k = nullptr;
   err = clEnqueueNDRangeKernel(queue_, kernel_multiply_, 1, nullptr, &global,
-                                nullptr, 0, nullptr, nullptr);
+                                nullptr, 0, nullptr, &ev_k);
   if (err != CL_SUCCESS)
     throw std::runtime_error("DechirpWithGPURef: enqueue failed");
+  CollectOrRelease(ev_k, "Kernel_Multiply", prof_events);
 
   std::vector<std::complex<float>> result(total);
+  cl_event ev_dl = nullptr;
   err = clEnqueueReadBuffer(queue_, buf_dc_, CL_TRUE, 0, rx_bytes,
-                             result.data(), 0, nullptr, nullptr);
+                             result.data(), 0, nullptr, &ev_dl);
   if (err != CL_SUCCESS)
     throw std::runtime_error("DechirpWithGPURef: read failed");
+  CollectOrRelease(ev_dl, "Download", prof_events);
 
   return result;
 }

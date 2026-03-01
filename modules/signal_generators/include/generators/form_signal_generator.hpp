@@ -27,6 +27,7 @@
 #include <vector>
 #include <complex>
 #include <string>
+#include <utility>
 
 namespace signal_gen {
 
@@ -63,6 +64,9 @@ namespace signal_gen {
  */
 class FormSignalGenerator {
 public:
+  /// Тип для сбора OpenCL событий профилирования (имя → cl_event)
+  using ProfEvents = std::vector<std::pair<const char*, cl_event>>;
+
   explicit FormSignalGenerator(drv_gpu_lib::IBackend* backend);
   ~FormSignalGenerator();
 
@@ -88,6 +92,14 @@ public:
    * @note Вызывающий код должен освободить input.data через clReleaseMemObject()!
    */
   drv_gpu_lib::InputData<cl_mem> GenerateInputData();
+
+  /**
+   * @brief Генерация на GPU с опциональным сбором событий профилирования
+   * @param prof_events nullptr → production (zero overhead); &vec → benchmark
+   *
+   * Собирает события: "Kernel" (form_signal.cl)
+   */
+  drv_gpu_lib::InputData<cl_mem> GenerateInputData(ProfEvents* prof_events);
 
   /**
    * @brief Генерация с возвратом на CPU (по каналам)

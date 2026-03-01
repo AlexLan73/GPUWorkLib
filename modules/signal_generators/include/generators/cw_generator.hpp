@@ -22,11 +22,16 @@
 #include <CL/cl.h>
 #include <string>
 #include <cstring>
+#include <utility>
+#include <vector>
 
 namespace signal_gen {
 
 class CwGenerator : public ISignalGenerator {
 public:
+    /// Тип для сбора OpenCL событий профилирования (имя → cl_event)
+    using ProfEvents = std::vector<std::pair<const char*, cl_event>>;
+
     /**
      * @brief Конструктор
      * @param backend GPU backend (не владеет!)
@@ -49,6 +54,16 @@ public:
 
     cl_mem GenerateToGpu(const SystemSampling& system,
                          size_t beam_count = 1) override;
+
+    /**
+     * @brief Генерация на GPU с опциональным сбором событий профилирования
+     * @param prof_events nullptr → production (zero overhead); &vec → benchmark
+     *
+     * Собирает события: "Kernel" (cw_kernel)
+     */
+    cl_mem GenerateToGpu(const SystemSampling& system,
+                         size_t beam_count,
+                         ProfEvents* prof_events);
 
     SignalKind Kind() const override { return SignalKind::CW; }
 

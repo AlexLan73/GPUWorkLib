@@ -24,6 +24,7 @@
 #include <vector>
 #include <complex>
 #include <cstdint>
+#include <utility>
 
 namespace signal_gen {
 
@@ -46,6 +47,9 @@ namespace signal_gen {
  */
 class LfmConjugateGenerator {
 public:
+  /// Тип для сбора OpenCL событий профилирования (имя → cl_event)
+  using ProfEvents = std::vector<std::pair<const char*, cl_event>>;
+
   LfmConjugateGenerator(drv_gpu_lib::IBackend* backend,
                          const LfmParams& params);
   ~LfmConjugateGenerator();
@@ -72,6 +76,14 @@ public:
    * @note Caller must release via clReleaseMemObject()
    */
   cl_mem GenerateToGpu();
+
+  /**
+   * @brief Генерация на GPU с опциональным сбором событий профилирования
+   * @param prof_events nullptr → production (zero overhead); &vec → benchmark
+   *
+   * Собирает события: "Kernel" (lfm_conjugate.cl)
+   */
+  cl_mem GenerateToGpu(ProfEvents* prof_events);
 
   /**
    * @brief Generate conjugate LFM on CPU (reference)

@@ -15,6 +15,10 @@
 #include "test_heterodyne_basic.hpp"
 #include "test_heterodyne_pipeline.hpp"
 #include "test_heterodyne_rocm.hpp"
+#include "test_heterodyne_benchmark.hpp"
+#if ENABLE_ROCM
+#include "test_heterodyne_benchmark_rocm.hpp"
+#endif
 
 #include "DrvGPU/services/console_output.hpp"
 
@@ -47,6 +51,14 @@ inline void run() {
 
   // ROCm: HeterodyneProcessorROCm tests (on Linux + AMD GPU)
   test_heterodyne_rocm::run();
+
+  // Heterodyne OpenCL Benchmark (GpuBenchmarkBase)
+  //  test_heterodyne_benchmark::run();    // ← раскомментировать для запуска
+
+  // Heterodyne ROCm Benchmark
+#if ENABLE_ROCM
+  //  test_heterodyne_benchmark_rocm::run();
+#endif
 }
 
 }  // namespace heterodyne_all_test
