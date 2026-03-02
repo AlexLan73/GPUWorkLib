@@ -28,7 +28,7 @@
 #include "lch_farrow_rocm.hpp"
 #include "kernels/lch_farrow_kernels_rocm.hpp"
 #include "services/console_output.hpp"
-#include "DrvGPU/services/profiling_types.hpp"
+#include "services/profiling_types.hpp"
 
 #include <stdexcept>
 #include <cmath>

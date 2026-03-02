@@ -1,0 +1,4 @@
+#!/bin/bash
+# Shortcut: ./run_test [all | DrvGPU | fft_processor | ... | --file path]
+cd "$(dirname "$0")"
+exec ./scripts/run_agent_tests.sh "$@"

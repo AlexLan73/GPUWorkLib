@@ -35,7 +35,7 @@
 
 #include <hip/hip_runtime.h>
 #include <hip/hiprtc.h>
-#include "DrvGPU/services/profiling_types.hpp"
+#include "services/profiling_types.hpp"
 
 #include <vector>
 #include <complex>

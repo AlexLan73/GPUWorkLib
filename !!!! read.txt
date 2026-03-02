@@ -17,3 +17,44 @@ DAP Proxy Monitor интересно
 нужно передалать modules\fft_maxima
 Пожалуйста сформируй план и таски запиши я почитаю пиши все очень подробно
 для OpenCl & ROCm
+
+*********************************
+Агент в курсор
+озданное
+1. Cursor Agent
+Файл: .cursor/skills/run-gpu-tests/SKILL.md
+Агент используется при запросах вида «run tests», «test module», «validate build» и описывает порядок шагов тестирования.
+2. Команда
+./scripts/run_agent_tests.sh all                    # все модули./scripts/run_agent_tests.sh fft_processor         # один модуль./scripts/run_agent_tests.sh --file config/tests_to_run.txt
+Скрипт запускает:
+Сборку C++
+C++-тесты (./build/GPUWorkLib …)
+Python-тесты (pytest)
+3. CLI для GPUWorkLib
+main.cpp поддерживает аргументы:
+all — все модули (порядок из config/tests_order.txt)
+<module> — один модуль
+--file <path> — модули из файла
+--help — справка
+4. Файлы конфигурации
+config/tests_order.txt — порядок модулей для режима all
+DrvGPU — первый в списке
+5. Определение GPU
+Build-time: через CMakeCache.txt (пресет)
+Run-time: через rocminfo / nvidia-smi
+Python-скрипт пропускает ROCm-тесты на NVIDIA
+Порядок модулей
+drvgpu
+fft_processor
+statistics
+vector_algebra
+fft_maxima
+filters
+signal_generators
+lch_farrow
+heterodyne
+
+****************
+./run_test DrvGPU
+./run_test all
+./run_test fft_processor

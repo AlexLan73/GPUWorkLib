@@ -26,7 +26,7 @@
 
 #include "../i_heterodyne_processor.hpp"
 #include "interface/i_backend.hpp"
-#include "DrvGPU/services/profiling_types.hpp"
+#include "services/profiling_types.hpp"
 
 #include <hip/hip_runtime.h>
 #include <hip/hiprtc.h>

@@ -32,7 +32,7 @@ import traceback
 
 # ── Project root (Python_test/filters/ -> 2 levels up) ──
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-for subdir in ["build/python/Release", "build/python/Debug", "build/Release", "build/Debug"]:
+for subdir in ["build/python", "build/debian-radeon9070/python", "build/python/Release", "build/python/Debug", "build/Release", "build/Debug"]:
     p = os.path.join(PROJECT_ROOT, subdir.replace("/", os.sep))
     if os.path.exists(p):
         sys.path.insert(0, p)
@@ -99,6 +99,23 @@ if os.path.isfile(_API_KEYS_PATH):
 # ============================================================================
 # AI BACKENDS
 # ============================================================================
+
+def _has_ai_backend():
+    """Check if AI backend (groq/ollama) is available."""
+    if MODE == "groq":
+        try:
+            from groq import Groq  # noqa: F401
+            return True
+        except ImportError:
+            return False
+    if MODE == "ollama":
+        try:
+            import ollama  # noqa: F401
+            return True
+        except ImportError:
+            return False
+    return True  # MODE="none" doesn't need backend
+
 
 def ai_ask(prompt: str, system: str = "") -> str:
     """Send request to LLM. Returns text response or None if MODE='none'."""
@@ -856,9 +873,11 @@ def demo_russian_request():
 
 def test_ai_pipeline_iir_lowpass():
     """AI Pipeline: IIR low-pass produces valid filtered output"""
+    import pytest
     if not HAS_GPU or not HAS_SCIPY:
-        print("SKIP: missing gpuworklib or scipy")
-        return
+        pytest.skip("missing gpuworklib or scipy")
+    if not _has_ai_backend():
+        pytest.skip("AI backend not available (pip install groq or ollama)")
     result = demo_iir_lowpass()
     assert result["validation"]["ok"], "IIR pipeline validation failed"
     print("  PASSED")
@@ -866,9 +885,11 @@ def test_ai_pipeline_iir_lowpass():
 
 def test_ai_pipeline_fir_lowpass():
     """AI Pipeline: FIR low-pass produces valid filtered output"""
+    import pytest
     if not HAS_GPU or not HAS_SCIPY:
-        print("SKIP: missing gpuworklib or scipy")
-        return
+        pytest.skip("missing gpuworklib or scipy")
+    if not _has_ai_backend():
+        pytest.skip("AI backend not available (pip install groq or ollama)")
     result = demo_fir_lowpass()
     assert result["validation"]["ok"], "FIR pipeline validation failed"
     print("  PASSED")
@@ -876,9 +897,11 @@ def test_ai_pipeline_fir_lowpass():
 
 def test_ai_pipeline_iir_highpass():
     """AI Pipeline: IIR high-pass produces valid filtered output"""
+    import pytest
     if not HAS_GPU or not HAS_SCIPY:
-        print("SKIP: missing gpuworklib or scipy")
-        return
+        pytest.skip("missing gpuworklib or scipy")
+    if not _has_ai_backend():
+        pytest.skip("AI backend not available (pip install groq or ollama)")
     result = demo_iir_highpass()
     assert result["validation"]["ok"], "IIR highpass pipeline validation failed"
     print("  PASSED")
@@ -886,9 +909,11 @@ def test_ai_pipeline_iir_highpass():
 
 def test_ai_pipeline_russian():
     """AI Pipeline: Russian language request works"""
+    import pytest
     if not HAS_GPU or not HAS_SCIPY:
-        print("SKIP: missing gpuworklib or scipy")
-        return
+        pytest.skip("missing gpuworklib or scipy")
+    if not _has_ai_backend():
+        pytest.skip("AI backend not available (pip install groq or ollama)")
     result = demo_russian_request()
     assert result["validation"]["ok"], "Russian request pipeline failed"
     print("  PASSED")

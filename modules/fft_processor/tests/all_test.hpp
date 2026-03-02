@@ -18,20 +18,16 @@
 #include "test_fft_processor_rocm.hpp"
 #include "test_complex_to_mag_phase_rocm.hpp"
 #include "test_fft_benchmark_rocm.hpp"
+#include "test_fft_matrix_rocm.hpp"
 #endif
 
 namespace fft_processor_all_test {
 
 inline void run() {
-    // FFTProcessor: Complex, MagPhase режимы
+    // FFTProcessor (OpenCL/clFFT) — отложено, clFFT не компилируется на gfx1201
 //    test_fft_processor::run();
-
-    // FFTProcessor vs CPU reference (pocketfft)
 //    test_fft_vs_cpu::run();
-
-    // FFTProcessor Benchmark (GpuBenchmarkBase — единый механизм профилирования)
-    // Раскомментировать когда GpuBenchmarkBase реализован:
-    test_fft_benchmark::run();
+//    test_fft_benchmark::run();
 
     // FFTProcessorROCm: hipFFT-based FFT (ROCm only)
 #if ENABLE_ROCM
@@ -46,6 +42,11 @@ inline void run() {
     // FFTProcessorROCm Benchmark (GpuBenchmarkBase — hipFFT timing)
 #if ENABLE_ROCM
 //    test_fft_benchmark_rocm::run();
+#endif
+
+    // FFT Matrix Benchmark — beams × nFFT table (ROCm)
+#if ENABLE_ROCM
+    test_fft_matrix_rocm::run();
 #endif
 }
 

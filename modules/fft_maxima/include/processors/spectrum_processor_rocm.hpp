@@ -22,7 +22,7 @@
 #include "interface/spectrum_maxima_types.h"
 #include "interface/i_backend.hpp"
 #include "pipelines/all_maxima_pipeline_rocm.hpp"
-#include "DrvGPU/services/profiling_types.hpp"
+#include "services/profiling_types.hpp"
 
 #include <hip/hip_runtime.h>
 #include <hipfft/hipfft.h>
@@ -65,8 +65,12 @@ public:
     bool IsInitialized() const override { return initialized_; }
 
     std::vector<SpectrumResult> ProcessFromCPU(
+        const std::vector<std::complex<float>>& data) override {
+        return ProcessFromCPU(data, nullptr);
+    }
+    std::vector<SpectrumResult> ProcessFromCPU(
         const std::vector<std::complex<float>>& data,
-        ROCmProfEvents* prof_events = nullptr);
+        ROCmProfEvents* prof_events);
 
     std::vector<SpectrumResult> ProcessFromGPU(
         void* gpu_data, size_t antenna_count, size_t n_point,
@@ -75,8 +79,14 @@ public:
     std::vector<SpectrumResult> ProcessBatch(
         const std::vector<std::complex<float>>& batch_data,
         size_t start_antenna,
+        size_t batch_antenna_count) override {
+        return ProcessBatch(batch_data, start_antenna, batch_antenna_count, nullptr);
+    }
+    std::vector<SpectrumResult> ProcessBatch(
+        const std::vector<std::complex<float>>& batch_data,
+        size_t start_antenna,
         size_t batch_antenna_count,
-        ROCmProfEvents* prof_events = nullptr);
+        ROCmProfEvents* prof_events);
 
     std::vector<SpectrumResult> ProcessBatchFromGPU(
         void* gpu_data, size_t src_offset_bytes,
@@ -84,8 +94,13 @@ public:
 
     AllMaximaResult FindAllMaximaFromCPU(
         const std::vector<std::complex<float>>& data,
+        OutputDestination dest, uint32_t search_start, uint32_t search_end) override {
+        return FindAllMaximaFromCPU(data, dest, search_start, search_end, nullptr);
+    }
+    AllMaximaResult FindAllMaximaFromCPU(
+        const std::vector<std::complex<float>>& data,
         OutputDestination dest, uint32_t search_start, uint32_t search_end,
-        ROCmProfEvents* prof_events = nullptr);
+        ROCmProfEvents* prof_events);
 
     AllMaximaResult FindAllMaximaFromGPUPipeline(
         void* gpu_data, size_t antenna_count, size_t n_point,

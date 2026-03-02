@@ -13,7 +13,7 @@
  * Использование:
  * @code
  *   signal_gen::CwGenerator gen(backend, cw_params);
- *   CwGeneratorBenchmark bench(backend, gen, system, /*beam_count=*/1);
+ *   CwGeneratorBenchmark bench(backend, gen, system, 1); // beam_count
  *   bench.Run();
  *   bench.Report();
  * @endcode

@@ -34,7 +34,7 @@
 #include "services/gpu_profiler.hpp"
 #include "services/batch_manager.hpp"
 #include "interface/i_backend.hpp"
-#include "DrvGPU/services/profiling_types.hpp"
+#include "services/profiling_types.hpp"
 
 #include <stdexcept>
 #include <cstring>

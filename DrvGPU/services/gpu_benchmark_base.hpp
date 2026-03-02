@@ -49,17 +49,15 @@
 
 namespace drv_gpu_lib {
 
+struct BenchmarkConfig {
+  int         n_warmup   = 5;                  ///< Прогревочных запусков (без замеров)
+  int         n_runs     = 20;                 ///< Измерений для статистики (>= 20)
+  std::string output_dir = "Results/Profiler"; ///< Каталог для JSON/MD отчётов
+};
+
 class GpuBenchmarkBase {
 public:
-  // ═══════════════════════════════════════════════════════════════════════
-  // Конфигурация
-  // ═══════════════════════════════════════════════════════════════════════
-
-  struct Config {
-    int         n_warmup   = 5;                  ///< Прогревочных запусков (без замеров)
-    int         n_runs     = 20;                 ///< Измерений для статистики (>= 20)
-    std::string output_dir = "Results/Profiler"; ///< Каталог для JSON/MD отчётов
-  };
+  using Config = BenchmarkConfig;
 
   // ═══════════════════════════════════════════════════════════════════════
   // Конструктор / Деструктор
@@ -293,8 +291,8 @@ private:
         backend_type == BackendType::OPENCLandROCm) {
       std::map<std::string, std::string> rocm_driver;
       rocm_driver["driver_type"]    = "ROCm";
-      rocm_driver["version"]        = device_info.rocm_version;
-      rocm_driver["driver_version"] = device_info.hip_driver_version;
+      rocm_driver["version"]        = device_info.driver_version;
+      rocm_driver["driver_version"] = device_info.driver_version;
       gpu_info.drivers.push_back(rocm_driver);
     }
 #endif

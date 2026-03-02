@@ -154,8 +154,10 @@ static void test_bridge_import() {
   cl_device_id cl_device = static_cast<cl_device_id>(cl_backend.GetNativeDevice());
   auto method = DetectBestZeroCopyMethod(cl_device);
 
-  if (method == ZeroCopyMethod::NONE) {
-    std::cout << "  [ZeroCopy] bridge_import: SKIPPED (no ZeroCopy method available)\n";
+  // ImportFromOpenCl поддерживает только DMA_BUF и AMD_GPU_VA; SVM — нет
+  if (method != ZeroCopyMethod::DMA_BUF && method != ZeroCopyMethod::AMD_GPU_VA) {
+    std::cout << "  [ZeroCopy] bridge_import: SKIPPED (method="
+              << ZeroCopyMethodToString(method) << ", need DMA_BUF or AMD_GPU_VA)\n";
     rocm_backend.Cleanup();
     cl_backend.Cleanup();
     return;
@@ -199,8 +201,9 @@ static void test_data_integrity() {
   cl_device_id cl_device = static_cast<cl_device_id>(cl_backend.GetNativeDevice());
   auto method = DetectBestZeroCopyMethod(cl_device);
 
-  if (method == ZeroCopyMethod::NONE) {
-    std::cout << "  [ZeroCopy] data_integrity: SKIPPED (no ZeroCopy method)\n";
+  if (method != ZeroCopyMethod::DMA_BUF && method != ZeroCopyMethod::AMD_GPU_VA) {
+    std::cout << "  [ZeroCopy] data_integrity: SKIPPED (method="
+              << ZeroCopyMethodToString(method) << ", need DMA_BUF or AMD_GPU_VA)\n";
     rocm_backend.Cleanup();
     cl_backend.Cleanup();
     return;

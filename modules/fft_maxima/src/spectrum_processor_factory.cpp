@@ -8,7 +8,9 @@
 
 #include "factory/spectrum_processor_factory.hpp"
 #include "processors/spectrum_processor_opencl.hpp"
+#if ENABLE_ROCM
 #include "processors/spectrum_processor_rocm.hpp"
+#endif
 
 #include <stdexcept>
 
@@ -29,7 +31,11 @@ std::unique_ptr<ISpectrumProcessor> SpectrumProcessorFactory::Create(
     case drv_gpu_lib::BackendType::OPENCL:
         return std::make_unique<SpectrumProcessorOpenCL>(backend);
     case drv_gpu_lib::BackendType::ROCm:
+#if ENABLE_ROCM
         return std::make_unique<SpectrumProcessorROCm>(backend);
+#else
+        throw std::runtime_error("SpectrumProcessorFactory: ROCm backend not available (ENABLE_ROCM=0)");
+#endif
     case drv_gpu_lib::BackendType::AUTO:
     case drv_gpu_lib::BackendType::OPENCLandROCm:
         return std::make_unique<SpectrumProcessorOpenCL>(backend);

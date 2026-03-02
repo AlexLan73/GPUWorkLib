@@ -20,7 +20,12 @@
 class PyHeterodyneDechirp {
 public:
   explicit PyHeterodyneDechirp(GPUContext& ctx)
-      : ctx_(ctx), het_(ctx.backend()) {}
+      : ctx_(&ctx), het_(ctx.backend(), drv_gpu_lib::BackendType::OPENCL) {}
+
+#if ENABLE_ROCM
+  explicit PyHeterodyneDechirp(ROCmGPUContext& ctx)
+      : rocm_ctx_(&ctx), het_(ctx.backend(), drv_gpu_lib::BackendType::ROCm) {}
+#endif
 
   void set_params(float f_start, float f_end, float sample_rate,
                   int num_samples, int num_antennas) {
@@ -122,7 +127,10 @@ private:
     return out;
   }
 
-  GPUContext& ctx_;
+  GPUContext* ctx_ = nullptr;
+#if ENABLE_ROCM
+  ROCmGPUContext* rocm_ctx_ = nullptr;
+#endif
   drv_gpu_lib::HeterodyneDechirp het_;
 };
 
@@ -146,7 +154,11 @@ inline void register_heterodyne(py::module& m) {
       "  result = het.process(rx_data)\n"
       "  print(result['antennas'][0]['f_beat_hz'])\n")
       .def(py::init<GPUContext&>(), py::arg("ctx"),
-           "Create HeterodyneDechirp bound to GPU context")
+           "Create HeterodyneDechirp bound to OpenCL GPU context")
+#if ENABLE_ROCM
+      .def(py::init<ROCmGPUContext&>(), py::arg("ctx"),
+           "Create HeterodyneDechirp bound to ROCm GPU context (AMD)")
+#endif
 
       .def("set_params", &PyHeterodyneDechirp::set_params,
            py::arg("f_start"), py::arg("f_end"),
@@ -183,7 +195,7 @@ inline void register_heterodyne(py::module& m) {
       .def("__repr__", [](const PyHeterodyneDechirp& self) {
           auto p = self.get_params();
           return "<HeterodyneDechirp B=" +
-                 std::to_string(p["bandwidth"].cast<int>()) +
+                 std::to_string(static_cast<int>(p["bandwidth"].cast<float>())) +
                  " Hz, N=" +
                  std::to_string(p["num_samples"].cast<int>()) + ">";
       });

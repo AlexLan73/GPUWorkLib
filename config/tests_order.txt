@@ -1,0 +1,13 @@
+# GPUWorkLib test order
+# One module per line. Use # to skip: comment line or add "# skip" at end
+# Order is mandatory. Used by default (no args) and by "all"
+
+# drvgpu        # набор драйверов 
+fft_processor
+statistics
+vector_algebra
+fft_maxima
+filters
+signal_generators
+lch_farrow
+heterodyne

@@ -22,9 +22,9 @@ import os
 import time
 import numpy as np
 
-# Add gpuworklib path (Python_test/fft_maxima/ -> 2 levels up to project root)
+# Add gpuworklib path (build/python — см. python/CMakeLists.txt)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-for subdir in ["build/python/Release", "build/python/Debug", "build/Release", "build/Debug"]:
+for subdir in ["build/python", "build/debian-radeon9070/python", "build/python/Release", "build/python/Debug", "build/Release", "build/Debug"]:
     path = os.path.join(PROJECT_ROOT, subdir.replace("/", os.sep))
     if os.path.exists(path):
         sys.path.insert(0, path)

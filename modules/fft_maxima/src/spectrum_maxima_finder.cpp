@@ -26,6 +26,7 @@
 
 #include "spectrum_maxima_finder.h"
 #include "services/console_output.hpp"
+#include "services/gpu_profiler.hpp"
 #include <stdexcept>
 #include <cstring>
 #include <cmath>

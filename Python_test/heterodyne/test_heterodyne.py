@@ -41,6 +41,19 @@ if not hasattr(gpuworklib, 'HeterodyneDechirp'):
     print("  Rebuild: cmake -B build -DBUILD_PYTHON=ON && cmake --build build")
     sys.exit(1)
 
+
+def _is_amd_gpu():
+    """Detect AMD GPU (ROCm available)."""
+    try:
+        import subprocess
+        r = subprocess.run(["rocminfo"], capture_output=True, text=True, timeout=2)
+        return r.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+USE_ROCM = _is_amd_gpu()
+
 # ============================================================================
 # Constants (match C++ test parameters)
 # ============================================================================
@@ -84,12 +97,14 @@ def generate_lfm_rx(delays_us, f_start=F_START, f_end=F_END, fs=FS, n=N):
 
 @pytest.fixture(scope="module")
 def ctx():
+    if USE_ROCM and hasattr(gpuworklib, 'ROCmGPUContext'):
+        return gpuworklib.ROCmGPUContext(0)
     return gpuworklib.GPUContext(0)
 
 @pytest.fixture(scope="module")
 def het(ctx):
     h = gpuworklib.HeterodyneDechirp(ctx)
-    h.set_params(F_START, F_END, FS, N, ANTENNAS)
+    h.set_params(float(F_START), float(F_END), float(FS), int(N), int(ANTENNAS))
     return h
 
 
@@ -100,7 +115,7 @@ def het(ctx):
 def test_basic_dechirp_single_antenna(ctx):
     """Single antenna with delay=100us -> f_beat=300kHz."""
     het = gpuworklib.HeterodyneDechirp(ctx)
-    het.set_params(F_START, F_END, FS, N, 1)
+    het.set_params(float(F_START), float(F_END), float(FS), int(N), 1)
 
     rx = generate_lfm_rx([100.0])
     result = het.process(rx.ravel())

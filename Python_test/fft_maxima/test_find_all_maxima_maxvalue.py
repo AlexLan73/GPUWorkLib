@@ -24,10 +24,10 @@ except ImportError:
     print("Ошибка: установите numpy (pip install numpy)")
     sys.exit(1)
 
-# Путь к gpuworklib (пробуем Debug и Release)
+# Путь к gpuworklib (build/python — см. python/CMakeLists.txt)
 # Python_test/fft_maxima/ -> 2 уровня вверх до корня
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-for subdir in ["build/python/Debug", "build/python/Release", "build/Debug", "build/Release"]:
+for subdir in ["build/python", "build/debian-radeon9070/python", "build/python/Debug", "build/python/Release", "build/Debug", "build/Release"]:
     path = os.path.join(PROJECT_ROOT, subdir.replace("/", os.sep))
     if os.path.exists(path):
         sys.path.insert(0, path)

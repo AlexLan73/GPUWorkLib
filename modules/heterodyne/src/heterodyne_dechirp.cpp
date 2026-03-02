@@ -20,6 +20,9 @@
 
 // Spectrum peak finding: FFT + OnePeak (parabolic interpolation) on GPU
 #include "spectrum_maxima_finder.h"
+#if ENABLE_ROCM
+#include "factory/spectrum_processor_factory.hpp"
+#endif
 
 #include <cmath>
 #include <stdexcept>
@@ -65,11 +68,39 @@ void HeterodyneDechirp::SetParams(const HeterodyneParams& params) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// CPU-only LFM conjugate (for ROCm when LfmConjugateGenerator needs OpenCL)
+// ════════════════════════════════════════════════════════════════════════════
+
+namespace {
+std::vector<std::complex<float>> GenerateConjugateLfmCpu(
+    float f_start, float f_end, float sample_rate, size_t num_samples) {
+  if (num_samples == 0) return {};
+  double duration = static_cast<double>(num_samples) / sample_rate;
+  double chirp_rate = (f_end - f_start) / duration;
+  std::vector<std::complex<float>> result(num_samples);
+  for (size_t n = 0; n < num_samples; ++n) {
+    double t = static_cast<double>(n) / sample_rate;
+    double phase = -(M_PI * chirp_rate * t * t + 2.0 * M_PI * f_start * t);
+    result[n] = std::complex<float>(
+        static_cast<float>(std::cos(phase)),
+        static_cast<float>(std::sin(phase)));
+  }
+  return result;
+}
+}  // namespace
+
+// ════════════════════════════════════════════════════════════════════════════
 // OPT-4: Lazy-init conjugate generator (rebuild only when params change)
 // ════════════════════════════════════════════════════════════════════════════
 
 void HeterodyneDechirp::EnsureConjugateGenerator() {
-  if (!params_dirty_ && conj_gen_) return;
+  if (!params_dirty_ && (conj_gen_ || compute_backend_ == BackendType::ROCm)) return;
+
+  if (compute_backend_ == BackendType::ROCm) {
+    conj_gen_.reset();
+    params_dirty_ = false;
+    return;
+  }
 
   signal_gen::LfmParams lfm_p;
   lfm_p.f_start = params_.f_start;
@@ -94,12 +125,16 @@ HeterodyneResult HeterodyneDechirp::Process(
     const std::vector<std::complex<float>>& rx_data) {
 
   try {
-    // OPT-4: Reuse cached conj generator
     EnsureConjugateGenerator();
 
-    // Generate ref on CPU, dechirp on GPU
-    // (OPT-3 GPU-ref path is used in ProcessExternal() where rx is already on GPU)
-    auto ref_cpu = conj_gen_->GenerateToCpu();
+    std::vector<std::complex<float>> ref_cpu;
+    if (compute_backend_ == BackendType::ROCm) {
+      ref_cpu = GenerateConjugateLfmCpu(
+          params_.f_start, params_.f_end, params_.sample_rate,
+          static_cast<size_t>(params_.num_samples));
+    } else {
+      ref_cpu = conj_gen_->GenerateToCpu();
+    }
     auto dc_data = processor_->Dechirp(rx_data, ref_cpu, params_);
 
     // Build result: FFT + peak finding + range + SNR
@@ -139,8 +174,9 @@ HeterodyneResult HeterodyneDechirp::ProcessExternal(
     std::vector<std::complex<float>> dc_data;
 
     if (compute_backend_ == BackendType::ROCm) {
-      // ROCm path: generate ref on CPU, dechirp from external GPU buffer
-      auto ref_cpu = conj_gen_->GenerateToCpu();
+      auto ref_cpu = GenerateConjugateLfmCpu(
+          params.f_start, params.f_end, params.sample_rate,
+          static_cast<size_t>(params.num_samples));
       dc_data = processor_->DechirpFromGPU(rx_gpu_ptr, ref_cpu, params);
     } else {
       // OpenCL path: OPT-3 — generate ref on GPU, dechirp both on GPU
@@ -171,24 +207,38 @@ HeterodyneResult HeterodyneDechirp::BuildResult(
     const HeterodyneParams& params) {
 
   HeterodyneResult result;
+  std::vector<antenna_fft::SpectrumResult> spec_results;
 
-  // SpectrumMaximaFinder: FFT + OnePeak (parabolic interpolation) on GPU
-  antenna_fft::SpectrumMaximaFinder finder(backend_);
+#if ENABLE_ROCM
+  if (compute_backend_ == BackendType::ROCm) {
+    antenna_fft::SpectrumParams spec_params;
+    spec_params.antenna_count = static_cast<uint32_t>(params.num_antennas);
+    spec_params.n_point = static_cast<uint32_t>(params.num_samples);
+    spec_params.repeat_count = 1;
+    spec_params.sample_rate = params.sample_rate;
+    spec_params.search_range = 5000;
+    spec_params.peak_mode = antenna_fft::PeakSearchMode::ONE_PEAK;
+    spec_params.memory_limit = 0.8f;
 
-  antenna_fft::InputData<std::vector<std::complex<float>>> input;
-  input.antenna_count = static_cast<size_t>(params.num_antennas);
-  input.n_point = static_cast<size_t>(params.num_samples);
-  input.data = dc_data;
-  input.repeat_count = 1;
-  input.sample_rate = params.sample_rate;
-  // search_range=5000 → half_range=2500, covers bins [0..2499] (~3.66 MHz @ fs=12MHz)
-  // Default nFFT/4=2048 was too narrow: f_beat=1.5MHz hits boundary (excluded bin 1024)
-  input.search_range = 5000;
-
-  // Use matching driver for spectrum analysis (forward-compatible with ROCm)
-  auto spec_results = finder.Process(input,
-      antenna_fft::PeakSearchMode::ONE_PEAK,
-      static_cast<antenna_fft::DriverType>(compute_backend_));
+    auto processor = antenna_fft::SpectrumProcessorFactory::Create(
+        BackendType::ROCm, backend_);
+    processor->Initialize(spec_params);
+    spec_results = processor->ProcessFromCPU(dc_data);
+  } else
+#endif
+  {
+    antenna_fft::SpectrumMaximaFinder finder(backend_);
+    antenna_fft::InputData<std::vector<std::complex<float>>> input;
+    input.antenna_count = static_cast<size_t>(params.num_antennas);
+    input.n_point = static_cast<size_t>(params.num_samples);
+    input.data = dc_data;
+    input.repeat_count = 1;
+    input.sample_rate = params.sample_rate;
+    input.search_range = 5000;
+    spec_results = finder.Process(input,
+        antenna_fft::PeakSearchMode::ONE_PEAK,
+        static_cast<antenna_fft::DriverType>(compute_backend_));
+  }
 
   float bandwidth = params.GetBandwidth();
   result.antennas.resize(params.num_antennas);
