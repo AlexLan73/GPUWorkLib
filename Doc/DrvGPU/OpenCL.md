@@ -615,8 +615,9 @@ int main() {
 
 void compileAndRunKernel() {
     auto devices = drv_gpu_lib::OpenCLCore::GetAllDevices();
-    auto context = drv_gpu_lib::OpenCLCore::CreateContext(devices[0]);
-    auto queue = drv_gpu_lib::OpenCLCore::CreateQueue(context, devices[0]);
+    // devices — vector<pair<cl_platform_id, cl_device_id>>
+    auto context = drv_gpu_lib::OpenCLCore::CreateContext(devices[0].second);
+    auto queue = drv_gpu_lib::OpenCLCore::CreateQueue(context, devices[0].second);
     
     const char* source = R"(
         __kernel void hello(__global float* data) {
@@ -663,6 +664,8 @@ void compileAndRunKernel() {
 | `opencl_backend.cpp` | `OpenCLBackend` | Реализация | Высокая |
 | `opencl_backend_external.hpp` | `OpenCLBackendExternal` | External Context | Средняя |
 | `opencl_backend_external.cpp` | `OpenCLBackendExternal` | Реализация | Средняя |
+| `opencl_profiling.hpp` | `FillOpenCLProfilingData`, `RecordProfilingEvent` | Хелперы профилирования cl_event | Низкая |
+| `opencl_export.hpp` | `ZeroCopyMethod`, утилиты экспорта | DMA-buf / GpuVA экспорт cl_mem (Linux only) | Средняя |
 | `command_queue_pool.hpp` | `CommandQueuePool` | Пул очередей | Средняя |
 | `command_queue_pool.cpp` | `CommandQueuePool` | Реализация | Средняя |
 
@@ -764,9 +767,10 @@ void multiGPUExample() {
 | v2.0 | Multi-GPU Discovery | ✅ Готов |
 | v1.0 | External Context | ✅ Готов |
 | v1.0 | Command Queue Pool | ✅ Готов |
-| v1.1 | Улучшенная обработка ошибок | 📋 План |
-| v1.2 | Асинхронные операции | 📋 План |
-| v2.0 | ROCm бэкенд | 📋 План |
+| v1.1 | opencl_export.hpp (ZeroCopy DMA/GpuVA) | ✅ Готов |
+| v1.1 | opencl_profiling.hpp (FillOpenCLProfilingData) | ✅ Готов |
+| v2.0 | ROCm бэкенд | ✅ Готов (см. backends/rocm/) |
+| — | CUDA бэкенд | ❌ Не планируется |
 
 ---
 

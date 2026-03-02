@@ -1,6 +1,6 @@
 # DrvGPU Services — Краткий справочник
 
-> KernelCacheService, FilterConfigService, Storage Backend
+> ConsoleOutput, GPUProfiler, ServiceManager, KernelCacheService, FilterConfigService
 
 ---
 
@@ -8,6 +8,9 @@
 
 | Сервис | Назначение |
 |--------|------------|
+| **ServiceManager** | Init/Start/Stop всех сервисов (из configGPU.json) |
+| **ConsoleOutput** | Потокобезопасный stdout для multi-GPU |
+| **GPUProfiler** | Сбор статистики, экспорт JSON/MD |
 | **KernelCacheService** | On-disk кэш скомпилированных kernel (.cl + binary + manifest) |
 | **FilterConfigService** | Сохранение/загрузка конфигов фильтров (FIR/IIR коэффициенты) |
 | **IStorageBackend** | Абстракция хранения (FileStorageBackend → SQLite) |
@@ -15,6 +18,52 @@
 ---
 
 ## Быстрый старт
+
+### ServiceManager
+
+```cpp
+#include "services/service_manager.hpp"
+
+auto& sm = drv_gpu_lib::ServiceManager::GetInstance();
+sm.InitializeFromConfig("configGPU.json");  // или InitializeDefaults()
+sm.StartAll();
+// ... работа GPU ...
+sm.StopAll();
+```
+
+### ConsoleOutput
+
+```cpp
+#include "services/console_output.hpp"
+
+auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
+con.Print(0, "AntennaFFT", "Processing...");       // INFO
+con.PrintWarning(1, "Memory", "High usage: 90%");  // WARNING
+con.PrintError(0, "Backend", "hipMalloc failed");  // ERROR → stderr
+con.PrintSystem("Main", "App started");            // SYSTEM (без GPU)
+```
+
+### GPUProfiler
+
+```cpp
+#include "services/gpu_profiler.hpp"
+
+auto& prof = drv_gpu_lib::GPUProfiler::GetInstance();
+// SetGPUInfo ДО StartAll():
+drv_gpu_lib::GPUReportInfo info;
+info.gpu_name = "Radeon RX 9070 XT";
+info.global_mem_mb = 16384;
+prof.SetGPUInfo(0, info);
+
+// После StartAll() из модулей:
+prof.Record(0, "AntennaFFT", "FFT_Execute", opencl_data);
+
+// Вывод:
+prof.PrintReport();
+prof.ExportJSON("Results/Profiler/2026-03-02.json");
+```
+
+---
 
 ### KernelCacheService
 
@@ -71,8 +120,7 @@ base_dir/
 ## Ссылки
 
 - [Full](Full.md) — полное описание, API, тесты
-- [PLAN_KernelCacheService](../../../MemoryBank/tasks/PLAN_KernelCacheService_DrvGPU.md)
 
 ---
 
-*Обновлено: 2026-02-23*
+*Обновлено: 2026-03-02*

@@ -9,12 +9,16 @@
 | Класс | Назначение |
 |-------|------------|
 | `DrvGPU` | Фасад: инициализация, бэкенд, память |
-| `IBackend` | Интерфейс бэкенда (OpenCL, ROCm) |
+| `IBackend` | Интерфейс бэкенда (OpenCL, ROCm, Hybrid) |
 | `MemoryManager` | Управление GPU-буферами |
-| `GPUBuffer` | Стандартный буфер (cl_mem) |
+| `GPUBuffer<T>` | Owning RAII буфер (cl_mem) |
+| `HIPBuffer<T>` | Non-owning HIP буфер (ROCm only) |
 | `SVMBuffer` | SVM (Shared Virtual Memory) |
 | `GPUManager` | Multi-GPU, load balancing |
-| **Services** | [KernelCacheService](Services/Quick.md), FilterConfigService, Storage |
+| `ServiceManager` | Init/Start/Stop всех сервисов |
+| `ConsoleOutput` | Мультиgpu-безопасный stdout |
+| `GPUProfiler` | Профилирование, экспорт JSON/MD |
+| **Storage Services** | [KernelCacheService](Services/Quick.md), FilterConfigService |
 
 ---
 
@@ -22,17 +26,26 @@
 
 ```cpp
 #include "DrvGPU/drv_gpu.hpp"
+#include "services/service_manager.hpp"
 
-drv_gpu_lib::DrvGPU drv(BackendType::OPENCL, 0);
+// Инициализация сервисов
+auto& sm = drv_gpu_lib::ServiceManager::GetInstance();
+sm.InitializeFromConfig("configGPU.json");
+sm.StartAll();
+
+drv_gpu_lib::DrvGPU drv(drv_gpu_lib::BackendType::OPENCL, 0);
 drv.Initialize();
 
-auto* backend = drv.GetBackend();
-auto* mem = drv.GetMemoryManager();
+IBackend& backend = drv.GetBackend();   // ссылка, не указатель!
+MemoryManager& mem = drv.GetMemoryManager(); // ссылка, не указатель!
 
-// Буфер
-auto buf = mem->AllocateBuffer(4096 * sizeof(std::complex<float>));
-// ... работа с buf ...
-mem->ReleaseBuffer(buf);
+// Буфер (CreateBuffer вместо AllocateBuffer)
+auto buf = mem.CreateBuffer<std::complex<float>>(4096);
+buf->Write(host_data);
+auto result = buf->Read();  // buf — RAII, освобождается при выходе из scope
+
+drv.Synchronize();
+sm.StopAll();
 ```
 
 ---
@@ -47,4 +60,4 @@ mem->ReleaseBuffer(buf);
 
 ---
 
-*Обновлено: 2026-02-17*
+*Обновлено: 2026-03-02*

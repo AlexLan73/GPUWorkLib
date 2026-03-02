@@ -40,14 +40,19 @@ DrvGPU — модульная библиотека для работы с GPU, �
 │  │    ┌─────────────────────┼─────────────────────┐          │
 │  │    ▼                     ▼                     ▼          │
 │  │  ┌──────────┐       ┌──────────┐       ┌──────────┐      │
-│  │  │ OpenCL   │       │  ROCm    │       │  CUDA    │      │
+│  │  │ OpenCL   │       │  ROCm    │       │  Hybrid  │      │
 │  │  │ Backend  │       │  Backend │       │  Backend │      │
-│  │  │ (ГОТОВ)  │       │ (ПЛАН)   │       │ (ПЛАН)   │      │
-│  │  └──────────┘       └──────────┘       └──────────┘      │
+│  │  │ (ГОТОВ)  │       │ (ГОТОВ)  │       │(OpenCL+  │      │
+│  │  └──────────┘       └──────────┘       │ ROCm)    │      │
+│  │                                        └──────────┘      │
 │  └───────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │                   Common Services                         │  │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐    │  │
+│  │  │ Console  │ │   GPU    │ │ Service  │ │  Batch   │    │  │
+│  │  │ Output   │ │ Profiler │ │ Manager  │ │ Manager  │    │  │
+│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘    │  │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐    │  │
 │  │  │ Logger   │ │ Config   │ │ GPUDevice│ │ Load     │    │  │
 │  │  │          │ │ Logger   │ │ Info     │ │ Balancing│    │  │
@@ -69,6 +74,10 @@ DrvGPU — модульная библиотека для работы с GPU, �
 │  │  Generators   │ │ Processor    │ │ (SpectrumMaxima      │   │
 │  │  (signal_gen) │ │(fft_processor│ │  Finder)             │   │
 │  └──────┬───────┘ └──────┬───────┘ └──────────┬───────────┘   │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────┐   │
+│  │  Statistics   │ │  Heterodyne  │ │  Filters             │   │
+│  │  (statistics) │ │ (heterodyne) │ │  (filters)           │   │
+│  └──────┬───────┘ └──────┬───────┘ └──────────┬───────────┘   │
 │         │                │                     │               │
 │         └────────────────┼─────────────────────┘               │
 │                          │  IBackend*                          │
@@ -78,7 +87,7 @@ DrvGPU — модульная библиотека для работы с GPU, �
 └────────────────────────────────────────────────────────────────┘
 ```
 
-Подробнее о модулях: [`../Module/README.md`](../Module/README.md)
+Подробнее о модулях: [`../Modules/`](../Modules/)
 
 ---
 
@@ -87,46 +96,99 @@ DrvGPU — модульная библиотека для работы с GPU, �
 ```
 GPUWorkLib/
 ├── DrvGPU/                       # Ядро библиотеки
-│   ├── include/DrvGPU/
-│   │   ├── drv_gpu.cpp/hpp           # Главный класс
-│   │   ├── gpu_manager.hpp           # Менеджер нескольких GPU
-│   │   ├── module_registry.cpp/hpp   # Регистр модулей
-│   │   │
-│   │   ├── common/                   # Общие интерфейсы и утилиты
-│   │   │   ├── backend_type.hpp      # Типы бэкендов
-│   │   │   ├── i_backend.hpp         # Интерфейс бэкенда
-│   │   │   ├── i_compute_module.hpp  # Интерфейс модуля
-│   │   │   ├── gpu_device_info.hpp   # Инфо о GPU
-│   │   │   ├── load_balancing.hpp    # Балансировка
-│   │   │   ├── logger*.hpp/cpp       # Логирование
-│   │   │   └── config_logger*.hpp/cpp# Конфиг логирования
-│   │   │
-│   │   ├── backends/                 # Бэкенды (см. OpenCL.md)
-│   │   │   └── opencl/
-│   │   │       ├── opencl_core.cpp/hpp
-│   │   │       ├── opencl_backend.cpp/hpp
-│   │   │       ├── opencl_backend_external.cpp/hpp
-│   │   │       └── command_queue_pool.cpp/hpp
-│   │   │
-│   │   └── memory/                   # Управление памятью (см. Memory.md)
-│   │       ├── memory_type.hpp
-│   │       ├── i_memory_buffer.hpp
-│   │       ├── gpu_buffer.hpp
-│   │       ├── memory_manager.hpp
-│   │       ├── svm_buffer.hpp
-│   │       ├── svm_capabilities.hpp
-│   │       └── external_cl_buffer_adapter.hpp
+│   ├── include/                      # Публичные заголовки (симлинки)
+│   │   ├── drv_gpu.hpp
+│   │   ├── gpu_manager.hpp
+│   │   └── module_registry.hpp
 │   │
-│   └── services/
-│       └── batch_manager.hpp         # BatchManager для batch processing
+│   ├── src/                          # Реализации (.cpp)
+│   │   ├── drv_gpu.cpp
+│   │   └── module_registry.cpp
+│   │
+│   ├── interface/                    # Интерфейсы
+│   │   ├── i_backend.hpp             # Интерфейс бэкенда
+│   │   ├── i_compute_module.hpp      # Интерфейс модуля
+│   │   ├── i_memory_buffer.hpp       # Интерфейс буфера
+│   │   ├── i_logger.hpp              # Интерфейс логера
+│   │   ├── i_data_sink.hpp           # Sink для данных
+│   │   ├── input_data.hpp            # InputData<T>
+│   │   ├── input_data_traits.hpp     # is_cpu_vector_v и др.
+│   │   └── output_destination.hpp    # Цели вывода
+│   │
+│   ├── common/                       # Общие типы и утилиты
+│   │   ├── backend_type.hpp          # BackendType enum
+│   │   ├── gpu_device_info.hpp       # GPUDeviceInfo
+│   │   └── load_balancing.hpp        # LoadBalancingStrategy
+│   │
+│   ├── backends/                     # Бэкенды (см. OpenCL.md)
+│   │   ├── opencl/
+│   │   │   ├── opencl_core.cpp/hpp       # Низкоуровневые операции
+│   │   │   ├── opencl_backend.cpp/hpp    # OpenCL реализация IBackend
+│   │   │   ├── opencl_profiling.hpp      # FillOpenCLProfilingData
+│   │   │   ├── opencl_export.hpp         # ZeroCopy экспорт (DMA, GpuVA)
+│   │   │   └── command_queue_pool.cpp/hpp
+│   │   ├── rocm/
+│   │   │   ├── rocm_backend.cpp/hpp      # ROCm реализация IBackend ✅
+│   │   │   ├── rocm_core.cpp/hpp         # Per-device HIP контекст ✅
+│   │   │   └── zero_copy_bridge.cpp/hpp  # OpenCL↔ROCm ZeroCopy ✅
+│   │   └── hybrid/
+│   │       └── hybrid_backend.cpp/hpp    # Гибридный OpenCL+ROCm бэкенд ✅
+│   │
+│   ├── memory/                       # Управление памятью (см. Memory.md)
+│   │   ├── memory_type.hpp
+│   │   ├── i_memory_buffer.hpp
+│   │   ├── gpu_buffer.hpp
+│   │   ├── hip_buffer.hpp            # HIPBuffer (non-owning, ROCm only)
+│   │   ├── memory_manager.cpp/hpp
+│   │   ├── svm_buffer.hpp
+│   │   ├── svm_capabilities.hpp
+│   │   └── external_cl_buffer_adapter.hpp
+│   │
+│   ├── services/                     # Сервисы (см. Services/)
+│   │   ├── async_service_base.hpp    # Базовый шаблон сервисов
+│   │   ├── console_output.hpp        # ConsoleOutput (singleton)
+│   │   ├── gpu_profiler.hpp          # GPUProfiler (singleton)
+│   │   ├── service_manager.hpp       # ServiceManager (singleton)
+│   │   ├── gpu_benchmark_base.hpp    # Базовый класс бенчмарков
+│   │   ├── profiling_types.hpp       # ProfilingDataBase, OpenCLProfilingData и др.
+│   │   ├── profiling_stats.hpp       # ProfilingMessage, EventStats, ModuleStats
+│   │   ├── batch_manager.cpp/hpp     # BatchManager
+│   │   ├── filter_config_service.cpp/hpp
+│   │   ├── kernel_cache_service.cpp/hpp
+│   │   └── storage/
+│   │       ├── i_storage_backend.hpp
+│   │       └── file_storage_backend.cpp/hpp
+│   │
+│   ├── config/                       # Конфигурация
+│   │   ├── gpu_config.cpp/hpp        # GPUConfig (configGPU.json)
+│   │   └── config_types.hpp          # GPUConfigEntry и др.
+│   │
+│   ├── logger/                       # Логирование (plog)
+│   │   ├── logger.cpp/hpp            # Logger фасад (per-GPU)
+│   │   ├── default_logger.cpp/hpp    # DefaultLogger на plog
+│   │   └── config_logger.cpp/hpp     # ConfigLogger (пути, Singleton)
+│   │
+│   └── tests/                        # Тесты DrvGPU
+│       ├── all_test.hpp
+│       ├── single_gpu.hpp
+│       ├── test_services.hpp
+│       ├── test_gpu_profiler.hpp
+│       ├── test_storage_services.hpp
+│       ├── test_rocm_backend.hpp
+│       ├── test_zero_copy.hpp
+│       ├── test_hybrid_backend.hpp
+│       └── example_external_context_usage.hpp
 │
-├── modules/                      # Модули обработки (см. Doc/Module/)
-│   ├── signal_generators/            # CW, LFM, Noise, Script генераторы
-│   ├── fft_processor/                # GPU FFT (clFFT wrapper)
-│   └── fft_maxima/                   # Поиск максимумов спектра
+├── modules/                      # Модули обработки (см. Doc/Modules/)
+│   ├── signal_generators/
+│   ├── fft_processor/
+│   ├── fft_maxima/
+│   ├── statistics/
+│   ├── heterodyne/
+│   └── filters/
 │
 ├── python/                       # Python bindings
-│   └── gpu_worklib_bindings.cpp      # pybind11 модуль gpuworklib
+│   └── gpu_worklib_bindings.cpp
 │
 └── Doc/
     ├── DrvGPU/                       # Документация ядра
@@ -134,12 +196,9 @@ GPUWorkLib/
     │   ├── Memory.md                 # Система памяти
     │   ├── OpenCL.md                 # OpenCL бэкенд
     │   ├── Command.md                # Command Queue
-    │   └── Classes.md                # Все классы по категориям
-    └── Module/                       # Документация модулей
-        ├── signal_generators/        # Signal Generators docs
-        ├── fft_processor/            # FFT Processor docs
-        ├── fft_maxima/               # FFT Maxima docs
-        └── python_bindings/          # Python bindings docs
+    │   ├── Classes.md                # Все классы по категориям
+    │   └── Services/                 # Документация сервисов
+    └── Modules/                      # Документация модулей
 ```
 
 ---
@@ -160,10 +219,14 @@ GPUWorkLib/
 
 | Компонент | Файл | Назначение |
 |-----------|------|------------|
-| `IBackend` | common/i_backend.hpp | Интерфейс бэкенда |
-| `OpenCLBackend` | opencl/opencl_backend.hpp/cpp | OpenCL реализация |
-| `OpenCLCore` | opencl/opencl_core.hpp/cpp | Низкоуровневые операции |
-| `OpenCLBackendExternal` | opencl/opencl_backend_external.hpp/cpp | External Context |
+| `IBackend` | interface/i_backend.hpp | Интерфейс бэкенда |
+| `OpenCLBackend` | backends/opencl/opencl_backend.hpp/cpp | OpenCL реализация |
+| `OpenCLCore` | backends/opencl/opencl_core.hpp/cpp | Низкоуровневые операции |
+| `OpenCLBackendExternal` | backends/opencl/opencl_backend_external.hpp/cpp | External Context |
+| `ROCmBackend` | backends/rocm/rocm_backend.hpp/cpp | ✅ ROCm/HIP реализация |
+| `ROCmCore` | backends/rocm/rocm_core.hpp/cpp | ✅ Per-device HIP контекст |
+| `ZeroCopyBridge` | backends/rocm/zero_copy_bridge.hpp/cpp | ✅ OpenCL↔ROCm ZeroCopy |
+| `HybridBackend` | backends/hybrid/hybrid_backend.hpp/cpp | ✅ OpenCL + ROCm вместе |
 
 **См. также**: [OpenCL.md](OpenCL.md)
 
@@ -180,21 +243,36 @@ GPUWorkLib/
 | Компонент | Файл | Назначение |
 |-----------|------|------------|
 | `IMemoryBuffer` | memory/i_memory_buffer.hpp | Интерфейс буфера |
-| `GPUBuffer` | memory/gpu_buffer.hpp | Стандартный буфер |
+| `GPUBuffer<T>` | memory/gpu_buffer.hpp | Owning RAII буфер (cl_mem) |
 | `SVMBuffer` | memory/svm_buffer.hpp | SVM буфер |
+| `HIPBuffer<T>` | memory/hip_buffer.hpp | ✅ Non-owning HIP буфер (ROCm) |
 | `MemoryManager` | memory/memory_manager.hpp | Менеджер памяти |
 
 **См. также**: [Memory.md](Memory.md)
 
-### 5. Common Services (Общие сервисы)
+### 5. Services Layer (Сервисы)
 
 | Компонент | Файл | Назначение |
 |-----------|------|------------|
-| `Logger` | common/logger.hpp/cpp | Фасад логирования |
-| `ILogger` | common/logger_interface.hpp | Интерфейс логера |
-| `DefaultLogger` | common/default_logger.hpp/cpp | Реализация на spdlog |
-| `ConfigLogger` | common/config_logger.hpp/cpp | Конфигурация |
-| `GPUDeviceInfo` | common/gpu_device_info.hpp | Информация о GPU |
+| `AsyncServiceBase<T>` | services/async_service_base.hpp | Базовый шаблон: фоновый поток + очередь |
+| `ConsoleOutput` | services/console_output.hpp | ✅ Singleton: мультиGPU-безопасный stdout |
+| `GPUProfiler` | services/gpu_profiler.hpp | ✅ Singleton: сбор статистики, экспорт JSON/MD |
+| `ServiceManager` | services/service_manager.hpp | ✅ Singleton: Init/Start/Stop всех сервисов |
+| `GpuBenchmarkBase` | services/gpu_benchmark_base.hpp | Базовый класс бенчмарков |
+| `BatchManager` | services/batch_manager.hpp/cpp | Обработка больших данных по частям |
+| `KernelCacheService` | services/kernel_cache_service.hpp | Кэш скомпилированных kernels |
+| `FilterConfigService` | services/filter_config_service.hpp | Хранение конфигов фильтров |
+
+### 6. Common (Логирование и утилиты)
+
+| Компонент | Файл | Назначение |
+|-----------|------|------------|
+| `Logger` | logger/logger.hpp/cpp | Фасад логирования (per-GPU) |
+| `ILogger` | interface/i_logger.hpp | Интерфейс логера |
+| `DefaultLogger` | logger/default_logger.hpp/cpp | Реализация на plog |
+| `ConfigLogger` | logger/config_logger.hpp/cpp | Конфигурация путей логов |
+| `GPUDeviceInfo` | common/gpu_device_info.hpp | Структура: информация о GPU |
+| `GPUConfig` | config/gpu_config.hpp | Загрузка configGPU.json |
 
 ---
 
@@ -263,10 +341,12 @@ GPUWorkLib/
 
 | Модуль | Документация | Описание |
 |--------|-------------|----------|
-| **Signal Generators** | [../Module/signal_generators/](../Module/signal_generators/) | CW, LFM, Noise, Script генераторы |
-| **FFT Processor** | [../Module/fft_processor/](../Module/fft_processor/) | GPU FFT (clFFT wrapper) |
-| **FFT Maxima** | [../Module/fft_maxima/](../Module/fft_maxima/) | Поиск максимумов спектра |
-| **Python Bindings** | [../Module/python_bindings/](../Module/python_bindings/) | pybind11 модуль gpuworklib |
+| **Signal Generators** | [../Modules/signal_generators/](../Modules/signal_generators/) | CW, LFM, Noise, Script генераторы |
+| **FFT Processor** | [../Modules/fft_processor/](../Modules/fft_processor/) | GPU FFT (hipFFT/clFFT) |
+| **FFT Maxima** | [../Modules/fft_maxima/](../Modules/fft_maxima/) | Поиск максимумов спектра |
+| **Statistics** | [../Modules/statistics/](../Modules/statistics/) | Welford, medians, radix sort |
+| **Heterodyne** | [../Modules/heterodyne/](../Modules/heterodyne/) | LFM Dechirp, NCO |
+| **Filters** | [../Modules/filters/](../Modules/filters/) | FIR, IIR фильтры |
 
 ---
 
@@ -275,10 +355,11 @@ GPUWorkLib/
 Документация DrvGPU соответствует концепции LID (Library Interface Definition):
 
 - **LID-Core**: `DrvGPU`, `GPUManager`, `ModuleRegistry`
-- **LID-Backend**: `IBackend`, `OpenCLBackend`, `OpenCLCore`
-- **LID-Utils**: `Logger`, `GPUDeviceInfo`, `LoadBalancing`
-- **LID-Memory**: `IMemoryBuffer`, `GPUBuffer`, `MemoryManager`
+- **LID-Backend**: `IBackend`, `OpenCLBackend`, `ROCmBackend`, `HybridBackend`
+- **LID-Services**: `ConsoleOutput`, `GPUProfiler`, `ServiceManager`, `BatchManager`
+- **LID-Utils**: `Logger`, `GPUDeviceInfo`, `LoadBalancing`, `GPUConfig`
+- **LID-Memory**: `IMemoryBuffer`, `GPUBuffer<T>`, `HIPBuffer<T>`, `MemoryManager`
 
 ---
 
-*Последнее обновление: 2026-02-13*
+*Последнее обновление: 2026-03-02*

@@ -14,13 +14,13 @@
 | **DrvGPU** | Active | Базовый драйвер GPU (OpenCL backend). См. `specs/drvgpu.md` |
 | **SpectrumMaximaFinder** (fft_maxima) | Active | Поиск максимума спектра FFT. См. `Doc/Modules/fft_maxima/Full.md` |
 | **SignalGenerators** | Active | CW, LFM, Noise, Script, **FormSignal** DONE. См. `Doc/Modules/signal_generators/Full.md` |
-| **FFTProcessor** | Active | FFT с режимами Complex/MagPhase |
+| **FFTProcessor** | Active | FFT с режимами Complex/MagPhase. OpenCL (clFFT) + **ROCm (hipFFT)** + **ComplexToMagPhaseROCm**. ROCm: 11/11 тестов. `Doc/Modules/fft_processor/Full.md` |
 | **ScriptGenerator** | Active | Text DSL -> OpenCL kernel compiler |
 | **LchFarrow** | Active | Lagrange fractional delay (48x5 matrix) |
 | **Filters** | **Active** | **FIR + IIR GPU фильтры (Stage 1 MVP + Stage 3 AI Pipeline DONE)** |
 | **Python Bindings** | Active | pybind11 модуль gpuworklib |
 | **vector_algebra** | **COMPLETED** | Cholesky инверсия матриц (rocBLAS+rocSOLVER). **v2**: SymmetrizeMode (Roundtrip/GpuKernel), hiprtc, RAII CholeskyResult. C++ 23 PASSED, Python 6 PASSED. API: `Doc/Python/vector_algebra_api.md` |
-| **Statistics** | 🟢 **Active** | ROCm hiprtc: welford_fused, extract_medians, KernelCacheService. C++ тест ✅, Python тест ✅. Нет: `Doc/Python/statistics_api.md` |
+| **Statistics** | 🟢 **Active** | ROCm hiprtc: welford_fused, extract_medians, KernelCacheService. C++ 7/7 PASSED, Python 9/9 PASSED. `Doc/Modules/statistics/Full.md` |
 | **Heterodyne** | **Active** | LFM Dechirp (stretch-processing). См. `Doc/Modules/heterodyne/Full.md` |
 
 

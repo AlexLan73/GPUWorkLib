@@ -13,6 +13,7 @@
 | **signal_generators** | `Python_test/signal_generators/` | `test_form_signal.py`, `test_delayed_form_signal.py`, `test_lfm_analytical_delay.py`, `example_form_signal.py` |
 | **lch_farrow** | `Python_test/lch_farrow/` | `test_lch_farrow.py` |
 | **integration** | `Python_test/integration/` | `test_gpuworklib.py` |
+| **vector_algebra** | `Python_test/vector_algebra/` | `test_cholesky_inverter_rocm.py`, `test_matrix_csv_comparison.py` |
 
 ---
 
@@ -132,4 +133,10 @@ python3 Python_test/signal_generators/test_delayed_form_signal.py
 
 ---
 
-*Обновлено: 2026-02-18*
+### vector_algebra/test_matrix_csv_comparison.py — сравнение инверсии с эталоном CSV
+
+Тест инверсии матриц R_inv из `modules/vector_algebra/tests/Data/`: загрузка R_inv_85.csv, R_inv_341.csv, вычисление inv через CholeskyInverterROCm, сравнение с R_85 (1).csv и R_341 (1).csv. Отчёт → `Results/Reports/vector_algebra/matrix_csv_comparison_report.md`.
+
+---
+
+*Обновлено: 2026-03-02*

@@ -168,7 +168,7 @@
 
 ### IBackend (Интерфейс)
 
-**Файл**: [`common/i_backend.hpp`](../../include/DrvGPU/common/i_backend.hpp)
+**Файл**: [`interface/i_backend.hpp`](../../DrvGPU/interface/i_backend.hpp)
 
 **Назначение**: Абстрактный интерфейс для всех бэкендов.
 
@@ -190,7 +190,7 @@
 
 ### OpenCLBackend
 
-**Файл**: [`opencl/opencl_backend.hpp`](../../include/DrvGPU/backends/opencl/opencl_backend.hpp), [`opencl_backend.cpp`](../../include/DrvGPU/backends/opencl/opencl_backend.cpp)
+**Файл**: [`backends/opencl/opencl_backend.hpp`](../../DrvGPU/backends/opencl/opencl_backend.hpp), [`opencl_backend.cpp`](../../DrvGPU/backends/opencl/opencl_backend.cpp)
 
 **Назначение**: Реализация IBackend для OpenCL.
 
@@ -221,7 +221,7 @@
 
 ### OpenCLCore
 
-**Файл**: [`opencl/opencl_core.hpp`](../../include/DrvGPU/backends/opencl/opencl_core.hpp), [`opencl_core.cpp`](../../include/DrvGPU/backends/opencl/opencl_core.cpp)
+**Файл**: [`backends/opencl/opencl_core.hpp`](../../DrvGPU/backends/opencl/opencl_core.hpp), [`opencl_core.cpp`](../../DrvGPU/backends/opencl/opencl_core.cpp)
 
 **Назначение**: Управление OpenCL устройством. **Per-device architecture для Multi-GPU (v2.0)!**
 
@@ -245,7 +245,7 @@
 
 ### OpenCLBackendExternal
 
-**Файл**: [`opencl/opencl_backend_external.hpp`](../../include/DrvGPU/backends/opencl/opencl_backend_external.hpp), [`opencl_backend_external.cpp`](../../include/DrvGPU/backends/opencl/opencl_backend_external.cpp)
+**Файл**: [`backends/opencl/opencl_backend_external.hpp`](../../DrvGPU/backends/opencl/opencl_backend_external.hpp), [`opencl_backend_external.cpp`](../../DrvGPU/backends/opencl/opencl_backend_external.cpp)
 
 **Назначение**: External Context поддержка для OpenCL.
 
@@ -255,9 +255,61 @@
 
 ---
 
+### ROCmBackend ✅
+
+**Файл**: [`backends/rocm/rocm_backend.hpp`](../../DrvGPU/backends/rocm/rocm_backend.hpp)
+
+**Назначение**: Реализация IBackend для ROCm/HIP. Предоставляет GPU вычисления через HIP API.
+
+**Иерархия**: `IBackend` → `ROCmBackend`
+
+**Ключевые особенности**:
+- Работает через `ROCmCore` (per-device HIP контекст)
+- Управляет `hipStream_t` для асинхронных операций
+- Аллокация через `hipMalloc` / `hipFree`
+- Memcpy через `hipMemcpy*`
+
+---
+
+### ROCmCore ✅
+
+**Файл**: [`backends/rocm/rocm_core.hpp`](../../DrvGPU/backends/rocm/rocm_core.hpp)
+
+**Назначение**: Per-device HIP контекст. Аналог OpenCLCore для ROCm.
+
+**Ключевые методы**:
+
+| Метод | Описание |
+|-------|----------|
+| `ROCmCore(device_index)` | Конструктор для конкретного устройства |
+| `Initialize()` | Инициализировать HIP устройство |
+| `GetDeviceIndex()` | Индекс устройства |
+| `GetStream()` | hipStream_t поток |
+| `GetDeviceProperties()` | hipDeviceProp_t свойства |
+
+---
+
+### ZeroCopyBridge ✅
+
+**Файл**: [`backends/rocm/zero_copy_bridge.hpp`](../../DrvGPU/backends/rocm/zero_copy_bridge.hpp)
+
+**Назначение**: Мост для передачи данных OpenCL ↔ ROCm без лишнего копирования через CPU.
+Использует DMA-buf export (`opencl_export.hpp`) для получения GPU Virtual Address.
+
+---
+
+### HybridBackend ✅
+
+**Файл**: [`backends/hybrid/hybrid_backend.hpp`](../../DrvGPU/backends/hybrid/hybrid_backend.hpp)
+
+**Назначение**: Комбинированный бэкенд — использует OpenCL и ROCm одновременно.
+Позволяет одному модулю работать на одном GPU через оба API.
+
+---
+
 ### CommandQueuePool
 
-**Файл**: [`opencl/command_queue_pool.hpp`](../../include/DrvGPU/backends/opencl/command_queue_pool.hpp), [`command_queue_pool.cpp`](../../include/DrvGPU/backends/opencl/command_queue_pool.cpp)
+**Файл**: [`backends/opencl/command_queue_pool.hpp`](../../DrvGPU/backends/opencl/command_queue_pool.hpp), [`command_queue_pool.cpp`](../../DrvGPU/backends/opencl/command_queue_pool.cpp)
 
 **Назначение**: Пул очередей команд для оптимизации производительности.
 
@@ -265,11 +317,11 @@
 
 | Метод | Описание |
 |-------|----------|
-| `CommandQueuePool(context, device)` | Создать пул |
+| `CommandQueuePool(context, device, initial_size=4)` | Создать пул |
 | `AcquireQueue()` | Получить очередь |
 | `ReleaseQueue(queue)` | Вернуть очередь |
 | `GetPoolSize()` | Размер пула |
-| `SetPoolSize(size)` | Установить размер |
+| `SetMaxSize(size_t)` | Установить максимальный размер |
 | `GetAvailableCount()` | Доступных очередей |
 | `SynchronizeAll()` | Синхронизировать все |
 | `Clear()` | Очистить пул |
@@ -560,8 +612,8 @@ DRVGPU_LOG_ERROR(component, message)   // Всегда активен
 ```cpp
 enum class BackendType {
     OPENCL,        // OpenCL backend
-    ROCm,          // ROCm backend (future)
-    OPENCLandROCm, // OpenCL and ROCm
+    ROCm,          // ROCm/HIP backend ✅
+    OPENCLandROCm, // OpenCL + ROCm (Hybrid) ✅
     AUTO           // Auto selection
 };
 ```
@@ -591,7 +643,7 @@ enum class LoadBalancingStrategy {
 
 ### IComputeModule (Интерфейс)
 
-**Файл**: [`common/i_compute_module.hpp`](../../include/DrvGPU/common/i_compute_module.hpp)
+**Файл**: [`interface/i_compute_module.hpp`](../../DrvGPU/interface/i_compute_module.hpp)
 
 **Назначение**: Интерфейс для compute модулей.
 
@@ -615,16 +667,136 @@ enum class LoadBalancingStrategy {
 
 ---
 
+---
+
+## Services Layer
+
+### AsyncServiceBase\<T\> (Шаблон)
+
+**Файл**: [`services/async_service_base.hpp`](../../DrvGPU/services/async_service_base.hpp)
+
+**Назначение**: Базовый шаблон для асинхронных сервисов с фоновым потоком и lock-free очередью.
+
+**Ключевые методы**:
+
+| Метод | Описание |
+|-------|----------|
+| `Start()` | Запустить рабочий поток |
+| `Stop()` | Остановить рабочий поток (дождаться опустения очереди) |
+| `Enqueue(T&&)` | Неблокирующая постановка в очередь |
+| `WaitEmpty()` | Дождаться обработки всех сообщений |
+| `IsRunning()` | Проверить состояние |
+| `GetProcessedCount()` | Число обработанных сообщений |
+| `GetQueueSize()` | Текущий размер очереди |
+
+Производный класс обязан реализовать: `ProcessMessage(const T&)`, `GetServiceName()`.
+
+---
+
+### ConsoleOutput (Singleton) ✅
+
+**Файл**: [`services/console_output.hpp`](../../DrvGPU/services/console_output.hpp)
+
+**Назначение**: Потокобезопасный вывод в консоль с нескольких GPU. Фоновый поток сериализует вывод в stdout.
+
+**Иерархия**: `AsyncServiceBase<ConsoleMessage>` → `ConsoleOutput`
+
+**API**:
+
+| Метод | Описание |
+|-------|----------|
+| `GetInstance()` | Singleton (static) |
+| `Print(gpu_id, module, message)` | INFO сообщение |
+| `PrintWarning(gpu_id, module, message)` | WARNING сообщение |
+| `PrintError(gpu_id, module, message)` | ERROR → stderr |
+| `PrintDebug(gpu_id, module, message)` | DEBUG сообщение |
+| `PrintSystem(module, message)` | Системное (gpu_id = -1) |
+| `SetEnabled(bool)` | Глобально вкл/выкл |
+| `SetGPUEnabled(gpu_id, bool)` | По конкретному GPU |
+
+**Формат вывода**: `[HH:MM:SS.mmm] [INF] [GPU_00] [Module] message`
+
+> ⚠️ **Только 3-аргументный Print**: `Print(gpu_id, module, message)`. Нет 1-аргументной версии.
+
+---
+
+### GPUProfiler (Singleton) ✅
+
+**Файл**: [`services/gpu_profiler.hpp`](../../DrvGPU/services/gpu_profiler.hpp)
+
+**Назначение**: Асинхронный сбор и агрегация данных профилирования GPU. Экспорт в JSON и Markdown.
+
+**Иерархия**: `AsyncServiceBase<ProfilingMessage>` → `GPUProfiler`
+
+**API**:
+
+| Метод | Описание |
+|-------|----------|
+| `GetInstance()` | Singleton (static) |
+| `Record(gpu_id, module, event, OpenCLProfilingData)` | Запись OpenCL события |
+| `Record(gpu_id, module, event, ROCmProfilingData)` | Запись ROCm события |
+| `GetStats(gpu_id)` → `map<string, ModuleStats>` | Статистика одного GPU |
+| `GetAllStats()` → `map<int, map<string, ModuleStats>>` | Все GPU |
+| `SetGPUInfo(gpu_id, GPUReportInfo)` | Инфо о GPU для шапки отчёта |
+| `PrintReport()` | Полный отчёт в stdout |
+| `PrintSummary()` | Краткая сводка |
+| `ExportJSON(path)` → `bool` | Экспорт в JSON |
+| `ExportMarkdown(path)` → `bool` | Экспорт в Markdown |
+| `Reset()` | Сброс статистики |
+| `SetEnabled(bool)` | Вкл/выкл глобально |
+| `SetGPUEnabled(gpu_id, bool)` | Вкл/выкл для GPU |
+
+> ⚠️ **ВАЖНО**: Вызывать `SetGPUInfo()` ПЕРЕД `Start()`, иначе в отчёте «Unknown» и «нет информации о драйверах».
+> ⚠️ **Вывод только через**: `PrintReport()`, `ExportMarkdown()`, `ExportJSON()`. Запрещено: `GetStats()` + цикл + cout.
+
+---
+
+### ServiceManager (Singleton) ✅
+
+**Файл**: [`services/service_manager.hpp`](../../DrvGPU/services/service_manager.hpp)
+
+**Назначение**: Централизованное управление жизненным циклом всех сервисов. Читает `configGPU.json`.
+
+**Паттерн**: Singleton, Facade
+
+**API**:
+
+| Метод | Описание |
+|-------|----------|
+| `GetInstance()` | Singleton (static) |
+| `InitializeFromConfig(path)` → `bool` | Настройка из configGPU.json |
+| `InitializeDefaults()` | Настройка по умолчанию |
+| `StartAll()` | Запустить ConsoleOutput + GPUProfiler |
+| `StopAll()` | Остановить все сервисы |
+| `IsRunning()` | Запущены ли сервисы |
+| `ExportProfiling(path)` → `bool` | Экспорт профилирования |
+| `PrintProfilingSummary()` | Сводка профилирования |
+| `PrintConfig()` | Конфигурация GPU |
+| `GetStatus()` → `string` | Статус всех сервисов |
+
+**Жизненный цикл**:
+```cpp
+auto& sm = ServiceManager::GetInstance();
+sm.InitializeFromConfig("configGPU.json");
+sm.StartAll();
+// ... работа ...
+sm.StopAll();
+```
+
+---
+
 ## Interfaces
 
 ### Сводная таблица интерфейсов
 
 | Интерфейс | Файл | Назначение |
 |-----------|------|------------|
-| `IBackend` | `common/i_backend.hpp` | Абстракция бэкенда |
-| `IMemoryBuffer` | `memory/i_memory_buffer.hpp` | Буфер памяти |
-| `ILogger` | `common/logger_interface.hpp` | Логирование |
-| `IComputeModule` | `common/i_compute_module.hpp` | Compute модуль |
+| `IBackend` | `interface/i_backend.hpp` | Абстракция бэкенда |
+| `IMemoryBuffer` | `interface/i_memory_buffer.hpp` | Буфер памяти |
+| `ILogger` | `interface/i_logger.hpp` | Логирование |
+| `IComputeModule` | `interface/i_compute_module.hpp` | Compute модуль |
+| `IDataSink` | `interface/i_data_sink.hpp` | Sink для результатов |
+| `IStorageBackend` | `services/storage/i_storage_backend.hpp` | Хранилище (key-value) |
 
 ---
 
@@ -634,24 +806,33 @@ enum class LoadBalancingStrategy {
 
 | Класс | Файл | Интерфейс | Слой |
 |-------|------|-----------|------|
-| `DrvGPU` | drv_gpu.hpp/cpp | - | Core |
-| `GPUManager` | gpu_manager.hpp | - | Core |
+| `DrvGPU` | src/drv_gpu.hpp/cpp | - | Core |
+| `GPUManager` | include/gpu_manager.hpp | - | Core |
 | `MemoryManager` | memory/memory_manager.hpp | - | Memory |
-| `ModuleRegistry` | module_registry.hpp/cpp | - | Core |
-| `IBackend` | common/i_backend.hpp | Interface | Backend |
-| `OpenCLBackend` | opencl/opencl_backend.hpp/cpp | IBackend | Backend |
-| `OpenCLCore` | opencl/opencl_core.hpp/cpp | - | Backend |
-| `OpenCLBackendExternal` | opencl/opencl_backend_external.hpp/cpp | OpenCLBackend | Backend |
-| `CommandQueuePool` | opencl/command_queue_pool.hpp/cpp | - | Backend |
+| `ModuleRegistry` | src/module_registry.hpp/cpp | - | Core |
+| `IBackend` | interface/i_backend.hpp | Interface | Backend |
+| `OpenCLBackend` | backends/opencl/opencl_backend.hpp/cpp | IBackend | Backend |
+| `OpenCLCore` | backends/opencl/opencl_core.hpp/cpp | - | Backend |
+| `OpenCLBackendExternal` | backends/opencl/opencl_backend_external.hpp/cpp | OpenCLBackend | Backend |
+| `ROCmBackend` | backends/rocm/rocm_backend.hpp/cpp | IBackend | Backend ✅ |
+| `ROCmCore` | backends/rocm/rocm_core.hpp/cpp | - | Backend ✅ |
+| `ZeroCopyBridge` | backends/rocm/zero_copy_bridge.hpp/cpp | - | Backend ✅ |
+| `HybridBackend` | backends/hybrid/hybrid_backend.hpp/cpp | IBackend | Backend ✅ |
+| `CommandQueuePool` | backends/opencl/command_queue_pool.hpp/cpp | - | Backend |
 | `IMemoryBuffer` | memory/i_memory_buffer.hpp | Interface | Memory |
-| `GPUBuffer` | memory/gpu_buffer.hpp | IMemoryBuffer | Memory |
+| `GPUBuffer<T>` | memory/gpu_buffer.hpp | IMemoryBuffer | Memory |
 | `SVMBuffer` | memory/svm_buffer.hpp | IMemoryBuffer | Memory |
+| `HIPBuffer<T>` | memory/hip_buffer.hpp | - | Memory ✅ |
 | `ExternalCLBufferAdapter` | memory/external_cl_buffer_adapter.hpp | IMemoryBuffer | Memory |
-| `Logger` | common/logger.hpp/cpp | - | Common |
-| `ConfigLogger` | common/config_logger.hpp/cpp | - | Common |
-| `DefaultLogger` | common/default_logger.hpp/cpp | ILogger | Common |
-| `ILogger` | common/logger_interface.hpp | Interface | Common |
-| `IComputeModule` | common/i_compute_module.hpp | Interface | Core |
+| `Logger` | logger/logger.hpp/cpp | - | Common |
+| `ConfigLogger` | logger/config_logger.hpp/cpp | - | Common |
+| `DefaultLogger` | logger/default_logger.hpp/cpp | ILogger | Common |
+| `ILogger` | interface/i_logger.hpp | Interface | Common |
+| `IComputeModule` | interface/i_compute_module.hpp | Interface | Core |
+| `ConsoleOutput` | services/console_output.hpp | AsyncServiceBase | Services ✅ |
+| `GPUProfiler` | services/gpu_profiler.hpp | AsyncServiceBase | Services ✅ |
+| `ServiceManager` | services/service_manager.hpp | - | Services ✅ |
+| `BatchManager` | services/batch_manager.hpp | - | Services |
 
 ---
 
@@ -699,10 +880,12 @@ ILogger
 
 | Модуль | Namespace | Ключевые классы | Документация |
 |--------|-----------|-----------------|--------------|
-| **Signal Generators** | `signal_gen` | ISignalGenerator, CwGenerator, LfmGenerator, NoiseGenerator, ScriptGenerator, SignalService, Factory | [../Module/signal_generators/](../Module/signal_generators/) |
-| **FFT Processor** | `fft_processor` | FFTProcessor, FFTOutputMode | [../Module/fft_processor/](../Module/fft_processor/) |
-| **FFT Maxima** | `antenna_fft` | SpectrumMaximaFinder, SpectrumProcessorOpenCL | [../Modules/fft_maxima/](../Modules/fft_maxima/) |
-| **Python Bindings** | — | GPUContext, SignalGenerator, FFTProcessor, ScriptGenerator | [../Module/python_bindings/](../Module/python_bindings/) |
+| **Signal Generators** | `signal_gen` | ISignalGenerator, CwGenerator, LfmGenerator, NoiseGenerator, ScriptGenerator | [../Modules/signal_generators/](../Modules/signal_generators/) |
+| **FFT Processor** | `fft_processor` | FFTProcessor, FFTOutputMode | [../Modules/fft_processor/](../Modules/fft_processor/) |
+| **FFT Maxima** | `antenna_fft` | SpectrumMaximaFinder | [../Modules/fft_maxima/](../Modules/fft_maxima/) |
+| **Statistics** | `statistics` | StatisticsProcessor, WelfordFused | [../Modules/statistics/](../Modules/statistics/) |
+| **Heterodyne** | `heterodyne` | HeterodyneDechirp | [../Modules/heterodyne/](../Modules/heterodyne/) |
+| **Filters** | `filters` | FirFilter, IirFilter | [../Modules/filters/](../Modules/filters/) |
 
 ---
 
@@ -714,8 +897,8 @@ ILogger
 | OpenCL бэкенд | [OpenCL.md](OpenCL.md) | OpenCLBackend, OpenCLCore, External Context |
 | Command Queue | [Command.md](Command.md) | CommandQueuePool |
 | Система памяти | [Memory.md](Memory.md) | IMemoryBuffer, GPUBuffer, SVMBuffer |
-| Модули | [../Module/README.md](../Module/README.md) | Все модули библиотеки |
+| Модули | [../Modules/](../Modules/) | Все модули библиотеки |
 
 ---
 
-*Последнее обновление: 2026-02-13*
+*Последнее обновление: 2026-03-02*
