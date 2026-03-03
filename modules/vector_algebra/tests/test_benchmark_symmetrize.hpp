@@ -222,7 +222,7 @@ inline std::string GetDateForFilename() {
   struct tm tm_buf;
   localtime_r(&time_t_now, &tm_buf);
   char buf[32];
-  std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm_buf);
+  std::strftime(buf, sizeof(buf), "%Y-%m-%d_%H-%M-%S", &tm_buf);
   return buf;
 }
 
@@ -459,7 +459,7 @@ inline void RunComprehensiveBenchmark(drv_gpu_lib::IBackend* backend) {
   auto results_85 = RunMatrixBenchmark(backend, 85, batch_sizes);
 
   // Генерация MD отчёта
-  std::string filename = "Results/Profiler/cholesky_benchmark_" +
+  std::string filename = "../Results/Profiler/cholesky/cholesky_benchmark_" +
                           GetDateForFilename() + ".md";
   WriteMarkdownReport(backend, results_341, results_85, filename);
 
@@ -535,8 +535,9 @@ inline void TestProfilerIntegration(drv_gpu_lib::IBackend* backend) {
   profiler.Stop();
 
   profiler.PrintReport();
-  profiler.ExportMarkdown("Results/Profiler/cholesky_invert_v2.md");
-  profiler.ExportJSON("Results/Profiler/cholesky_invert_v2.json");
+  std::string profiler_base = "../Results/Profiler/cholesky/cholesky_profiler_" + GetDateForFilename();
+  profiler.ExportMarkdown(profiler_base + ".md");
+  profiler.ExportJSON(profiler_base + ".json");
 
   con.Print(0, "VecAlg", "TestProfilerIntegration PASSED");
 }

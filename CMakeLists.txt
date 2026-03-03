@@ -48,6 +48,9 @@ add_subdirectory(modules/statistics)
 # vector_algebra module (ROCm only: Cholesky matrix inversion via rocBLAS+rocSOLVER)
 add_subdirectory(modules/vector_algebra)
 
+# FM Correlator module (ROCm only: frequency-domain correlation for M-sequence FM)
+add_subdirectory(modules/fm_correlator)
+
 # Main executable (src/)
 add_subdirectory(src)
 

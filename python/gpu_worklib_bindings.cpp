@@ -196,6 +196,7 @@ private:
 #include "py_heterodyne_rocm.hpp"
 #include "py_statistics.hpp"
 #include "py_vector_algebra_rocm.hpp"
+#include "py_fm_correlator_rocm.hpp"
 
 // ============================================================================
 // HybridGPUContext — wraps HybridBackend (OpenCL + ROCm on one GPU)
@@ -1172,7 +1173,8 @@ PYBIND11_MODULE(gpuworklib, m) {
               "  IirFilterROCm           - GPU IIR biquad cascade (ROCm)\n"
               "  LchFarrowROCm           - Lagrange fractional delay (ROCm)\n"
               "  HeterodyneROCm          - LFM dechirp + correct (ROCm)\n"
-              "  StatisticsProcessor     - mean/median/variance/std (ROCm)\n";
+              "  StatisticsProcessor     - mean/median/variance/std (ROCm)\n"
+              "  FMCorrelatorROCm        - FM correlation M-sequence (ROCm)\n";
 
     // ════════════════════════════════════════════════════════════════
     // GPUContext
@@ -1800,6 +1802,9 @@ PYBIND11_MODULE(gpuworklib, m) {
 
     // CholeskyInverterROCm (see py_vector_algebra_rocm.hpp)
     register_cholesky_inverter_rocm(m);
+
+    // FMCorrelatorROCm (see py_fm_correlator_rocm.hpp)
+    register_fm_correlator_rocm(m);
 
     // HybridGPUContext
     py::class_<HybridGPUContext>(m, "HybridGPUContext",

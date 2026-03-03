@@ -15,13 +15,15 @@
 #include "modules/heterodyne/tests/all_test.hpp"
 #include "modules/statistics/tests/all_test.hpp"
 #include "modules/vector_algebra/tests/all_test.hpp"
+#include "modules/fm_correlator/tests/all_test.hpp"
 
 namespace {
 
 // Порядок модулей для режима "all" (MemoryBank/specs/create_agent_test.md)
 const char* kDefaultOrder[] = {
     "drvgpu", "fft_processor", "statistics", "vector_algebra",
-    "fft_maxima", "filters", "signal_generators", "lch_farrow", "heterodyne"
+    "fft_maxima", "filters", "signal_generators", "lch_farrow", "heterodyne",
+    "fm_correlator"
 };
 const size_t kDefaultOrderSize = sizeof(kDefaultOrder) / sizeof(kDefaultOrder[0]);
 
@@ -68,6 +70,7 @@ bool run_module(const std::string& name) {
     if (n == "signal_generators"){ signal_generators_all_test::run(); return true; }
     if (n == "lch_farrow")       { lch_farrow_all_test::run(); return true; }
     if (n == "heterodyne")       { heterodyne_all_test::run(); return true; }
+    if (n == "fm_correlator")    { fm_correlator_all_test::run(); return true; }
 
     return false;
 }
@@ -80,7 +83,8 @@ void print_usage(const char* prog) {
               << "  <module>     - run single module\n"
               << "  --file path  - run modules from specified file\n"
               << "Modules: drvgpu, fft_processor, statistics, vector_algebra,\n"
-              << "         fft_maxima, filters, signal_generators, lch_farrow, heterodyne\n";
+              << "         fft_maxima, filters, signal_generators, lch_farrow, heterodyne,\n"
+              << "         fm_correlator\n";
 }
 
 }  // namespace

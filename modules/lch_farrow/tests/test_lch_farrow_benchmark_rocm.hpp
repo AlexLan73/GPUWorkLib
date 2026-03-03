@@ -105,7 +105,7 @@ inline int run() {
         &backend, proc, input_data, antennas, points,
         {.n_warmup   = 5,
          .n_runs     = 20,
-         .output_dir = "Results/Profiler/GPU_00_LchFarrow_ROCm"});
+         .output_dir = "../Results/Profiler/lch_farrow"});
 
     // ── Запуск ───────────────────────────────────────────────────────
     if (!bench.IsProfEnabled()) {

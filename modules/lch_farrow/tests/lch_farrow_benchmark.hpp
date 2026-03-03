@@ -49,7 +49,7 @@ public:
       uint32_t points,
       GpuBenchmarkBase::Config cfg = {.n_warmup   = 5,
                                       .n_runs     = 20,
-                                      .output_dir = "Results/Profiler/GPU_00_LchFarrow"})
+                                      .output_dir = "../Results/Profiler/lch_farrow"})
     : GpuBenchmarkBase(backend, "LchFarrow", cfg),
       proc_(proc),
       input_buf_(input_buf),
