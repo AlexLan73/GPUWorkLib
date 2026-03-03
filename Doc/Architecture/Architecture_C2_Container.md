@@ -1,7 +1,7 @@
 # C2 — Container Diagram
 
 > **Project**: GPUWorkLib
-> **Date**: 2026-02-23
+> **Date**: 2026-03-03
 > **Reference**: [c4model.com](https://c4model.com)
 > **Level**: 2 (Container) — основные "контейнеры" внутри системы
 
@@ -41,19 +41,25 @@ Container-уровень показывает основные развёрты�
   ║  │ │ Signal       │ │ FFT          │ │ FFT Maxima         │ │ ║
   ║  │ │ Generators   │ │ Processor    │ │ (SpectrumMaxima-   │ │ ║
   ║  │ │              │ │              │ │  Finder)           │ │ ║
-  ║  │ │ CW,LFM,Noise│ │ Complex,     │ │ OnePeak,TwoPeaks,  │ │ ║
-  ║  │ │ Form,Conj    │ │ MagPhase     │ │ AllMaxima          │ │ ║
+  ║  │ │ CW,LFM,Noise│ │ Complex,     │ │ OnePeak,AllMaxima  │ │ ║
+  ║  │ │ Form,Conj    │ │ MagPhase     │ │                    │ │ ║
   ║  │ └──────┬───────┘ └──────┬───────┘ └─────────┬──────────┘ │ ║
   ║  │        │                │                    │             │ ║
   ║  │ ┌──────┴───────┐ ┌─────┴────────┐ ┌────────┴───────────┐│ ║
   ║  │ │ Filters      │ │ Heterodyne   │ │ LCH Farrow         ││ ║
   ║  │ │              │ │ (Dechirp)    │ │ (Fractional Delay)  ││ ║
-  ║  │ │ FIR, IIR     │ │              │ │                     ││ ║
-  ║  │ │              │ │ LFM Dechirp  │ │ Lagrange 5-point   ││ ║
-  ║  │ │              │ │ Pipeline     │ │ Interpolation       ││ ║
+  ║  │ │ FIR, IIR     │ │ LFM Dechirp  │ │ Lagrange 5-point   ││ ║
+  ║  │ │ OpenCL+ROCm  │ │ Pipeline     │ │ OpenCL+ROCm        ││ ║
   ║  │ └──────┬───────┘ └──────┬───────┘ └─────────┬──────────┘│ ║
   ║  │        │                │                    │            │ ║
-  ║  └────────┼────────────────┼────────────────────┼────────────┘ ║
+  ║  │ ┌──────┴───────┐ ┌─────┴────────┐                        │ ║
+  ║  │ │ Statistics   │ │ Vector       │                         │ ║
+  ║  │ │ (ROCm only)  │ │ Algebra      │                         │ ║
+  ║  │ │ Welford,     │ │ (ROCm only)  │                         │ ║
+  ║  │ │ Median,RadixS│ │ Cholesky     │                         │ ║
+  ║  │ └──────┬───────┘ └──────┬───────┘                        │ ║
+  ║  │        │                │                                  │ ║
+  ║  └────────┼────────────────┼──────────────────────────────────┘ ║
   ║           │                │                    │               ║
   ║  ┌────────┴────────────────┴────────────────────┴────────────┐ ║
   ║  │                     DrvGPU (Core Driver)                  │ ║
@@ -90,14 +96,16 @@ Container-уровень показывает основные развёрты�
 | # | Контейнер | Технология | Каталог | Назначение |
 |---|-----------|-----------|---------|------------|
 | 1 | **DrvGPU** | C++17 / OpenCL / HIP | `DrvGPU/` | Ядро: абстракция GPU, память, сервисы, профилирование |
-| 2 | **Signal Generators** | C++17 / OpenCL kernels | `modules/signal_generators/` | Генерация CW, LFM, Noise, Script, Conjugate |
+| 2 | **Signal Generators** | C++17 / OpenCL / HIP kernels | `modules/signal_generators/` | Генерация CW, LFM, Noise, Script, Conjugate |
 | 3 | **FFT Processor** | C++17 / clFFT / hipFFT | `modules/fft_processor/` | БПФ с режимами Complex / MagPhase |
-| 4 | **FFT Maxima** | C++17 / OpenCL kernels | `modules/fft_maxima/` | Поиск спектральных максимумов (1, 2, All peaks) |
-| 5 | **Filters** | C++17 / OpenCL kernels | `modules/filters/` | FIR/IIR фильтрация (до 16000 taps) |
-| 6 | **Heterodyne** | C++17 / OpenCL kernels | `modules/heterodyne/` | LFM Dechirp pipeline (дальнометрия) |
-| 7 | **LCH Farrow** | C++17 / OpenCL kernels | `modules/lch_farrow/` | Дробная задержка (Lagrange 5-point, 48x5 matrix) |
-| 8 | **Python Bindings** | pybind11 / NumPy | `python/` | Python API: `gpu_worklib.pyd` |
-| 9 | **Test Suite** | C++17 / pytest | `*/tests/`, `Python_test/` | C++ тесты (hpp) + Python тесты |
+| 4 | **FFT Maxima** | C++17 / OpenCL / HIP kernels | `modules/fft_maxima/` | Поиск спектральных максимумов (OnePeak, AllMaxima) |
+| 5 | **Filters** | C++17 / OpenCL / HIP kernels | `modules/filters/` | FIR/IIR фильтрация (до 16000 taps) |
+| 6 | **Heterodyne** | C++17 / OpenCL / HIP kernels | `modules/heterodyne/` | LFM Dechirp pipeline (дальнометрия) |
+| 7 | **LCH Farrow** | C++17 / OpenCL / HIP kernels | `modules/lch_farrow/` | Дробная задержка (Lagrange 5-point, 48x5 matrix) |
+| 8 | **Statistics** | C++17 / HIP kernels (ROCm only) | `modules/statistics/` | Welford mean/variance, медиана, radix sort |
+| 9 | **Vector Algebra** | C++17 / rocSOLVER (ROCm only) | `modules/vector_algebra/` | Cholesky POTRF/POTRI инверсия матриц |
+| 10 | **Python Bindings** | pybind11 / NumPy | `python/` | Python API: `gpu_worklib.so` |
+| 11 | **Test Suite** | C++17 / pytest | `*/tests/`, `Python_test/` | C++ тесты (hpp) + Python тесты |
 
 ---
 
@@ -139,15 +147,17 @@ Container-уровень показывает основные развёрты�
 
 ### Матрица зависимостей
 
-| Модуль ↓ \ Зависит от → | DrvGPU | SigGen | FFT | Maxima | Filters | Heterodyne | Farrow |
-|--------------------------|:------:|:------:|:---:|:------:|:-------:|:----------:|:------:|
-| **Signal Generators**    |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |
-| **FFT Processor**        |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |
-| **FFT Maxima**           |   ✅   |   —    | ✅  |   —    |   —     |     —      |   —    |
-| **Filters**              |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |
-| **Heterodyne**           |   ✅   |  ✅    | ✅  |  ✅    |   —     |     —      |   —    |
-| **LCH Farrow**           |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |
-| **Python Bindings**      |   ✅   |  ✅    | ✅  |  ✅    |  ✅     |    ✅      |  ✅    |
+| Модуль ↓ \ Зависит от → | DrvGPU | SigGen | FFT | Maxima | Filters | Heterodyne | Farrow | Statistics | VecAlgebra |
+|--------------------------|:------:|:------:|:---:|:------:|:-------:|:----------:|:------:|:----------:|:----------:|
+| **Signal Generators**    |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |
+| **FFT Processor**        |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |
+| **FFT Maxima**           |   ✅   |   —    | ✅  |   —    |   —     |     —      |   —    |     —      |     —      |
+| **Filters**              |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |
+| **Heterodyne**           |   ✅   |  ✅    | ✅  |  ✅    |   —     |     —      |   —    |     —      |     —      |
+| **LCH Farrow**           |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |
+| **Statistics**           |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |
+| **Vector Algebra**       |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |
+| **Python Bindings**      |   ✅   |  ✅    | ✅  |  ✅    |  ✅     |    ✅      |  ✅    |    ✅      |    ✅      |
 
 ---
 
@@ -182,14 +192,16 @@ Person(cpp_dev, "C++ Engineer")
 Person(py_sci, "Python Scientist")
 
 System_Boundary(gpuworklib, "GPUWorkLib") {
-    Container(pybind, "Python Bindings", "pybind11", "gpu_worklib.pyd\nNumPy ↔ cl_mem")
+    Container(pybind, "Python Bindings", "pybind11", "gpu_worklib.so\nNumPy ↔ cl_mem / HIP ptr")
 
-    Container(siggen, "Signal Generators", "C++17/OpenCL", "CW, LFM, Noise,\nForm, Conjugate")
-    Container(fftproc, "FFT Processor", "C++17/clFFT", "Complex, MagPhase\nмоды вывода")
-    Container(fftmax, "FFT Maxima", "C++17/OpenCL", "1-peak, 2-peaks,\nAll Maxima")
-    Container(filters, "Filters", "C++17/OpenCL", "FIR, IIR\n(до 16000 taps)")
-    Container(hetero, "Heterodyne", "C++17/OpenCL", "LFM Dechirp\npipeline")
-    Container(farrow, "LCH Farrow", "C++17/OpenCL", "Fractional Delay\nLagrange 5-pt")
+    Container(siggen, "Signal Generators", "C++17/OpenCL/HIP", "CW, LFM, Noise,\nForm, Conjugate")
+    Container(fftproc, "FFT Processor", "C++17/clFFT/hipFFT", "Complex, MagPhase\nмоды вывода")
+    Container(fftmax, "FFT Maxima", "C++17/OpenCL/HIP", "OnePeak,\nAllMaxima pipeline")
+    Container(filters, "Filters", "C++17/OpenCL/HIP", "FIR, IIR\n(до 16000 taps)")
+    Container(hetero, "Heterodyne", "C++17/OpenCL/HIP", "LFM Dechirp\npipeline")
+    Container(farrow, "LCH Farrow", "C++17/OpenCL/HIP", "Fractional Delay\nLagrange 5-pt")
+    Container(stats, "Statistics", "C++17/HIP (ROCm)", "Welford mean/var,\nMedian, Radix Sort")
+    Container(vecalg, "Vector Algebra", "C++17/rocSOLVER", "Cholesky POTRF/POTRI\nMatrix Inversion")
 
     Container(drvgpu, "DrvGPU", "C++17", "Core Driver:\nBackends, Memory,\nServices, Profiler")
 }
@@ -208,6 +220,8 @@ Rel(pybind, fftmax, "wraps")
 Rel(pybind, filters, "wraps")
 Rel(pybind, hetero, "wraps")
 Rel(pybind, farrow, "wraps")
+Rel(pybind, stats, "wraps")
+Rel(pybind, vecalg, "wraps")
 
 Rel(siggen, drvgpu, "IBackend*")
 Rel(fftproc, drvgpu, "IBackend*")
@@ -219,6 +233,8 @@ Rel(hetero, siggen, "LfmConjGen")
 Rel(hetero, fftproc, "FFT stage")
 Rel(hetero, fftmax, "Peak find")
 Rel(farrow, drvgpu, "IBackend*")
+Rel(stats, drvgpu, "IBackend* (ROCm)")
+Rel(vecalg, drvgpu, "IBackend* (ROCm)")
 
 Rel(drvgpu, gpu, "OpenCL/HIP API")
 Rel(fftproc, clfft, "clFFT API")

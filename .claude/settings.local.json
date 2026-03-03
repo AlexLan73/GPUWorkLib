@@ -23,7 +23,8 @@
       "mcp__dap-debug__continue",
       "mcp__dap-debug__get-debug-state",
       "mcp__dap-debug__get-variables-scope",
-      "mcp__dap-debug__get-debug-console"
+      "mcp__dap-debug__get-debug-console",
+      "Bash(ls -lh /home/alex/C++/GPUWorkLib/Python_test/*/test_*.py)"
     ]
   },
   "enableAllProjectMcpServers": true,

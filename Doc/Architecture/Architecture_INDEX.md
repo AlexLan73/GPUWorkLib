@@ -1,6 +1,6 @@
 # GPUWorkLib — Architecture Documentation Index
 
-> **Date**: 2026-02-23
+> **Date**: 2026-03-03
 > **Author**: Кодо (AI Assistant)
 > **Notation**: C4 Model + DFD + UML Sequence Diagrams
 
@@ -32,12 +32,26 @@
 
 ---
 
+## Модули системы (текущее состояние)
+
+| Модуль | Backend | Статус | Описание |
+|--------|---------|--------|----------|
+| **FFT Processor** | OpenCL / ROCm | 🟢 Active | БПФ Complex/MagPhase |
+| **Statistics** | ROCm only | 🟢 Active | Welford mean/var, медиана, radix sort |
+| **Vector Algebra** | ROCm only | 🟢 Active | Cholesky POTRF/POTRI инверсия |
+| **FFT Maxima** | OpenCL / ROCm | 🟢 Active | Поиск спектральных максимумов |
+| **Filters** | OpenCL / ROCm | 🟢 Active | FIR, IIR фильтры |
+| **Signal Generators** | OpenCL / ROCm | 🟢 Active | CW, LFM, Noise, Form, Script |
+| **LCH Farrow** | OpenCL / ROCm | 🟢 Active | Дробная задержка Lagrange 5-pt |
+| **Heterodyne** | OpenCL / ROCm | 🟢 Active | LFM Dechirp pipeline |
+| **DrvGPU** | OpenCL / ROCm | 🟢 Active | Ядро: backend, память, сервисы |
+
 ## Предыдущие документы (справочные)
 
 | Документ | Описание |
 |----------|----------|
 | [DrvGPU_Design_C4.md](DrvGPU_Design_C4.md) | C4 только для DrvGPU (ранняя версия) |
-| [GPUWorkLib_Design_C4_Full.md](GPUWorkLib_Design_C4_Full.md) | Предыдущая полная C4 (до Heterodyne/Farrow) |
+| [GPUWorkLib_Design_C4_Full.md](GPUWorkLib_Design_C4_Full.md) | Предыдущая полная C4 (до Statistics/VectorAlgebra) |
 | [Disane C4.md](Disane%20C4.md) | Справочный пример C4-модели |
 
 ---
@@ -51,4 +65,4 @@
 
 ---
 
-*Maintained by: Кодо (AI Assistant) | Last updated: 2026-02-23*
+*Maintained by: Кодо (AI Assistant) | Last updated: 2026-03-03*
