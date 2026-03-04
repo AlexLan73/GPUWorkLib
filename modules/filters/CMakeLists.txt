@@ -34,6 +34,9 @@ if(ROCM_ENABLED)
     list(APPEND MODULE_SOURCES
         src/fir_filter_rocm.cpp
         src/iir_filter_rocm.cpp
+        src/moving_average_filter_rocm.cpp
+        src/kalman_filter_rocm.cpp
+        src/kaufman_filter_rocm.cpp
     )
     message(STATUS "  ${MODULE_NAME}: ROCm support ENABLED")
 endif()

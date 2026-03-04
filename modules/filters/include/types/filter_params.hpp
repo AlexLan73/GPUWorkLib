@@ -213,4 +213,73 @@ private:
   }
 };
 
+// ════════════════════════════════════════════════════════════════════════════
+// Moving Average Filter (ROCm)
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * @enum MAType
+ * @brief Type of moving average filter
+ */
+enum class MAType {
+  SMA,   ///< Simple MA — ring buffer, equal weights 1/N
+  EMA,   ///< Exponential MA — alpha = 2/(N+1)
+  MMA,   ///< Modified MA (Wilder) — alpha = 1/N
+  DEMA,  ///< Double EMA — 2*EMA1 - EMA2
+  TEMA   ///< Triple EMA — 3*EMA1 - 3*EMA2 + EMA3
+};
+
+/**
+ * @struct MovingAverageParams
+ * @brief Parameters for moving average filter
+ */
+struct MovingAverageParams {
+  MAType   type        = MAType::EMA;  ///< Filter type
+  uint32_t window_size = 10;           ///< N — window size (for SMA: max 128)
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// Kalman Filter (ROCm)
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * @struct KalmanParams
+ * @brief Parameters for 1D scalar Kalman filter
+ *
+ * Applied to Re and Im parts independently.
+ *
+ * Parameter selection:
+ *   R — measurement noise variance. Start with: R = (FFT_bin_size)^2 / 12
+ *   Q — process noise variance. Start with: Q = R / 100
+ *   Q/R << 1: strong smoothing, slow reaction
+ *   Q/R >> 1: weak smoothing, fast reaction
+ */
+struct KalmanParams {
+  float Q  = 0.1f;    ///< Process noise variance
+  float R  = 25.0f;   ///< Measurement noise variance
+  float x0 = 0.0f;    ///< Initial state estimate
+  float P0 = 25.0f;   ///< Initial error covariance (usually = R)
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// Kaufman Adaptive Moving Average — KAMA (ROCm)
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * @struct KaufmanParams
+ * @brief Parameters for KAMA filter
+ *
+ * Algorithm:
+ *   ER  = |x[n] - x[n-N]| / sum(|x[i] - x[i-1]|, i=n-N+1..n)
+ *   SC  = (ER * (fast_sc - slow_sc) + slow_sc)^2
+ *   KAMA[n] = KAMA[n-1] + SC * (x[n] - KAMA[n-1])
+ *
+ * Standard Kaufman: er_period=10, fast=2, slow=30
+ */
+struct KaufmanParams {
+  uint32_t er_period   = 10;  ///< N — Efficiency Ratio period (max 128)
+  uint32_t fast_period = 2;   ///< Fast EMA period (when ER≈1)
+  uint32_t slow_period = 30;  ///< Slow EMA period (when ER≈0)
+};
+
 } // namespace filters

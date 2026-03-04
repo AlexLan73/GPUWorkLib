@@ -16,7 +16,10 @@
 
 #include "test_fm_msequence.hpp"
 #include "test_fm_basic.hpp"
-#include "test_fm_benchmark_rocm.hpp"
+#include "test_fm_benchmark_rocm_all_time.hpp"
+#include "test_fm_step_profiling.hpp"
+#include "test_fm_avg_summary.hpp"
+#include "test_fm_combined.hpp"
 
 #include "DrvGPU/services/console_output.hpp"
 
@@ -42,6 +45,11 @@ inline void run() {
   // fm_correlator::tests::run_benchmark();
   // fm_correlator::tests::run_parametric_benchmark();
   fm_correlator::tests::run_sweep_correlations();
+
+  // Профилирование по шагам:
+  // fm_correlator::tests::run_step_profiling();   // 2.1 — детальное (20 Record на шаг)
+  // fm_correlator::tests::run_avg_summary();      // 2.2 — среднее для планирования
+  // fm_correlator::tests::run_combined();         // 2.3 — после принятия 2.2
 
   con.Print(gpu_id, "FM_Corr", "════════════════════════════════════════════════════════════");
   con.Print(gpu_id, "FM_Corr", " All FM Correlator tests PASSED ✅");

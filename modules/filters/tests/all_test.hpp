@@ -18,6 +18,9 @@
 #include "test_filters_benchmark.hpp"
 #if ENABLE_ROCM
 #include "test_filters_benchmark_rocm.hpp"
+#include "test_moving_average_rocm.hpp"
+#include "test_kalman_rocm.hpp"
+#include "test_kaufman_rocm.hpp"
 #endif
 
 namespace filters_all_test {
@@ -33,6 +36,11 @@ inline void run() {
   // BENCHMARK: FirFilterROCm + IirFilterROCm (ROCm, GpuBenchmarkBase)
 #if ENABLE_ROCM
 //  test_filters_benchmark_rocm::run();
+
+  // ROCm — Linux + AMD GPU только:
+  // test_moving_average_rocm::run();   // Task_20: SMA/EMA/MMA/DEMA/TEMA
+  // test_kalman_rocm::run();           // Task_21: 1D Kalman filter
+  // test_kaufman_rocm::run();          // Task_22: KAMA (Kaufman adaptive MA)
 #endif
 }
 
