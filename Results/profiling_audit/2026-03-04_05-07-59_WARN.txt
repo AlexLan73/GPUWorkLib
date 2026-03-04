@@ -1,0 +1,173 @@
+GPU Profiling Implementation Audit
+Date: 2026-03-04 05:07:59
+Ref: Doc_Addition/GPU_Profiling_Mechanism.md
+============================================================
+
+[OK] fft_maxima
+  [OK]   OpenCL benchmark: ExecuteKernel + ExecuteKernelTimed ✓
+  [OK]   OpenCL benchmark: RecordEvent ✓
+  [OK]   ROCm benchmark: ExecuteKernel + ExecuteKernelTimed ✓
+  [OK]   ROCm benchmark: RecordROCmEvent ✓
+  [OK]   OpenCL runner test_benchmark_all_maxima.hpp: CL_QUEUE_PROFILING_ENABLE ✓
+  [OK]   OpenCL runner test_fft_maxima_benchmark.hpp: CL_QUEUE_PROFILING_ENABLE ✓
+  [OK]   Runner test_fft_maxima_benchmark.hpp: IsProfEnabled ✓
+  [OK]   Runner test_fft_maxima_benchmark_rocm.hpp: IsProfEnabled ✓
+  [OK]   OpenCL production: prof_events* в сигнатуре ✓
+  [OK]   OpenCL production: CollectOrRelease ✓
+  [OK]   ROCm production: ROCmProfEvents* в сигнатуре ✓
+  [OK]   ROCm production: MakeROCmDataFrom* хелперы ✓
+  [OK]   ROCm production: if(prof_events) guard ✓
+
+[OK] fft_processor
+  [OK]   OpenCL benchmark: ExecuteKernel + ExecuteKernelTimed ✓
+  [OK]   OpenCL benchmark: RecordEvent ✓
+  [OK]   ROCm benchmark: ExecuteKernel + ExecuteKernelTimed ✓
+  [OK]   ROCm benchmark: RecordROCmEvent ✓
+  [OK]   OpenCL runner test_fft_benchmark.hpp: CL_QUEUE_PROFILING_ENABLE ✓
+  [OK]   Runner test_fft_benchmark.hpp: IsProfEnabled ✓
+  [OK]   Runner test_fft_benchmark_rocm.hpp: IsProfEnabled ✓
+  [OK]   OpenCL production: prof_events* в сигнатуре ✓
+  [OK]   OpenCL production: CollectOrRelease ✓
+  [OK]   ROCm production: ROCmProfEvents* в сигнатуре ✓
+  [OK]   ROCm production: MakeROCmDataFrom* хелперы ✓
+  [OK]   ROCm production: if(prof_events) guard ✓
+
+[OK] filters
+  [OK]   OpenCL benchmark: ExecuteKernel + ExecuteKernelTimed ✓
+  [OK]   OpenCL benchmark: RecordEvent ✓
+  [OK]   ROCm benchmark: ExecuteKernel + ExecuteKernelTimed ✓
+  [OK]   ROCm benchmark: RecordROCmEvent ✓
+  [OK]   OpenCL runner test_filters_benchmark.hpp: CL_QUEUE_PROFILING_ENABLE ✓
+  [OK]   Runner test_filters_benchmark.hpp: IsProfEnabled ✓
+  [OK]   OpenCL production: prof_events* в сигнатуре ✓
+  [OK]   OpenCL production: CollectOrRelease ✓
+  [OK]   ROCm production: ROCmProfEvents* в сигнатуре ✓
+  [OK]   ROCm production: MakeROCmDataFrom* хелперы ✓
+  [OK]   ROCm production: if(prof_events) guard ✓
+  [WARN] Runner test_filters_benchmark_rocm.hpp: Run() без проверки IsProfEnabled
+
+[CUSTOM] fm_correlator
+  [OK]   Custom: hipEvent GPU-таймер ✓
+  [OK]   Custom: profiler.Record ✓
+  [OK]   Custom: SetGPUInfo ✓
+  [OK]   Custom: PrintReport ✓
+  [OK]   Custom: ExportMarkdown/JSON ✓
+  [WARN] Кастомная реализация (без GpuBenchmarkBase): нет разбивки Upload/Kernel/Download
+  [INFO] Замер: hipEvent оборачивает ВЕСЬ pipeline (одно монолитное время)
+  [INFO]   Стадии НЕ разделены — в отчёте одна запись на конфиг (N/K/S)
+  [INFO]   H2D входных данных НЕ включён (генерация на GPU через kernel)
+  [INFO]   H2D референса НЕ включён (PrepareReference вызывается до замера)
+  [INFO]   Включено: generate_inputs + R2C FFT + multiply_conj + IFFT + extract + D2H peaks
+
+  ┌─ Измеряемый GPU pipeline ─────────────────────────────┐
+
+  hipEventRecord(ev_start)
+    │
+    ▼
+    corr.RunTestPattern()
+      ├── [GPU] kernel  (hipModuleLaunchKernel)
+      ├── [GPU] R2C FFT  (hipfftExecR2C)
+      ├── ⟲ stream sync  (hipStreamSynchronize)
+      │
+      └── RunCorrelationPipeline()
+            ├── [GPU] kernel  (hipModuleLaunchKernel)
+            ├── [GPU] C2R IFFT  (hipfftExecC2R)
+            └── ⟲ stream sync  (hipStreamSynchronize)
+    │
+    ▼
+  hipEventRecord(ev_stop)
+  hipEventElapsedTime → avg_ms  (warmup=3, runs=20, среднее за 20 прогонов)
+
+  В GPUProfiler: одна запись на конфиг — монолитное суммарное время
+  Для разбивки по стадиям — переход на GpuBenchmarkBase
+
+  └────────────────────────────────────────────────────────┘
+
+[OK] heterodyne
+  [OK]   OpenCL benchmark: ExecuteKernel + ExecuteKernelTimed ✓
+  [OK]   OpenCL benchmark: RecordEvent ✓
+  [OK]   ROCm benchmark: ExecuteKernel + ExecuteKernelTimed ✓
+  [OK]   ROCm benchmark: RecordROCmEvent ✓
+  [OK]   OpenCL runner test_heterodyne_benchmark.hpp: CL_QUEUE_PROFILING_ENABLE ✓
+  [OK]   Runner test_heterodyne_benchmark.hpp: IsProfEnabled ✓
+  [OK]   OpenCL production: prof_events* в сигнатуре ✓
+  [OK]   OpenCL production: CollectOrRelease ✓
+  [OK]   ROCm production: ROCmProfEvents* в сигнатуре ✓
+  [OK]   ROCm production: MakeROCmDataFrom* хелперы ✓
+  [OK]   ROCm production: if(prof_events) guard ✓
+  [WARN] Runner test_heterodyne_benchmark_rocm.hpp: Run() без проверки IsProfEnabled
+
+[OK] lch_farrow
+  [OK]   OpenCL benchmark: ExecuteKernel + ExecuteKernelTimed ✓
+  [OK]   OpenCL benchmark: RecordEvent ✓
+  [OK]   ROCm benchmark: ExecuteKernel + ExecuteKernelTimed ✓
+  [OK]   ROCm benchmark: RecordROCmEvent ✓
+  [OK]   OpenCL runner test_lch_farrow_benchmark.hpp: CL_QUEUE_PROFILING_ENABLE ✓
+  [OK]   Runner test_lch_farrow_benchmark.hpp: IsProfEnabled ✓
+  [OK]   Runner test_lch_farrow_benchmark_rocm.hpp: IsProfEnabled ✓
+  [OK]   OpenCL production: prof_events* в сигнатуре ✓
+  [OK]   OpenCL production: CollectOrRelease ✓
+  [OK]   ROCm production: ROCmProfEvents* в сигнатуре ✓
+  [OK]   ROCm production: MakeROCmDataFrom* хелперы ✓
+  [OK]   ROCm production: if(prof_events) guard ✓
+
+[OK] signal_generators
+  [OK]   OpenCL benchmark: ExecuteKernel + ExecuteKernelTimed ✓
+  [OK]   OpenCL benchmark: RecordEvent ✓
+  [OK]   OpenCL benchmark: ExecuteKernel + ExecuteKernelTimed ✓
+  [OK]   OpenCL benchmark: RecordEvent ✓
+  [OK]   ROCm benchmark: ExecuteKernel + ExecuteKernelTimed ✓
+  [OK]   ROCm benchmark: RecordROCmEvent ✓
+  [OK]   OpenCL runner test_form_signal_benchmark.hpp: CL_QUEUE_PROFILING_ENABLE ✓
+  [OK]   Runner test_form_signal_benchmark.hpp: IsProfEnabled ✓
+  [OK]   OpenCL runner test_signal_generators_benchmark.hpp: CL_QUEUE_PROFILING_ENABLE ✓
+  [OK]   Runner test_signal_generators_benchmark.hpp: IsProfEnabled ✓
+  [OK]   OpenCL production: prof_events* в сигнатуре ✓
+  [OK]   OpenCL production: CollectOrRelease ✓
+  [OK]   ROCm production: ROCmProfEvents* в сигнатуре ✓
+  [OK]   ROCm production: MakeROCmDataFrom* хелперы ✓
+  [OK]   ROCm production: if(prof_events) guard ✓
+  [WARN] Runner test_signal_generators_benchmark_rocm.hpp: Run() без проверки IsProfEnabled
+
+[CUSTOM] vector_algebra
+  [OK]   Custom: hipEvent GPU-таймер ✓
+  [OK]   Custom: profiler.Record ✓
+  [OK]   Custom: SetGPUInfo ✓
+  [OK]   Custom: PrintReport ✓
+  [OK]   Custom: ExportMarkdown/JSON ✓
+  [WARN] Кастомная реализация (без GpuBenchmarkBase): нет разбивки Upload/Kernel/Download
+  [INFO] Замер: hipEvent оборачивает ВЕСЬ pipeline (одно монолитное время)
+  [INFO]   Стадии НЕ разделены — в отчёте одна запись на конфиг (N/K/S)
+  [INFO]   H2D входных данных НЕ включён (генерация на GPU через kernel)
+  [INFO]   H2D референса НЕ включён (PrepareReference вызывается до замера)
+  [INFO]   Включено: generate_inputs + R2C FFT + multiply_conj + IFFT + extract + D2H peaks
+
+  ┌─ Измеряемый GPU pipeline ─────────────────────────────┐
+
+  hipEventRecord(ev_start)
+    │
+    ▼
+    inverter.Invert()
+      │
+      └── CorePotrf()
+            ├── [GPU] rocsolver_cpotrf  (rocBLAS/rocSOLVER)
+      │
+      └── CorePotri()
+            └── [GPU] rocsolver_cpotri  (rocBLAS/rocSOLVER)
+    │
+    ▼
+  hipEventRecord(ev_stop)
+  hipEventElapsedTime → avg_ms  (warmup=3, runs=20, среднее за 20 прогонов)
+
+  В GPUProfiler: одна запись на конфиг — монолитное суммарное время
+  Для разбивки по стадиям — переход на GpuBenchmarkBase
+
+  └────────────────────────────────────────────────────────┘
+
+============================================================
+Modules checked : 8
+Errors          : 0
+Warnings        : 5
+Custom impl     : fm_correlator, vector_algebra
+  → Монолитный замер всего pipeline (нет разбивки по стадиям)
+  → Для детальных данных рекомендуется GpuBenchmarkBase (см. GPU_Profiling_Mechanism.md §2)

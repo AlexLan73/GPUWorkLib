@@ -664,6 +664,15 @@ modules/my_module/
 - [ ] Вывод только через `bench.Report()` → `GPUProfiler::PrintReport()`
 - [ ] **ЗАПРЕЩЕНО**: `GetStats()` + цикл + `con.Print` / `std::cout` напрямую
 
+### Автоматическая проверка
+
+```bash
+python scripts/check_profiling.py [module]   # один модуль
+python scripts/check_profiling.py --all       # все модули
+```
+
+Skill-агент: `.cursor/skills/check-profiling-implementation/` — описание чеклиста и триггеров.
+
 ---
 
 ## 7. Частые ошибки
@@ -745,3 +754,4 @@ clCreateCommandQueue(context, device, CL_QUEUE_PROFILING_ENABLE, &err);
 | GPUProfiler | `DrvGPU/services/gpu_profiler.hpp` |
 | Profiling types | `DrvGPU/services/profiling_types.hpp` |
 | SetGPUInfo паттерн | `Examples/GPUProfiler_SetGPUInfo.md` |
+| Проверка соответствия | `python scripts/check_profiling.py [module]` |

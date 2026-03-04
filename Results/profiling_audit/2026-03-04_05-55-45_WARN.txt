@@ -1,0 +1,49 @@
+GPU Profiling Implementation Audit
+Date: 2026-03-04 05:55:45
+Ref: Doc_Addition/GPU_Profiling_Mechanism.md
+============================================================
+
+[CUSTOM] fm_correlator
+  [OK]   Custom: hipEvent GPU-таймер ✓
+  [OK]   Custom: profiler.Record ✓
+  [OK]   Custom: SetGPUInfo ✓
+  [OK]   Custom: PrintReport ✓
+  [OK]   Custom: ExportMarkdown/JSON ✓
+  [WARN] Кастомная реализация (без GpuBenchmarkBase): нет разбивки Upload/Kernel/Download
+  [INFO] Замер: hipEvent оборачивает ВЕСЬ pipeline (одно монолитное время)
+  [INFO]   Стадии НЕ разделены — в отчёте одна запись на конфиг (N/K/S)
+  [INFO]   H2D входных данных НЕ включён (генерация на GPU через kernel)
+  [INFO]   H2D референса НЕ включён (PrepareReference вызывается до замера)
+  [INFO]   Включено: generate_inputs + R2C FFT + multiply_conj + IFFT + extract + D2H peaks
+
+  ┌─ Измеряемый GPU pipeline ─────────────────────────────┐
+
+  hipEventRecord(ev_start)
+    │
+    ▼
+    corr.RunTestPattern()
+      ├── [GPU] kernel  (hipModuleLaunchKernel)
+      ├── [GPU] R2C FFT  (hipfftExecR2C)
+      ├── ⟲ stream sync  (hipStreamSynchronize)
+      │
+      └── RunCorrelationPipeline()
+            ├── [GPU] kernel  (hipModuleLaunchKernel)
+            ├── [GPU] C2R IFFT  (hipfftExecC2R)
+            └── ⟲ stream sync  (hipStreamSynchronize)
+    │
+    ▼
+  hipEventRecord(ev_stop)
+  hipEventElapsedTime → avg_ms  (warmup=3, runs=20, среднее за 20 прогонов)
+
+  В GPUProfiler: одна запись на конфиг — монолитное суммарное время
+  Для разбивки по стадиям — переход на GpuBenchmarkBase
+
+  └────────────────────────────────────────────────────────┘
+
+============================================================
+Modules checked : 1
+Errors          : 0
+Warnings        : 1
+Custom impl     : fm_correlator
+  → Монолитный замер всего pipeline (нет разбивки по стадиям)
+  → Для детальных данных рекомендуется GpuBenchmarkBase (см. GPU_Profiling_Mechanism.md §2)

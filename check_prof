@@ -1,0 +1,2 @@
+#!/bin/bash
+exec python "$(dirname "$0")/scripts/check_profiling.py" "$@"
