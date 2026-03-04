@@ -33,6 +33,19 @@ namespace antenna_fft {
 // EnsureMagnitudesBuffer — создание/переиспользование буфера амплитуд
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Создать или расширить magnitudes_buffer_ (float[beam_count × nFFT])
+ *
+ * Lazy allocation: если буфер уже достаточного размера — переиспользуем.
+ * Буфер заполняется либо post-callback clFFT (в FindAllMaximaFromCPU/GPU),
+ * либо явным ядром compute_magnitudes (в AllMaxima — raw FFT API).
+ *
+ * Почему отдельный буфер, а не inline в detect: detect читает magnitudes дважды
+ * (для сравнения с соседями), поэтому float[] значительно дешевле float2[].
+ *
+ * @param total_elements beam_count × nFFT — общее число элементов спектра
+ * @throws std::runtime_error если clCreateBuffer не удался
+ */
 void SpectrumMaximaFinder::EnsureMagnitudesBuffer(size_t total_elements) {
     if (magnitudes_buffer_ && magnitudes_buffer_size_ >= total_elements) {
         return;  // Достаточно большой — переиспользуем
@@ -56,12 +69,23 @@ void SpectrumMaximaFinder::EnsureMagnitudesBuffer(size_t total_elements) {
 // ════════════════════════════════════════════════════════════════════════════
 // CreateAllMaximaFFTPlan — FFT план с pre-callback + post-callback
 // ════════════════════════════════════════════════════════════════════════════
-//
-// Pre-callback:  zero-padding (n_point → nFFT)
-// Post-callback: вычисление |FFT[i]| → magnitudes_buffer_
-//
-// Это ОТДЕЛЬНЫЙ план от plan_handle_ (который используется для Process)
 
+/**
+ * @brief Создать или переиспользовать clFFT план с pre+post callbacks для AllMaxima
+ *
+ * Pre-callback:  zero-padding n_point → nFFT (читает из pre_callback_userdata_, header=32 байт).
+ * Post-callback: |FFT[i]| = hypot(Re, Im) → magnitudes_buffer_ (float[batch×nFFT]).
+ *
+ * Это ОТДЕЛЬНЫЙ план от plan_handle_ (который используется для Process/FindAllMaxima).
+ * Нельзя переиспользовать plan_handle_ — у него другой post-callback (peak search),
+ * а здесь нужен иной: только вычисление magnitude без поиска пика.
+ *
+ * Если план уже создан с тем же batch_count — немедленный return (переиспользование).
+ * Если batch_count изменился — старый план уничтожается и создаётся новый.
+ *
+ * @param batch_count Число лучей/антенн в текущем batch
+ * @throws std::runtime_error если любой из шагов clFFT провалился
+ */
 void SpectrumMaximaFinder::CreateAllMaximaFFTPlan(size_t batch_count) {
     // Если план уже создан с таким же batch size — переиспользуем
     if (allmax_plan_created_ && allmax_plan_batch_size_ == batch_count) {
@@ -148,6 +172,18 @@ void SpectrumMaximaFinder::CreateAllMaximaFFTPlan(size_t batch_count) {
 // ExecuteAllMaximaFFT — запуск FFT с AllMaxima планом
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Запустить FFT с allmax_plan_handle_ (pre+post callbacks уже встроены)
+ *
+ * Тонкость: fft_input_ и fft_output_ — это ТЕХНИЧЕСКИЕ параметры clFFT,
+ * реальный ввод читается pre-callback'ом из pre_callback_userdata_ (с offset 32).
+ * fft_output_ используется как выходной буфер для complex результата,
+ * magnitudes_buffer_ заполняется post-callback'ом параллельно с FFT.
+ *
+ * @param wait_event cl_event предыдущей операции (Upload или CopyBuffer); nullptr — без ожидания
+ * @return cl_event FFT операции (caller ОБЯЗАН clReleaseEvent или CollectOrRelease)
+ * @throws std::runtime_error если clfftEnqueueTransform провалился
+ */
 cl_event SpectrumMaximaFinder::ExecuteAllMaximaFFT(cl_event wait_event) {
     cl_event event = nullptr;
 
@@ -174,6 +210,25 @@ cl_event SpectrumMaximaFinder::ExecuteAllMaximaFFT(cl_event wait_event) {
 // FindAllMaximaFromCPU — full pipeline: CPU data → FFT(pre+post) → AllMaxima
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Full pipeline: CPU сырой сигнал → Upload → FFT(zero-pad + magnitude) → Detect+Scan+Compact
+ *
+ * Вход — сырой сигнал (n_point точек, не FFT'd). Результат — все локальные максимумы спектра.
+ * Разница с AllMaximaFromCPU: здесь FFT выполняется внутри (через CreateAllMaximaFFTPlan/Execute),
+ * а AllMaximaFromCPU принимает уже FFT'ые данные.
+ *
+ * Batch processing: если params_.antenna_count × bytes_per_antenna > memory_limit×VRAM —
+ * данные разбиваются на batches (CreateBatches), выходные GPU-буферы создаются на ВСЕ антенны,
+ * каждый batch записывает свою часть через beam_offset.
+ *
+ * @param data          Плоский массив [antenna_count × n_point] complex<float> (CPU)
+ * @param dest          CPU / GPU / ALL — куда помещать результаты
+ * @param search_start  Начальный бин поиска (0 = авто = 1, пропускаем DC)
+ * @param search_end    Конечный бин поиска (0 = авто = nFFT/2)
+ * @param prof_events   Список cl_event для профилирования (nullptr = не профилируем)
+ * @return AllMaximaResult; при dest=GPU/ALL — caller ОБЯЗАН освободить gpu_maxima/gpu_counts!
+ * @throws std::runtime_error если объект не инициализирован или размер не совпадает
+ */
 AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromCPU(
     const std::vector<std::complex<float>>& data,
     OutputDestination dest, uint32_t search_start, uint32_t search_end,
@@ -320,6 +375,27 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromCPU(
 // FindAllMaximaFromGPUPipeline — full pipeline: GPU data → FFT(pre+post) → AllMaxima
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Full pipeline: GPU сырой сигнал → G2G Copy → FFT(zero-pad + magnitude) → Detect+Scan+Compact
+ *
+ * GPU-аналог FindAllMaximaFromCPU: данные уже на GPU (gpu_data), Upload не нужен —
+ * выполняем clEnqueueCopyBuffer с offset PRE_CALLBACK_HEADER_SIZE (чтобы не затереть заголовок).
+ *
+ * BatchManager учитывает gpu_memory_bytes как external_memory при расчёте доступной VRAM
+ * (внешние данные уже заняли память, нам нужно место для рабочих буферов).
+ * Если gpu_memory_bytes=0 — вычисляем сами: antenna_count × n_point × sizeof(complex).
+ *
+ * @param gpu_data          Внешний cl_mem [antenna_count × n_point × complex<float>]
+ * @param antenna_count     Число антенн/лучей
+ * @param n_point           Точек на антенну (сырой сигнал, не FFT)
+ * @param gpu_memory_bytes  Реальный размер gpu_data (0 = авто-вычисление)
+ * @param dest              CPU / GPU / ALL — куда помещать результаты
+ * @param search_start      Начальный бин (0 = авто = 1)
+ * @param search_end        Конечный бин (0 = авто = nFFT/2)
+ * @param prof_events       Список cl_event для профилирования (nullptr = не профилируем)
+ * @return AllMaximaResult; при dest=GPU/ALL — caller ОБЯЗАН освободить gpu_maxima/gpu_counts!
+ * @throws std::invalid_argument если gpu_data == nullptr
+ */
 AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline(
     cl_mem gpu_data, size_t antenna_count, size_t n_point,
     size_t gpu_memory_bytes,
@@ -479,9 +555,30 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline(
 
 // ════════════════════════════════════════════════════════════════════════════
 // AllMaximaFromCPU — upload готовых FFT данных → Detect → Scan → Compact
-// (БЕЗ FFT! Данные уже FFT'd)
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Pipeline без FFT: готовые FFT данные с CPU → Upload → Detect+Scan+Compact
+ *
+ * Входные данные уже FFT'ые (complex<float>[beam_count × nFFT]).
+ * В отличие от FindAllMaximaFromCPU — здесь FFT НЕ выполняется.
+ *
+ * Создаёт временный gpu_fft буфер CL_MEM_COPY_HOST_PTR (eager upload),
+ * затем делегирует в FindAllMaxima() и освобождает временный буфер.
+ *
+ * Когда использовать: если FFT уже выполнен вне этого класса (например,
+ * через FFTProcessor) — нет смысла делать его повторно.
+ *
+ * @param fft_data    Плоский массив [beam_count × nFFT] complex<float> (FFT результаты)
+ * @param beam_count  Число лучей/антенн
+ * @param nFFT        Размер FFT (степень двойки; nFFT = base_fft × repeat_count)
+ * @param sample_rate Частота дискретизации в Гц (для перевода бин → Гц)
+ * @param dest        CPU / GPU / ALL
+ * @param search_start Начальный бин (0 = авто = 1)
+ * @param search_end   Конечный бин (0 = авто = nFFT/2)
+ * @param prof_events  Список cl_event для профилирования (nullptr = не профилируем)
+ * @return AllMaximaResult; при dest=GPU/ALL — caller ОБЯЗАН освободить gpu_maxima/gpu_counts!
+ */
 AllMaximaResult SpectrumMaximaFinder::AllMaximaFromCPU(
     const std::vector<std::complex<float>>& fft_data,
     uint32_t beam_count, uint32_t nFFT, float sample_rate,
@@ -521,6 +618,23 @@ AllMaximaResult SpectrumMaximaFinder::AllMaximaFromCPU(
 // CompileAllMaximaKernels — компиляция OpenCL кернелов
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Lazy compilation: собирает 3 OpenCL программы для AllMaxima pipeline
+ *
+ * Вызывается из FindAllMaxima() при первом обращении (all_maxima_kernels_compiled_ = false).
+ * Повторные вызовы — немедленный return (guard флаг).
+ *
+ * Три программы (раздельно для изоляции ошибок компиляции):
+ *   1. all_maxima_program_:  detect_all_maxima + compute_magnitudes (объединены)
+ *      — detect читает из magnitudes_buffer_, detect и compute_magnitudes — одна программа
+ *        для максимального переиспользования одного CL контекста compile cache.
+ *   2. prefix_sum_program_:  block_scan + block_add (Blelloch Exclusive Scan)
+ *   3. compact_program_:     compact_maxima (stream compaction — flags + scan → MaxValue[])
+ *
+ * При ошибке компиляции: выводит build log через ConsoleOutput, освобождает program, бросает runtime_error.
+ *
+ * @throws std::runtime_error при ошибке создания или компиляции любой из программ
+ */
 void SpectrumMaximaFinder::CompileAllMaximaKernels() {
     if (all_maxima_kernels_compiled_) return;
 
@@ -628,6 +742,32 @@ void SpectrumMaximaFinder::CompileAllMaximaKernels() {
 // ExecutePrefixSum — beam-aware parallel prefix sum (Blelloch)
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Parallel Exclusive Prefix Sum (Blelloch) с поддержкой нескольких лучей (beam-aware)
+ *
+ * Каждый луч обрабатывается независимо: scan в луче [b] не смешивается со scan луча [b+1].
+ * Это обеспечивает beam-aware свойство — compact kernel корректно находит позиции внутри каждого луча.
+ *
+ * Алгоритм Blelloch (work-efficient, O(N log N) работы):
+ * - Один блок на луч: block_scan с null block_sums — вся работа в одном NDRange.
+ * - Несколько блоков: рекурсивный трёхуровневый подход:
+ *   L1: block_scan каждого блока → block_sums[total_blocks]
+ *   L2: ExecutePrefixSum(block_sums) рекурсивно
+ *   L3: block_add — добавить scanned block sums к результатам каждого блока
+ *
+ * LDS (Local Memory) padding: SCAN_BLOCK_SIZE * sizeof(uint32_t) — дополнительный элемент
+ * устраняет bank conflicts в LDS (TASK-9). Константа задаётся в kernel source.
+ *
+ * Temp буферы (block_sums, block_sums_scanned) выделяются и освобождаются внутри.
+ * clWaitForEvents вызывается перед освобождением tmp буферов (для безопасного free).
+ *
+ * @param input       cl_mem uint32[beam_count × n_per_beam] — входные flags (0/1)
+ * @param output      cl_mem uint32[beam_count × n_per_beam] — выходные scan positions
+ * @param n_per_beam  Число элементов на луч (= nFFT)
+ * @param beam_count  Число лучей
+ * @param wait_event  cl_event предыдущей операции; nullptr — без ожидания
+ * @return cl_event последней операции (block_scan или block_add); caller должен clReleaseEvent
+ */
 cl_event SpectrumMaximaFinder::ExecutePrefixSum(
     cl_mem input, cl_mem output, size_t n_per_beam, size_t beam_count,
     cl_event wait_event)
@@ -761,10 +901,49 @@ cl_event SpectrumMaximaFinder::ExecutePrefixSum(
 // ════════════════════════════════════════════════════════════════════════════
 // FindAllMaxima(cl_mem) — detect → scan → compact pipeline
 // ════════════════════════════════════════════════════════════════════════════
-//
-// Принимает FFT данные (float2*) и magnitudes_buffer_ с pre-computed |FFT[i]|.
-// Если magnitudes_buffer_ не заполнен (старый API) — запускает compute_magnitudes.
 
+/**
+ * @brief Core AllMaxima pipeline: Magnitudes → Detect → Scan → Compact → Results
+ *
+ * Принимает готовые FFT данные (float2 complex) на GPU. Все шаги выполняются на GPU:
+ *
+ * 0. Magnitudes: если fft_data != fft_output_ || !allmax_plan_created_ — запускает
+ *    compute_magnitudes kernel (post-callback уже заполнил magnitudes_buffer_ при
+ *    вызове через FindAllMaximaFromCPU/GPU — избегаем двойного вычисления).
+ *
+ * 1. Detect: detect_all_maxima kernel → flags_buf (1 = локальный максимум, 0 = нет).
+ *    search_start=0 → авто=1 (пропускаем DC bin), search_end=0 → авто=nFFT/2.
+ *
+ * 2. Scan: ExecutePrefixSum(flags_buf, scan_buf) — beam-aware Blelloch Exclusive Scan.
+ *    Результат: scan_buf[i] = количество максимумов до позиции i в этом луче.
+ *
+ * 3. Compact: compact_maxima kernel — записывает MaxValue в out_maxima[beam][scan_pos].
+ *    beam_offset корректирует antenna_id при batch processing.
+ *    max_output_per_beam = min((search_end-search_start)/2, params_.max_maxima_per_beam).
+ *
+ * 4. Read beam_counts (async ReadBuffer + clWaitForEvents).
+ *
+ * 5. Формирование результата:
+ *    - CPU/ALL: читаем MaxValue[] для каждого луча через clEnqueueReadBuffer
+ *    - GPU/ALL: передаём владение out_maxima/out_beam_counts caller'у (не освобождаем)
+ *    - dest=GPU: beams[] заполнен только метаданными (antenna_id, num_maxima) — без maxima[]
+ *
+ * Внешние буферы: если external_out_maxima != nullptr — используем их (batch merge режим).
+ * Локальные буферы: создаём свои на beam_count антенн (одиночный вызов).
+ *
+ * @param fft_data             cl_mem float2[beam_count × nFFT] — FFT результаты
+ * @param beam_count           Число лучей в текущем batch
+ * @param nFFT                 Размер FFT
+ * @param sample_rate          Частота дискретизации (для freq = (idx+δ) × fs/nFFT)
+ * @param dest                 CPU / GPU / ALL
+ * @param search_start         Начальный бин (0=авто=1)
+ * @param search_end           Конечный бин (0=авто=nFFT/2)
+ * @param beam_offset          Абсолютный offset лучей для batch merge (antenna_id коррекция)
+ * @param external_out_maxima  Внешний буфер MaxValue (nullptr = создать локальный)
+ * @param external_out_counts  Внешний буфер uint32 counts (nullptr = создать локальный)
+ * @param prof_events          Список cl_event для профилирования (nullptr = не профилируем)
+ * @return AllMaximaResult; при dest=GPU/ALL без external буферов — caller ОБЯЗАН освободить gpu_maxima/gpu_counts!
+ */
 AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
     cl_mem fft_data,
     uint32_t beam_count,
@@ -1038,6 +1217,16 @@ AllMaximaResult SpectrumMaximaFinder::FindAllMaxima(
 // ReleaseAllMaximaResources — освобождение ресурсов
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Освободить все ресурсы AllMaxima pipeline (kernels + programs)
+ *
+ * Порядок: сначала kernels (clReleaseKernel), затем programs (clReleaseProgram).
+ * Обратный порядок не безопасен — kernel держит reference на program.
+ *
+ * Вызывается из деструктора SpectrumMaximaFinder и при необходимости re-init.
+ * magnitudes_buffer_ НЕ освобождается здесь — он управляется EnsureMagnitudesBuffer
+ * и освобождается в основном деструкторе.
+ */
 void SpectrumMaximaFinder::ReleaseAllMaximaResources() {
     if (detect_kernel_) { clReleaseKernel(detect_kernel_); detect_kernel_ = nullptr; }
     if (compute_magnitudes_kernel_) { clReleaseKernel(compute_magnitudes_kernel_); compute_magnitudes_kernel_ = nullptr; }

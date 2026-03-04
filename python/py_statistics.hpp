@@ -22,6 +22,11 @@
 // PyStatisticsProcessor — GPU statistics on complex signal data (ROCm)
 // ============================================================================
 
+// Вычисляет статистику по нескольким «лучам» (beam) параллельно на GPU.
+// Данные организованы как flat array: [beam0_sample0, beam0_sample1, ..., beam1_sample0, ...]
+// — то есть beam_count * n_point элементов, beam-major layout.
+// Три метода: compute_mean (быстро, только среднее), compute_median (требует radix sort),
+// compute_statistics (Welford — mean+variance за один проход, оптимально).
 class PyStatisticsProcessor {
 public:
   explicit PyStatisticsProcessor(ROCmGPUContext& ctx)
@@ -114,6 +119,10 @@ public:
   }
 
 private:
+  // Конвертирует numpy (любой формы) в flat vector. StatisticsProcessor ожидает
+  // данные в beam-major порядке: сначала все samples beam[0], потом beam[1]...
+  // Если данные пришли как 2D numpy (beam_count, n_point) — порядок уже правильный
+  // (C-contiguous), если 1D — пользователь сам отвечает за layout.
   static std::vector<std::complex<float>> to_vector(
       py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> data,
       uint32_t beam_count)

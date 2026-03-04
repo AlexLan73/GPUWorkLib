@@ -124,6 +124,8 @@ public:
   // IBackend: Нативные хэндлы (делегируем OpenCL)
   // ═══════════════════════════════════════════════════════════════
 
+  // Возвращают OpenCL-хэндлы, потому что IBackend интерфейс ориентирован на OpenCL.
+  // Для HIP-хэндлов используй GetROCm()->GetNativeContext() etc. напрямую.
   void* GetNativeContext() const override;   // → OpenCL cl_context
   void* GetNativeDevice() const override;    // → OpenCL cl_device_id
   void* GetNativeQueue() const override;     // → OpenCL cl_command_queue
@@ -132,6 +134,9 @@ public:
   // IBackend: Память (делегируем OpenCL по умолчанию)
   // ═══════════════════════════════════════════════════════════════
 
+  // Allocate/Free делегируют OpenCL (cl_mem). Для HIP-памяти (hipMalloc)
+  // используй GetROCm()->Allocate() напрямую — смешивать нельзя!
+  // Free определяет тип буфера по тому, через какой backend он был выделен.
   void* Allocate(size_t size_bytes, unsigned int flags = 0) override;
   void Free(void* ptr) override;
 
@@ -143,11 +148,20 @@ public:
   // IBackend: Синхронизация (оба backend)
   // ═══════════════════════════════════════════════════════════════
 
+  // Синхронизирует ОБА backend — нужно когда не знаешь, в каком из них
+  // висит незавершённая работа. Для точечной синхронизации перед ZeroCopy
+  // используй SyncBeforeZeroCopy() / SyncAfterZeroCopy() — они дешевле.
   void Synchronize() override;
+
+  // Отправляет накопленные команды в очередь GPU без ожидания завершения.
+  // Аналог clFlush + hipStreamQuery: GPU начинает исполнять, CPU не блокируется.
+  // Используй перед долгой работой на CPU, чтобы GPU и CPU шли параллельно.
   void Flush() override;
 
   // ═══════════════════════════════════════════════════════════════
   // IBackend: Capabilities (от OpenCL backend)
+  // Стандартные параметры IBackend берём из OpenCL — единый интерфейс для всех бэкендов.
+  // ROCm-специфика (warp size 64, L1/L2 cache size, bank width) — только через GetROCm().
   // ═══════════════════════════════════════════════════════════════
 
   bool SupportsSVM() const override;
@@ -158,7 +172,9 @@ public:
   size_t GetLocalMemorySize() const override;
 
   // ═══════════════════════════════════════════════════════════════
-  // IBackend: MemoryManager
+  // IBackend: MemoryManager (от OpenCL backend)
+  // MemoryManager управляет пулом cl_mem объектов и принадлежит OpenCL-бэкенду.
+  // HIP-буферы (hipMalloc) MemoryManager не отслеживает — ими ROCmBackend управляет сам.
   // ═══════════════════════════════════════════════════════════════
 
   MemoryManager* GetMemoryManager() override;
@@ -222,13 +238,17 @@ public:
   void SyncAfterZeroCopy();
 
 private:
-  int device_index_;
-  bool initialized_;
+  int device_index_;    // Индекс GPU — одинаков для OpenCL и ROCm (оба на одном устройстве).
+  bool initialized_;    // true после успешного Initialize() обоих sub-backends.
+  // owns_resources_: если false — sub-backends созданы снаружи и нельзя их уничтожать.
+  // Обычно true (HybridBackend создаёт sub-backends сам в Initialize()).
   bool owns_resources_;
 
-  std::unique_ptr<OpenCLBackend> opencl_;
-  std::unique_ptr<ROCmBackend> rocm_;
+  std::unique_ptr<OpenCLBackend> opencl_;  // Primary: cl_mem, clFFT, legacy kernels
+  std::unique_ptr<ROCmBackend>   rocm_;    // Secondary: hipMalloc, hipFFT, rocPRIM, hiprtc
 
+  // Мьютекс для Initialize/Cleanup — потокобезопасность при многопоточном создании.
+  // Не защищает вызовы Allocate/Free/Memcpy — они уже потокобезопасны внутри sub-backends.
   mutable std::mutex mutex_;
 };
 
@@ -251,9 +271,12 @@ namespace drv_gpu_lib {
  * @class HybridBackend
  * @brief Windows stub — HybridBackend не доступен без ROCm
  *
- * Все методы бросают std::runtime_error.
- * Компилируется, но не работает — для Windows используйте
- * BackendType::OPENCL.
+ * Компилируется, но не работает — для Windows используйте BackendType::OPENCL.
+ *
+ * Асимметрия no-op vs throw:
+ * - Allocate / Memcpy* бросают: caller ожидает результат, молча вернуть nullptr нельзя.
+ * - Free / Cleanup / Sync / Flush — silent no-op: нет ресурсов → нечего освобождать.
+ *   Это безопаснее: код, вызывающий Free(nullptr) или Cleanup() дважды, не должен падать.
  */
 class HybridBackend : public IBackend {
 public:

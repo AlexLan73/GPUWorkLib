@@ -34,6 +34,23 @@ namespace drv_gpu_lib {
 // Class: ROCmBackend - Реализация бэкенда для HIP/ROCm
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @class ROCmBackend
+ * @brief Реализация IBackend на базе HIP API (ROCm)
+ *
+ * Один экземпляр = один AMD GPU. Владеет ROCmCore (поток + device handle)
+ * и MemoryManager (пул hipMalloc буферов).
+ *
+ * Архитектура Multi-GPU:
+ * - Каждый ROCmBackend создаёт собственный ROCmCore с device_index
+ * - HybridBackend содержит ROCmBackend как secondary sub-backend
+ * - Модули обращаются к ROCm через HybridBackend::GetROCm()
+ *
+ * Делегирование:
+ * - Все вычисления → ROCmCore::GetStream() (один stream на GPU)
+ * - Memory → hipMalloc / hipFree напрямую (без CL_MEM_FLAGS аналогов)
+ * - Capabilities → hipDeviceProp_t через ROCmCore
+ */
 class ROCmBackend : public IBackend {
 public:
   // ═══════════════════════════════════════════════════════════════
@@ -55,14 +72,23 @@ public:
   // Реализация IBackend: Инициализация
   // ═══════════════════════════════════════════════════════════════
 
+  // Создаёт собственный ROCmCore + MemoryManager для заданного GPU.
+  // Thread-safe. При повторном вызове — автоматически вызывает Cleanup() сначала.
+  // Бросает std::runtime_error если device_index выходит за пределы или HIP недоступен.
   void Initialize(int device_index) override;
   bool IsInitialized() const override { return initialized_; }
+  // Освобождает MemoryManager (hipFree буферов), затем core_ (hipStreamDestroy).
+  // Порядок важен: буферы могут ссылаться на stream_ — core_ уничтожается последним.
+  // Идемпотентен; вызывается автоматически из деструктора.
   void Cleanup() override;
 
   // ═══════════════════════════════════════════════════════════════
   // Реализация IBackend: Управление владением ресурсами
   // ═══════════════════════════════════════════════════════════════
 
+  // owns_resources_ управляет кто уничтожает core_ в Cleanup().
+  // false — core_ создан снаружи (например, shared между несколькими бэкендами).
+  // В нормальном пути Initialize() выставляет owns=true сам — явный вызов обычно не нужен.
   void SetOwnsResources(bool owns) override { owns_resources_ = owns; }
   bool OwnsResources() const override { return owns_resources_; }
 
@@ -87,9 +113,15 @@ public:
   // Реализация IBackend: Управление памятью
   // ═══════════════════════════════════════════════════════════════
 
+  // Выделяет device memory через hipMalloc. flags — игнорируется (HIP не имеет
+  // аналога CL_MEM_FLAGS). Возвращает nullptr при ошибке (не бросает).
   void* Allocate(size_t size_bytes, unsigned int flags = 0) override;
+  // hipFree(ptr). Безопасен для nullptr. Логирует ошибки через plog.
   void Free(void* ptr) override;
 
+  // Все три Memcpy — СИНХРОННЫЕ: внутри вызывают Async + hipStreamSynchronize.
+  // Совместимость с OpenCL backend, где enqueueWriteBuffer с CL_TRUE блокирует.
+  // Для асинхронной передачи — используй hipMemcpy*Async напрямую через GetCore().
   void MemcpyHostToDevice(void* dst, const void* src, size_t size_bytes) override;
   void MemcpyDeviceToHost(void* dst, const void* src, size_t size_bytes) override;
   void MemcpyDeviceToDevice(void* dst, const void* src, size_t size_bytes) override;
@@ -98,24 +130,33 @@ public:
   // Реализация IBackend: Синхронизация
   // ═══════════════════════════════════════════════════════════════
 
+  // Блокирует CPU до завершения ВСЕХ операций в stream_. Вызывай перед чтением результатов.
   void Synchronize() override;
+  // Non-blocking: hipStreamQuery — только «подталкивает» очередь, не ждёт завершения.
+  // Аналог clFlush. Для реальной синхронизации используй Synchronize().
   void Flush() override;
 
   // ═══════════════════════════════════════════════════════════════
   // Реализация IBackend: Возможности устройства
   // ═══════════════════════════════════════════════════════════════
 
+  // HIP unified memory (hipMallocManaged) технически есть, но через IBackend
+  // SVM не экспонируем: модули работают с явными HtoD/DtoH копиями.
+  // Для unified memory в ROCm используй hipMallocManaged() напрямую через GetCore().
   bool SupportsSVM() const override { return false; }
-  bool SupportsDoublePrecision() const override;
-  size_t GetMaxWorkGroupSize() const override;
-  size_t GetGlobalMemorySize() const override;
-  size_t GetFreeMemorySize() const override;
-  size_t GetLocalMemorySize() const override;
+  bool SupportsDoublePrecision() const override;  // device_props_.arch.hasDoubles (gfx900+)
+  size_t GetMaxWorkGroupSize() const override;    // maxThreadsPerBlock из hipDeviceProp_t
+  size_t GetGlobalMemorySize() const override;    // totalGlobalMem — кешировано при init
+  size_t GetFreeMemorySize() const override;      // hipMemGetInfo — runtime запрос, не кеш
+  size_t GetLocalMemorySize() const override;     // sharedMemPerBlock (LDS на AMD)
 
   // ═══════════════════════════════════════════════════════════════
   // Специфичные для ROCm методы
   // ═══════════════════════════════════════════════════════════════
 
+  // Прямой доступ к ROCmCore для модулей, которым нужны HIP-специфичные хэндлы
+  // (hipStream_t для hipFFT, hipDevice_t для hipDeviceGetAttribute и т.п.).
+  // Бросает std::runtime_error если не инициализирован.
   ROCmCore& GetCore();
   const ROCmCore& GetCore() const;
 
@@ -123,20 +164,25 @@ public:
   const MemoryManager* GetMemoryManager() const override;
 
 protected:
-  int device_index_;
-  bool initialized_;
+  int device_index_;    ///< Индекс HIP устройства (hipSetDevice argument)
+  bool initialized_;    ///< true после успешного Initialize()
+  // owns_resources_: если false — core_ был создан снаружи и нельзя его уничтожать.
+  // Обычно true (ROCmBackend создаёт core_ сам в Initialize()).
   bool owns_resources_;
 
-  std::unique_ptr<ROCmCore> core_;
-  std::unique_ptr<MemoryManager> memory_manager_;
+  std::unique_ptr<ROCmCore> core_;                  ///< HIP stream + device props — сердце бэкенда
+  std::unique_ptr<MemoryManager> memory_manager_;   ///< Пул hipMalloc буферов
 
-  // Cached HIP handles
-  hipDevice_t device_;
-  hipStream_t stream_;
+  // Кешированные хэндлы из core_ — для быстрого доступа без разыменования unique_ptr.
+  // Обновляются в Initialize() и обнуляются в Cleanup().
+  hipDevice_t device_;   ///< hipDeviceGet handle — integer ID устройства
+  hipStream_t stream_;   ///< Основной stream для всех операций этого backend
 
-  mutable std::mutex mutex_;
+  mutable std::mutex mutex_;  ///< Защита Initialize()/Cleanup() при многопоточном создании
 
 private:
+  // Собирает GPUDeviceInfo из hipDeviceProp_t через ROCmCore.
+  // Вынесен в приватный метод, чтобы GetDeviceInfo() оставался const.
   GPUDeviceInfo QueryDeviceInfo() const;
 };
 

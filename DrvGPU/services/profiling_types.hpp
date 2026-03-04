@@ -90,7 +90,11 @@ using ProfilingTimeVariant = std::variant<OpenCLProfilingData, ROCmProfilingData
  * @param duration_ms Длительность в миллисекундах
  * @return OpenCLProfilingData с заполненными полями
  *
- * Используется для тестов и fallback без cl_event
+ * Используется для тестов и fallback без cl_event.
+ *
+ * ВАЖНО: все поля кроме start_ns/end_ns устанавливаются в end_ns.
+ * В результате все производные задержки (queue_delay, submit_delay, complete_delay)
+ * в EventStats::UpdateFull() будут равны нулю — только exec_time будет ненулевым.
  */
 inline OpenCLProfilingData MakeOpenCLFromDurationMs(double duration_ms) {
     OpenCLProfilingData d{};

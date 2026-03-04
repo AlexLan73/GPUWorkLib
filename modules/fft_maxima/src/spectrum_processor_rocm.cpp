@@ -82,6 +82,21 @@ namespace antenna_fft {
 // PART 1: Constructor, Destructor
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Конструктор — получить HIP stream из backend и создать pipeline
+ *
+ * stream_ берётся из backend_->GetNativeQueue() — backend владеет очередью,
+ * мы только используем её (не закрываем в деструкторе).
+ *
+ * pipeline_ = AllMaximaPipelineROCm(stream_, backend_) создаётся сразу —
+ * lazy CompileKernels внутри pipeline произойдёт при первом вызове FindAllMaxima.
+ *
+ * Ключевое отличие от OpenCL: нет cl_context/cl_queue, только hipStream_t.
+ *
+ * @param backend Инициализированный IBackend с ROCm backend (не nullptr, не uninit)
+ * @throws std::invalid_argument если backend == nullptr
+ * @throws std::runtime_error если backend не инициализирован или нет HIP stream
+ */
 SpectrumProcessorROCm::SpectrumProcessorROCm(drv_gpu_lib::IBackend* backend)
     : backend_(backend) {
 
@@ -101,6 +116,13 @@ SpectrumProcessorROCm::SpectrumProcessorROCm(drv_gpu_lib::IBackend* backend)
     pipeline_ = std::make_unique<AllMaximaPipelineROCm>(stream_, backend_);
 }
 
+/**
+ * @brief Деструктор — освободить все GPU ресурсы
+ *
+ * Порядок освобождения в ReleaseResources() критичен:
+ * pipeline_.reset() → allmax_plan → plan_ → буферы → hiprtc module.
+ * stream_ НЕ закрывается — он принадлежит backend_.
+ */
 SpectrumProcessorROCm::~SpectrumProcessorROCm() {
     ReleaseResources();
 }
@@ -109,6 +131,20 @@ SpectrumProcessorROCm::~SpectrumProcessorROCm() {
 // PART 2: Initialize
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Инициализировать процессор для заданных параметров
+ *
+ * Вычисляет nFFT, определяет нужен ли batch режим, выделяет GPU буферы
+ * и компилирует kernels (hiprtc JIT).
+ *
+ * Два пути:
+ *  - Batch mode: ReallocateBuffersForBatch(max_batch_size) — буферы на max batch
+ *  - Normal mode: AllocateBuffers() → CreateFFTPlan() → CompileKernels()
+ *
+ * Повторный вызов (initialized_==true) → только обновляет params_, пропускает выделение.
+ *
+ * @param params Параметры обработки (antenna_count, n_point, repeat_count, etc.)
+ */
 void SpectrumProcessorROCm::Initialize(const SpectrumParams& params) {
     params_ = params;
     if (initialized_) return;
@@ -156,6 +192,23 @@ void SpectrumProcessorROCm::Initialize(const SpectrumParams& params) {
 // PART 3: Process (ONE_PEAK / TWO_PEAKS mode)
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Обработать один batch CPU-данных: Upload → Pad → FFT → Post → Sync → ReadResults
+ *
+ * ROCm версия использует stream-ordered execution без явных cl_event:
+ * - Порядок операций гарантирован одним hipStream_t (stream_)
+ * - Синхронизация: hipStreamSynchronize(stream_) перед ReadResults
+ *
+ * Профилирование через hipEvent (если prof_events != nullptr):
+ *   5 операций: Upload(H2D) | PadKernel | FFT | PostKernel | Download(D2H wall-clock)
+ *   Download измеряется wall-clock (MakeROCmDataFromClock) — hipMemcpyDtoH синхронный.
+ *
+ * @param input_data          Весь массив входных данных [total_antenna_count × n_point]
+ * @param start_antenna       Индекс первой антенны в input_data для этого batch
+ * @param batch_antenna_count Количество антенн в batch
+ * @param prof_events         Список ROCmProfilingData для профилирования (nullptr = не собираем)
+ * @return vector<SpectrumResult>[batch_antenna_count] с корректными antenna_id (start_antenna + i)
+ */
 std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessBatch(
     const std::vector<std::complex<float>>& input_data,
     size_t start_antenna,
@@ -229,6 +282,17 @@ std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessBatch(
     return results;
 }
 
+/**
+ * @brief Обработать все антенны с CPU-данных: разбить на batch'и если нужно
+ *
+ * Если все данные помещаются в VRAM (BatchManager::AllItemsFit) → один ProcessBatch.
+ * Иначе → loop по batch'ам через CreateBatches (с overlap=3, logProgress=true).
+ *
+ * @param data        Плоский массив [antenna_count × n_point] complex<float>
+ * @param prof_events Список ROCmProfilingData (nullptr = не профилируем)
+ * @return vector<SpectrumResult>[antenna_count]
+ * @throws std::runtime_error если не инициализирован или размер данных не совпадает
+ */
 std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessFromCPU(
     const std::vector<std::complex<float>>& data,
     ROCmProfEvents* prof_events)
@@ -275,6 +339,19 @@ std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessFromCPU(
     return all_results;
 }
 
+/**
+ * @brief Обработать GPU-данные (D2D): CopyGpuData → Pad → FFT → Post → Sync → ReadResults
+ *
+ * Данные уже на GPU (void* device pointer) → D2D copy через hipMemcpyDtoDAsync.
+ * external_memory учитывается в BatchManager::CalculateOptimalBatchSize как уже занятая VRAM.
+ *
+ * @param gpu_data         void* device pointer на входные данные [antenna_count × n_point]
+ * @param antenna_count    Количество антенн
+ * @param n_point          Точек на антенну в исходных данных (до padding)
+ * @param gpu_memory_bytes Реальный размер gpu_data в байтах (0 = вычисляем сами)
+ * @return vector<SpectrumResult>[antenna_count]
+ * @throws std::invalid_argument если gpu_data == nullptr
+ */
 std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessFromGPU(
     void* gpu_data, size_t antenna_count, size_t n_point,
     size_t gpu_memory_bytes)
@@ -340,6 +417,18 @@ std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessFromGPU(
     return all_results;
 }
 
+/**
+ * @brief Обработать один batch из внешнего GPU буфера (вызывается из ProcessFromGPU)
+ *
+ * CopyGpuData с src_offset → Pad → FFT → PostKernel → Sync → ReadResults.
+ * antenna_id в результатах сдвигается на start_antenna.
+ *
+ * @param gpu_data             Внешний device pointer с данными
+ * @param src_offset_bytes     Смещение в gpu_data для этого batch (в байтах)
+ * @param start_antenna        Абсолютный индекс первой антенны batch (для antenna_id)
+ * @param batch_antenna_count  Количество антенн в batch
+ * @return vector<SpectrumResult>[batch_antenna_count] с корректными antenna_id
+ */
 std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessBatchFromGPU(
     void* gpu_data, size_t src_offset_bytes,
     size_t start_antenna, size_t batch_antenna_count)
@@ -368,6 +457,25 @@ std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessBatchFromGPU(
 // PART 4: FindAllMaxima pipeline
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Полный AllMaxima pipeline из CPU-данных (raw signal → все пики)
+ *
+ * Отличие от ProcessFromCPU: вместо PostKernel (ONE/TWO_PEAKS) запускает
+ * полный AllMaxima pipeline: ComputeMagnitudes → pipeline_->Execute() (Detect+Scan+Compact).
+ *
+ * ⚠️ Batch НЕ поддерживается — если данные не помещаются → throw runtime_error.
+ *    Причина: stream compaction с prefix sum требует полного спектра всех лучей.
+ *
+ * Профилирование (5 операций): Upload | PadKernel | FFT | ComputeMagnitudes | Pipeline
+ *
+ * @param data        Плоский массив [antenna_count × n_point] complex<float>
+ * @param dest        Куда писать результаты (CPU/GPU/ALL)
+ * @param search_start Первый индекс FFT для поиска (0 → авто=1, пропуск DC)
+ * @param search_end   Последний индекс FFT (0 → авто=nFFT/2)
+ * @param prof_events  ROCmProfEvents для профилирования (nullptr = не собираем)
+ * @return AllMaximaResult; при dest=GPU/ALL — caller обязан освободить gpu_maxima/gpu_counts!
+ * @throws std::runtime_error если не инициализирован или данные не помещаются
+ */
 AllMaximaResult SpectrumProcessorROCm::FindAllMaximaFromCPU(
     const std::vector<std::complex<float>>& data,
     OutputDestination dest, uint32_t search_start, uint32_t search_end,
@@ -469,6 +577,23 @@ AllMaximaResult SpectrumProcessorROCm::FindAllMaximaFromCPU(
     return result;
 }
 
+/**
+ * @brief AllMaxima pipeline из GPU-данных (D2D): CopyGpu → Pad → FFT → ComputeMag → pipeline
+ *
+ * Аналог FindAllMaximaFromCPU, но входные данные уже на GPU (void* device pointer).
+ * D2D copy через CopyGpuData(src_offset=0) → далее всё то же что и в FromCPU.
+ *
+ * ⚠️ Batch НЕ поддерживается — если данные не помещаются → throw runtime_error.
+ *
+ * @param gpu_data         void* device pointer [antenna_count × n_point]
+ * @param antenna_count    Число антенн
+ * @param n_point          Точек на антенну до padding
+ * @param gpu_memory_bytes Размер gpu_data (0 = вычисляем)
+ * @param dest             OutputDestination (CPU/GPU/ALL)
+ * @param search_start     Первый FFT-бин (0 → авто=1)
+ * @param search_end       Последний FFT-бин (0 → авто=nFFT/2)
+ * @return AllMaximaResult; при dest=GPU/ALL — caller обязан освободить gpu_maxima/gpu_counts!
+ */
 AllMaximaResult SpectrumProcessorROCm::FindAllMaximaFromGPUPipeline(
     void* gpu_data, size_t antenna_count, size_t n_point,
     size_t gpu_memory_bytes,
@@ -517,6 +642,26 @@ AllMaximaResult SpectrumProcessorROCm::FindAllMaximaFromGPUPipeline(
         dest, search_start, search_end);
 }
 
+/**
+ * @brief AllMaxima из готовых FFT данных с CPU (без FFT шага)
+ *
+ * Вход — уже готовые FFT спектры (complex<float>), не сырые данные.
+ * Создаёт временный GPU буфер через hipMalloc → hipMemcpyHtoDAsync → FindAllMaxima → hipFree.
+ *
+ * Ownership временного gpu_fft: только внутри функции, освобождается до return.
+ * Ownership AllMaximaResult.gpu_maxima/gpu_counts при dest=GPU/ALL: caller обязан освободить!
+ *
+ * @param fft_data    Плоский массив [beam_count × nFFT] complex<float> (FFT спектры)
+ * @param beam_count  Количество лучей/антенн
+ * @param nFFT        Длина FFT на луч
+ * @param sample_rate Частота дискретизации (для freq в MaxValue)
+ * @param dest        OutputDestination (CPU/GPU/ALL)
+ * @param search_start Первый FFT-бин (0 → авто=1)
+ * @param search_end   Последний FFT-бин (0 → авто=nFFT/2)
+ * @return AllMaximaResult
+ * @throws std::invalid_argument если размер не совпадает
+ * @throws std::runtime_error если hipMalloc/hipMemcpy неудача
+ */
 AllMaximaResult SpectrumProcessorROCm::AllMaximaFromCPU(
     const std::vector<std::complex<float>>& fft_data,
     uint32_t beam_count, uint32_t nFFT, float sample_rate,
@@ -559,6 +704,30 @@ AllMaximaResult SpectrumProcessorROCm::AllMaximaFromCPU(
     return result;
 }
 
+/**
+ * @brief Core AllMaxima: ComputeMagnitudes → pipeline_->Execute() (Strategy pattern!)
+ *
+ * Принимает уже готовые FFT данные на GPU (void* device pointer).
+ * Вычисляет magnitudes через явный hipModuleLaunchKernel с fft_data (не fft_output_!).
+ *
+ * ⚠️ Внимание на двойной вызов: ExecuteComputeMagnitudes(total_elements) вверху функции
+ * обрабатывает fft_output_, но потом перезаписывается явным kernel launch с fft_data.
+ * Это нужно потому что fft_data может быть не тем же указателем что fft_output_.
+ *
+ * Нормализация search_start/search_end:
+ *   search_start=0 → 1 (пропуск DC-компоненты)
+ *   search_end=0   → nFFT/2 (только положительные частоты)
+ *   search_end>=nFFT → nFFT-1
+ *
+ * @param fft_data    void* device pointer на FFT спектры [beam_count × nFFT] complex<float>
+ * @param beam_count  Количество лучей
+ * @param nFFT        Длина FFT на луч
+ * @param sample_rate Частота дискретизации (Hz)
+ * @param dest        OutputDestination (CPU/GPU/ALL)
+ * @param search_start Первый FFT-бин (0 → авто=1)
+ * @param search_end   Последний FFT-бин (0 → авто=nFFT/2)
+ * @return AllMaximaResult; при dest=GPU/ALL — caller обязан освободить gpu_maxima/gpu_counts!
+ */
 AllMaximaResult SpectrumProcessorROCm::FindAllMaxima(
     void* fft_data, uint32_t beam_count, uint32_t nFFT, float sample_rate,
     OutputDestination dest, uint32_t search_start, uint32_t search_end)
@@ -620,6 +789,21 @@ AllMaximaResult SpectrumProcessorROCm::FindAllMaxima(
 // PART 5: GPU Resources
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Выделить 4 основных GPU буфера для params_.antenna_count антенн
+ *
+ * Буферы:
+ *  1. input_buffer_  [antenna_count × n_point × sizeof(complex)] — сырые данные до padding
+ *  2. fft_input_     [antenna_count × nFFT × sizeof(complex)]    — после pad_data kernel
+ *  3. fft_output_    [antenna_count × nFFT × sizeof(complex)]    — результат hipfftExecC2C
+ *  4. maxima_output_ [antenna_count × (4 или 8) × sizeof(MaxValue)] — результат post_kernel
+ *     ONE_PEAK → 4 MaxValue/beam, TWO_PEAKS → 8 MaxValue/beam
+ *
+ * Вызывается из Initialize() когда все антенны помещаются в VRAM.
+ * При batch режиме вместо этого вызывается ReallocateBuffersForBatch().
+ *
+ * @throws std::runtime_error если hipMalloc неудача для любого буфера
+ */
 void SpectrumProcessorROCm::AllocateBuffers() {
     hipError_t err;
 
@@ -650,6 +834,19 @@ void SpectrumProcessorROCm::AllocateBuffers() {
         throw std::runtime_error("AllocateBuffers: maxima_output failed");
 }
 
+/**
+ * @brief Создать hipFFT план для ProcessBatch (Process режим)
+ *
+ * hipfftPlan1d(nFFT, C2C, batch_count) → привязка к stream_ через hipfftSetStream.
+ * Guard: повторный вызов с тем же batch_count — ничего не делает.
+ * При изменении batch_count — старый план уничтожается.
+ *
+ * Отличие от CreateAllMaximaFFTPlan: это план для Process (ONE/TWO_PEAKS),
+ * план для AllMaxima — отдельный allmax_plan_.
+ *
+ * @param batch_count Количество антенн для этого плана
+ * @throws std::runtime_error если hipfftPlan1d или hipfftSetStream неудача
+ */
 void SpectrumProcessorROCm::CreateFFTPlan(size_t batch_count) {
     if (plan_created_ && plan_batch_size_ == batch_count) return;
 
@@ -678,6 +875,18 @@ void SpectrumProcessorROCm::CreateFFTPlan(size_t batch_count) {
     plan_created_ = true;
 }
 
+/**
+ * @brief Создать hipFFT план для FindAllMaxima pipeline (отдельный от plan_)
+ *
+ * allmax_plan_ может использоваться параллельно с plan_ — разные режимы работы.
+ * ExecuteFFT() выбирает активный план: allmax_plan_created_ ? allmax_plan_ : plan_.
+ *
+ * Также вызывает EnsureMagnitudesBuffer(batch_count × nFFT) — чтобы magnitudes_buffer_
+ * был достаточного размера до запуска ComputeMagnitudes.
+ *
+ * @param batch_count Количество антенн для AllMaxima FFT плана
+ * @throws std::runtime_error если hipfftPlan1d или hipfftSetStream неудача
+ */
 void SpectrumProcessorROCm::CreateAllMaximaFFTPlan(size_t batch_count) {
     if (allmax_plan_created_ && allmax_plan_batch_size_ == batch_count) return;
 
@@ -708,6 +917,20 @@ void SpectrumProcessorROCm::CreateAllMaximaFFTPlan(size_t batch_count) {
     allmax_plan_created_ = true;
 }
 
+/**
+ * @brief JIT-компилировать HIP kernels через hiprtc
+ *
+ * Компилирует GetSpectrumHIPKernelSource() с -O3 → hipModule → извлекает функции:
+ *  - pad_data: zero-padding [n_point → nFFT] для всех лучей
+ *  - compute_magnitudes: |z|² = re² + im² (complex→float)
+ *
+ * post_kernel_one_peak / post_kernel_two_peaks компилируются отдельно в CompilePostKernel()
+ * из того же module_ (kernel source содержит все kernels).
+ *
+ * При ошибке компиляции → print лог через ConsoleOutput (не PrintError) + throw.
+ *
+ * @throws std::runtime_error если hiprtcCreateProgram / Compile / ModuleLoadData неудача
+ */
 void SpectrumProcessorROCm::CompileKernels() {
     if (kernels_compiled_) return;
 
@@ -762,6 +985,18 @@ void SpectrumProcessorROCm::CompileKernels() {
         "HIP kernels compiled (pad + compute_magnitudes)");
 }
 
+/**
+ * @brief Получить post_kernel из уже скомпилированного hiprtc module_
+ *
+ * Выбирает kernel по params_.peak_mode:
+ *  - ONE_PEAK  → "post_kernel_one_peak"  → 4 MaxValue/beam
+ *  - TWO_PEAKS → "post_kernel_two_peaks" → 8 MaxValue/beam
+ *
+ * Важно: CompileKernels() должен быть вызван первым (module_ должен существовать).
+ * Если module_ уже загружен (kernels_compiled_=true), просто извлекаем функцию.
+ *
+ * @throws std::runtime_error если hipModuleGetFunction неудача
+ */
 void SpectrumProcessorROCm::CompilePostKernel() {
     if (post_kernel_) return;
 
@@ -790,6 +1025,17 @@ void SpectrumProcessorROCm::CompilePostKernel() {
 // PART 6: GPU Operations
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Асинхронный upload CPU→GPU (H2D) в input_buffer_
+ *
+ * hipMemcpyHtoDAsync в stream_ — не блокирует CPU до hipStreamSynchronize.
+ * Отличие от OpenCL версии: нет Pinned Memory (нет CL_MEM_ALLOC_HOST_PTR),
+ * hipMemcpyHtoDAsync сам оптимизирует transfer через DMA если данные page-locked.
+ *
+ * @param data          Указатель на CPU данные [element_count × sizeof(complex<float>)]
+ * @param element_count Количество complex<float> элементов для копирования
+ * @throws std::runtime_error если hipMemcpyHtoDAsync неудача
+ */
 void SpectrumProcessorROCm::UploadData(const std::complex<float>* data, size_t element_count) {
     size_t data_size = element_count * sizeof(std::complex<float>);
 
@@ -802,6 +1048,18 @@ void SpectrumProcessorROCm::UploadData(const std::complex<float>* data, size_t e
     }
 }
 
+/**
+ * @brief Асинхронный D2D copy из внешнего GPU буфера в input_buffer_
+ *
+ * hipMemcpyDtoDAsync(dst=input_buffer_, src=src+offset, count, stream_).
+ * Используется в ProcessFromGPU и FindAllMaximaFromGPUPipeline для batch обработки
+ * где src_offset_bytes указывает на начало текущего batch в исходном буфере.
+ *
+ * @param src              Внешний device pointer
+ * @param src_offset_bytes Смещение в src в байтах (byte pointer arithmetic)
+ * @param element_count    Количество complex<float> элементов для копирования
+ * @throws std::runtime_error если hipMemcpyDtoDAsync неудача
+ */
 void SpectrumProcessorROCm::CopyGpuData(void* src, size_t src_offset_bytes, size_t element_count) {
     size_t data_size = element_count * sizeof(std::complex<float>);
     char* src_ptr = static_cast<char*>(src) + src_offset_bytes;
@@ -813,6 +1071,22 @@ void SpectrumProcessorROCm::CopyGpuData(void* src, size_t src_offset_bytes, size
     }
 }
 
+/**
+ * @brief Запустить pad_data kernel: zero-padding [n_point → nFFT] для всех лучей
+ *
+ * Аналог pre-callback в OpenCL версии, но здесь — отдельный kernel.
+ * Читает из input_buffer_ [beam × n_point], пишет в fft_input_ [beam × nFFT].
+ * Паддинг нулями: элементы [n_point..nFFT-1] заполняются комплексным нулём.
+ *
+ * NDRange: grid=((beam_count × nFFT + 255) / 256, 1, 1), block=(256, 1, 1)
+ * Args: [input_buffer_, fft_input_, bc, n_point, nFFT, beam_offset]
+ *
+ * beam_offset используется при batch обработке для индексации исходного буфера.
+ *
+ * @param beam_count  Количество лучей в текущем batch
+ * @param beam_offset Смещение начального луча (для частичных batch, по умолчанию=0)
+ * @throws std::runtime_error если hipModuleLaunchKernel неудача
+ */
 void SpectrumProcessorROCm::ExecutePadKernel(size_t beam_count, size_t beam_offset) {
     unsigned int bc = static_cast<unsigned int>(beam_count);
     unsigned int np = params_.n_point;
@@ -840,6 +1114,18 @@ void SpectrumProcessorROCm::ExecutePadKernel(size_t beam_count, size_t beam_offs
     }
 }
 
+/**
+ * @brief Запустить hipFFT (C2C Forward) над fft_input_ → fft_output_
+ *
+ * Выбирает активный план: allmax_plan_created_ ? allmax_plan_ : plan_.
+ * Это позволяет использовать один метод как для Process, так и для AllMaxima pipeline,
+ * избегая дублирования кода.
+ *
+ * hipfftSetStream(plan_, stream_) при создании плана — FFT выполняется в stream_.
+ * Результат: fft_output_[beam × nFFT] — комплексный спектр каждого луча.
+ *
+ * @throws std::runtime_error если hipfftExecC2C неудача
+ */
 void SpectrumProcessorROCm::ExecuteFFT() {
     hipfftHandle active_plan = allmax_plan_created_ ? allmax_plan_ : plan_;
 
@@ -855,6 +1141,21 @@ void SpectrumProcessorROCm::ExecuteFFT() {
     }
 }
 
+/**
+ * @brief Запустить post_kernel: найти пик(и) в спектре каждого луча
+ *
+ * Аналог post-callback в OpenCL версии, но здесь — отдельный kernel.
+ * Читает fft_output_ → пишет maxima_output_ [beam × (4 или 8) × MaxValue].
+ *
+ * NDRange: ONE workgroup per beam — grid=(beam_count,1,1), block=(LOCAL_SIZE,1,1)
+ * Каждый workgroup редуцирует search_range элементов до 1 (ONE_PEAK) или 2 (TWO_PEAKS) пиков.
+ *
+ * Args: [fft_output_, maxima_output_, bc, nFFT, search_range, sample_rate]
+ *
+ * @param beam_count  Количество лучей в текущем batch
+ * @param beam_offset Смещение (для частичных batch — пока не используется в kernel, будущее)
+ * @throws std::runtime_error если hipModuleLaunchKernel неудача
+ */
 void SpectrumProcessorROCm::ExecutePostKernel(size_t beam_count, size_t beam_offset) {
     unsigned int bc = static_cast<unsigned int>(beam_count);
     unsigned int nfft = params_.nFFT;
@@ -882,6 +1183,19 @@ void SpectrumProcessorROCm::ExecutePostKernel(size_t beam_count, size_t beam_off
     }
 }
 
+/**
+ * @brief Запустить compute_magnitudes: fft_output_ → magnitudes_buffer_ (float)
+ *
+ * |z|² = re² + im² для всех total_elements элементов.
+ * Читает fft_output_, пишет в magnitudes_buffer_[total_elements] float.
+ *
+ * Lazy compile: если kernels_compiled_=false → вызывает CompileKernels() первым.
+ * NDRange: grid=((total_elements+255)/256, 1, 1), block=(256, 1, 1)
+ * Args: [fft_output_, magnitudes_buffer_, total_size]
+ *
+ * @param total_elements beam_count × nFFT — общее количество float элементов в magnitudes
+ * @throws std::runtime_error если hipModuleLaunchKernel неудача
+ */
 void SpectrumProcessorROCm::ExecuteComputeMagnitudes(size_t total_elements) {
     if (!compute_mag_kernel_) {
         if (!kernels_compiled_) CompileKernels();
@@ -906,6 +1220,23 @@ void SpectrumProcessorROCm::ExecuteComputeMagnitudes(size_t total_elements) {
     }
 }
 
+/**
+ * @brief Синхронный D2H download результатов из maxima_output_ → SpectrumResult[]
+ *
+ * hipMemcpyDtoH (блокирующий!) — поэтому вызывается ПОСЛЕ hipStreamSynchronize(stream_)
+ * в ProcessBatch/ProcessFromGPU/ProcessBatchFromGPU.
+ *
+ * Формат maxima_output_:
+ *  - ONE_PEAK:  [beam × 4×MaxValue] → 1 SpectrumResult/beam  (interpolated/left/center/right)
+ *  - TWO_PEAKS: [beam × 8×MaxValue] → 2 SpectrumResult/beam (два пика: left+right)
+ *
+ * antenna_id заполняется как (beam_offset + i).
+ *
+ * @param beam_count  Количество лучей для чтения
+ * @param beam_offset Смещение для antenna_id (при batch — абсолютный индекс первой антенны)
+ * @return vector<SpectrumResult>[beam_count] или [2×beam_count] (TWO_PEAKS)
+ * @throws std::runtime_error если hipMemcpyDtoH неудача
+ */
 std::vector<SpectrumResult> SpectrumProcessorROCm::ReadResults(size_t beam_count, size_t beam_offset) {
     size_t max_values_per_beam = (params_.peak_mode == PeakSearchMode::ONE_PEAK) ? 4 : 8;
     size_t num_results = beam_count * max_values_per_beam;
@@ -962,6 +1293,15 @@ std::vector<SpectrumResult> SpectrumProcessorROCm::ReadResults(size_t beam_count
 // PART 7: Utilities
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Вычислить nFFT и search_range из params_.n_point и repeat_count
+ *
+ * base_fft = nextPow2(n_point) — hipFFT требует степень двойки.
+ * nFFT = base_fft × repeat_count — zero-padding для частотного разрешения.
+ * search_range = 0 → авто = nFFT/4 (первая четверть: положительные частоты).
+ *
+ * Идентично OpenCL версии — алгоритм backend-независим.
+ */
 void SpectrumProcessorROCm::CalculateFFTSize() {
     params_.base_fft = NextPowerOf2(params_.n_point);
     params_.nFFT = params_.base_fft * params_.repeat_count;
@@ -970,6 +1310,10 @@ void SpectrumProcessorROCm::CalculateFFTSize() {
     }
 }
 
+/**
+ * @brief Округлить вверх до следующей степени двойки (bitwise алгоритм)
+ * Например: 1000 → 1024, 1024 → 1024, 0 → 1.
+ */
 uint32_t SpectrumProcessorROCm::NextPowerOf2(uint32_t n) {
     if (n == 0) return 1;
     n--;
@@ -981,6 +1325,19 @@ uint32_t SpectrumProcessorROCm::NextPowerOf2(uint32_t n) {
     return n + 1;
 }
 
+/**
+ * @brief Рассчитать потребление памяти на одну антенну для BatchManager
+ *
+ * Включает все 5 буферов:
+ *  - input_bytes:  n_point × sizeof(complex) — сырые данные
+ *  - fft_bytes:    2 × nFFT × sizeof(complex) — fft_input + fft_output
+ *  - mag_bytes:    nFFT × sizeof(float) — magnitudes (для AllMaxima)
+ *  - maxima_bytes: (4 или 8) × sizeof(MaxValue) — результат post_kernel
+ *
+ * ⚠️ Включает mag_bytes в отличие от OpenCL версии — ROCm всегда создаёт mag буфер.
+ *
+ * @return Байт на одну антенну (используется BatchManager для расчёта batch_size)
+ */
 size_t SpectrumProcessorROCm::CalculateBytesPerAntenna() const {
     size_t input_bytes = params_.n_point * sizeof(std::complex<float>);
     size_t fft_bytes = 2 * params_.nFFT * sizeof(std::complex<float>);  // input + output
@@ -992,6 +1349,18 @@ size_t SpectrumProcessorROCm::CalculateBytesPerAntenna() const {
     return input_bytes + fft_bytes + mag_bytes + maxima_bytes;
 }
 
+/**
+ * @brief Lazy выделение/переаллокация magnitudes_buffer_ [total_elements × float]
+ *
+ * Guard: если существующий буфер >= total_elements — ничего не делает (переиспользуем).
+ * Иначе → освободить старый (hipFree) и выделить новый (hipMalloc).
+ *
+ * Вызывается из CreateAllMaximaFFTPlan и FindAllMaxima перед ExecuteComputeMagnitudes.
+ * magnitudes_buffer_size_ хранит текущий размер в элементах (не байтах).
+ *
+ * @param total_elements beam_count × nFFT — общее количество float в буфере
+ * @throws std::runtime_error если hipMalloc неудача
+ */
 void SpectrumProcessorROCm::EnsureMagnitudesBuffer(size_t total_elements) {
     if (magnitudes_buffer_ && magnitudes_buffer_size_ >= total_elements) return;
 
@@ -1008,6 +1377,25 @@ void SpectrumProcessorROCm::EnsureMagnitudesBuffer(size_t total_elements) {
     magnitudes_buffer_size_ = total_elements;
 }
 
+/**
+ * @brief Переаллоцировать GPU буферы и/или FFT план под batch_antenna_count антенн
+ *
+ * ROCm версия имеет 2 пути (без FAST PATH — нет эквивалента WritePreCallbackHeader):
+ *
+ * FULL PATH (need_new_buffers=true):
+ *   - hipFree все буферы → hipMalloc заново под batch_antenna_count
+ *   - current_batch_size_ обновляется
+ *
+ * PLAN ONLY PATH (need_new_buffers=false, need_new_plan=true):
+ *   - Буферы достаточны, только пересоздать FFT план через CreateFFTPlan
+ *
+ * Если оба false — return немедленно (буферы и план актуальны).
+ *
+ * CompileKernels() вызывается в конце если ещё не скомпилированы.
+ *
+ * @param batch_antenna_count Целевое количество антенн для нового batch
+ * @throws std::runtime_error если hipMalloc или CreateFFTPlan неудача
+ */
 void SpectrumProcessorROCm::ReallocateBuffersForBatch(size_t batch_antenna_count) {
     bool need_new_plan = (plan_batch_size_ != batch_antenna_count) || !plan_created_;
     bool need_new_buffers = (current_batch_size_ < batch_antenna_count) || !input_buffer_;
@@ -1056,6 +1444,14 @@ void SpectrumProcessorROCm::ReallocateBuffersForBatch(size_t batch_antenna_count
     if (!kernels_compiled_) CompileKernels();
 }
 
+/**
+ * @brief Освободить ресурсы AllMaxima pipeline (pipeline + allmax_plan + magnitudes_buffer_)
+ *
+ * Вызывается из ReleaseResources() и может вызываться явно для сброса AllMaxima режима.
+ * Порядок: pipeline_.reset() (Detect+Scan+Compact kernels) → allmax_plan_ → magnitudes_buffer_.
+ *
+ * Не трогает основные буферы (input/fft_in/fft_out/maxima) и plan_ (Process режим).
+ */
 void SpectrumProcessorROCm::ReleaseAllMaximaResources() {
     pipeline_.reset();
 
@@ -1073,6 +1469,19 @@ void SpectrumProcessorROCm::ReleaseAllMaximaResources() {
     }
 }
 
+/**
+ * @brief Полное освобождение всех GPU ресурсов (вызывается из деструктора)
+ *
+ * Порядок освобождения критичен:
+ *  1. ReleaseAllMaximaResources() — pipeline_ → allmax_plan_ → magnitudes_buffer_
+ *  2. hipfftDestroy(plan_) — Process режим FFT план
+ *  3. hipFree для 4 основных буферов (input/fft_in/fft_out/maxima)
+ *  4. hipModuleUnload(module_) — hiprtc модуль (все kernels) последним
+ *     ⚠️ Если освободить module_ до kernels→UB при следующем запуске
+ *
+ * stream_ НЕ закрывается — принадлежит backend_.
+ * Флаги сбрасываются: initialized_=false, kernels_compiled_=false, etc.
+ */
 void SpectrumProcessorROCm::ReleaseResources() {
     ReleaseAllMaximaResources();
 
@@ -1105,6 +1514,15 @@ void SpectrumProcessorROCm::ReleaseResources() {
     initialized_ = false;
 }
 
+/**
+ * @brief Получить накопленные данные профилирования (TODO: не реализовано)
+ *
+ * ROCm версия пока возвращает пустой ProfilingData.
+ * Профилирование передаётся через ROCmProfEvents* в ProcessBatch/FindAllMaximaFromCPU.
+ * Агрегация в GPUProfiler происходит на уровне benchmark тестов, не здесь.
+ *
+ * @return Пустой ProfilingData (временная заглушка)
+ */
 ProfilingData SpectrumProcessorROCm::GetProfilingData() const {
     ProfilingData out{};
     // TODO: Add HIP profiling via hipEvent timing when running on AMD GPU

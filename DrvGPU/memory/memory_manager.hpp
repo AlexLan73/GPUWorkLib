@@ -168,17 +168,17 @@ private:
     // ═══════════════════════════════════════════════════════════════
     // Члены класса
     // ═══════════════════════════════════════════════════════════════
-    IBackend* backend_;  ///< Указатель на бэкенд (не владеет)
-    
-    // Статистика
-    size_t total_allocations_;
-    size_t total_frees_;
-    size_t current_allocations_;
-    size_t total_bytes_allocated_;
-    size_t peak_bytes_allocated_;
-    
+    IBackend* backend_;  ///< Не владеет — lifetime backend должен превышать lifetime MemoryManager
+
+    // Статистика: обновляется под mutex_ в TrackAllocation/TrackFree
+    size_t total_allocations_;    ///< Сумма всех Allocate() вызовов (монотонно растёт)
+    size_t total_frees_;          ///< Сумма всех TrackFree() вызовов (сейчас не используется — нет size map)
+    size_t current_allocations_;  ///< Активные аллокации (total_allocations_ - total_frees_)
+    size_t total_bytes_allocated_; ///< Суммарно выделено байт (накапливается, не уменьшается при Free)
+    size_t peak_bytes_allocated_;  ///< Максимум total_bytes_allocated_ за всё время — для диагностики
+
     // Thread-safety
-    mutable std::mutex mutex_;
+    mutable std::mutex mutex_;  ///< Защита всех счётчиков статистики; mutable → const-методы тоже блокируют
     
     // ═══════════════════════════════════════════════════════════════
     // Приватные методы
@@ -215,6 +215,9 @@ std::shared_ptr<GPUBuffer<T>> MemoryManager::CreateBuffer(
     size_t num_elements,
     unsigned int flags)
 {
+    // CreateBuffer<T>() внутри захватывает и отпускает mutex_.
+    // Write() вызывается УЖЕ после того как lock отпущен — не под блокировкой.
+    // Это безопасно: buffer уже создан и принадлежит только нам (не разделён ещё).
     auto buffer = CreateBuffer<T>(num_elements, flags);
     buffer->Write(data, num_elements * sizeof(T));
     return buffer;

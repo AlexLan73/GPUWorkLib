@@ -26,6 +26,10 @@
 // PyFirFilter — GPU FIR convolution filter
 // ============================================================================
 
+// Python-обёртка над FirFilter (OpenCL).
+// FirFilter.Process() ожидает cl_mem на входе — поэтому мы сами создаём
+// буфер через clCreateBuffer+CL_MEM_COPY_HOST_PTR и освобождаем после Process.
+// Для ROCm-версии используется ProcessFromCPU — backend сам управляет памятью.
 class PyFirFilter {
 public:
   explicit PyFirFilter(GPUContext& ctx)
@@ -56,7 +60,8 @@ public:
     size_t total = static_cast<size_t>(channels) * points;
     auto* ptr = static_cast<std::complex<float>*>(buf.ptr);
 
-    // Upload to GPU
+    // Upload to GPU: FirFilter ожидает cl_mem (не vector), поэтому загружаем вручную.
+    // CL_MEM_COPY_HOST_PTR — синхронная копия при создании буфера, input_buf готов сразу.
     cl_context cl_ctx = static_cast<cl_context>(ctx_.backend()->GetNativeContext());
     cl_int err;
     cl_mem input_buf = clCreateBuffer(cl_ctx,
@@ -69,12 +74,15 @@ public:
 
     drv_gpu_lib::InputData<cl_mem> result;
     {
+      // Освобождаем GIL на время GPU-вычисления — другие Python потоки могут работать.
+      // FirFilter.Process() блокирует до завершения kernel + копирования.
       py::gil_scoped_release release;
       result = fir_.Process(input_buf, channels, points);
     }
     clReleaseMemObject(input_buf);
 
-    // Readback
+    // Readback: result.data — cl_mem, caller owns. FirFilter не освобождает его —
+    // наша ответственность вызвать clReleaseMemObject после чтения.
     std::vector<std::complex<float>> data(total);
     clEnqueueReadBuffer(ctx_.queue(), result.data, CL_TRUE, 0,
                         total * sizeof(std::complex<float>),

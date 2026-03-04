@@ -28,6 +28,16 @@ namespace antenna_fft {
 // Constructor, destructor
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Создать ROCm pipeline; kernel'ы компилируются лениво при первом Execute()
+ *
+ * Все операции выполняются на указанном hipStream (stream-ordered, без явных event).
+ * Не владеет stream_ и backend_ — их lifetime управляется IBackend.
+ *
+ * @param stream  HIP stream для всех kernel launch и memcpy
+ * @param backend IBackend для доступа к ресурсам ROCm backend
+ * @throws std::invalid_argument если stream == nullptr
+ */
 AllMaximaPipelineROCm::AllMaximaPipelineROCm(hipStream_t stream,
                                                drv_gpu_lib::IBackend* backend)
     : stream_(stream), backend_(backend)
@@ -37,6 +47,10 @@ AllMaximaPipelineROCm::AllMaximaPipelineROCm(hipStream_t stream,
     }
 }
 
+/**
+ * @brief Деструктор — выгружает hipModule (освобождает все kernel'ы одним вызовом)
+ * hipModuleUnload освобождает module + все связанные hipFunction_t автоматически.
+ */
 AllMaximaPipelineROCm::~AllMaximaPipelineROCm() {
     if (module_) {
         (void)hipModuleUnload(module_);
@@ -53,6 +67,18 @@ AllMaximaPipelineROCm::~AllMaximaPipelineROCm() {
 // CompileKernels — hiprtc compilation
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Скомпилировать HIP kernel'ы через hiprtc (idempotent)
+ *
+ * Один hipModule содержит все 4 функции: detect_all_maxima, block_scan, block_add, compact_maxima.
+ * Компилируется с -O3. Source из GetAllMaximaHIPKernelSource() (inline строка в all_maxima_kernel_sources_rocm.hpp).
+ *
+ * Почему hiprtc (не hipModuleLoad из файла):
+ * - Нет зависимости от пути к .co файлам в runtime
+ * - Компиляция под текущую GPU архитектуру (gfx1201 и др.)
+ *
+ * @throws std::runtime_error при ошибке компиляции (с полным hiprtc build log)
+ */
 void AllMaximaPipelineROCm::CompileKernels() {
     if (kernels_compiled_) return;
 
@@ -120,6 +146,23 @@ void AllMaximaPipelineROCm::CompileKernels() {
 // ExecutePrefixSum (beam-aware, recursive Blelloch)
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Beam-aware Blelloch prefix sum (ROCm/HIP stream-ordered)
+ *
+ * Аналог OpenCL версии но без явных cl_event — все kernel'ы выполняются
+ * stream-ordered на stream_, sync происходит через hipStreamSynchronize перед hipFree.
+ *
+ * При blocks_per_beam == 1 → один block_scan, рекурсия не нужна.
+ * При blocks_per_beam > 1 → block_scan + рекурсивный ExecutePrefixSum(block_sums) + block_add.
+ *
+ * temp буферы (block_sums, block_sums_scanned) выделяются hipMalloc и освобождаются
+ * после hipStreamSynchronize — safe т.к. kernel'ы уже завершены.
+ *
+ * @param input      Входной буфер флагов (void* = hipDeviceptr_t, uint32[beam×nFFT])
+ * @param output     Выходной буфер scan (uint32[beam×nFFT])
+ * @param n_per_beam Элементов на луч (= nFFT)
+ * @param beam_count Количество лучей
+ */
 void AllMaximaPipelineROCm::ExecutePrefixSum(
     void* input, void* output, size_t n_per_beam, size_t beam_count)
 {
@@ -233,6 +276,28 @@ void AllMaximaPipelineROCm::ExecutePrefixSum(
 // Execute — main pipeline
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Запустить ROCm pipeline: Detect → Scan → Compact (все на hipStream)
+ *
+ * ROCm аналог AllMaximaPipelineOpenCL::Execute() — идентичная логика,
+ * но без cl_event (stream-ordered), hipModuleLaunchKernel вместо clEnqueueNDRangeKernel.
+ *
+ * Temp буферы (flags, scan) выделяются hipMalloc внутри и освобождаются после sync.
+ * out_maxima/out_counts: ownership зависит от dest (аналогично OpenCL версии — см. AllMaximaResult).
+ *
+ * hipStreamSynchronize вызывается ОДИН раз после Step 3 — wait перед CPU read beam_counts.
+ * Это гарантирует что compact_kernel завершён, но не блокирует между шагами.
+ *
+ * @param magnitudes_gpu  HIP device pointer float[beam_count × nFFT]
+ * @param fft_data_gpu    HIP device pointer complex float2[beam_count × nFFT]
+ * @param beam_count      Количество лучей
+ * @param nFFT            Размер FFT (power-of-2)
+ * @param sample_rate     Для refined_frequency в MaxValue
+ * @param dest            CPU / GPU / ALL
+ * @param search_start    0 → auto = 1
+ * @param search_end      0 → auto = nFFT/2
+ * @param max_maxima_per_beam  Лимит MaxValue на луч
+ */
 AllMaximaResult AllMaximaPipelineROCm::Execute(
     void* magnitudes_gpu,
     void* fft_data_gpu,

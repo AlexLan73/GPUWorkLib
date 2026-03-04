@@ -76,7 +76,12 @@ public:
   // Инициализация
   // ═══════════════════════════════════════════════════════════════
 
+  // 6 шагов HIP init: hipInit → hipGetDeviceCount → hipSetDevice →
+  // hipDeviceGet → hipGetDeviceProperties → hipStreamCreate.
+  // Thread-safe (mutex_). Идемпотентен — повторный вызов выдаёт WARNING, не ломает состояние.
   void Initialize();
+  // Уничтожает stream (hipStreamDestroy). НЕ вызывает hipDeviceReset() —
+  // это сбросило бы состояние GPU для всего процесса (все контексты на устройстве).
   void Cleanup();
   bool IsInitialized() const { return initialized_; }
 
@@ -92,36 +97,48 @@ public:
   // Информация о девайсе
   // ═══════════════════════════════════════════════════════════════
 
-  std::string GetDeviceInfo() const;
-  std::string GetDeviceName() const;
-  std::string GetVendor() const;
-  std::string GetArchName() const;
-  size_t GetGlobalMemorySize() const;
-  size_t GetFreeMemorySize() const;
-  size_t GetLocalMemorySize() const;
-  int GetComputeUnits() const;
-  size_t GetMaxWorkGroupSize() const;
-  size_t GetMaxClockFrequency() const;
+  std::string GetDeviceInfo() const;    // Форматированный многострочный отчёт (диагностика/лог)
+  std::string GetDeviceName() const;    // props.name: напр. "AMD Radeon RX 9070 XT"
+  std::string GetVendor() const;        // Всегда "AMD" — ROCm поддерживает только AMD GPU
+  std::string GetArchName() const;      // props.gcnArchName: напр. "gfx1201" (RDNA4)
+  size_t GetGlobalMemorySize() const;   // totalGlobalMem — кешировано при init, не меняется
+  size_t GetFreeMemorySize() const;     // hipMemGetInfo — runtime запрос! Значение изменяется
+  size_t GetLocalMemorySize() const;    // sharedMemPerBlock (LDS на AMD), кешировано
+  int GetComputeUnits() const;          // multiProcessorCount (CU count)
+  size_t GetMaxWorkGroupSize() const;   // maxThreadsPerBlock — hard limit для kernel launch
+  size_t GetMaxClockFrequency() const;  // clockRate / 1000: kHz → MHz
+  // device_props_.arch.hasDoubles: gfx900+ = 1, некоторые APU (gfx902) = 0 (SW emulation).
   bool SupportsDoublePrecision() const;
 
   // ═══════════════════════════════════════════════════════════════
   // СТАТИЧЕСКИЕ МЕТОДЫ для обнаружения GPU (Multi-GPU support)
   // ═══════════════════════════════════════════════════════════════
 
+  // Не требует инициализации ROCmCore — вызывает hipGetDeviceCount напрямую.
+  // Возвращает 0 при ошибке (нет AMD GPU или не установлен ROCm runtime).
   static int GetAvailableDeviceCount();
+  // Диагностика: форматированный список всех AMD GPU (name, arch, VRAM, CU, clock).
+  // Вызывается при старте для вывода в лог. Не требует инициализации ROCmCore.
   static std::string GetAllDevicesInfo();
 
 private:
-  int device_index_;
-  bool initialized_;
+  int device_index_;         ///< Аргумент hipSetDevice — порядковый номер GPU
+  bool initialized_;         ///< true после успешного Initialize()
 
-  hipDevice_t device_;
-  hipStream_t stream_;
-  hipDeviceProp_t device_props_;
+  hipDevice_t device_;       ///< Integer handle устройства (от hipDeviceGet)
+  hipStream_t stream_;       ///< Основной поток команд — создаётся в Initialize(), уничтожается в ReleaseResources()
+  hipDeviceProp_t device_props_;  ///< Кеш свойств устройства (от hipGetDeviceProperties); заполняется однократно при инициализации
 
-  mutable std::mutex mutex_;
+  mutable std::mutex mutex_;  ///< Защита Initialize()/Cleanup() от гонок при одновременном вызове
 
+  // Выполняет 6 шагов HIP init: hipInit → hipGetDeviceCount → hipSetDevice →
+  // hipDeviceGet → hipGetDeviceProperties → hipStreamCreate.
+  // Бросает std::runtime_error при любой ошибке.
   void InitializeHIP();
+
+  // Уничтожает stream (hipStreamDestroy) и обнуляет device_.
+  // НЕ вызывает hipDeviceReset() — это сбросит всё состояние GPU для всего процесса,
+  // включая другие бэкенды и контексты на том же устройстве.
   void ReleaseResources();
 };
 

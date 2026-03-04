@@ -113,7 +113,9 @@ public:
     cl_event ReadAsync(ComplexVector& out_data) override;
     
     // --- OpenCL ресурсы ---
-    cl_mem GetCLMem() const override { return nullptr; }  // SVM не использует cl_mem
+    // SVM не создаёт cl_mem объект — аллокация через clSVMAlloc возвращает void*, не cl_mem.
+    // Kernel-аргументы SVM ставятся через clSetKernelArgSVMPointer, а не clSetKernelArg.
+    cl_mem GetCLMem() const override { return nullptr; }
     void* GetSVMPointer() const override { return svm_ptr_; }
     void SetAsKernelArg(cl_kernel kernel, cl_uint arg_index) override;
     
@@ -122,7 +124,10 @@ public:
     size_t GetSizeBytes() const override { return size_bytes_; }
     MemoryType GetMemoryType() const override { return mem_type_; }
     MemoryStrategy GetStrategy() const override { return strategy_; }
-    bool IsExternal() const override { return false; }  // SVM всегда owning
+    // SVM память выделяется нами через clSVMAlloc → мы владеем, освобождаем в FreeSVM().
+    // External = false, потому что cl_mem адаптер (ExternalCLBufferAdapter) — внешний,
+    // а SVMBuffer всегда создаёт и владеет своей памятью.
+    bool IsExternal() const override { return false; }
     bool IsSVM() const override { return true; }
     BufferInfo GetInfo() const override;
     void PrintStats() const override;
@@ -240,8 +245,10 @@ inline SVMBuffer& SVMBuffer::operator=(SVMBuffer&& other) noexcept {
 
 inline void SVMBuffer::AllocateSVM() {
     cl_svm_mem_flags flags = GetSVMFlags();
-    
-    // clSVMAlloc: OpenCL 2.0+
+
+    // clSVMAlloc: OpenCL 2.0+. Alignment=0 → реализация выбирает сама
+    // (обычно 64 байта для векторных операций на GPU).
+    // Возвращает nullptr при неудаче (не бросает, в отличие от clCreateBuffer).
     svm_ptr_ = clSVMAlloc(context_, flags, size_bytes_, 0);
     
     if (!svm_ptr_) {
@@ -254,11 +261,13 @@ inline void SVMBuffer::AllocateSVM() {
 
 inline void SVMBuffer::FreeSVM() {
     if (svm_ptr_) {
-        // Сначала unmap при необходимости
+        // Unmap ПЕРЕД clSVMFree — обязательно для coarse-grain SVM.
+        // clSVMFree на mapped память → undefined behavior (OpenCL spec 2.0, §5.6.1).
+        // Для fine-grain Unmap() — no-op, но вызов безопасен.
         if (is_mapped_) {
             Unmap();
         }
-        
+
         clSVMFree(context_, svm_ptr_);
         svm_ptr_ = nullptr;
     }
@@ -273,12 +282,16 @@ inline cl_svm_mem_flags SVMBuffer::GetSVMFlags() const {
             flags = CL_MEM_SVM_FINE_GRAIN_BUFFER;
             break;
         case MemoryStrategy::SVM_FINE_SYSTEM:
-            // Fine-grain system здесь не использует флаги
+            // OpenCL не имеет отдельного флага для Fine-Grain System —
+            // он использует те же CL_MEM_SVM_FINE_GRAIN_BUFFER. Различие только
+            // в том, что Fine-Grain System память физически единая с хостом (iGPU/APU).
+            // Детектируется через CL_DEVICE_SVM_FINE_GRAIN_SYSTEM в SVMCapabilities.
             flags = CL_MEM_SVM_FINE_GRAIN_BUFFER;
             break;
         case MemoryStrategy::SVM_COARSE_GRAIN:
         default:
-            // Coarse-grain по умолчанию (без специальных флагов)
+            // Coarse-grain: нет специальных флагов для clSVMAlloc.
+            // Требует явного Map/Unmap для синхронизации видимости CPU↔GPU.
             flags = 0;
             break;
     }
@@ -305,14 +318,16 @@ inline void SVMBuffer::Map(bool write, bool read) {
         return;  // Уже отображён
     }
     
-    // Fine-grained SVM не требует явного map
-    if (strategy_ == MemoryStrategy::SVM_FINE_GRAIN || 
+    // Fine-grained SVM: CPU может обращаться к памяти напрямую без map —
+    // аппаратура сама поддерживает когерентность. Map → no-op (просто ставим флаг).
+    if (strategy_ == MemoryStrategy::SVM_FINE_GRAIN ||
         strategy_ == MemoryStrategy::SVM_FINE_SYSTEM) {
         is_mapped_ = true;
         return;
     }
-    
-    // Coarse-grained требует явного map
+
+    // Coarse-grained требует явного map через OpenCL runtime.
+    // До clEnqueueSVMMap CPU не должен читать/писать svm_ptr_ — UB!
     cl_map_flags map_flags = 0;
     if (write) map_flags |= CL_MAP_WRITE;
     if (read)  map_flags |= CL_MAP_READ;
@@ -375,16 +390,17 @@ inline void SVMBuffer::WriteRaw(const void* data, size_t size_bytes) {
     }
     
     bool was_mapped = is_mapped_;
-    
+
+    // Паттерн: временно маппируем если не был mapped.
+    // Если caller уже сделал Map() — не трогаем (он управляет lifetime map-периода).
     if (!is_mapped_) {
-        Map(true, false);  // Отображение для записи
+        Map(true, false);  // map write-only: не нужно читать GPU данные
     }
-    
-    // Прямое копирование памяти (без лишнего копирования)
+
     std::memcpy(svm_ptr_, data, size_bytes);
-    
+
     if (!was_mapped) {
-        Unmap();
+        Unmap();  // Unmap сигнализирует GPU что CPU завершил запись
     }
 }
 

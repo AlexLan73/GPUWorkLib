@@ -23,6 +23,14 @@
 // PyCholeskyInverterROCm — Python wrapper
 // ════════════════════════════════════════════════════════════════════════════
 
+// Инверсия эрмитовой положительно определённой матрицы на GPU через:
+//   rocSOLVER POTRF — Cholesky разложение A = L*L^H (нижний треугольник)
+//   rocSOLVER POTRI — инверсия A^-1 по разложению (заполняет нижний треугольник)
+// После POTRI нижний треугольник содержит инверсию, верхний — мусор.
+// Симметризация (копирование lower→upper) — два режима:
+//   Roundtrip: скачать на CPU, симметризовать, загрузить обратно (~медленнее)
+//   GpuKernel: HIP ядро in-place (~быстрее, рекомендуется)
+// std::unique_ptr<> — нельзя копировать объект (ресурс GPU), только move.
 class PyCholeskyInverterROCm {
 public:
   PyCholeskyInverterROCm(ROCmGPUContext& ctx,
@@ -87,7 +95,9 @@ public:
       result = inverter_->InvertBatch(input, n);
     }
 
-    // Download GPU → numpy (batch, n, n)
+    // Download GPU → numpy (batch, n, n) с zero-copy через capsule.
+    // 3D массив нельзя создать через vector_to_numpy_2d — нужны явные strides.
+    // capsule держит владение вектором до уничтожения numpy-массива (Python GC).
     auto vec = result.AsVector();
     auto* out_vec = new std::vector<std::complex<float>>(std::move(vec));
     auto capsule = py::capsule(out_vec, [](void* p) {

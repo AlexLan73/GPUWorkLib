@@ -27,6 +27,13 @@ namespace drv_gpu_lib {
 // Constructor
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Создаёт сервис кеширования кернелов для указанного каталога и бэкенда
+ *
+ * @param base_dir     Корневая директория кеша (напр. "modules/signal_generators/kernels").
+ *                     Подкаталог bin/ создаётся автоматически при первом Save().
+ * @param backend_type OPENCL → суффикс "_opencl.bin"; ROCm → "_rocm.hsaco"
+ */
 KernelCacheService::KernelCacheService(const std::string& base_dir,
                                        BackendType backend_type)
     : base_dir_(base_dir), backend_type_(backend_type) {
@@ -36,6 +43,22 @@ KernelCacheService::KernelCacheService(const std::string& base_dir,
 // Save
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Сохраняет кернел на диск: .cl источник + бинарь + запись в manifest.json
+ *
+ * Порядок операций важен:
+ * 1. GetBinDir() + create_directories — гарантируем существование bin/
+ * 2. VersionOldFiles(name) — переименуем старые файлы (_00, _01...) ДО записи новых
+ * 3. Сохраняем {name}.cl в base_dir_/
+ * 4. Сохраняем {name}{suffix} в base_dir_/bin/
+ * 5. WriteManifestEntry() — UPSERT в manifest.json
+ *
+ * @param name      Имя кернела (без расширения), напр. "my_signal"
+ * @param cl_source OpenCL/HIP исходный код
+ * @param binary    Скомпилированный бинарь (clGetProgramInfo → CL_PROGRAM_BINARIES)
+ * @param metadata  Строка-метаданные (параметры компиляции, версия)
+ * @param comment   Человекочитаемый комментарий для manifest.json
+ */
 void KernelCacheService::Save(const std::string& name,
                                const std::string& cl_source,
                                const std::vector<uint8_t>& binary,
@@ -83,6 +106,17 @@ void KernelCacheService::Save(const std::string& name,
 // Load
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Загружает кернел с диска: бинарь (fast path) или исходник (fallback)
+ *
+ * Приоритет бинаря: clCreateProgramWithBinary пропускает JIT-компиляцию →
+ * быстрее старта, стабильнее результат. Если бинарь есть — возвращаем {source+binary}.
+ * Если только исходник — {source, {}}: caller компилирует и может сохранить через Save().
+ *
+ * @param name Имя кернела (без расширения)
+ * @return CacheEntry с source и/или binary
+ * @throws std::runtime_error если ни source ни binary не найдены
+ */
 KernelCacheService::CacheEntry
 KernelCacheService::Load(const std::string& name) const {
   CacheEntry entry;
@@ -90,7 +124,9 @@ KernelCacheService::Load(const std::string& name) const {
   std::string cl_path = base_dir_ + "/" + name + ".cl";
   std::string bin_path = GetBinDir() + "/" + name + GetBinarySuffix();
 
-  // Try binary (fast path)
+  // Бинарный путь приоритетнее: clCreateProgramWithBinary не требует JIT-компиляции.
+  // Если бинарь есть → возвращаем {source + binary}, caller сам выбирает что использовать.
+  // Если бинаря нет → только source; caller компилирует и может сохранить бинарь через Save().
   if (fs::exists(bin_path)) {
     std::ifstream f(bin_path, std::ios::binary | std::ios::ate);
     if (f.is_open()) {
@@ -126,6 +162,15 @@ KernelCacheService::Load(const std::string& name) const {
 // ListKernels
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Возвращает имена всех кернелов из manifest.json
+ *
+ * Читает manifest.json и извлекает все поля "name" ручным парсингом.
+ * Не зависит от внешних JSON-библиотек — достаточно для нашего простого формата.
+ * Если manifest.json отсутствует → возвращает пустой вектор (не бросает).
+ *
+ * @return Вектор имён кернелов в порядке записи в manifest.json
+ */
 std::vector<std::string> KernelCacheService::ListKernels() const {
   std::vector<std::string> names;
   std::string manifest_path = base_dir_ + "/manifest.json";
@@ -136,6 +181,9 @@ std::vector<std::string> KernelCacheService::ListKernels() const {
   std::string content((std::istreambuf_iterator<char>(f)),
                        std::istreambuf_iterator<char>());
 
+  // Ручной парсинг JSON: не зависим от внешних библиотек (nlohmann/rapidjson).
+  // Ищем ВСЕ вхождения "name": "..." в документе — достаточно для нашего манифеста.
+  // Ограничение: значение "name" не должно содержать экранированные кавычки (\").
   // Simple JSON parsing: find all "name": "value" pairs
   std::string search = "\"name\"";
   size_t pos = 0;
@@ -159,6 +207,10 @@ std::vector<std::string> KernelCacheService::ListKernels() const {
 // GetBinDir
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Возвращает путь к подкаталогу бинарей (base_dir_/bin)
+ * Каталог создаётся в Save(), здесь только формируется строка пути.
+ */
 std::string KernelCacheService::GetBinDir() const {
   return base_dir_ + "/bin";
 }
@@ -167,6 +219,14 @@ std::string KernelCacheService::GetBinDir() const {
 // GetBinarySuffix
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Возвращает суффикс имени бинарного файла по типу бэкенда
+ *
+ * Разные суффиксы гарантируют отсутствие коллизий при смешанном кеше:
+ * - OpenCL: "_opencl.bin"  → платформо-зависимый бинарь (SPIR / native ISA)
+ * - ROCm:   "_rocm.hsaco"  → AMD GPU shader compiled object (RDNA, GCN)
+ * default → OpenCL для безопасности.
+ */
 std::string KernelCacheService::GetBinarySuffix() const {
   switch (backend_type_) {
     case BackendType::ROCm:
@@ -181,6 +241,17 @@ std::string KernelCacheService::GetBinarySuffix() const {
 // VersionOldFiles
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Переименовывает существующие файлы кернела в версионированные (_00, _01, ...)
+ *
+ * Вызывается ДО записи новых файлов в Save() — чтобы старая версия не потерялась.
+ * fs::rename() атомарно (POSIX) — нет window в котором файл исчезает.
+ *
+ * Суффикс версии вставляется ПЕРЕД расширением: "_opencl.bin" → "_opencl_00.bin".
+ * Перебирает _00.._99; если все заняты — функция молча возвращается (не бросает).
+ *
+ * @param name Имя кернела (без расширения)
+ */
 void KernelCacheService::VersionOldFiles(const std::string& name) const {
   std::string cl_path = base_dir_ + "/" + name + ".cl";
   std::string bin_dir = GetBinDir();
@@ -201,7 +272,8 @@ void KernelCacheService::VersionOldFiles(const std::string& name) const {
     std::string old_cl = base_dir_ + "/" + name + s + ".cl";
     // Binary suffix: e.g. name_opencl_00.bin
     std::string suffix_str = GetBinarySuffix();
-    // Insert version before extension: _opencl_00.bin
+    // Суффикс версии вставляется ПЕРЕД расширением файла:
+    // "_opencl.bin" → rfind('.') = 7 → "_opencl" + "_00" + ".bin" = "_opencl_00.bin"
     auto dot_pos = suffix_str.rfind('.');
     std::string versioned_suffix = suffix_str.substr(0, dot_pos)
                                    + s + suffix_str.substr(dot_pos);
@@ -220,6 +292,20 @@ void KernelCacheService::VersionOldFiles(const std::string& name) const {
 // WriteManifestEntry
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief UPSERT-запись в manifest.json: обновляет или добавляет запись по имени кернела
+ *
+ * UPSERT логика: читаем существующий manifest → фильтруем запись с тем же name →
+ * добавляем новую в конец → перезаписываем весь файл.
+ * Позволяет обновить comment/metadata без дублирования строк.
+ *
+ * Бинарный режим записи (ios::binary) — LF-only переносы строк на Windows,
+ * что обеспечивает совместимость с git (no CRLF).
+ *
+ * @param name     Имя кернела (ключ UPSERT)
+ * @param metadata Строка метаданных (параметры, версия)
+ * @param comment  Человекочитаемый комментарий
+ */
 void KernelCacheService::WriteManifestEntry(
     const std::string& name,
     const std::string& metadata,
@@ -250,7 +336,9 @@ void KernelCacheService::WriteManifestEntry(
   entry << "      \"backend\": \"" << backend_str << "\"\n";
   entry << "    }";
 
-  // Parse existing entries (skip entry with same name)
+  // UPSERT: читаем старый манифест, отфильтровываем запись с тем же именем,
+  // добавляем новую. Это позволяет обновлять comment/params без дублирования.
+  // Новая запись всегда добавляется в конец массива.
   std::vector<std::string> entries;
   if (!content.empty()) {
     size_t arr_start = content.find('[');
@@ -304,6 +392,12 @@ void KernelCacheService::WriteManifestEntry(
 // GetTimestamp
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Возвращает текущее время в ISO 8601: "2026-02-22T14:35:00"
+ *
+ * Кросс-платформенный: localtime_s (MSVC/Win32) / localtime_r (POSIX).
+ * Используется для поля "created" в manifest.json.
+ */
 std::string KernelCacheService::GetTimestamp() {
   auto now = std::chrono::system_clock::now();
   auto t = std::chrono::system_clock::to_time_t(now);

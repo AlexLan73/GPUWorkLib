@@ -208,6 +208,9 @@ public:
     // Диагностика
     // ========================================================================
 
+    // ДИАГНОСТИКА ТОЛЬКО: использует std::cout напрямую, минуя ConsoleOutput.
+    // Намеренно — вызывается только при разработке/отладке, не в production multi-GPU режиме.
+    // Для runtime-вывода в мультиGPU контексте используй ConsoleOutput::GetInstance().
     /**
      * @brief Вывести конфигурацию пакетов в stdout
      * @param batches Вектор диапазонов пакетов
@@ -298,6 +301,7 @@ inline std::vector<BatchRange> BatchManager::CreateBatches(
         batch.start = current;
         batch.count = remainder;
         batch.batch_idx = idx;
+        // После слияния remainder = tail + full_batch_size → всегда > items_per_batch
         batch.is_merged = (remainder > items_per_batch);  // Флаг слияния
         batches.push_back(batch);
     }

@@ -25,6 +25,14 @@ namespace drv_gpu_lib {
 // Constructor
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Создаёт сервис хранения конфигураций фильтров
+ *
+ * Создаёт FileStorageBackend с корнем в base_dir.
+ * Подкаталог filters/ создаётся автоматически при первом Save().
+ *
+ * @param base_dir Корневая директория для JSON-файлов фильтров
+ */
 FilterConfigService::FilterConfigService(const std::string& base_dir)
     : base_dir_(base_dir),
       storage_(std::make_unique<FileStorageBackend>(base_dir)) {
@@ -34,6 +42,21 @@ FilterConfigService::FilterConfigService(const std::string& base_dir)
 // Save
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Сохраняет конфигурацию фильтра в JSON-файл
+ *
+ * Порядок операций:
+ * 1. VersionOldFiles(name) — если файл существует, переименуем в _00.json/_01.json...
+ * 2. GetTimestamp() — ISO 8601 метка для поля "created"
+ * 3. comment приоритет: явный параметр > data.comment (override семантика)
+ * 4. ToJson() → bytes → storage_->Save()
+ *
+ * Файл сохраняется по ключу "filters/{name}.json".
+ *
+ * @param name    Имя фильтра (напр. "lp_5000"). Не должно быть пустым.
+ * @param data    Конфигурация (FIR coefficients или IIR biquad sections)
+ * @param comment Переопределение комментария; если пуст — берётся data.comment
+ */
 void FilterConfigService::Save(const std::string& name,
                                 const FilterConfigData& data,
                                 const std::string& comment) {
@@ -58,6 +81,13 @@ void FilterConfigService::Save(const std::string& name,
 // Load
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Загружает конфигурацию фильтра из JSON-файла
+ *
+ * @param name Имя фильтра (без расширения)
+ * @return FilterConfigData с полями из файла
+ * @throws std::runtime_error если фильтр не найден
+ */
 FilterConfigData FilterConfigService::Load(const std::string& name) const {
   std::string key = "filters/" + name + ".json";
   if (!storage_->Exists(key)) {
@@ -74,13 +104,26 @@ FilterConfigData FilterConfigService::Load(const std::string& name) const {
 // ListFilters
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Возвращает список имён сохранённых фильтров (без версионированных)
+ *
+ * Список ключей от storage_ фильтруется:
+ * - Убирает префикс "filters/" и расширение ".json"
+ * - Пропускает файлы с суффиксами _00..._99 (это старые версии)
+ * - Пропускает слишком короткие ключи (пустое имя)
+ *
+ * @return Вектор имён фильтров (только текущие, без старых версий)
+ */
 std::vector<std::string> FilterConfigService::ListFilters() const {
   auto keys = storage_->List("filters/");
   std::vector<std::string> names;
 
   for (const auto& key : keys) {
     // Extract name from "filters/{name}.json"
-    if (key.size() <= 13) continue;  // "filters/" + ".json" = 13
+    // "filters/" = 8 символов, ".json" = 5 символов → минимальный корректный ключ:
+    // "filters/X.json" = 14 символов (имя хотя бы из одного символа).
+    // key.size() <= 13 → имя пустое ("filters/.json") → пропускаем.
+    if (key.size() <= 13) continue;
     std::string name = key.substr(8);  // remove "filters/"
     // Remove .json extension
     auto dot = name.rfind(".json");
@@ -104,6 +147,11 @@ std::vector<std::string> FilterConfigService::ListFilters() const {
 // Exists
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Проверяет существование конфигурации фильтра
+ * @param name Имя фильтра (без расширения)
+ * @return true если файл "filters/{name}.json" существует в хранилище
+ */
 bool FilterConfigService::Exists(const std::string& name) const {
   return storage_->Exists("filters/" + name + ".json");
 }
@@ -112,6 +160,16 @@ bool FilterConfigService::Exists(const std::string& name) const {
 // VersionOldFiles
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Переименовывает существующий JSON-файл фильтра в версионированный (_00, _01, ...)
+ *
+ * IStorageBackend не имеет Delete() → копируем через storage_->Save()/Load(),
+ * потом удаляем оригинал напрямую через fs::remove().
+ * Порядок важен: сначала сохранить копию, потом удалить → нет потери данных.
+ * Caller перезапишет оригинальный ключ новыми данными через Save().
+ *
+ * @param name Имя фильтра (без расширения)
+ */
 void FilterConfigService::VersionOldFiles(const std::string& name) const {
   std::string key = "filters/" + name + ".json";
   if (!storage_->Exists(key)) return;
@@ -122,7 +180,9 @@ void FilterConfigService::VersionOldFiles(const std::string& name) const {
     snprintf(buf, sizeof(buf), "_%02d", i);
     std::string versioned_key = "filters/" + name + std::string(buf) + ".json";
     if (!storage_->Exists(versioned_key)) {
-      // Rename: load old, save as versioned, (old will be overwritten by caller)
+      // IStorageBackend не имеет Delete() — копируем через интерфейс, удаляем напрямую.
+      // Порядок важен: сначала сохранить версию, потом удалить оригинал.
+      // Caller затем перезапишет оригинальный ключ новыми данными через Save().
       auto data = storage_->Load(key);
       storage_->Save(versioned_key, data);
 
@@ -140,6 +200,10 @@ void FilterConfigService::VersionOldFiles(const std::string& name) const {
 // GetTimestamp
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Возвращает текущее время в ISO 8601: "2026-02-22T14:35:00"
+ * Кросс-платформенный: localtime_s (MSVC) / localtime_r (POSIX).
+ */
 std::string FilterConfigService::GetTimestamp() {
   auto now = std::chrono::system_clock::now();
   auto t = std::chrono::system_clock::to_time_t(now);
@@ -159,6 +223,20 @@ std::string FilterConfigService::GetTimestamp() {
 // JSON Serialization
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Сериализует FilterConfigData в JSON-строку
+ *
+ * Ручная сериализация без внешних зависимостей (nlohmann, rapidjson).
+ * Для FIR: поле "coefficients" — массив float в scientific нотации (сохраняет все биты).
+ * Для IIR: поле "sections" — массив объектов {b0,b1,b2,a1,a2} на каждую biquad-секцию.
+ * Поле "created" заполняется caller'ом (GetTimestamp()), не здесь.
+ *
+ * @param name      Имя фильтра
+ * @param data      Конфигурация (type определяет какое поле будет в JSON)
+ * @param comment   Комментарий (уже resolved приоритетом в Save())
+ * @param timestamp ISO 8601 строка времени создания
+ * @return JSON-строка готовая для записи в файл
+ */
 std::string FilterConfigService::ToJson(
     const std::string& name,
     const FilterConfigData& data,
@@ -176,7 +254,7 @@ std::string FilterConfigService::ToJson(
     j << ",\n  \"coefficients\": [";
     for (size_t i = 0; i < data.coefficients.size(); ++i) {
       if (i > 0) j << ", ";
-      j << std::scientific << data.coefficients[i];
+      j << std::scientific << data.coefficients[i];  // scientific: сохраняет все значимые биты float
     }
     j << "]";
   }
@@ -200,10 +278,23 @@ std::string FilterConfigService::ToJson(
   return j.str();
 }
 
+/**
+ * @brief Десериализует FilterConfigData из JSON-строки
+ *
+ * Ручной парсинг через лямбды (parse_string, parse_float) — нет внешних зависимостей.
+ * Предполагает JSON, сгенерированный нашим ToJson() — не валидирует произвольный JSON.
+ *
+ * FIR: посимвольный парсинг "coefficients" массива (e/E/+/-/digit).
+ * IIR: посекционный парсинг — каждый {b0..a2} объект собирается через parse_float.
+ *
+ * @param json JSON-строка из файла хранилища
+ * @return Заполненный FilterConfigData
+ */
 FilterConfigData FilterConfigService::FromJson(const std::string& json) {
   FilterConfigData data;
 
-  // Parse name
+  // Ручной парсинг: не зависим от внешних JSON-библиотек.
+  // Предполагает корректный JSON, сгенерированный нашим ToJson() — не валидирует структуру.
   auto parse_string = [&json](const std::string& key) -> std::string {
     auto pos = json.find("\"" + key + "\"");
     if (pos == std::string::npos) return "";

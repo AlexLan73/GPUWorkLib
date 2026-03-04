@@ -61,6 +61,8 @@ namespace py = pybind11;
 // Helper: zero-copy vector -> numpy via capsule
 // ============================================================================
 
+// Передаём numpy владение данными через capsule — Python GC вызовет delete когда
+// numpy-массив будет уничтожен. Это даёт zero-copy: не копируем данные второй раз.
 template<typename T>
 py::array_t<T> vector_to_numpy(std::vector<T>&& data) {
     auto* vec = new std::vector<T>(std::move(data));
@@ -72,6 +74,8 @@ py::array_t<T> vector_to_numpy(std::vector<T>&& data) {
     return py::array_t<T>(shape, strides, vec->data(), capsule);
 }
 
+// 2D вариант (rows × cols) — row-major strides, как ожидает numpy C-contiguous.
+// Данные в vec должны быть уже в flat row-major порядке: [row0_col0, row0_col1, ..., rowN_colM].
 template<typename T>
 py::array_t<T> vector_to_numpy_2d(std::vector<T>&& data, size_t rows, size_t cols) {
     auto* vec = new std::vector<T>(std::move(data));
@@ -93,6 +97,9 @@ py::array_t<T> vector_to_numpy_2d(std::vector<T>&& data, size_t rows, size_t col
 // GPUContext — wraps OpenCL context + backend
 // ============================================================================
 
+// Лёгкая Python-обёртка над OpenCL: создаёт context/queue/backend для одного GPU-устройства.
+// Lifetime GPUContext должен превышать lifetime любых объектов (PySignalGenerator, PyFFTProcessor...),
+// которые держат ссылку ctx_ — они не владеют бэкендом, только используют.
 class GPUContext {
 public:
     GPUContext(int device_index = 0) {
@@ -120,6 +127,8 @@ public:
         if (err != CL_SUCCESS)
             throw std::runtime_error("OpenCL: clCreateContext failed (" + std::to_string(err) + ")");
 
+        // CL_QUEUE_PROFILING_ENABLE нужен для GPUProfiler: без него cl_event.profiling_info недоступен.
+        // Лёгкий overhead (~1%), зато профилирование всегда готово без пересоздания очереди.
 #ifdef CL_VERSION_2_0
         cl_queue_properties props[] = { CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0 };
         queue_ = clCreateCommandQueueWithProperties(context_, device_, props, &err);
@@ -202,6 +211,11 @@ private:
 // HybridGPUContext — wraps HybridBackend (OpenCL + ROCm on one GPU)
 // ============================================================================
 
+// Специальный контекст для AMD GPU: держит одновременно OpenCL и ROCm backend
+// на одном устройстве. Позволяет использовать zero-copy буферы между ними —
+// данные генерируются OpenCL-модулем и передаются в ROCm-модуль без копирования через CPU.
+// Используется в интеграционных тестах и продакшн-пайплайнах типа:
+//   OpenCL генератор → (zero-copy) → ROCm LchFarrow → ROCm Statistics
 class HybridGPUContext {
 public:
   explicit HybridGPUContext(int device_index = 0)
@@ -250,6 +264,9 @@ private:
 // PySignalGenerator — pythonic wrapper over signal_gen::SignalService
 // ============================================================================
 
+// Обёртка над всеми генераторами сигналов. Единственная точка входа из Python
+// для генерации CW/LFM/Noise/FormSignal/Script. Не хранит состояние сигнала —
+// каждый вызов generate_* создаёт новый буфер.
 class PySignalGenerator {
 public:
     explicit PySignalGenerator(GPUContext& ctx) : ctx_(ctx) {}
@@ -268,6 +285,9 @@ public:
 
         signal_gen::SystemSampling sys{ fs, length };
 
+        // beam_count == 1: CPU-путь через SignalService (нет смысла гонять на GPU
+        // одну трассу — оверхед upload/download перевешивает выигрыш).
+        // beam_count > 1: GPU-путь (CwGenerator), всё в параллель, потом readback.
         if (beam_count <= 1) {
             signal_gen::SignalService service(ctx_.backend());
             auto data = service.GenerateCpu(cw, sys);
@@ -360,6 +380,9 @@ public:
     }
 
     // ── Universal: generate from string ─────────────────────────────
+    // DSL-парсер для скриптовых конфигураций: читает тип сигнала из "type=..."
+    // и диспетчеризует в нужный генератор. Нужен для сценариев где тип сигнала
+    // задаётся в конфиге/JSON и не известен на этапе компиляции Python-кода.
     // Format: "type=cw,freq=100,amp=1.0" or "type=lfm,f_start=100,f_end=500"
     // or "type=noise,power=2.0"
     py::array_t<std::complex<float>> generate_from_string(
@@ -466,6 +489,11 @@ private:
 // PyFFTProcessor — pythonic wrapper over fft_processor::FFTProcessor
 // ============================================================================
 
+// Обёртка над FFTProcessor с двумя режимами вывода:
+//   process_complex  → numpy complex64 (спектр как комплексный массив)
+//   process_mag_phase → dict {magnitude, phase, frequency} — для анализа и визуализации
+// Внутри FFTProcessor использует clFFT (OpenCL). Не хранит состояние между вызовами —
+// каждый process_* может иметь другой размер FFT.
 class PyFFTProcessor {
 public:
     explicit PyFFTProcessor(GPUContext& ctx) : ctx_(ctx), fft_(ctx.backend()) {}
@@ -610,6 +638,10 @@ private:
 // PyScriptGenerator — text DSL -> OpenCL kernel compiler
 // ============================================================================
 
+// Динамический компилятор сигналов: принимает текстовый DSL (описание формулы сигнала)
+// и компилирует его в OpenCL kernel на лету. Позволяет задавать произвольные сигналы
+// без перекомпиляции C++ кода — только новый скрипт. Компиляция занимает ~100-500ms,
+// после этого генерация быстрая (~GPU).
 class PyScriptGenerator {
 public:
     explicit PyScriptGenerator(GPUContext& ctx) : ctx_(ctx), gen_(ctx.backend()) {}
@@ -662,6 +694,11 @@ private:
 // PyGPUBuffer — GPU buffer handle for output="gpu"
 // ============================================================================
 
+// Хранит cl_mem буфер на GPU и позволяет передавать его между Python-объектами
+// без копирования через CPU. Например: FormSignalGenerator → HeterodyneDechirp
+// (через process_external) — данные остаются на GPU.
+// ВАЖНО: вызовите read() или release() до удаления объекта, иначе буфер
+// освободится автоматически в деструкторе.
 class PyGPUBuffer {
 public:
     PyGPUBuffer(cl_mem mem, cl_command_queue queue,
@@ -758,6 +795,12 @@ private:
 // PyFormSignalGenerator — multi-channel getX formula on GPU
 // ============================================================================
 
+// Генератор многоканального сигнала с произвольными задержками tau на GPU.
+// В отличие от PySignalGenerator (простые CW/LFM), FormSignalGenerator поддерживает:
+//   - случайные задержки tau (tau_base ± tau_step) — имитация многопутного распространения
+//   - девиацию частоты fdev — FM-сигнал
+//   - шум noise_amplitude добавляется прямо в ядре GPU
+// Задержки задаются параметрически, не через Farrow-интерполяцию — нет артефактов.
 class PyFormSignalGenerator {
 public:
     explicit PyFormSignalGenerator(GPUContext& ctx)
@@ -837,6 +880,11 @@ private:
 // PyFormScriptGenerator — DSL + on-disk kernel cache for getX
 // ============================================================================
 
+// Расширенная версия FormSignalGenerator: добавляет кеш скомпилированных ядер на диске.
+// Разница с FormSignalGenerator: FormScriptGenerator генерирует текст скрипта/ядра,
+// компилирует его, и может сохранить/загрузить бинарный kernel по имени — повторная
+// компиляция не нужна, загрузка занимает ~10мс вместо ~500мс.
+// Типовой workflow: compile() → save_kernel("my_signal") → в следующий раз load_kernel("my_signal").
 class PyFormScriptGenerator {
 public:
     explicit PyFormScriptGenerator(GPUContext& ctx)
@@ -955,6 +1003,11 @@ private:
 // PyDelayedFormSignalGenerator — Farrow 48×5 fractional delay on GPU
 // ============================================================================
 
+// Генератор с точной дробной задержкой через интерполяцию Лагранжа 48×5.
+// Отличие от FormSignalGenerator: задержки задаются в микросекундах через set_delays(),
+// а дробная часть реализуется Farrow-фильтром (не параметрическим сдвигом фазы).
+// Результат совпадает с LchFarrow.process(FormSignalGenerator.generate()) с более высокой
+// точностью при нецелочисленных задержках. Используется как эталон для тестирования LchFarrow.
 class PyDelayedFormSignalGenerator {
 public:
     explicit PyDelayedFormSignalGenerator(GPUContext& ctx)
@@ -1046,6 +1099,12 @@ private:
 // PySpectrumMaximaFinder — find all local maxima in FFT spectrum
 // ============================================================================
 
+// Ищет все локальные максимумы в FFT-спектре (не только глобальный).
+// Принимает комплексный FFT-результат, вычисляет магнитуды внутри на GPU,
+// затем сравнивает соседние точки. search_start/search_end задают диапазон
+// бинов для поиска — нужно при ограниченном интересующем диапазоне частот,
+// например, если известно что сигнал только в [0.1..0.4 * fs].
+// Возвращает для каждого луча: positions (bin indices), magnitudes, frequencies (Hz).
 class PySpectrumMaximaFinder {
 public:
     explicit PySpectrumMaximaFinder(GPUContext& ctx) : ctx_(ctx), finder_(ctx.backend()) {}
@@ -1101,7 +1160,8 @@ public:
 
         clReleaseMemObject(gpu_fft);
 
-        // Convert to Python (extract from MaxValue for backward compatibility)
+        // Single beam → dict (удобнее чем list[dict] с одним элементом в Python).
+        // Multi beam → list[dict], каждый с полем antenna_id.
         if (beam_count == 1 && result.beams.size() == 1) {
             // Single beam: return dict
             auto& b = result.beams[0];

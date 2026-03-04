@@ -1,7 +1,7 @@
 # C3 — Component Diagram
 
 > **Project**: GPUWorkLib
-> **Date**: 2026-02-23
+> **Date**: 2026-03-04
 > **Reference**: [c4model.com](https://c4model.com)
 > **Level**: 3 (Component) — компоненты внутри каждого контейнера
 
@@ -227,13 +227,12 @@
 ┌───────────────────── Filters ──────────────────────────────────┐
 │                                                                  │
 │  ┌──────────────────────────────────────────────────────┐       │
-│  │ FirFilter                                             │       │
+│  │ FirFilter                          [OpenCL]           │       │
 │  │                                                       │       │
 │  │ LoadConfig(json_path)                                 │       │
 │  │ SetCoefficients(coeffs)                               │       │
 │  │ Process(cl_mem, channels, points) → InputData<cl_mem> │       │
 │  │ ProcessCpu(input, ch, pts) → vector<complex<float>>   │       │
-│  │ GetNumTaps() → uint32_t                               │       │
 │  │                                                       │       │
 │  │ ⚡ Kernel: __constant (≤16000 taps)                   │       │
 │  │           __global   (>16000 taps, fallback)          │       │
@@ -241,17 +240,33 @@
 │  └──────────────────────────────────────────────────────┘       │
 │                                                                  │
 │  ┌──────────────────────────────────────────────────────┐       │
-│  │ IirFilter                                             │       │
+│  │ IirFilter                          [OpenCL]           │       │
 │  │                                                       │       │
-│  │ SetCoefficients(a_coeffs, b_coeffs)                   │       │
+│  │ SetBiquadSections(sections)                           │       │
 │  │ Process(cl_mem, channels, points) → InputData<cl_mem> │       │
 │  │                                                       │       │
-│  │ Formula: y[n] = Σ b[k]*x[n-k] - Σ a[k]*y[n-k]       │       │
+│  │ Formula: biquad DFII-T cascade                        │       │
+│  │ y[n] = Σ b[k]*x[n-k] - Σ a[k]*y[n-k]                │       │
 │  └──────────────────────────────────────────────────────┘       │
 │                                                                  │
 │  ┌──────────────────── ROCm variants ───────────────────┐       │
-│  │ FirFilterROCm / IirFilterROCm                         │       │
-│  │ (HIP kernels, same API)                               │       │
+│  │ FirFilterROCm / IirFilterROCm      [HIP + hiprtc]     │       │
+│  │ (same API as OpenCL variants)                         │       │
+│  └──────────────────────────────────────────────────────┘       │
+│                                                                  │
+│  ┌────────────── ROCm-only: Adaptive Filters ───────────┐       │
+│  │ MovingAverageFilterROCm                               │       │
+│  │   SetParams(type: SMA|EMA|MMA|DEMA|TEMA, N)           │       │
+│  │   Process(cl_mem, channels, points) → cl_mem          │       │
+│  │   1 thread per channel, efficient at ≥64 channels     │       │
+│  │                                                       │       │
+│  │ KalmanFilterROCm                                      │       │
+│  │   SetParams(Q, R, x0, P0)                             │       │
+│  │   1D scalar Kalman (Re/Im независимо)                 │       │
+│  │                                                       │       │
+│  │ KaufmanFilterROCm (KAMA)                              │       │
+│  │   SetParams(er_period, fast_period, slow_period)      │       │
+│  │   Adaptive Moving Average по Efficiency Ratio         │       │
 │  └──────────────────────────────────────────────────────┘       │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -336,7 +351,54 @@
 
 ---
 
-## 8. Python Bindings — Components
+## 8. FM Correlator — Components
+
+```
+┌───────────────────── FM Correlator ───────────────────────────┐
+│  Backend: ROCm-only (hipFFT R2C/C2R + HIP kernels)             │
+│                                                                 │
+│  ┌─────────────────────────── API ──────────────────────┐      │
+│  │ FMCorrelator                                          │      │
+│  │                                                       │      │
+│  │ SetParams(FMCorrelatorParams)                         │      │
+│  │ GenerateMSequence([seed]) → vector<float>             │      │
+│  │ PrepareReference([ref_signal])   // Step 1 (once)     │      │
+│  │ Process(input_signals) → FMCorrelatorResult           │      │
+│  │ RunTestPattern(shift_step) → FMCorrelatorResult       │      │
+│  │ Step1_ReferenceFFT() / Step2_InputFFT() / Step3_Corr()│      │
+│  └──────────────────────────┬────────────────────────────┘      │
+│                             │                                    │
+│  ┌──────────────────────────┴───────────────────────────┐       │
+│  │ HIP Kernels (3 production + 1 utility)               │       │
+│  │                                                       │       │
+│  │ apply_cyclic_shifts   — float→float2 + K shifts      │       │
+│  │ multiply_conj_fused   — conj(ref_fft) × inp_fft      │       │
+│  │                          (conj inline, N/2+1 points)  │       │
+│  │ extract_magnitudes    — |corr_time| / N, n_kg points  │       │
+│  │ generate_test_inputs  — circshift(ref, s*step) on GPU │       │
+│  └──────────────────────────────────────────────────────┘       │
+│                                                                  │
+│  ┌────────────────── hipFFT Plans ───────────────────────┐      │
+│  │ plan_ref:  C2C Forward, batch=K  (in-place, ref_fft)  │      │
+│  │ plan_inp:  R2C Forward, batch=S  (float → N/2+1 cplx) │      │
+│  │ plan_corr: C2R Inverse, batch=S×K (cplx → float)     │      │
+│  │ Созданы при SetParams(), хранятся постоянно           │      │
+│  └──────────────────────────────────────────────────────┘       │
+│                                                                  │
+│  ┌──────────────────── Data Types ───────────────────────┐      │
+│  │ FMCorrelatorParams:                                   │      │
+│  │   { fft_size=32768, num_shifts=32, num_signals=5,     │      │
+│  │     num_output_points=2000,                           │      │
+│  │     lfsr_polynomial=0xB8000000, lfsr_seed=0x1 }       │      │
+│  │ FMCorrelatorResult:                                   │      │
+│  │   { peaks[S×K×n_kg], at(signal,shift,point) }        │      │
+│  └──────────────────────────────────────────────────────┘       │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 9. Python Bindings — Components
 
 ```
 ┌───────────────── Python Bindings ──────────────────────────────┐
@@ -378,7 +440,7 @@
 
 ---
 
-## 9. Сводная таблица всех компонентов
+## 10. Сводная таблица всех компонентов
 
 | Контейнер | Компонент | Тип | Файлы |
 |-----------|-----------|-----|-------|
@@ -412,17 +474,26 @@
 | | SpectrumProcessorROCm | Strategy | `include/processors/spectrum_processor_rocm.hpp` |
 | **Filters** | FirFilter | Class | `include/filters/fir_filter.hpp` |
 | | IirFilter | Class | `include/filters/iir_filter.hpp` |
+| | FirFilterROCm | Class | `include/filters/fir_filter_rocm.hpp` |
+| | IirFilterROCm | Class | `include/filters/iir_filter_rocm.hpp` |
+| | MovingAverageFilterROCm | Class | `include/filters/moving_average_filter_rocm.hpp` |
+| | KalmanFilterROCm | Class | `include/filters/kalman_filter_rocm.hpp` |
+| | KaufmanFilterROCm | Class | `include/filters/kaufman_filter_rocm.hpp` |
 | **Heterodyne** | HeterodyneDechirp | Facade | `include/heterodyne_dechirp.hpp` |
 | | IHeterodyneProcessor | Interface | `include/processors/i_heterodyne_processor.hpp` |
 | | HeterodyneProcessorOpenCL | Strategy | `include/processors/heterodyne_processor_opencl.hpp` |
 | | HeterodyneProcessorROCm | Strategy | `include/processors/heterodyne_processor_rocm.hpp` |
 | **Farrow** | LchFarrow | Class | `include/lch_farrow.hpp` |
+| **FMCorr** | FMCorrelator | Class | `include/fm_correlator.hpp` |
+| | FMCorrelatorParams | Struct | `include/fm_correlator.hpp` |
+| | FMCorrelatorResult | Struct | `include/fm_correlator.hpp` |
 | **Python** | GPUContext | Wrapper | `python/gpu_worklib_bindings.cpp` |
 | | PySignalGenerator | Wrapper | `python/gpu_worklib_bindings.cpp` |
 | | PyFFTProcessor | Wrapper | `python/gpu_worklib_bindings.cpp` |
 | | PyHeterodyneDechirp | Wrapper | `python/py_heterodyne.hpp` |
 | | PyFilters | Wrapper | `python/py_filters.hpp` |
 | | PyLchFarrow | Wrapper | `python/py_lch_farrow.hpp` |
+| | PyFMCorrelatorROCm | Wrapper | `python/py_fm_correlator_rocm.hpp` |
 
 ---
 

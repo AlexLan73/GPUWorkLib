@@ -19,6 +19,12 @@ namespace drv_gpu_lib {
 // Helper: проверка hipError
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Вспомогательная функция проверки HIP ошибок
+ *
+ * Локальная для .cpp — не дублирует CheckHIPError из rocm_core.hpp.
+ * Бросает std::runtime_error с полным описанием: operation + код + строка ошибки.
+ */
 static void CheckHip(hipError_t err, const char* operation) {
   if (err != hipSuccess) {
     throw std::runtime_error(
@@ -33,6 +39,11 @@ static void CheckHip(hipError_t err, const char* operation) {
 // Constructor / Destructor
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Создаёт неактивный ZeroCopyBridge (импорт ещё не выполнен)
+ *
+ * Все хэндлы — nullptr. IsActive() вернёт false. Реальный импорт — через ImportFrom*().
+ */
 ZeroCopyBridge::ZeroCopyBridge()
     : ext_mem_(nullptr)
     , hip_ptr_(nullptr)
@@ -41,10 +52,19 @@ ZeroCopyBridge::ZeroCopyBridge()
     , owns_memory_(false) {
 }
 
+/**
+ * @brief Деструктор — вызывает Release() для освобождения ext_mem_ (если DMA-BUF метод)
+ */
 ZeroCopyBridge::~ZeroCopyBridge() {
   Release();
 }
 
+/**
+ * @brief Move-конструктор — передаёт владение ext_mem_ без его пересоздания
+ *
+ * other.ext_mem_ и hip_ptr_ → nullptr: деструктор other НЕ вызовет hipDestroyExternalMemory
+ * на уже переданном хэндле (double-free). owns_memory_ → false у other.
+ */
 ZeroCopyBridge::ZeroCopyBridge(ZeroCopyBridge&& other) noexcept
     : ext_mem_(other.ext_mem_)
     , hip_ptr_(other.hip_ptr_)
@@ -58,6 +78,11 @@ ZeroCopyBridge::ZeroCopyBridge(ZeroCopyBridge&& other) noexcept
   other.owns_memory_ = false;
 }
 
+/**
+ * @brief Move-присваивание — сначала освобождает свои ресурсы, затем перенимает чужие
+ *
+ * Release() первым — иначе текущий ext_mem_ останется без освобождения (утечка).
+ */
 ZeroCopyBridge& ZeroCopyBridge::operator=(ZeroCopyBridge&& other) noexcept {
   if (this != &other) {
     Release();
@@ -96,6 +121,9 @@ hipError_t ZeroCopyBridge::ImportFromDmaBuf(int dma_buf_fd, size_t buffer_size) 
   size_ = buffer_size;
 
   // 1. Описание внешней памяти — dma-buf fd
+  // hipExternalMemoryHandleTypeOpaqueFd = Linux dma-buf file descriptor.
+  // OpenCL экспортирует cl_mem через cl_khr_external_memory_dma_buf → получаем fd →
+  // передаём сюда для маппинга в HIP address space.
   hipExternalMemoryHandleDesc ext_mem_desc = {};
   ext_mem_desc.type = hipExternalMemoryHandleTypeOpaqueFd;
   ext_mem_desc.handle.fd = dma_buf_fd;
@@ -174,6 +202,8 @@ void ZeroCopyBridge::ImportFromOpenCl(cl_mem cl_buffer, size_t buffer_size,
   }
 
   // Метод B (приоритет): AMD GPU VA — zero overhead
+  // OpenCL и HIP на одном AMD GPU разделяют unified VA space →
+  // VA из cl_mem напрямую доступен из HIP kernels без каких-либо копий.
   if (SupportsAmdGpuVA(cl_device)) {
     void* gpu_va = ExportClBufferToGpuVA(cl_buffer);
     if (gpu_va) {
@@ -184,7 +214,9 @@ void ZeroCopyBridge::ImportFromOpenCl(cl_mem cl_buffer, size_t buffer_size,
     DRVGPU_LOG_WARNING("ZeroCopyBridge", "AMD GPU VA export failed, trying DMA-BUF...");
   }
 
-  // Метод A (fallback): DMA-BUF
+  // Метод A (fallback): DMA-BUF через Linux kernel
+  // cl_khr_external_memory_dma_buf экспортирует cl_mem как fd → hipImportExternalMemory.
+  // Слегка дороже GPU VA (microseconds overhead на import), но работает везде на Linux.
   if (SupportsDmaBufExport(cl_device)) {
     int fd = ExportClBufferToFd(cl_buffer);
     if (fd >= 0) {
@@ -196,6 +228,8 @@ void ZeroCopyBridge::ImportFromOpenCl(cl_mem cl_buffer, size_t buffer_size,
     DRVGPU_LOG_WARNING("ZeroCopyBridge", "DMA-BUF export failed (fd=-1)");
   }
 
+  // SVM fallback намеренно НЕ реализован: hipSVMAlloc требует специальной аллокации
+  // cl_mem через clSVMAlloc — мы не можем импортировать произвольный cl_mem в SVM.
   throw std::runtime_error(
       "ZeroCopyBridge::ImportFromOpenCl: no ZeroCopy method available. "
       "Device does not support cl_khr_external_memory_dma_buf or CL_MEM_AMD_GPU_VA. "
@@ -209,6 +243,9 @@ void ZeroCopyBridge::ImportFromOpenCl(cl_mem cl_buffer, size_t buffer_size,
 // ════════════════════════════════════════════════════════════════════════════
 
 void ZeroCopyBridge::Release() {
+  // owns_memory_ = true только для DMA-BUF метода: ext_mem_ был создан hipImportExternalMemory →
+  // нужно hipDestroyExternalMemory. Для AMD GPU VA метода: owns_memory_ = false,
+  // память принадлежит OpenCL cl_mem — мы её не освобождаем.
   if (owns_memory_ && ext_mem_) {
     (void)hipDestroyExternalMemory(ext_mem_);
     DRVGPU_LOG_INFO("ZeroCopyBridge", "Released external memory");

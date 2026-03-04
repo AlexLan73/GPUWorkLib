@@ -23,6 +23,9 @@
 // Helper: vector -> numpy 3D [d1, d2, d3]
 // ════════════════════════════════════════════════════════════════════════════
 
+// Локальная версия для 3D массива [signals × shifts × output_points].
+// Не вынесена в общий хелпер — единственное место использования в проекте.
+// Row-major strides: d3 самый быстрый (output points), d1 самый медленный (signals).
 template<typename T>
 py::array_t<T> vector_to_numpy_3d(std::vector<T>&& data,
                                    size_t d1, size_t d2, size_t d3) {
@@ -47,6 +50,16 @@ py::array_t<T> vector_to_numpy_3d(std::vector<T>&& data,
 // PyFMCorrelatorROCm
 // ════════════════════════════════════════════════════════════════════════════
 
+// Частотно-доменный коррелятор для детектирования M-последовательностей
+// в ФМн (фазоманипулированных) сигналах. Pipeline на GPU:
+//   1. Генерируем K циклических сдвигов референса (cyclic_shifts kernel)
+//   2. R2C FFT входных сигналов S + C2C FFT референсов K (параллельно)
+//   3. Поэлементное умножение * conj (cross-correlation в частотной области)
+//   4. C2R IFFT → время-доменная кросс-корреляция
+//   5. Извлекаем первые n_kg точек (пик корреляции там)
+// Выход: [S, K, n_kg] — корреляция каждого сигнала с каждым сдвигом.
+// params_ хранит конфигурацию отдельно и передаётся в SetParams — так что
+// можно менять параметры без пересоздания объекта.
 class PyFMCorrelatorROCm {
 public:
   explicit PyFMCorrelatorROCm(ROCmGPUContext& ctx)
@@ -58,6 +71,8 @@ public:
     params_.num_shifts = num_shifts;
     params_.num_signals = num_signals;
     params_.num_output_points = num_output_points;
+    // lfsr_polynomial = 0x00400007 — примитивный полином GF(2^26):
+    //   x^26 + x^1 + 1 (биты 26 и 1 установлены) → M-последовательность длины 2^26-1.
     params_.lfsr_polynomial = polynomial;
     params_.lfsr_seed = seed;
     correlator_.SetParams(params_);

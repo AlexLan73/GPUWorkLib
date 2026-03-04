@@ -154,7 +154,9 @@ struct EventStats {
         end.Update(data.end_ns);
         complete.Update(data.complete_ns);
 
-        // Производные задержки (в наносекундах, конвертируем)
+        // Производные задержки (в наносекундах, конвертируем).
+        // Защитные проверки >= нужны: некоторые драйверы возвращают 0 или некорректный
+        // порядок для временных меток событий, которые не прошли все фазы очереди GPU.
         if (data.submit_ns >= data.queued_ns)
             queue_delay.Update(data.submit_ns - data.queued_ns);
         if (data.start_ns >= data.submit_ns)
@@ -232,7 +234,9 @@ struct ModuleStats {
         return total;
     }
 
-    /// Number of benchmark runs (calls per individual event, assuming all equal)
+    // ПРЕДПОЛОЖЕНИЕ: все события имеют одинаковое число вызовов.
+    // Верно для бенчмарков, где каждая фаза (Init→Process→Cleanup) замеряется ровно n раз.
+    // Если события вызывались с разной частотой — GetRunCount() даст неверный результат.
     uint64_t GetRunCount() const {
         if (events.empty()) return 0;
         return events.begin()->second.total_calls;

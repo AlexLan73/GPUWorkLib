@@ -19,12 +19,12 @@
 
 namespace drv_gpu_lib {
 
+// Текущая единственная реализация IStorageBackend — хранит данные как файлы на диске.
+// Ключи маппируются в пути: "filters/lp_5000.json" → base_dir/filters/lp_5000.json
+// Разделители '/' в ключе создают подкаталоги автоматически (fs::create_directories).
+// Планируемая альтернатива: SqliteStorageBackend (для атомарных транзакций).
 class FileStorageBackend : public IStorageBackend {
 public:
-  /**
-   * @brief Construct file storage with given root directory
-   * @param base_dir Root directory for all stored files
-   */
   explicit FileStorageBackend(const std::string& base_dir);
 
   void Save(const std::string& key, const std::vector<uint8_t>& data) override;
@@ -32,13 +32,13 @@ public:
   std::vector<std::string> List(const std::string& prefix = "") const override;
   bool Exists(const std::string& key) const override;
 
-  /// Get the base directory path
+  /// Путь к корневой директории хранилища
   const std::string& GetBaseDir() const { return base_dir_; }
 
 private:
   std::string base_dir_;
 
-  /// Build full filesystem path from key
+  // Конвертирует ключ в полный путь: key "filters/x.json" → base_dir_/filters/x.json
   std::string KeyToPath(const std::string& key) const;
 };
 

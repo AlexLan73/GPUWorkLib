@@ -1,6 +1,6 @@
 # Filters — Полная документация
 
-> FIR и IIR фильтры на GPU (OpenCL + ROCm/HIP) для комплексных multi-channel сигналов
+> FIR и IIR фильтры на GPU (OpenCL + ROCm/HIP): прямая свёртка, biquad-каскад, скользящие средние (SMA/EMA/MMA/DEMA/TEMA), 1D Kalman, KAMA — для комплексных multi-channel сигналов
 
 **Namespace**: `filters`
 **Каталог**: `modules/filters/`
@@ -31,12 +31,15 @@
 
 Модуль `filters` — GPU-фильтрация **комплексных** multi-channel сигналов в формате `float2` (complex64). Каждый канал обрабатывается параллельно.
 
-| Класс | Backend | Алгоритм | Коэффициенты |
+| Класс | Backend | Алгоритм | Конфигурация |
 |-------|---------|----------|--------------|
-| **FirFilter** | OpenCL | Direct-form convolution | `SetCoefficients()`, JSON |
-| **IirFilter** | OpenCL | Biquad cascade DFII-T | `SetBiquadSections()`, JSON |
+| **FirFilter** | OpenCL | Direct-form convolution (2D NDRange) | `SetCoefficients()`, JSON |
+| **IirFilter** | OpenCL | Biquad cascade DFII-T (1D NDRange) | `SetBiquadSections()`, JSON |
 | **FirFilterROCm** | ROCm/HIP | Direct-form + hiprtc | `SetCoefficients()` |
-| **IirFilterROCm** | ROCm/HIP | Biquad cascade DFII-T | `SetBiquadSections()` |
+| **IirFilterROCm** | ROCm/HIP | Biquad cascade DFII-T + hiprtc | `SetBiquadSections()` |
+| **MovingAverageFilterROCm** | ROCm/HIP | SMA/EMA/MMA/DEMA/TEMA | `SetParams(MAType, N)` |
+| **KalmanFilterROCm** | ROCm/HIP | 1D scalar Kalman (Re/Im независимо) | `SetParams(Q, R, x0, P0)` |
+| **KaufmanFilterROCm** | ROCm/HIP | KAMA (адаптивная MA по ER) | `SetParams(er_period, fast, slow)` |
 
 **Workflow Stage 1**: scipy → коэффициенты → GPU (Python генерирует, передаёт в C++).
 **Workflow Stage 3**: Natural language → AI → scipy params → GPU → plot.
@@ -53,8 +56,12 @@ GPU эффективен **только при multi-channel** (≥ 8 канал
 | FIR direct | 64 | ~40–60× |
 | IIR cascade | 1 | ~0.5× (CPU быстрее!) |
 | IIR cascade | 64 | ~50–80× |
+| MovingAverage (ROCm) | 256 | ~100–200× |
+| Kalman 1D (ROCm) | 256 | ~80–150× |
+| KAMA (ROCm) | 256 | ~60–120× |
 
 **Вывод**: Single-channel IIR — лучше на CPU. Multi-channel — GPU даёт значительный выигрыш.
+ROCm-only фильтры (MA, Kalman, KAMA) — 1 thread per channel, эффективны при ≥ 64 каналах.
 
 ---
 
@@ -114,6 +121,77 @@ sos[sec * 5 + 2] = b2
 sos[sec * 5 + 3] = a1
 sos[sec * 5 + 4] = a2
 ```
+
+### 3.3 Скользящие средние (ROCm)
+
+**SMA (Simple MA)** — равновесное взвешивание, ring buffer (max N ≤ 128):
+
+$$\text{SMA}[n] = \frac{1}{N} \sum_{k=0}^{N-1} x[n-k]$$
+
+**EMA (Exponential MA)** — экспоненциальное взвешивание, $\alpha = \frac{2}{N+1}$:
+
+$$\text{EMA}[n] = \alpha \cdot x[n] + (1 - \alpha) \cdot \text{EMA}[n-1]$$
+
+**MMA (Modified / Wilder)** — $\alpha = \frac{1}{N}$:
+
+$$\text{MMA}[n] = \frac{1}{N} \cdot x[n] + \frac{N-1}{N} \cdot \text{MMA}[n-1]$$
+
+**DEMA (Double EMA)**:
+
+$$\text{DEMA}[n] = 2 \cdot \text{EMA}_1[n] - \text{EMA}_2[n], \quad \text{где EMA}_2 = \text{EMA of EMA}_1$$
+
+**TEMA (Triple EMA)** — минимальная задержка:
+
+$$\text{TEMA}[n] = 3 \cdot \text{EMA}_1 - 3 \cdot \text{EMA}_2 + \text{EMA}_3$$
+
+**Параллелизм**: 1D NDRange — 1 thread per channel, последовательный цикл по семплам внутри.
+**Ограничение SMA**: ring buffer `N ≤ 128` (хранится в thread-local регистрах/LDS).
+
+### 3.4 Kalman 1D scalar (ROCm)
+
+Скалярный Kalman применяется **независимо к Re и Im** частям каждого канала.
+
+**Predict:**
+
+$$\hat{x}^{-}[n] = \hat{x}[n-1], \quad P^{-}[n] = P[n-1] + Q$$
+
+**Update:**
+
+$$K[n] = \frac{P^{-}[n]}{P^{-}[n] + R}$$
+
+$$\hat{x}[n] = \hat{x}^{-}[n] + K[n] \cdot (z[n] - \hat{x}^{-}[n])$$
+
+$$P[n] = (1 - K[n]) \cdot P^{-}[n]$$
+
+**Параметры** (`KalmanParams`):
+
+| Параметр | По умолчанию | Описание |
+|----------|-------------|----------|
+| `Q` | 0.1 | Process noise variance. Q/R ≪ 1: сильное сглаживание |
+| `R` | 25.0 | Measurement noise variance. Стартовое: R = (FFT_bin_size)² / 12 |
+| `x0` | 0.0 | Начальное состояние |
+| `P0` | 25.0 | Начальная ковариация ошибки (обычно = R) |
+
+**Параллелизм**: 1 thread per channel, последовательный predict-update цикл.
+
+### 3.5 KAMA — Kaufman Adaptive Moving Average (ROCm)
+
+KAMA автоматически адаптирует скорость сглаживания по **Efficiency Ratio (ER)**:
+
+$$\text{ER}[n] = \frac{|x[n] - x[n-N]|}{\sum_{k=1}^{N} |x[n-k+1] - x[n-k]|}$$
+
+$$\text{SC}[n] = \left(\text{ER}[n] \cdot (\alpha_\text{fast} - \alpha_\text{slow}) + \alpha_\text{slow}\right)^2$$
+
+$$\text{KAMA}[n] = \text{KAMA}[n-1] + \text{SC}[n] \cdot (x[n] - \text{KAMA}[n-1])$$
+
+где $\alpha_\text{fast} = \frac{2}{\text{fast\_period}+1}$, $\alpha_\text{slow} = \frac{2}{\text{slow\_period}+1}$.
+
+**Интерпретация**:
+- ER ≈ 1 (чистый тренд) → SC ≈ α_fast → быстрое следование за сигналом
+- ER ≈ 0 (шум) → SC ≈ α_slow → KAMA почти заморожен
+
+**Параметры стандарта Kaufman**: `er_period=10, fast_period=2, slow_period=30`
+**Ограничение**: `er_period ≤ 128` (ring buffer в thread-local регистрах).
 
 ---
 
@@ -469,6 +547,103 @@ print(fir.num_taps)
 print(repr(fir))   # "FirFilterROCm(num_taps=64)"
 ```
 
+### 7.5 C++ — MovingAverageFilterROCm (`ENABLE_ROCM=1`, Linux)
+
+```cpp
+#include "filters/moving_average_filter_rocm.hpp"
+
+filters::MovingAverageFilterROCm ma(rocm_backend);
+
+// Из структуры
+filters::MovingAverageParams p;
+p.type = filters::MAType::EMA;
+p.window_size = 10;
+ma.SetParams(p);
+
+// Или напрямую
+ma.SetParams(filters::MAType::SMA, 8);   // SMA N=8
+
+// GPU processing
+auto res = ma.Process(gpu_input_ptr, channels, points);  // void* out
+hipFree(res.data);  // caller owns!
+
+// Из CPU данных
+auto res2 = ma.ProcessFromCPU(cpu_data, channels, points);
+hipFree(res2.data);
+
+// CPU reference
+auto ref = ma.ProcessCpu(cpu_data, channels, points);
+
+// Getters
+filters::MAType t   = ma.GetType();        // MAType::EMA
+uint32_t        win = ma.GetWindowSize();  // 10
+bool            rdy = ma.IsReady();
+
+// MAType enum: SMA, EMA, MMA, DEMA, TEMA
+```
+
+### 7.6 C++ — KalmanFilterROCm (`ENABLE_ROCM=1`, Linux)
+
+```cpp
+#include "filters/kalman_filter_rocm.hpp"
+
+filters::KalmanFilterROCm kalman(rocm_backend);
+
+// Из структуры
+filters::KalmanParams kp;
+kp.Q = 0.1f;   // process noise variance
+kp.R = 25.0f;  // measurement noise variance
+kp.x0 = 0.0f; kp.P0 = 25.0f;
+kalman.SetParams(kp);
+
+// Или напрямую: SetParams(Q, R, x0, P0)
+kalman.SetParams(0.001f, 0.09f, 0.0f, 0.09f);  // LFM radar tuning
+
+// GPU processing
+auto res = kalman.Process(gpu_input_ptr, channels, points);
+hipFree(res.data);
+
+auto res2 = kalman.ProcessFromCPU(cpu_data, channels, points);
+hipFree(res2.data);
+
+// CPU reference
+auto ref = kalman.ProcessCpu(cpu_data, channels, points);
+
+const auto& params = kalman.GetParams();  // KalmanParams
+bool rdy = kalman.IsReady();
+```
+
+### 7.7 C++ — KaufmanFilterROCm (`ENABLE_ROCM=1`, Linux)
+
+```cpp
+#include "filters/kaufman_filter_rocm.hpp"
+
+filters::KaufmanFilterROCm kauf(rocm_backend);
+
+// Из структуры
+filters::KaufmanParams kp;
+kp.er_period   = 10;   // N — период Efficiency Ratio (max 128)
+kp.fast_period = 2;    // fast EMA period (ER≈1)
+kp.slow_period = 30;   // slow EMA period (ER≈0)
+kauf.SetParams(kp);
+
+// Или напрямую
+kauf.SetParams(10, 2, 30);   // стандартные параметры Kaufman
+
+// GPU processing
+auto res = kauf.Process(gpu_input_ptr, channels, points);
+hipFree(res.data);
+
+auto res2 = kauf.ProcessFromCPU(cpu_data, channels, points);
+hipFree(res2.data);
+
+// CPU reference
+auto ref = kauf.ProcessCpu(cpu_data, channels, points);
+
+const auto& params = kauf.GetParams();  // KaufmanParams
+bool rdy = kauf.IsReady();
+```
+
 ---
 
 ## 8. JSON формат конфигурации
@@ -611,6 +786,55 @@ DrvGPU `FilterConfigService` — сохранение/загрузка коэф�
 | `test_ai_filter_pipeline.py` | Stage 3: natural language → AI → scipy → GPU → plot |
 | `test_ai_fir_demo.py` | AI demo: описание фильтра в тексте → GPU |
 
+### 10.6 C++ тесты — MovingAverageFilterROCm (`test_moving_average_rocm.hpp`)
+
+Запуск: `test_moving_average_rocm::run()`. На Windows — compile-only. На Linux + AMD GPU — 6 тестов:
+
+| # | Функция | Сигнал | Порог | Что проверяет и почему |
+|---|---------|--------|-------|------------------------|
+| 1 | `test_ema()` | 8 ch × 4096 pts, random complex, EMA(N=10) | < 1e-4 | **GPU EMA ≈ CPU reference.** Random signal обеспечивает все граничные случаи (разные начальные состояния). Порог 1e-4 — ROCm без fast-relaxed-math, точность выше OpenCL. |
+| 2 | `test_sma()` | 8 ch × 4096 pts, random complex, SMA(N=8) | < 1e-4 | **GPU SMA ≈ CPU reference** с ring buffer. Ловит ошибки wraparound в кольцевом буфере SMA. |
+| 3 | `test_mma()` | 8 ch × 4096 pts, MMA(N=10) | < 1e-4 | Wilder smoothing: α=1/N. Проверяет корректность отличного от EMA alpha. |
+| 4 | `test_dema()` | 8 ch × 4096 pts, DEMA(N=10) | < 1e-4 | **DEMA = 2×EMA1 - EMA2**: проверяет правильность двойного EMA-прохода. Ловит ошибки в двуступенчатом вычислении. |
+| 5 | `test_tema()` | 8 ch × 4096 pts, TEMA(N=10) | < 1e-4 | **TEMA = 3×EMA1 - 3×EMA2 + EMA3**: тройной EMA. Ловит ошибки знаков в формуле TEMA. |
+| 6 | `test_step_response()` | 1 ch × 120 pts, step: 20 нулей / 50 единиц / 50 нулей | plateau @ t=55 < 5% | **Step demo** для всех 5 типов: все должны достичь ~1.0 на плато и TEMA должен реагировать быстрее EMA на фронте (t=23). Наглядно проверяет скорость реакции разных MA. |
+
+**Ключевая идея test 6**: ступенчатый сигнал — классический способ сравнить задержку фильтров. TEMA должен иметь меньшую задержку чем EMA — это свойство тройного EMA. Если нарушено — ошибка в формуле.
+
+### 10.7 C++ тесты — KalmanFilterROCm (`test_kalman_rocm.hpp`)
+
+Запуск: `test_kalman_rocm::run()`. На Linux + AMD GPU — 5 тестов:
+
+| # | Функция | Сигнал | Критерий | Что проверяет и почему |
+|---|---------|--------|----------|------------------------|
+| 1 | `test_gpu_vs_cpu()` | 8 ch × 4096 pts, random, Q=0.1 R=25 | max_err < 1e-4 | **GPU ≈ CPU Kalman.** Случайный сигнал гарантирует разнообразие значений K[n]. Ловит ошибки в HIP predict-update цикле. |
+| 2 | `test_const_signal()` | 8 ch × 1024 pts, const + AWGN(σ=5), Q=0.01 R=25 | improvement > 10 dB | **Convergence**: Kalman должен сходиться к константе и уменьшить шум на >10 дБ. Константа с шумом — идеальный случай для Kalman (Q≪R). Если <10 дБ — неверная настройка или баг в Update. |
+| 3 | `test_channel_independence()` | 256 ch × 512 pts, ch_i = i×10 + noise(σ=0.1), Q=0.1 R=1 | err < 1.0 для всех 256 | **Channel isolation**: каждый канал имеет свою уникальную константу. Ловит race condition или перекрёстное загрязнение состояний между каналами. |
+| 4 | `test_step_response()` | 1 ch × 1024 pts, step at n=512 (0→100), Q=1 R=25 | val@612 > 60, val@end ≈ 100 | **Step tracking**: после 100 отсчётов должны достичь >60% от уровня (реакция) и ≈100 к концу (сходимость). Проверяет Q/R ratio для быстрого отслеживания. |
+| 5 | `test_lfm_radar_demo()` | 5 ch × 16384 pts, beat signal + AWGN(σ=0.3), Q=0.001 R=0.09 | > 5 dB per channel | **LFM radar application demo**: 5 антенн, 5 целей (50–250 км), beat signal + AWGN. Kalman должен дать >5 дБ улучшения SNR на каждой антенне. Демонстрирует реальный use-case. |
+
+**Ключевая идея test 5 (LFM demo)**: Kalman в ЛЧМ-радаре применяется для сглаживания огибающей/фазы перед FFT. Параметры Q=0.001, R=0.09 настроены для beat signal с σ_noise=0.3.
+
+### 10.8 C++ тесты — KaufmanFilterROCm (`test_kaufman_rocm.hpp`)
+
+Запуск: `test_kaufman_rocm::run()`. На Linux + AMD GPU — 5 тестов:
+
+| # | Функция | Сигнал | Критерий | Что проверяет и почему |
+|---|---------|--------|----------|------------------------|
+| 1 | `test_gpu_vs_cpu()` | 8 ch × 4096 pts, random, er=10 fast=2 slow=30 | max_err < 1e-4 | **GPU KAMA ≈ CPU reference.** Random signal — ER меняется случайно, проверяет все ветви SC-вычисления. |
+| 2 | `test_trend()` | 1 ch × 256 pts, линейный тренд x[n]=n×0.1 | max_lag < 2.0 после warmup | **Fast tracking при ER≈1**: линейный тренд → ER≈1 → SC≈α_fast. KAMA должен следовать с минимальным лагом. Если лаг большой — ошибка в ER или SC вычислении. |
+| 3 | `test_noise()` | 1 ch × 512 pts, white noise σ=1 | std(KAMA)/std(signal) < 0.2 | **Freezing при ER≈0**: белый шум → ER≈0 → SC≈α_slow → KAMA почти неподвижен. std ratio < 0.2 означает что KAMA в 5× стабильнее входного. |
+| 4 | `test_adaptive_transition()` | 1 ch × 2048 pts: тренд[0..511] + шум[512..1023] + тренд[1024..2047] | err_trend<0.5, delta_noise<3.0, err_recover<1.0 | **Адаптивность**: 3 фазы — KAMA должен (1) отслеживать тренд, (2) быть стабильным на шуме, (3) восстановить слежение после шума. Ловит баги в ring buffer ER-периода при смене режима. |
+| 5 | `test_step_kama_demo()` | Step signal 120 pts + trend-noise-step 120 pts | plateau<1%, noise_delta<0.5, GPU err<1e-4 | **Комбо-демо**: (a) ступенчатый сигнал — KAMA должен достичь плато; (b) trend→noise→step демонстрирует адаптивность; (c) GPU vs CPU verificationна шаговом сигнале. |
+
+### 10.9 Python тесты — MovingAverage, Kalman, KAMA (ROCm, Linux)
+
+| Файл | Что тестирует |
+|------|---------------|
+| `test_moving_average_rocm.py` | Python bindings: `gw.MovingAverageFilterROCm`, все 5 типов MA |
+| `test_kalman_rocm.py` | Python bindings: `gw.KalmanFilterROCm`, GPU vs CPU, convergence |
+| `test_kaufman_rocm.py` | Python bindings: `gw.KaufmanFilterROCm`, adaptive behavior |
+
 ---
 
 ## 11. Профилирование
@@ -660,17 +884,24 @@ modules/filters/
 ├── CMakeLists.txt
 ├── include/
 │   ├── filters/
-│   │   ├── fir_filter.hpp          # OpenCL FIR filter class
-│   │   ├── iir_filter.hpp          # OpenCL IIR biquad cascade class
-│   │   ├── fir_filter_rocm.hpp     # ROCm FIR (hiprtc), stub на Windows
-│   │   └── iir_filter_rocm.hpp     # ROCm IIR (hiprtc), stub на Windows
+│   │   ├── fir_filter.hpp              # OpenCL FIR filter class
+│   │   ├── iir_filter.hpp              # OpenCL IIR biquad cascade class
+│   │   ├── fir_filter_rocm.hpp         # ROCm FIR (hiprtc), stub на Windows
+│   │   ├── iir_filter_rocm.hpp         # ROCm IIR (hiprtc), stub на Windows
+│   │   ├── moving_average_filter_rocm.hpp  # ROCm MA: SMA/EMA/MMA/DEMA/TEMA
+│   │   ├── kalman_filter_rocm.hpp      # ROCm 1D scalar Kalman (Re/Im)
+│   │   └── kaufman_filter_rocm.hpp     # ROCm KAMA (er_period ≤ 128)
 │   ├── kernels/
-│   │   ├── fir_kernels.hpp         # GetFirDirectSource_opencl()
-│   │   ├── fir_kernels_rocm.hpp    # GetFirDirectSource_rocm()
-│   │   ├── iir_kernels.hpp         # GetIirBiquadSource_opencl()
-│   │   └── iir_kernels_rocm.hpp    # GetIirBiquadSource_rocm()
+│   │   ├── fir_kernels.hpp             # GetFirDirectSource_opencl()
+│   │   ├── fir_kernels_rocm.hpp        # GetFirDirectSource_rocm()
+│   │   ├── iir_kernels.hpp             # GetIirBiquadSource_opencl()
+│   │   ├── iir_kernels_rocm.hpp        # GetIirBiquadSource_rocm()
+│   │   ├── moving_average_kernels_rocm.hpp  # GetMASource_rocm() (5 kernels)
+│   │   ├── kalman_kernels_rocm.hpp     # GetKalmanSource_rocm()
+│   │   └── kaufman_kernels_rocm.hpp    # GetKaufmanSource_rocm()
 │   └── types/
-│       ├── filter_params.hpp       # BiquadSection, FirParams, IirParams, FilterConfig (JSON)
+│       ├── filter_params.hpp       # BiquadSection, FirParams, IirParams, FilterConfig (JSON),
+│       │                           # MAType, MovingAverageParams, KalmanParams, KaufmanParams
 │       ├── filter_types.hpp        # ProfEvents, ROCmProfEvents
 │       └── filter_modes.hpp        # FilterMode enum
 ├── kernels/
@@ -686,20 +917,26 @@ modules/filters/
 │   ├── fir_filter_rocm.cpp         # FirFilterROCm (hiprtc, Linux only)
 │   └── iir_filter_rocm.cpp         # IirFilterROCm (hiprtc, Linux only)
 └── tests/
-    ├── all_test.hpp                # Entry point: filters_all_test::run()
-    ├── test_fir_basic.hpp          # OpenCL FIR test (kTestFirCoeffs64)
-    ├── test_iir_basic.hpp          # OpenCL IIR test (Butterworth 2nd order)
-    ├── test_filters_rocm.hpp       # ROCm: 6 тестов (Linux + AMD GPU)
-    ├── filters_benchmark.hpp       # OpenCL benchmark classes (FirFilterBenchmark, IirFilterBenchmark)
-    ├── test_filters_benchmark.hpp  # OpenCL benchmark runner (test_filters_benchmark::run())
-    ├── filters_benchmark_rocm.hpp  # ROCm benchmark classes (FirFilterROCmBenchmark, IirFilterROCmBenchmark)
+    ├── all_test.hpp                     # Entry point: filters_all_test::run()
+    ├── test_fir_basic.hpp               # OpenCL FIR test (kTestFirCoeffs64)
+    ├── test_iir_basic.hpp               # OpenCL IIR test (Butterworth 2nd order)
+    ├── test_filters_rocm.hpp            # ROCm: 6 тестов FIR/IIR (Linux + AMD GPU)
+    ├── test_moving_average_rocm.hpp     # ROCm: 6 тестов MA (SMA/EMA/MMA/DEMA/TEMA + step demo)
+    ├── test_kalman_rocm.hpp             # ROCm: 5 тестов Kalman (GPU vs CPU, convergence, LFM demo)
+    ├── test_kaufman_rocm.hpp            # ROCm: 5 тестов KAMA (trend/noise/adaptive)
+    ├── filters_benchmark.hpp            # OpenCL benchmark classes (FirFilterBenchmark, IirFilterBenchmark)
+    ├── test_filters_benchmark.hpp       # OpenCL benchmark runner
+    ├── filters_benchmark_rocm.hpp       # ROCm benchmark classes
     ├── test_filters_benchmark_rocm.hpp  # ROCm benchmark runner
-    └── README.md                   # Tests overview
+    └── README.md                        # Tests overview
 
 Python_test/filters/
 ├── test_filters_stage1.py          # FIR + IIR vs scipy (5 тестов)
 ├── test_fir_filter_rocm.py         # FirFilterROCm: 5 тестов (Linux)
 ├── test_iir_filter_rocm.py         # IirFilterROCm: multi-section, GPU ptr
+├── test_moving_average_rocm.py     # MovingAverageFilterROCm: все 5 типов MA (Linux)
+├── test_kalman_rocm.py             # KalmanFilterROCm: GPU vs CPU, convergence (Linux)
+├── test_kaufman_rocm.py            # KaufmanFilterROCm: adaptive behavior (Linux)
 ├── test_iir_plot.py                # IIR order 2/4/8 сравнение (графики)
 ├── test_ai_filter_pipeline.py      # Stage 3: NL → AI → scipy → GPU → plot
 └── test_ai_fir_demo.py             # AI demo
@@ -726,7 +963,13 @@ Doc/Modules/filters/
 | ⚠️ | **SOS формат scipy**: `sos = butter(N, Wn, output='sos')`. Row: `[b0, b1, b2, a0, a1, a2]`, но `a0=1` пропускается. Передавать `a1=row[4], a2=row[5]`. |
 | ⚠️ | **ROCm FirFilter**: компиляция hiprtc занимает ~100–500 мс при первом запуске. На Windows — compile-only stub (throws). |
 | ⚠️ | **CL_QUEUE_PROFILING_ENABLE**: для бенчмарков OpenCL обязателен флаг при создании queue. Иначе `cl_event` timing вернёт 0. |
-| ⚠️ | **Granichnye условия FIR**: sample `n-k < 0` считается 0 (causal). Результат первых `num_taps-1` семплов отличается от `scipy.lfilter` не из-за бага, а из-за метода (`lfilter` тоже нулевые IC). Расхождение мало (< 1e-3). |
+| ⚠️ | **Граничные условия FIR**: sample `n-k < 0` считается 0 (causal). Результат первых `num_taps-1` семплов отличается от `scipy.lfilter` не из-за бага, а из-за метода (`lfilter` тоже нулевые IC). Расхождение мало (< 1e-3). |
+| ⚠️ | **SMA max N = 128**: ring buffer SMA хранится в thread-local регистрах/LDS. При N > 128 — undefined behavior или compilation error. |
+| ⚠️ | **KAMA er_period max = 128**: ring buffer ER тоже ограничен 128. Стандартный Kaufman (er_period=10) безопасен. |
+| ⚠️ | **Kalman независимо Re/Im**: 1D scalar Kalman применяется к Re и Im независимо. Для комплексного сигнала это корректно если Re/Im статистически независимы (AWGN). |
+| ⚠️ | **Kalman Q/R tuning**: Q/R ≪ 1 → медленная реакция (strong smoothing). Q/R ≫ 1 → быстрая реакция (слабое сглаживание). Стартовое: Q ≈ R/100, R = (noise_sigma)². |
+| ⚠️ | **ROCm MA/Kalman/KAMA hiprtc**: компиляция при первом `SetParams()` (~100–500 мс). На Windows — compile-only stub (throws `runtime_error`). |
+| ⚠️ | **MovingAverage — 1 thread per channel**: нет параллелизма по семплам. При очень большом числе семплов (> 1M) и малом числе каналов (<8) CPU может быть быстрее. GPU выгоден при ≥ 64 каналах. |
 
 ---
 
@@ -761,4 +1004,4 @@ Doc/Modules/filters/
 
 ---
 
-*Обновлено: 2026-03-02*
+*Обновлено: 2026-03-04*

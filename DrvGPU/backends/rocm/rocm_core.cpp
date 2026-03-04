@@ -11,6 +11,14 @@ namespace drv_gpu_lib {
 // Конструктор
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Создаёт ROCmCore для заданного GPU
+ *
+ * Только инициализирует поля; реальный HIP init — в Initialize().
+ * ЗАЧЕМ разделены: конструктор не бросает исключений, ошибки — через Initialize().
+ *
+ * @param device_index Индекс HIP устройства (аргумент hipSetDevice)
+ */
 ROCmCore::ROCmCore(int device_index)
     : device_index_(device_index),
       initialized_(false),
@@ -25,6 +33,9 @@ ROCmCore::ROCmCore(int device_index)
 // Деструктор
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Освобождает stream; вызывает ReleaseResources() если инициализирован
+ */
 ROCmCore::~ROCmCore() {
   if (initialized_) {
     ReleaseResources();
@@ -36,6 +47,12 @@ ROCmCore::~ROCmCore() {
 // Move semantics
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Move-конструктор — передаёт владение HIP ресурсами без их пересоздания
+ *
+ * other.initialized_ → false: деструктор other НЕ вызовет ReleaseResources()
+ * на уже переданных хэндлах — иначе double-free stream_.
+ */
 ROCmCore::ROCmCore(ROCmCore&& other) noexcept
     : device_index_(other.device_index_),
       initialized_(other.initialized_),
@@ -47,6 +64,11 @@ ROCmCore::ROCmCore(ROCmCore&& other) noexcept
   other.stream_ = nullptr;
 }
 
+/**
+ * @brief Move-присваивание — сначала освобождает свои ресурсы, затем перенимает чужие
+ *
+ * Cleanup() вызывается ПЕРВЫМ — иначе свой stream_ останется без владельца (утечка).
+ */
 ROCmCore& ROCmCore::operator=(ROCmCore&& other) noexcept {
   if (this != &other) {
     Cleanup();
@@ -66,6 +88,14 @@ ROCmCore& ROCmCore::operator=(ROCmCore&& other) noexcept {
 // Инициализация
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Инициализирует HIP runtime и создаёт stream для device_index_
+ *
+ * Thread-safe (mutex_). Идемпотентен — повторный вызов логирует WARNING, не ломает состояние.
+ * Делегирует основную работу в InitializeHIP() — 6 шагов.
+ *
+ * @throws std::runtime_error если HIP недоступен или device_index_ невалиден
+ */
 void ROCmCore::Initialize() {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -82,6 +112,14 @@ void ROCmCore::Initialize() {
                       "Device " + std::to_string(device_index_) + " initialized: " + GetDeviceName());
 }
 
+/**
+ * @brief 6 шагов HIP инициализации для конкретного устройства
+ *
+ * Вынесен из Initialize() чтобы тот остался читаемым (логика vs. механика).
+ * Вызывается только под mutex_ из Initialize().
+ *
+ * @throws std::runtime_error при любой ошибке или невалидном device_index_
+ */
 void ROCmCore::InitializeHIP() {
   // Шаг 1: Инициализация HIP runtime
   CheckHIPError(hipInit(0), "hipInit");
@@ -121,7 +159,16 @@ void ROCmCore::InitializeHIP() {
 // Очистка ресурсов
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Освобождает stream; идемпотентен, thread-safe
+ *
+ * Double-checked locking: первая проверка без mutex_ — быстрый выход без захвата мьютекса.
+ * Вторая под mutex_ — защита от гонки двух потоков, прошедших первую проверку одновременно.
+ */
 void ROCmCore::Cleanup() {
+  // Двойная проверка (до и после мьютекса) — стандартный паттерн для деструкторов.
+  // Первая проверка (без mutex_) — быстрый выход чтобы не захватывать мьютекс зря.
+  // Вторая проверка (под mutex_) — гарантия от гонки: два потока могут пройти первую.
   if (!initialized_) {
     return;
   }
@@ -136,11 +183,21 @@ void ROCmCore::Cleanup() {
   }
 }
 
+/**
+ * @brief Разрушает HIP stream; намеренно НЕ вызывает hipDeviceReset()
+ *
+ * hipDeviceReset() сбрасывает ВСЁ состояние GPU для всего процесса —
+ * убил бы другие ROCmBackend и OpenCL контексты на том же устройстве.
+ * device_ — integer handle, не требует явного освобождения через HIP API.
+ */
 void ROCmCore::ReleaseResources() {
   if (stream_) {
     (void)hipStreamDestroy(stream_);
     stream_ = nullptr;
   }
+  // device_ — integer handle, не требует явного освобождения через HIP API.
+  // hipDeviceReset() намеренно НЕ вызывается: он сбросил бы всё состояние GPU
+  // для всего процесса, включая другие ROCmBackend / OpenCL контексты на том же устройстве.
   device_ = 0;
 }
 
@@ -148,6 +205,12 @@ void ROCmCore::ReleaseResources() {
 // СТАТИЧЕСКИЕ МЕТОДЫ - Multi-GPU Discovery
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Возвращает число доступных AMD GPU без инициализации ROCmCore
+ *
+ * Вызывает hipGetDeviceCount напрямую. Возвращает 0 при ошибке
+ * (нет AMD GPU, ROCm не установлен или ошибка драйвера).
+ */
 int ROCmCore::GetAvailableDeviceCount() {
   int count = 0;
   hipError_t err = hipGetDeviceCount(&count);
@@ -157,6 +220,15 @@ int ROCmCore::GetAvailableDeviceCount() {
   return count;
 }
 
+/**
+ * @brief Форматированный список всех доступных AMD GPU (диагностика)
+ *
+ * Не требует инициализации ROCmCore — читает hipDeviceProp_t напрямую для каждого устройства.
+ * ЗАЧЕМ: вызывается при старте приложения для вывода в лог/консоль, чтобы видеть
+ * конфигурацию GPU окружения (особенно важно в multi-GPU системах с 10+ GPU).
+ *
+ * @return Многострочная строка-таблица всех GPU; "No devices found!" если GPU недоступны
+ */
 std::string ROCmCore::GetAllDevicesInfo() {
   std::ostringstream oss;
   int count = GetAvailableDeviceCount();
@@ -190,65 +262,131 @@ std::string ROCmCore::GetAllDevicesInfo() {
 // Информация о девайсе
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Имя устройства из hipDeviceProp_t.name
+ * @return Строка вида "AMD Radeon RX 9070 XT"; "Unknown" если не инициализирован
+ */
 std::string ROCmCore::GetDeviceName() const {
   if (!initialized_) return "Unknown";
   return std::string(device_props_.name);
 }
 
+/**
+ * @brief Вендор GPU — всегда "AMD" (ROCm/HIP поддерживает только AMD GPU)
+ */
 std::string ROCmCore::GetVendor() const {
   return "AMD";
 }
 
+/**
+ * @brief GCN архитектура из hipDeviceProp_t.gcnArchName
+ * @return Строка вида "gfx1201" (RDNA4), "gfx1100" (RDNA3); "Unknown" если не инициализирован
+ * @note Используется как суррогат версии драйвера в GPUDeviceInfo.driver_version
+ */
 std::string ROCmCore::GetArchName() const {
   if (!initialized_) return "Unknown";
   return std::string(device_props_.gcnArchName);
 }
 
+/**
+ * @brief Общий объём VRAM в байтах (кешировано при инициализации)
+ * @return props.totalGlobalMem; 0 если не инициализирован
+ */
 size_t ROCmCore::GetGlobalMemorySize() const {
   if (!initialized_) return 0;
   return device_props_.totalGlobalMem;
 }
 
+/**
+ * @brief Текущий объём свободной VRAM в байтах (runtime запрос, не кеш)
+ *
+ * ЗАЧЕМ не кешировать: свободная VRAM меняется динамически по мере выделений.
+ * Fallback при ошибке hipMemGetInfo: 90% от totalGlobalMem — консервативная оценка
+ * (иногда нужна для драйверов с поломанным hipMemGetInfo).
+ *
+ * @return Байты свободной VRAM; 0 если не инициализирован
+ */
 size_t ROCmCore::GetFreeMemorySize() const {
   if (!initialized_) return 0;
 
   size_t free_mem = 0;
   size_t total_mem = 0;
+  // hipMemGetInfo возвращает реальный объём свободной VRAM — самый точный способ.
   hipError_t err = hipMemGetInfo(&free_mem, &total_mem);
   if (err == hipSuccess) {
     return free_mem;
   }
 
-  // Fallback: 90% от общей
+  // Fallback: hipMemGetInfo не сработал (редко, но бывает на некоторых драйверах) →
+  // возвращаем 90% от общего объёма как консервативную оценку.
   return static_cast<size_t>(static_cast<double>(device_props_.totalGlobalMem) * 0.9);
 }
 
+/**
+ * @brief Объём LDS (Local Data Store) на блок в байтах
+ * @return sharedMemPerBlock из hipDeviceProp_t; 0 если не инициализирован
+ */
 size_t ROCmCore::GetLocalMemorySize() const {
   if (!initialized_) return 0;
   return device_props_.sharedMemPerBlock;
 }
 
+/**
+ * @brief Число Compute Units (CU) — аналог SM на NVIDIA
+ * @return multiProcessorCount; 0 если не инициализирован
+ */
 int ROCmCore::GetComputeUnits() const {
   if (!initialized_) return 0;
   return device_props_.multiProcessorCount;
 }
 
+/**
+ * @brief Максимальный размер work-group (threads per block)
+ *
+ * Это hard-limit GPU: kernel с blockDim > maxThreadsPerBlock не запустится.
+ * Типичные значения: 1024 (большинство AMD GPU).
+ *
+ * @return maxThreadsPerBlock из hipDeviceProp_t; 0 если не инициализирован
+ */
 size_t ROCmCore::GetMaxWorkGroupSize() const {
   if (!initialized_) return 0;
   return static_cast<size_t>(device_props_.maxThreadsPerBlock);
 }
 
+/**
+ * @brief Тактовая частота GPU в МГц
+ * @return clockRate / 1000 (конвертация kHz → MHz); 0 если не инициализирован
+ */
 size_t ROCmCore::GetMaxClockFrequency() const {
   if (!initialized_) return 0;
   return static_cast<size_t>(device_props_.clockRate / 1000);  // kHz -> MHz
 }
 
+/**
+ * @brief Поддерживает ли устройство float64 в hardware (без software emulation)
+ *
+ * Флаг device_props_.arch.hasDoubles выставляется HIP для gfx900+.
+ * На некоторых APU (gfx902) = 0 — fp64 работает через software emulation (очень медленно).
+ *
+ * @return true если fp64 реализован в железе; false если SW emulation или не инициализирован
+ */
 bool ROCmCore::SupportsDoublePrecision() const {
   if (!initialized_) return false;
-  // HIP: check arch >= gfx900 basically always supports fp64
+  // device_props_.arch.hasDoubles — официальный флаг HIP, выставляется для gfx900+.
+  // На RDNA4 (gfx1201) и большинстве AMD GPU этот флаг = 1.
+  // На некоторых мобильных APU (gfx902) может быть 0 — fp64 медленный (software emulation).
   return device_props_.arch.hasDoubles != 0;
 }
 
+/**
+ * @brief Форматированный отчёт о свойствах КОНКРЕТНОГО устройства (диагностика)
+ *
+ * Возвращает многострочную строку со всеми параметрами.
+ * ЗАЧЕМ: вывод при инициализации в лог/консоль для диагностики конкретного GPU.
+ * В отличие от GetAllDevicesInfo() — только для this->device_index_.
+ *
+ * @return Таблица свойств GPU; поля с "Unknown"/0 если не инициализирован
+ */
 std::string ROCmCore::GetDeviceInfo() const {
   std::ostringstream oss;
 

@@ -118,45 +118,55 @@ private:
 
     SpectrumParams params_;
     bool initialized_ = false;
-    drv_gpu_lib::IBackend* backend_ = nullptr;
+    drv_gpu_lib::IBackend* backend_ = nullptr;  ///< Не владеет; backend живёт дольше процессора
 
+    // OpenCL ресурсы (извлечены из IBackend, не владеем)
     cl_context context_ = nullptr;
     cl_command_queue queue_ = nullptr;
     cl_device_id device_ = nullptr;
 
+    // clFFT план для Process (ONE/TWO_PEAKS) — создаётся с pre-callback (zero-padding)
     clfftPlanHandle plan_handle_ = 0;
     bool plan_created_ = false;
 
-    cl_mem pre_callback_userdata_ = nullptr;
-    cl_mem fft_input_ = nullptr;
-    cl_mem fft_output_ = nullptr;
-    cl_mem maxima_output_ = nullptr;
-    cl_mem fft_temp_buffer_ = nullptr;
-    cl_mem pinned_staging_buffer_ = nullptr;
+    // GPU буферы — владеем (clReleaseMemObject в ReleaseResources)
+    cl_mem pre_callback_userdata_ = nullptr;  ///< [32-байт PreCallbackHeader][input complex<float>×batch×n_point]
+                                               ///< pre-callback читает отсюда beam_count/count_points/nFFT + данные
+    cl_mem fft_input_ = nullptr;              ///< Padded входной буфер: batch × nFFT × sizeof(complex), пишет pre-callback
+    cl_mem fft_output_ = nullptr;             ///< Результат FFT: batch × nFFT × sizeof(complex)
+    cl_mem maxima_output_ = nullptr;          ///< MaxValue[batch × max_peaks_count] — результат post_kernel
+    cl_mem fft_temp_buffer_ = nullptr;        ///< Temp буфер для clFFT (если clFFT потребовал); может быть nullptr
+    cl_mem pinned_staging_buffer_ = nullptr;  ///< CL_MEM_ALLOC_HOST_PTR для DMA upload (ускоряет HostToDevice)
 
+    // Post-kernel (ONE_PEAK/TWO_PEAKS — reduction + параболическая интерполяция)
     cl_program post_program_ = nullptr;
     cl_kernel post_kernel_ = nullptr;
 
+    // Batch tracking: current_ = размер выделенных буферов; actual_ = реальный batch
+    // plan_batch_ = размер batch, для которого создан clfft план (переиспользуется)
     size_t current_batch_size_ = 0;
-    size_t actual_batch_size_ = 0;
-    size_t plan_batch_size_ = 0;
-    size_t fft_temp_buffer_size_ = 0;
-    size_t pinned_buffer_size_ = 0;
-    bool clfft_initialized_ = false;
+    size_t actual_batch_size_ = 0;       ///< Текущий реальный batch (для ReadResults range)
+    size_t plan_batch_size_ = 0;         ///< Для какого batch создан plan_handle_ (reuse)
+    size_t fft_temp_buffer_size_ = 0;    ///< Текущий размер temp буфера (для reuse без realloc)
+    size_t pinned_buffer_size_ = 0;      ///< Текущий размер pinned буфера (для reuse без realloc)
+    bool clfft_initialized_ = false;     ///< clfftSetup() вызван (teardown в ReleaseResources)
 
-    static constexpr size_t PRE_CALLBACK_HEADER_SIZE = 32;
-    static constexpr size_t LOCAL_SIZE = 256;
+    static constexpr size_t PRE_CALLBACK_HEADER_SIZE = 32;  ///< Размер PreCallbackHeader (GPU alignment)
+    static constexpr size_t LOCAL_SIZE = 256;                ///< WI per work-group для post_kernel
 
+    // AllMaxima compute_magnitudes kernel (для случая FFT уже на GPU)
     cl_kernel compute_magnitudes_kernel_ = nullptr;
-    cl_program all_maxima_program_ = nullptr;  // for compute_magnitudes only
+    cl_program all_maxima_program_ = nullptr;  ///< Программа для compute_magnitudes (остальные — в pipeline_)
 
+    // Ownership: pipeline_ владеет detect/scan/compact kernel'ами (RAII)
     std::unique_ptr<AllMaximaPipelineOpenCL> pipeline_;
 
+    // Отдельный FFT план для AllMaxima (с pre+post callbacks — вычисляет |FFT| во время FFT)
     clfftPlanHandle allmax_plan_handle_ = 0;
     bool allmax_plan_created_ = false;
-    size_t allmax_plan_batch_size_ = 0;
-    cl_mem magnitudes_buffer_ = nullptr;
-    size_t magnitudes_buffer_size_ = 0;
+    size_t allmax_plan_batch_size_ = 0;          ///< batch, для которого создан allmax_plan (reuse)
+    cl_mem magnitudes_buffer_ = nullptr;          ///< Pre-computed |FFT[i]|: beam_count × nFFT × sizeof(float)
+    size_t magnitudes_buffer_size_ = 0;           ///< Размер magnitudes_buffer_ в элементах (для reuse)
 
 };
 

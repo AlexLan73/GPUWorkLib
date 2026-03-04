@@ -23,6 +23,13 @@ namespace antenna_fft {
 // Constructor, destructor
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Создать pipeline; kernel'ы компилируются лениво при первом Execute()
+ *
+ * Не владеет context/queue/device — их lifetime управляется IBackend.
+ *
+ * @throws std::invalid_argument если любой из аргументов nullptr
+ */
 AllMaximaPipelineOpenCL::AllMaximaPipelineOpenCL(cl_context context,
                                                  cl_command_queue queue,
                                                  cl_device_id device)
@@ -33,6 +40,9 @@ AllMaximaPipelineOpenCL::AllMaximaPipelineOpenCL(cl_context context,
     }
 }
 
+/**
+ * @brief Деструктор — освобождает все OpenCL kernel'ы и программы (3 раздельных program)
+ */
 AllMaximaPipelineOpenCL::~AllMaximaPipelineOpenCL() {
     if (detect_kernel_) { clReleaseKernel(detect_kernel_); detect_kernel_ = nullptr; }
     if (all_maxima_program_) { clReleaseProgram(all_maxima_program_); all_maxima_program_ = nullptr; }
@@ -47,6 +57,20 @@ AllMaximaPipelineOpenCL::~AllMaximaPipelineOpenCL() {
 // CompileKernels
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Скомпилировать 3 OpenCL программы: detect + prefix_sum + compact (idempotent)
+ *
+ * Вызывается лениво из Execute() при первом обращении.
+ * Три раздельных program (не один clBuildProgram) — быстрее перекомпиляция при ошибке
+ * и удобнее изолировать build log по стадиям.
+ *
+ * Источники kernel'ов:
+ * - detect:      GetDetectAllMaximaKernelSource_opencl()  → "detect_all_maxima"
+ * - prefix_sum:  GetPrefixSumKernelSource_opencl()        → "block_scan" + "block_add"
+ * - compact:     GetCompactMaximaKernelSource_opencl()    → "compact_maxima"
+ *
+ * @throws std::runtime_error при ошибке компиляции (с build log в ConsoleOutput)
+ */
 void AllMaximaPipelineOpenCL::CompileKernels() {
     if (kernels_compiled_) return;
 
@@ -140,6 +164,29 @@ void AllMaximaPipelineOpenCL::CompileKernels() {
 // ExecutePrefixSum (beam-aware)
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Beam-aware parallel prefix sum (Blelloch exclusive scan)
+ *
+ * Каждый луч сканируется независимо: flat array [beam_count × n_per_beam] →
+ * scan_output[beam × n + i] = sum(input[beam × n + 0..i-1]).
+ *
+ * Рекурсивный алгоритм (аналог thrust::inclusive_scan по блокам):
+ * 1. block_scan: каждый блок 512 (2×256) → локальный exclusive scan, собирает block_sums
+ * 2. ExecutePrefixSum(block_sums, ...) — рекурсивно сканирует суммы блоков
+ * 3. block_add: прибавляет отсканированные block_sums к каждому блоку
+ *
+ * TASK-9 оптимизация: LDS аллоцируется с +1 padding (BLOCK_SIZE+1)*sizeof(uint32_t)
+ * → устраняет bank conflicts в Blelloch up/down sweep.
+ *
+ * При blocks_per_beam == 1 — один вызов block_scan без рекурсии.
+ *
+ * @param input      Входной буфер флагов [beam_count × n_per_beam] uint32
+ * @param output     Выходной буфер scan_result [beam_count × n_per_beam] uint32
+ * @param n_per_beam Элементов на луч (= nFFT)
+ * @param beam_count Число лучей
+ * @param wait_event cl_event для ожидания перед стартом (nullptr = немедленно)
+ * @return cl_event завершения последнего kernel (caller ОБЯЗАН освободить!)
+ */
 cl_event AllMaximaPipelineOpenCL::ExecutePrefixSum(
     cl_mem input, cl_mem output, size_t n_per_beam, size_t beam_count,
     cl_event wait_event)
@@ -270,6 +317,8 @@ cl_event AllMaximaPipelineOpenCL::ExecutePrefixSum(
 // Execute — main pipeline
 // ════════════════════════════════════════════════════════════════════════════
 
+// Вспомогательная функция: время выполнения OpenCL event в миллисекундах.
+// Блокирует выполнение до завершения event — вызывать только после clEnqueueNDRange.
 static double GetEventMs(cl_event event) {
     if (!event) return 0.0;
     clWaitForEvents(1, &event);
@@ -279,6 +328,31 @@ static double GetEventMs(cl_event event) {
     return (end - start) / 1e6;
 }
 
+/**
+ * @brief Запустить полный pipeline: Detect → Scan → Compact
+ *
+ * Аллоцирует временные GPU буферы (flags, scan, out_maxima, out_counts) внутри.
+ * Буферы flags и scan освобождаются всегда. out_maxima/out_counts:
+ * - Dest=CPU: данные скопированы в result.beams → освобождаются внутри
+ * - Dest=GPU: передаются caller'у через result.gpu_maxima/gpu_counts — caller освобождает!
+ * - Dest=ALL: оба пути — и CPU copy, и GPU буферы переходят к caller'у
+ *
+ * Оптимизации:
+ * - TASK-6: 2D NDRange для detect (global=(nFFT, beam_count), local=(256,1)) — нет div/mod
+ * - TASK-9: LDS +1 padding в ExecutePrefixSum — нет bank conflicts в Blelloch scan
+ * - max_output_per_beam = min((search_end-search_start)/2, max_maxima_per_beam) — реалистичный лимит
+ *
+ * @param magnitudes_gpu  cl_mem с |FFT[i]| (float, beam_count × nFFT) — обязателен
+ * @param fft_data_gpu    cl_mem с complex FFT (для заполнения MaxValue.real/imag) — обязателен
+ * @param beam_count      Количество лучей
+ * @param nFFT            Размер FFT (power-of-2, min 256)
+ * @param sample_rate     Частота дискретизации (для refined_frequency = index×fs/nFFT)
+ * @param dest            CPU / GPU / ALL
+ * @param search_start    Начало поиска; 0 → auto = 1 (пропуск DC)
+ * @param search_end      Конец поиска; 0 → auto = nFFT/2 (только положительные частоты)
+ * @param max_maxima_per_beam  Лимит на луч
+ * @return AllMaximaResult
+ */
 AllMaximaResult AllMaximaPipelineOpenCL::Execute(
     void* magnitudes_gpu,
     void* fft_data_gpu,

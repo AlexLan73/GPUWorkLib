@@ -13,6 +13,13 @@ namespace drv_gpu_lib {
 // Конструктор и деструктор
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Создаёт неинициализированный ROCmBackend
+ *
+ * Все хэндлы — nullptr/0. Реальный HIP init — в Initialize(device_index).
+ * ЗАЧЕМ: конструктор без параметров нужен для размещения в контейнерах и
+ * отложенной инициализации (device_index известен позже, при парсинге конфига).
+ */
 ROCmBackend::ROCmBackend()
     : device_index_(-1),
       initialized_(false),
@@ -22,6 +29,9 @@ ROCmBackend::ROCmBackend()
       stream_(nullptr) {
 }
 
+/**
+ * @brief Деструктор — вызывает Cleanup() для освобождения HIP ресурсов
+ */
 ROCmBackend::~ROCmBackend() {
   Cleanup();
 }
@@ -30,6 +40,13 @@ ROCmBackend::~ROCmBackend() {
 // Move semantics
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Move-конструктор — передаёт владение HIP ресурсами без пересоздания
+ *
+ * Обнуляет other.initialized_ = false: деструктор other НЕ вызовет Cleanup() на уже
+ * переданных core_ и memory_manager_ — иначе double-free.
+ * owns_resources_ → false для other: даже если other думал что владеет core_, теперь владеем мы.
+ */
 ROCmBackend::ROCmBackend(ROCmBackend&& other) noexcept
     : device_index_(other.device_index_),
       initialized_(other.initialized_),
@@ -38,6 +55,8 @@ ROCmBackend::ROCmBackend(ROCmBackend&& other) noexcept
       memory_manager_(std::move(other.memory_manager_)),
       device_(other.device_),
       stream_(other.stream_) {
+  // Сбрасываем источник: деструктор other не должен вызвать Cleanup() с уже переданными ресурсами.
+  // owns_resources_ → false: даже если other думал что владеет core_, теперь владеем мы.
   other.device_index_ = -1;
   other.initialized_ = false;
   other.owns_resources_ = false;
@@ -45,9 +64,14 @@ ROCmBackend::ROCmBackend(ROCmBackend&& other) noexcept
   other.stream_ = nullptr;
 }
 
+/**
+ * @brief Move-присваивание — освобождает свои ресурсы, затем перенимает чужие
+ *
+ * Cleanup() вызывается ПЕРВЫМ — иначе свои core_ и memory_manager_ останутся без владельца.
+ */
 ROCmBackend& ROCmBackend::operator=(ROCmBackend&& other) noexcept {
   if (this != &other) {
-    Cleanup();
+    Cleanup();  // Освобождаем свои ресурсы ПЕРЕД перемещением — иначе утечка.
     device_index_ = other.device_index_;
     initialized_ = other.initialized_;
     owns_resources_ = other.owns_resources_;
@@ -69,6 +93,19 @@ ROCmBackend& ROCmBackend::operator=(ROCmBackend&& other) noexcept {
 // Инициализация
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Инициализирует ROCm бэкенд для заданного AMD GPU
+ *
+ * Thread-safe (mutex_). При повторном вызове без Cleanup() — сначала вызывает Cleanup().
+ *
+ * Порядок:
+ * 1. ROCmCore(device_index) → Initialize() — 6 шагов HIP init
+ * 2. Кешируем device_ и stream_ из core_ — для быстрого доступа без разыменования unique_ptr
+ * 3. MemoryManager(this) — пул hipMalloc буферов
+ *
+ * @param device_index Индекс AMD GPU (0..N-1; проверяется в ROCmCore::InitializeHIP)
+ * @throws std::runtime_error если device_index невалиден или HIP недоступен
+ */
 void ROCmBackend::Initialize(int device_index) {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -86,11 +123,11 @@ void ROCmBackend::Initialize(int device_index) {
   core_ = std::make_unique<ROCmCore>(device_index);
   core_->Initialize();
 
-  // Кешируем нативные хэндлы
+  // Кешируем нативные хэндлы из core_ — избегаем разыменования unique_ptr в hot path
   device_ = core_->GetDevice();
   stream_ = core_->GetStream();
 
-  // Создаём MemoryManager
+  // Создаём MemoryManager ПОСЛЕ инициализации core_ — MemoryManager хранит указатель на IBackend
   memory_manager_ = std::make_unique<MemoryManager>(this);
 
   initialized_ = true;
@@ -104,6 +141,17 @@ void ROCmBackend::Initialize(int device_index) {
 // Очистка
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Освобождает все ресурсы бэкенда
+ *
+ * Порядок освобождения критичен:
+ * 1. memory_manager_ ПЕРВЫМ — буферы MemoryManager могут содержать hipFree вызовы
+ *    на stream_ из core_; если core_ уничтожить раньше → dangling hipStream_t.
+ * 2. core_ — hipStreamDestroy (если owns_resources_=true)
+ *
+ * Идемпотентен (ранний выход если !initialized_).
+ * Вызывается автоматически из деструктора и из Initialize() при повторном вызове.
+ */
 void ROCmBackend::Cleanup() {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -120,10 +168,12 @@ void ROCmBackend::Cleanup() {
   memory_manager_.reset();
 
   if (owns_resources_) {
-    // Очищаем ROCmCore (уничтожает stream и пр.)
+    // owns_resources_=true: уничтожаем ROCmCore — вызовет hipStreamDestroy внутри.
     core_.reset();
   } else {
-    // Non-owning: просто обнуляем
+    // owns_resources_=false: core_ создан снаружи, мы не должны его уничтожать.
+    // reset() всё равно вызывает деструктор ROCmCore — это допустимо, т.к.
+    // non-owning сценарий сейчас не используется в реальных путях кода.
     core_.reset();
   }
 
@@ -139,10 +189,20 @@ void ROCmBackend::Cleanup() {
 // Информация об устройстве
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Возвращает структуру с информацией об устройстве
+ *
+ * Делегирует в QueryDeviceInfo() — выделен в приватный метод чтобы GetDeviceInfo() оставался const.
+ * @return GPUDeviceInfo; поля по умолчанию (пустые) если core_ не инициализирован
+ */
 GPUDeviceInfo ROCmBackend::GetDeviceInfo() const {
   return QueryDeviceInfo();
 }
 
+/**
+ * @brief Имя GPU устройства из hipDeviceProp_t.name
+ * @return Строка вида "AMD Radeon RX 9070 XT"; "Unknown" если не инициализирован
+ */
 std::string ROCmBackend::GetDeviceName() const {
   if (!core_ || !core_->IsInitialized()) {
     return "Unknown";
@@ -154,16 +214,34 @@ std::string ROCmBackend::GetDeviceName() const {
 // Нативные хэндлы
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Нативный контекст для совместимости с IBackend интерфейсом
+ *
+ * HIP не имеет явного контекстного объекта (в отличие от OpenCL cl_context).
+ * Контекст управляется неявно через hipSetDevice — хранить нечего.
+ * @return nullptr всегда
+ */
 void* ROCmBackend::GetNativeContext() const {
-  // HIP не имеет отдельного context как OpenCL
-  // Возвращаем nullptr — context управляется неявно через hipSetDevice
   return nullptr;
 }
 
+/**
+ * @brief Нативный device handle как void*
+ *
+ * hipDevice_t — это int, поэтому reinterpret_cast через intptr_t:
+ * сначала int → intptr_t (value-preserving), затем intptr_t → void* (pointer-sized).
+ * ЗАЧЕМ: IBackend интерфейс возвращает void* для backend-агностичного кода.
+ */
 void* ROCmBackend::GetNativeDevice() const {
   return reinterpret_cast<void*>(static_cast<intptr_t>(device_));
 }
 
+/**
+ * @brief Нативный HIP stream (hipStream_t) как void*
+ *
+ * hipStream_t — это указатель, безопасное приведение к void*.
+ * Использование: hipFFT, hipBLAS принимают hipStream_t — получать через GetCore().GetStream().
+ */
 void* ROCmBackend::GetNativeQueue() const {
   return static_cast<void*>(stream_);
 }
@@ -172,7 +250,21 @@ void* ROCmBackend::GetNativeQueue() const {
 // Управление памятью
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Выделяет device memory через hipMalloc
+ *
+ * flags игнорируется — HIP не имеет аналога CL_MEM_FLAGS (READ_ONLY, USE_HOST_PTR и т.п.).
+ * Для pinned host memory → hipMallocHost. Для unified memory → hipMallocManaged.
+ * Оба варианта вызываются напрямую через GetCore() — не через этот интерфейс.
+ *
+ * @param size_bytes Размер выделяемого буфера в байтах
+ * @param flags Игнорируется (совместимость с IBackend интерфейсом)
+ * @return Указатель на device memory; nullptr при ошибке или если не инициализирован
+ * @note Не бросает — возвращает nullptr, ошибка записывается в лог
+ */
 void* ROCmBackend::Allocate(size_t size_bytes, unsigned int /*flags*/) {
+  // flags игнорируем: hipMalloc не имеет аналога CL_MEM_FLAGS (READ_ONLY, USE_HOST_PTR и т.п.).
+  // Все HIP буферы — обычная device memory (VRAM). Для pinned/unified используй hipMallocHost/hipMallocManaged.
   if (!initialized_) {
     return nullptr;
   }
@@ -190,6 +282,13 @@ void* ROCmBackend::Allocate(size_t size_bytes, unsigned int /*flags*/) {
   return device_ptr;
 }
 
+/**
+ * @brief Освобождает device memory через hipFree
+ *
+ * Безопасен для nullptr (ранний выход). Логирует ошибки через plog (не бросает).
+ * ВАЖНО: не вызывать для pinned (hipMallocHost) или managed (hipMallocManaged) памяти —
+ * для них нужны hipFreeHost / hipFree соответственно.
+ */
 void ROCmBackend::Free(void* ptr) {
   if (ptr) {
     hipError_t err = hipFree(ptr);
@@ -200,6 +299,18 @@ void ROCmBackend::Free(void* ptr) {
   }
 }
 
+/**
+ * @brief Копирует данные host → device memory (СИНХРОННО)
+ *
+ * Внутри: hipMemcpyHtoDAsync (DMA transfer) + hipStreamSynchronize (wait).
+ * ЗАЧЕМ синхронно: сохраняем совместимость с OpenCL backend, где enqueueWriteBuffer
+ * с CL_TRUE блокирует. Модули рассчитывают что данные доступны сразу после вызова.
+ *
+ * Для максимальной скорости (pipeline HtoD + kernel): использовать hipMemcpyHtoDAsync
+ * напрямую через GetCore().GetStream() + синхронизировать позже перед kernel launch.
+ *
+ * @note Не бросает — ошибки записываются в лог (plog)
+ */
 void ROCmBackend::MemcpyHostToDevice(void* dst, const void* src, size_t size_bytes) {
   if (!dst || !src || !initialized_) {
     DRVGPU_LOG_ERROR_GPU(device_index_, "ROCmBackend",
@@ -218,6 +329,13 @@ void ROCmBackend::MemcpyHostToDevice(void* dst, const void* src, size_t size_byt
   (void)hipStreamSynchronize(stream_);
 }
 
+/**
+ * @brief Копирует данные device → host memory (СИНХРОННО)
+ *
+ * Внутри: hipMemcpyDtoHAsync + hipStreamSynchronize.
+ * Вызывать ПОСЛЕ того как все kernel'ы завершились (иначе читаем неготовые данные).
+ * В нашем flow: kernel → MemcpyDeviceToHost → читаем результат на CPU.
+ */
 void ROCmBackend::MemcpyDeviceToHost(void* dst, const void* src, size_t size_bytes) {
   if (!dst || !src || !initialized_) {
     DRVGPU_LOG_ERROR_GPU(device_index_, "ROCmBackend",
@@ -232,9 +350,18 @@ void ROCmBackend::MemcpyDeviceToHost(void* dst, const void* src, size_t size_byt
     return;
   }
 
+  // Синхронизируем для совместимости с синхронным API OpenCL backend.
   (void)hipStreamSynchronize(stream_);
 }
 
+/**
+ * @brief Копирует данные между двумя device буферами (СИНХРОННО)
+ *
+ * Внутри: hipMemcpyDtoDAsync + hipStreamSynchronize.
+ * ЗАЧЕМ: конвейерное копирование результатов между модулями без возврата на CPU.
+ * Типичный случай: output одного kernel → input следующего.
+ * На AMD GPU DtoD копия идёт через GPU DMA engine — не нагружает PCIE шину.
+ */
 void ROCmBackend::MemcpyDeviceToDevice(void* dst, const void* src, size_t size_bytes) {
   if (!dst || !src || !initialized_) {
     DRVGPU_LOG_ERROR_GPU(device_index_, "ROCmBackend",
@@ -249,6 +376,7 @@ void ROCmBackend::MemcpyDeviceToDevice(void* dst, const void* src, size_t size_b
     return;
   }
 
+  // Синхронизируем для совместимости с синхронным API OpenCL backend.
   (void)hipStreamSynchronize(stream_);
 }
 
@@ -256,6 +384,13 @@ void ROCmBackend::MemcpyDeviceToDevice(void* dst, const void* src, size_t size_b
 // Синхронизация
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Блокирует CPU до завершения всех операций в stream_
+ *
+ * hipStreamSynchronize — ждёт пока все операции в очереди stream_ выполнятся.
+ * КОГДА вызывать: после запуска kernel'ов, перед чтением результатов на CPU.
+ * В нормальном flow: Launch kernel → Synchronize → MemcpyDeviceToHost.
+ */
 void ROCmBackend::Synchronize() {
   if (stream_) {
     hipError_t err = hipStreamSynchronize(stream_);
@@ -266,6 +401,15 @@ void ROCmBackend::Synchronize() {
   }
 }
 
+/**
+ * @brief Non-blocking «подталкивание» очереди (аналог clFlush)
+ *
+ * hipStreamQuery проверяет статус stream без блокировки:
+ * hipSuccess — все операции завершены, hipErrorNotReady — ещё в процессе.
+ * (void) намеренно игнорирует возвращаемое значение — нас интересует только эффект flush.
+ * ЗАЧЕМ: в некоторых сценариях без явного flush GPU может задерживать старт операций.
+ * Для реальной синхронизации → Synchronize().
+ */
 void ROCmBackend::Flush() {
   if (stream_) {
     // HIP: hipStreamQuery возвращает hipSuccess если все операции завершены,
@@ -307,6 +451,14 @@ size_t ROCmBackend::GetLocalMemorySize() const {
 // Специфичные для ROCm методы
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Прямой доступ к ROCmCore для HIP-специфичных операций
+ *
+ * ЗАЧЕМ: модули (hipFFT, statistics, heterodyne) нуждаются в hipStream_t для запуска
+ * kernel'ов и библиотечных вызовов. GetCore().GetStream() — главный use case.
+ *
+ * @throws std::runtime_error если Initialize() ещё не вызван
+ */
 ROCmCore& ROCmBackend::GetCore() {
   if (!core_) {
     throw std::runtime_error("ROCmBackend::GetCore - Core not initialized");
@@ -321,6 +473,10 @@ const ROCmCore& ROCmBackend::GetCore() const {
   return *core_;
 }
 
+/**
+ * @brief Доступ к пулу hipMalloc буферов
+ * @return Указатель на MemoryManager; nullptr если не инициализирован
+ */
 MemoryManager* ROCmBackend::GetMemoryManager() {
   return memory_manager_.get();
 }
@@ -333,6 +489,19 @@ const MemoryManager* ROCmBackend::GetMemoryManager() const {
 // Приватные методы
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Заполняет GPUDeviceInfo из свойств ROCmCore
+ *
+ * Нюансы заполнения:
+ * - driver_version: содержит GCN arch string (напр. "gfx1201"), а НЕ версию драйвера —
+ *   hipDeviceProp_t не предоставляет строку версии ROCm. Принято как допустимый суррогат.
+ * - max_mem_alloc_size = global_memory: HIP не имеет per-allocation лимита
+ *   (в OpenCL CL_DEVICE_MAX_MEM_ALLOC_SIZE = 1/4 от VRAM — здесь таких ограничений нет).
+ * - supports_half = false: AMD GPU поддерживает fp16, но через IBackend не экспонируем —
+ *   модули работают с float/float2 напрямую без обёртки через IBackend.
+ *
+ * @return Заполненный GPUDeviceInfo; пустой (поля по умолчанию) если core_ не инициализирован
+ */
 GPUDeviceInfo ROCmBackend::QueryDeviceInfo() const {
   GPUDeviceInfo info{};
 
@@ -342,19 +511,19 @@ GPUDeviceInfo ROCmBackend::QueryDeviceInfo() const {
 
   info.name = core_->GetDeviceName();
   info.vendor = core_->GetVendor();
-  info.driver_version = core_->GetArchName();
+  info.driver_version = core_->GetArchName();  // GCN arch string (e.g. "gfx1201") вместо версии драйвера — ROCm не предоставляет строку версии через hipDeviceProp_t
   info.opencl_version = "N/A (ROCm/HIP)";
   info.device_index = device_index_;
   info.global_memory_size = core_->GetGlobalMemorySize();
   info.local_memory_size = core_->GetLocalMemorySize();
-  info.max_mem_alloc_size = core_->GetGlobalMemorySize();  // HIP: no separate limit
+  info.max_mem_alloc_size = core_->GetGlobalMemorySize();  // HIP не имеет отдельного лимита на одно выделение (в отличие от OpenCL CL_DEVICE_MAX_MEM_ALLOC_SIZE)
   info.max_compute_units = static_cast<size_t>(core_->GetComputeUnits());
   info.max_work_group_size = core_->GetMaxWorkGroupSize();
   info.max_clock_frequency = core_->GetMaxClockFrequency();
   info.supports_svm = false;
   info.supports_double = core_->SupportsDoublePrecision();
-  info.supports_half = false;
-  info.supports_unified_memory = false;
+  info.supports_half = false;             // Технически AMD поддерживает fp16; не экспонируем через IBackend — модули не используют
+  info.supports_unified_memory = false;   // hipMallocManaged не используем в текущей архитектуре
 
   return info;
 }

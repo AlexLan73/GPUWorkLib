@@ -43,7 +43,19 @@ namespace antenna_fft {
 // ЧАСТЬ 1: КОНСТРУКТОРЫ И ДЕСТРУКТОРЫ
 // ════════════════════════════════════════════════════════════════════════════
 
-// Новый конструктор (НОВЫЙ API)
+/**
+ * @brief Конструктор — получает OpenCL ресурсы из backend, создаёт AllMaxima pipeline
+ *
+ * Аналог конструктора SpectrumMaximaFinder, но дополнительно создаёт
+ * pipeline_ = AllMaximaPipelineOpenCL(context, queue, device) для AllMaxima операций.
+ * pipeline_ содержит detect/scan/compact kernels (lazy compiled при первом Execute).
+ *
+ * backend_ не владеет — lifetime backend > processor.
+ *
+ * @param backend Инициализированный IBackend (не nullptr, не владеем)
+ * @throws std::invalid_argument если backend == nullptr
+ * @throws std::runtime_error   если backend не инициализирован или нет OpenCL ресурсов
+ */
 SpectrumProcessorOpenCL::SpectrumProcessorOpenCL(drv_gpu_lib::IBackend* backend)
     : backend_(backend) {
 
@@ -67,6 +79,9 @@ SpectrumProcessorOpenCL::SpectrumProcessorOpenCL(drv_gpu_lib::IBackend* backend)
     pipeline_ = std::make_unique<AllMaximaPipelineOpenCL>(context_, queue_, device_);
 }
 
+/**
+ * @brief Деструктор — ReleaseResources() + pipeline_ уничтожается автоматически (unique_ptr)
+ */
 SpectrumProcessorOpenCL::~SpectrumProcessorOpenCL() {
     ReleaseResources();
 }
@@ -75,6 +90,19 @@ SpectrumProcessorOpenCL::~SpectrumProcessorOpenCL() {
 // ЧАСТЬ 2: ПУБЛИЧНЫЙ API — Initialize()
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Принять params и инициализировать GPU ресурсы: буферы, clFFT план, post-kernel
+ *
+ * Аналог SpectrumMaximaFinder::Initialize(), но принимает SpectrumParams явно (ISpectrumProcessor API).
+ * params копируется в params_. Если Initialize уже был вызван — выходим немедленно (guard).
+ *
+ * Стратегия выделения:
+ * - Если все антенны помещаются → AllocateBuffers() + CreateFFTPlanWithCallback() + CompilePostKernel()
+ * - Иначе batch mode → ReallocateBuffersForBatch(max_batch_size) + CompilePostKernel()
+ *
+ * @param params SpectrumParams с конфигурацией (antenna_count, n_point, repeat_count, etc.)
+ * @throws std::runtime_error если любой шаг инициализации провалился
+ */
 void SpectrumProcessorOpenCL::Initialize(const SpectrumParams& params) {
     params_ = params;
     if (initialized_) {
@@ -134,6 +162,18 @@ void SpectrumProcessorOpenCL::Initialize(const SpectrumParams& params) {
 // ЧАСТЬ 3: BATCH PROCESSING — ProcessBatch(), ReallocateBuffersForBatch()
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Обработать один batch: Upload → FFT → PostKernel → ReadResults, с profiling
+ *
+ * Отличие от SpectrumMaximaFinder::ProcessBatch: использует RecordProfilingEvent (не CollectOrRelease).
+ * Это потому что SpectrumProcessorOpenCL работает без ProfEvents* параметра — профилирование
+ * через GPUProfiler::Record внутри, не через аккумуляцию событий в вектор.
+ *
+ * @param input_data          Весь массив (не только batch)
+ * @param start_antenna       Абсолютный индекс первой антенны
+ * @param batch_antenna_count Число антенн в batch
+ * @return vector<SpectrumResult> с корректными antenna_id
+ */
 std::vector<SpectrumResult> SpectrumProcessorOpenCL::ProcessBatch(
     const std::vector<std::complex<float>>& input_data,
     size_t start_antenna,
@@ -185,6 +225,16 @@ std::vector<SpectrumResult> SpectrumProcessorOpenCL::ProcessBatch(
 // ProcessFromCPU — обработка CPU-данных (vector<complex<float>>)
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief ISpectrumProcessor::ProcessFromCPU — сырой сигнал с CPU → GPU → результат
+ *
+ * Реализация интерфейса ISpectrumProcessor. Аналог ProcessFromCPU в SpectrumMaximaFinder,
+ * но без ProfEvents* — профилирование через RecordProfilingEvent внутри ProcessBatch.
+ *
+ * @param data Плоский массив [antenna_count × n_point] complex<float>
+ * @return vector<SpectrumResult>[antenna_count]
+ * @throws std::runtime_error если не инициализирован или размер не совпадает
+ */
 std::vector<SpectrumResult> SpectrumProcessorOpenCL::ProcessFromCPU(
     const std::vector<std::complex<float>>& data)
 {
@@ -244,6 +294,21 @@ std::vector<SpectrumResult> SpectrumProcessorOpenCL::ProcessFromCPU(
 // ProcessFromGPU — обработка GPU-данных (void* → cl_mem)
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief ISpectrumProcessor::ProcessFromGPU — данные уже на GPU (void* = cl_mem)
+ *
+ * gpu_data: void* для соответствия интерфейсу ISpectrumProcessor (backend-agnostic),
+ * внутри приводится к cl_mem. Использует G2G CopyBuffer вместо Upload.
+ *
+ * external_memory учитывается при расчёте batch (gpu_data уже занимает VRAM).
+ *
+ * @param gpu_data        Указатель-cl_mem [antenna_count × n_point × complex<float>]
+ * @param antenna_count   Число антенн
+ * @param n_point         Точек на антенну
+ * @param gpu_memory_bytes Размер gpu_data (0 = авто = antenna_count × n_point × 8)
+ * @return vector<SpectrumResult>[antenna_count]
+ * @throws std::invalid_argument если gpu_data == nullptr
+ */
 std::vector<SpectrumResult> SpectrumProcessorOpenCL::ProcessFromGPU(
     void* gpu_data, size_t antenna_count, size_t n_point,
     size_t gpu_memory_bytes)
@@ -342,6 +407,11 @@ std::vector<SpectrumResult> SpectrumProcessorOpenCL::ProcessFromGPU(
 // ProcessBatchFromGPU — обработка одного batch с GPU-данными
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Обработать один batch из внешнего GPU буфера (void* = cl_mem)
+ * G2G CopyBuffer(src_offset_bytes) → ExecuteFFT → ExecutePostKernel → ReadResults.
+ * antenna_id корректируется на start_antenna. Использует RecordProfilingEvent (не ProfEvents*).
+ */
 std::vector<SpectrumResult> SpectrumProcessorOpenCL::ProcessBatchFromGPU(
     void* gpu_data, size_t src_offset_bytes,
     size_t start_antenna, size_t batch_antenna_count)
@@ -389,6 +459,11 @@ std::vector<SpectrumResult> SpectrumProcessorOpenCL::ProcessBatchFromGPU(
     return results;
 }
 
+/**
+ * @brief Выделить или переиспользовать буферы и FFT план для batch_antenna_count антенн
+ * Идентичен SpectrumMaximaFinder::ReallocateBuffersForBatch — см. документацию там.
+ * FAST PATH / PARTIAL PATH / FULL PATH — те же три пути оптимизации.
+ */
 void SpectrumProcessorOpenCL::ReallocateBuffersForBatch(size_t batch_antenna_count) {
     cl_int err;
 
@@ -605,6 +680,10 @@ void SpectrumProcessorOpenCL::ReallocateBuffersForBatch(size_t batch_antenna_cou
 // ЧАСТЬ 4: УТИЛИТЫ — CalculateFFTSize(), NextPowerOf2(), CalculateBytesPerAntenna()
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Вычислить base_fft, nFFT, search_range в params_
+ * base_fft = nextPow2(n_point), nFFT = base_fft × repeat_count, search_range=0→nFFT/4.
+ */
 void SpectrumProcessorOpenCL::CalculateFFTSize() {
     // base_fft = следующая степень двойки от n_point
     params_.base_fft = NextPowerOf2(params_.n_point);
@@ -618,6 +697,10 @@ void SpectrumProcessorOpenCL::CalculateFFTSize() {
     }
 }
 
+/**
+ * @brief Следующая степень двойки ≥ n (bit-twiddling, O(1))
+ * hipFFT/clFFT оптимально работают со степенями двойки.
+ */
 uint32_t SpectrumProcessorOpenCL::NextPowerOf2(uint32_t n) {
     if (n == 0) return 1;
     n--;
@@ -629,6 +712,11 @@ uint32_t SpectrumProcessorOpenCL::NextPowerOf2(uint32_t n) {
     return n + 1;
 }
 
+/**
+ * @brief Оценить потребление GPU памяти на одну антенну (для BatchManager)
+ * Упрощённая формула (без ALL_MAXIMA branch) т.к. SpectrumProcessorOpenCL не поддерживает
+ * peak_mode=ALL_MAXIMA напрямую — только через FindAllMaxima() и AllMaximaFromCPU().
+ */
 size_t SpectrumProcessorOpenCL::CalculateBytesPerAntenna() const {
     // Формула памяти на одну антенну для BatchManager:
     // 1. Input data: n_point * sizeof(complex<float>)
@@ -650,6 +738,10 @@ size_t SpectrumProcessorOpenCL::CalculateBytesPerAntenna() const {
 // AllocateBuffers(), CreateFFTPlanWithCallback(), CompilePostKernel()
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Выделить GPU буферы для single-batch (все помещаются в VRAM)
+ * Аналог SpectrumMaximaFinder::AllocateBuffers() — см. документацию там.
+ */
 void SpectrumProcessorOpenCL::AllocateBuffers() {
     cl_int err;
 
@@ -696,6 +788,10 @@ void SpectrumProcessorOpenCL::AllocateBuffers() {
     }
 }
 
+/**
+ * @brief Создать clFFT план с pre-callback (zero-padding) для single-batch режима
+ * Аналог SpectrumMaximaFinder::CreateFFTPlanWithCallback() — см. документацию там.
+ */
 void SpectrumProcessorOpenCL::CreateFFTPlanWithCallback() {
     // Инициализация clFFT (один раз на экземпляр, НЕ static для multi-GPU!)
     if (!clfft_initialized_) {
@@ -746,6 +842,10 @@ void SpectrumProcessorOpenCL::CreateFFTPlanWithCallback() {
     plan_created_ = true;
 }
 
+/**
+ * @brief Скомпилировать post-kernel (peak search: ONE_PEAK или TWO_PEAKS)
+ * Аналог SpectrumMaximaFinder::CompilePostKernel() — см. документацию там.
+ */
 void SpectrumProcessorOpenCL::CompilePostKernel() {
     cl_int err;
 
@@ -798,6 +898,10 @@ void SpectrumProcessorOpenCL::CompilePostKernel() {
 // ЧАСТЬ 6: GPU ОПЕРАЦИИ — UploadData(), ExecuteFFT(), ExecutePostKernel(), ReadResults()
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief CPU→GPU upload через Pinned Memory (DMA) или fallback WriteBuffer
+ * Аналог SpectrumMaximaFinder::UploadData() — см. документацию там.
+ */
 cl_event SpectrumProcessorOpenCL::UploadData(const std::vector<std::complex<float>>& input_data) {
     cl_event event = nullptr;
     size_t data_size = input_data.size() * sizeof(std::complex<float>);
@@ -869,6 +973,10 @@ cl_event SpectrumProcessorOpenCL::UploadData(const std::vector<std::complex<floa
     return event;
 }
 
+/**
+ * @brief Запустить clFFT с plan_handle_ (pre-callback встроен)
+ * Аналог SpectrumMaximaFinder::ExecuteFFT() — см. документацию там.
+ */
 cl_event SpectrumProcessorOpenCL::ExecuteFFT(cl_event wait_event) {
     cl_event event = nullptr;
 
@@ -892,6 +1000,10 @@ cl_event SpectrumProcessorOpenCL::ExecuteFFT(cl_event wait_event) {
     return event;
 }
 
+/**
+ * @brief Запустить post-kernel (peak search) после FFT
+ * Аналог SpectrumMaximaFinder::ExecutePostKernel() — см. документацию там.
+ */
 cl_event SpectrumProcessorOpenCL::ExecutePostKernel(cl_event wait_event) {
     cl_int err;
     cl_event event = nullptr;
@@ -935,6 +1047,11 @@ cl_event SpectrumProcessorOpenCL::ExecutePostKernel(cl_event wait_event) {
     return event;
 }
 
+/**
+ * @brief Читать maxima_output_ с GPU → vector<SpectrumResult>
+ * Отличие от SpectrumMaximaFinder::ReadResults: профилирование через RecordProfilingEvent
+ * (не CollectOrRelease) — read_event записывается в GPUProfiler["Download"].
+ */
 std::vector<SpectrumResult> SpectrumProcessorOpenCL::ReadResults(cl_event wait_event) {
     // Количество MaxValue зависит от режима: ONE_PEAK=4, TWO_PEAKS=8
     // Используем actual_batch_size_ — реальный размер текущего batch (не размер буферов!)
@@ -1033,6 +1150,10 @@ ProfilingData SpectrumProcessorOpenCL::GetProfilingData() const {
 // ЧАСТЬ 7: AllMaxima — EnsureMagnitudesBuffer, CreateAllMaximaFFTPlan, etc.
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Lazy alloc/resize magnitudes_buffer_ (float[beam_count × nFFT])
+ * Аналог SpectrumMaximaFinder::EnsureMagnitudesBuffer() — см. документацию там.
+ */
 void SpectrumProcessorOpenCL::EnsureMagnitudesBuffer(size_t total_elements) {
     if (magnitudes_buffer_ && magnitudes_buffer_size_ >= total_elements) {
         return;
@@ -1052,6 +1173,11 @@ void SpectrumProcessorOpenCL::EnsureMagnitudesBuffer(size_t total_elements) {
     magnitudes_buffer_size_ = total_elements;
 }
 
+/**
+ * @brief Создать clFFT план с pre+post callbacks для AllMaxima (lazy, с переиспользованием)
+ * Аналог SpectrumMaximaFinder::CreateAllMaximaFFTPlan() — см. документацию там.
+ * Post-callback "computeMagnitudePost" → magnitudes_buffer_ (float[batch×nFFT]).
+ */
 void SpectrumProcessorOpenCL::CreateAllMaximaFFTPlan(size_t batch_count) {
     if (allmax_plan_created_ && allmax_plan_batch_size_ == batch_count) {
         return;
@@ -1126,6 +1252,10 @@ void SpectrumProcessorOpenCL::CreateAllMaximaFFTPlan(size_t batch_count) {
         "FFT plan created with pre+post callbacks (batch=" + std::to_string(batch_count) + ")");
 }
 
+/**
+ * @brief Запустить FFT с allmax_plan_handle_ (pre+post callbacks встроены)
+ * Аналог SpectrumMaximaFinder::ExecuteAllMaximaFFT() — magnitudes_buffer_ заполняется post-callback'ом.
+ */
 cl_event SpectrumProcessorOpenCL::ExecuteAllMaximaFFT(cl_event wait_event) {
     cl_event event = nullptr;
 
@@ -1148,6 +1278,20 @@ cl_event SpectrumProcessorOpenCL::ExecuteAllMaximaFFT(cl_event wait_event) {
     return event;
 }
 
+/**
+ * @brief IAllMaximaPipeline-compatible: CPU сырой сигнал → FFT → AllMaxima pipeline
+ *
+ * Аналог SpectrumMaximaFinder::FindAllMaximaFromCPU(), но:
+ * - Профилирование через GPUProfiler::Record (не CollectOrRelease)
+ * - Без batch mode — бросает runtime_error если данные не помещаются (упрощённая реализация)
+ * - FindAllMaxima делегирует в pipeline_->Execute() (Strategy pattern!)
+ *
+ * @param data  Плоский массив [antenna_count × n_point] complex<float>
+ * @param dest  CPU / GPU / ALL
+ * @param search_start Начальный бин (0=авто=1)
+ * @param search_end   Конечный бин (0=авто=nFFT/2)
+ * @return AllMaximaResult; при dest=GPU/ALL — caller ОБЯЗАН освободить gpu_maxima/gpu_counts!
+ */
 AllMaximaResult SpectrumProcessorOpenCL::FindAllMaximaFromCPU(
     const std::vector<std::complex<float>>& data,
     OutputDestination dest, uint32_t search_start, uint32_t search_end)
@@ -1214,6 +1358,16 @@ AllMaximaResult SpectrumProcessorOpenCL::FindAllMaximaFromCPU(
     return result;
 }
 
+/**
+ * @brief IAllMaximaPipeline-compatible: GPU сырой сигнал → G2G Copy → FFT → AllMaxima
+ *
+ * Аналог SpectrumMaximaFinder::FindAllMaximaFromGPUPipeline() — без batch mode.
+ * Бросает runtime_error если данные + рабочие буферы не помещаются в VRAM.
+ * FindAllMaxima делегирует в pipeline_->Execute() (Strategy pattern!)
+ *
+ * @param gpu_data        void* = cl_mem [antenna_count × n_point × complex<float>]
+ * @param gpu_memory_bytes Размер gpu_data (0 = авто)
+ */
 AllMaximaResult SpectrumProcessorOpenCL::FindAllMaximaFromGPUPipeline(
     void* gpu_data, size_t antenna_count, size_t n_point,
     size_t gpu_memory_bytes,
@@ -1294,6 +1448,10 @@ AllMaximaResult SpectrumProcessorOpenCL::FindAllMaximaFromGPUPipeline(
     return result;
 }
 
+/**
+ * @brief CPU FFT данные → Upload → AllMaxima (без FFT — данные уже FFT'ые)
+ * Аналог SpectrumMaximaFinder::AllMaximaFromCPU() — делегирует в FindAllMaxima() → pipeline_->Execute().
+ */
 AllMaximaResult SpectrumProcessorOpenCL::AllMaximaFromCPU(
     const std::vector<std::complex<float>>& fft_data,
     uint32_t beam_count, uint32_t nFFT, float sample_rate,
@@ -1329,6 +1487,13 @@ AllMaximaResult SpectrumProcessorOpenCL::AllMaximaFromCPU(
     return result;
 }
 
+/**
+ * @brief Скомпилировать "compute_magnitudes" kernel (lazy, guard флаг)
+ *
+ * Используется только в AllMaxima raw FFT API (FindAllMaxima с fft_data != fft_output_).
+ * Когда данные приходят через FindAllMaximaFromCPU/GPU — magnitudes уже заполнены post-callback'ом,
+ * этот kernel не нужен. При прямом вызове FindAllMaxima с внешними FFT данными — нужен.
+ */
 void SpectrumProcessorOpenCL::CompileComputeMagnitudesKernel() {
     if (compute_magnitudes_kernel_) return;
 
@@ -1358,6 +1523,21 @@ void SpectrumProcessorOpenCL::CompileComputeMagnitudesKernel() {
         throw std::runtime_error("CompileComputeMagnitudesKernel: kernel create failed: " + std::to_string(err));
 }
 
+/**
+ * @brief Core AllMaxima: Magnitudes → pipeline_->Execute() (Strategy pattern!)
+ *
+ * Ключевое отличие от SpectrumMaximaFinder::FindAllMaxima:
+ * здесь Detect+Scan+Compact делегируется в pipeline_->Execute() (AllMaximaPipelineOpenCL),
+ * а не выполняется inline через clSetKernelArg + clEnqueueNDRangeKernel.
+ *
+ * Это чище архитектурно: pipeline_ — отдельный объект с lazy compilation kernels.
+ * magnitudes_buffer_ передаётся в pipeline_ (который не владеет им).
+ *
+ * @param fft_data     void* = cl_mem float2[beam_count × nFFT] — FFT результаты
+ * @param search_start Начальный бин (0=авто=1)
+ * @param search_end   Конечный бин (0=авто=nFFT/2)
+ * @return AllMaximaResult; при dest=GPU/ALL — caller ОБЯЗАН освободить gpu_maxima/gpu_counts!
+ */
 AllMaximaResult SpectrumProcessorOpenCL::FindAllMaxima(
     void* fft_data, uint32_t beam_count, uint32_t nFFT, float sample_rate,
     OutputDestination dest, uint32_t search_start, uint32_t search_end)
@@ -1417,6 +1597,13 @@ AllMaximaResult SpectrumProcessorOpenCL::FindAllMaxima(
                              dest, search_start, search_end);
 }
 
+/**
+ * @brief Освободить AllMaxima ресурсы: compute_magnitudes kernel + program + pipeline_
+ *
+ * Отличие от SpectrumMaximaFinder::ReleaseAllMaximaResources:
+ * pipeline_.reset() освобождает AllMaximaPipelineOpenCL (detect/scan/compact kernels) —
+ * нам не нужно их освобождать по одному.
+ */
 void SpectrumProcessorOpenCL::ReleaseAllMaximaResources() {
     if (compute_magnitudes_kernel_) { clReleaseKernel(compute_magnitudes_kernel_); compute_magnitudes_kernel_ = nullptr; }
     if (all_maxima_program_) { clReleaseProgram(all_maxima_program_); all_maxima_program_ = nullptr; }
@@ -1427,6 +1614,18 @@ void SpectrumProcessorOpenCL::ReleaseAllMaximaResources() {
 // ЧАСТЬ 8: ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ — WritePreCallbackHeader(), ReleaseResources()
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Обновить PreCallbackHeader в pre_callback_userdata_ (32 байта, blocking write)
+ *
+ * Ключевое отличие от SpectrumMaximaFinder::WritePreCallbackHeader:
+ * здесь вычисляется nFFT_log2 (TASK-3) — pre-callback использует bitwise операции
+ * вместо div/mod для вычисления beam_idx и sample_idx:
+ *   beam_idx   = element_idx >> nFFT_log2      (== element_idx / nFFT)
+ *   sample_idx = element_idx & (nFFT-1)        (== element_idx % nFFT)
+ * Это значительно быстрее на GPU где целочисленное деление дорогое.
+ *
+ * @param batch_count Реальное число лучей в текущем batch
+ */
 void SpectrumProcessorOpenCL::WritePreCallbackHeader(size_t batch_count) {
     // TASK-3: вычисляем log2(nFFT) для bitwise div/mod в pre-callback
     // nFFT гарантированно pow2 (CalculateFFTSize)
@@ -1450,6 +1649,11 @@ void SpectrumProcessorOpenCL::WritePreCallbackHeader(size_t batch_count) {
     }
 }
 
+/**
+ * @brief Освободить все GPU ресурсы (вызывается из деструктора)
+ * Аналог SpectrumMaximaFinder::ReleaseResources() — тот же порядок освобождения.
+ * pipeline_ уже освобождён в ReleaseAllMaximaResources() через pipeline_.reset().
+ */
 void SpectrumProcessorOpenCL::ReleaseResources() {
     // AllMaxima ресурсы
     ReleaseAllMaximaResources();

@@ -37,7 +37,20 @@ namespace antenna_fft {
 // ЧАСТЬ 1: КОНСТРУКТОРЫ И ДЕСТРУКТОРЫ
 // ════════════════════════════════════════════════════════════════════════════
 
-// Новый конструктор (НОВЫЙ API)
+/**
+ * @brief Конструктор фасада — принимает готовый backend, не владеет им
+ *
+ * Извлекает OpenCL ресурсы (context, queue, device) из backend через GetNative*().
+ * Все GPU операции выполняются в этих context/queue — не создаём свои.
+ * Backend должен оставаться живым дольше этого объекта.
+ *
+ * Инициализация (AllocateBuffers, CreateFFTPlanWithCallback) происходит ЛЕНИВО в Initialize()
+ * или при первом вызове Process<T>. Конструктор только проверяет валидность backend'а.
+ *
+ * @param backend Указатель на инициализированный IBackend (не nullptr, не владеем)
+ * @throws std::invalid_argument если backend == nullptr
+ * @throws std::runtime_error   если backend не инициализирован или нет OpenCL ресурсов
+ */
 SpectrumMaximaFinder::SpectrumMaximaFinder(drv_gpu_lib::IBackend* backend)
     : backend_(backend) {
 
@@ -59,10 +72,20 @@ SpectrumMaximaFinder::SpectrumMaximaFinder(drv_gpu_lib::IBackend* backend)
     }
 }
 
+/**
+ * @brief Деструктор — освобождает все GPU ресурсы через ReleaseResources()
+ * ReleaseResources освобождает: clFFT планы, OpenCL kernels/programs, все cl_mem буферы.
+ * backend_ НЕ освобождается — мы не владеем им.
+ */
 SpectrumMaximaFinder::~SpectrumMaximaFinder() {
     ReleaseResources();
 }
 
+/**
+ * @brief Move constructor — передаёт владение всеми ресурсами, обнуляет источник
+ * После перемещения source.initialized_=false, все его cl_mem/планы=nullptr.
+ * Нужен для хранения в std::vector и возврата из фабрики без копирования.
+ */
 SpectrumMaximaFinder::SpectrumMaximaFinder(SpectrumMaximaFinder&& other) noexcept
     : params_(other.params_)
     , initialized_(other.initialized_)
@@ -135,6 +158,10 @@ SpectrumMaximaFinder::SpectrumMaximaFinder(SpectrumMaximaFinder&& other) noexcep
     other.magnitudes_buffer_size_ = 0;
 }
 
+/**
+ * @brief Move assignment — освобождает текущие ресурсы, принимает из other
+ * ReleaseResources() вызывается ПЕРЕД присвоением — иначе потеряем текущие буферы.
+ */
 SpectrumMaximaFinder& SpectrumMaximaFinder::operator=(SpectrumMaximaFinder&& other) noexcept {
     if (this != &other) {
         ReleaseResources();
@@ -215,6 +242,22 @@ SpectrumMaximaFinder& SpectrumMaximaFinder::operator=(SpectrumMaximaFinder&& oth
 // ЧАСТЬ 2: ПУБЛИЧНЫЙ API — Initialize(), Process(), PrintInfo()
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Инициализировать GPU ресурсы: буферы, clFFT план, post-kernel
+ *
+ * Вызывается один раз перед первым Process<T>. Повторные вызовы — нет-оп (guard флаг).
+ *
+ * Стратегия выделения:
+ * - Если все антенны помещаются в VRAM (AllItemsFit) → обычный путь:
+ *   AllocateBuffers() + CreateFFTPlanWithCallback() + CompilePostKernel()
+ * - Иначе batch mode: ReallocateBuffersForBatch(max_batch_size) + CompilePostKernel()
+ *   (буферы на max_batch, FFT план создаётся при первом batch'е)
+ *
+ * Почему batch mode не создаёт FFT план здесь: план зависит от batch_count, который
+ * определяется в ReallocateBuffersForBatch → нет смысла создавать его дважды.
+ *
+ * @throws std::runtime_error если любой шаг инициализации провалился
+ */
 void SpectrumMaximaFinder::Initialize() {
     if (initialized_) {
         return;
@@ -273,6 +316,22 @@ void SpectrumMaximaFinder::Initialize() {
 // ЧАСТЬ 3: BATCH PROCESSING — ProcessBatch(), ReallocateBuffersForBatch()
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Обработать один batch антенн: Upload → FFT → PostKernel → ReadResults
+ *
+ * Внутренний метод, вызывается из ProcessFromCPU() в цикле по batch'ам.
+ * Извлекает срез [start_antenna, start_antenna+batch_antenna_count) из input_data,
+ * выполняет полный GPU pipeline и корректирует antenna_id на start_antenna.
+ *
+ * Переиспользование буферов: если буферы достаточны (current_batch_size_ >= batch_antenna_count)
+ * и план совпадает — только обновляем заголовок (WritePreCallbackHeader). Иначе ReallocateBuffersForBatch.
+ *
+ * @param input_data          Весь массив всех антенн (не только batch)
+ * @param start_antenna       Абсолютный индекс первой антенны batch
+ * @param batch_antenna_count Число антенн в batch
+ * @param prof_events         Список cl_event для профилирования (nullptr = не профилируем)
+ * @return vector<SpectrumResult>[batch_antenna_count] с корректными antenna_id
+ */
 std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatch(
     const std::vector<std::complex<float>>& input_data,
     size_t start_antenna,
@@ -316,6 +375,29 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatch(
     return batch_results;
 }
 
+/**
+ * @brief Выделить или переиспользовать буферы и FFT план для batch_antenna_count антенн
+ *
+ * Центральный метод управления GPU памятью. Реализует три пути:
+ *
+ * FAST PATH: буферы >= batch_antenna_count && план совпадает по размеру →
+ *   только WritePreCallbackHeader (обновить beam_count в заголовке). O(1).
+ *
+ * PARTIAL PATH: нужен новый план (batch size изменился), но буферы достаточны →
+ *   только пересоздать FFT план + bake. Экономим ~50-200ms на переаллокации буферов.
+ *
+ * FULL PATH: буферы недостаточны → освободить и создать всё заново:
+ *   pre_callback_userdata_, fft_input_, fft_output_, maxima_output_, FFT план.
+ *   fft_temp_buffer_ и pinned_staging_buffer_ переиспользуются если достаточно большие.
+ *
+ * Инварианты после успешного завершения:
+ *   - current_batch_size_ >= batch_antenna_count (реальный размер буферов)
+ *   - plan_batch_size_ == batch_antenna_count (план точно совпадает)
+ *   - plan_created_ == true
+ *
+ * @param batch_antenna_count Число антенн в текущем batch
+ * @throws std::runtime_error если любое выделение или bake провалилось
+ */
 void SpectrumMaximaFinder::ReallocateBuffersForBatch(size_t batch_antenna_count) {
     cl_int err;
 
@@ -528,6 +610,10 @@ void SpectrumMaximaFinder::ReallocateBuffersForBatch(size_t batch_antenna_count)
     // Не обновляем здесь, чтобы сохранить реальный размер выделенных буферов
 }
 
+/**
+ * @brief Вывести конфигурацию (params_) в консоль через ConsoleOutput
+ * Полезно для диагностики: проверить nFFT, search_range, инициализацию.
+ */
 void SpectrumMaximaFinder::PrintInfo() const {
     auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
     con.Print(0, "SpectrumMaxima",
@@ -544,6 +630,12 @@ void SpectrumMaximaFinder::PrintInfo() const {
 // ЧАСТЬ 4: УТИЛИТЫ — CalculateFFTSize(), NextPowerOf2(), CalculateBytesPerAntenna()
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Вычислить и сохранить base_fft, nFFT, search_range в params_
+ * base_fft = nextPow2(n_point), nFFT = base_fft × repeat_count.
+ * search_range=0 → авто = nFFT/4 (первая четверть: положительные частоты).
+ * Вызывается из Initialize() и лениво из ProcessFromGPU при params_.nFFT==0.
+ */
 void SpectrumMaximaFinder::CalculateFFTSize() {
     // base_fft = следующая степень двойки от n_point
     params_.base_fft = NextPowerOf2(params_.n_point);
@@ -557,6 +649,11 @@ void SpectrumMaximaFinder::CalculateFFTSize() {
     }
 }
 
+/**
+ * @brief Следующая степень двойки ≥ n (bit-twiddling, O(1))
+ * Используется для выбора размера FFT: hipFFT/clFFT оптимально работают со степенями двойки.
+ * @return степень двойки ≥ n; при n=0 возвращает 1
+ */
 uint32_t SpectrumMaximaFinder::NextPowerOf2(uint32_t n) {
     if (n == 0) return 1;
     n--;
@@ -568,6 +665,19 @@ uint32_t SpectrumMaximaFinder::NextPowerOf2(uint32_t n) {
     return n + 1;
 }
 
+/**
+ * @brief Оценить потребление GPU памяти на одну антенну (для BatchManager)
+ *
+ * Используется в двух местах:
+ * 1. Initialize() — решить нужен ли batch mode
+ * 2. ProcessFromCPU/GPU — вычислить optimal_batch_size
+ *
+ * Формула зависит от params_.peak_mode:
+ * - ONE_PEAK/TWO_PEAKS: input + 3×fft + maxima_output
+ * - ALL_MAXIMA: input + 3×fft + pipeline_temp (magnitudes+flags+scan) + compact_output
+ *
+ * @return Байт GPU памяти на одну антенну (без учёта уже выделенных буферов)
+ */
 size_t SpectrumMaximaFinder::CalculateBytesPerAntenna() const {
     // Формула памяти на одну антенну для BatchManager:
     // 1. Input data: n_point * sizeof(complex<float>)
@@ -603,6 +713,20 @@ size_t SpectrumMaximaFinder::CalculateBytesPerAntenna() const {
 // AllocateBuffers(), CreateFFTPlanWithCallback(), CompilePostKernel()
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Выделить GPU буферы для single-batch режима (все антенны помещаются в VRAM)
+ *
+ * Используется только если AllItemsFit() вернул true в Initialize().
+ * Для batch mode используется ReallocateBuffersForBatch().
+ *
+ * Создаваемые буферы:
+ *   - pre_callback_userdata_: [32-байт header] + [input data] (все антенны)
+ *   - fft_input_, fft_output_: complex<float>[antenna_count × nFFT]
+ *   - maxima_output_: MaxValue[antenna_count × (4 или 8)]
+ *   (fft_temp_buffer_ и pinned_staging_buffer_ создаются позже в ReallocateBuffersForBatch)
+ *
+ * @throws std::runtime_error если любой clCreateBuffer провалился
+ */
 void SpectrumMaximaFinder::AllocateBuffers() {
     cl_int err;
 
@@ -649,6 +773,19 @@ void SpectrumMaximaFinder::AllocateBuffers() {
     }
 }
 
+/**
+ * @brief Создать clFFT план с pre-callback (zero-padding) для single-batch режима
+ *
+ * Pre-callback "prepareDataPre": читает из pre_callback_userdata_ (offset 32),
+ * выполняет zero-padding n_point → nFFT на лету внутри FFT без отдельного kernel'а.
+ * Это значительно быстрее чем явный memset + writeBuffer.
+ *
+ * Почему НЕ static clfft_initialized_: у каждого GPU свой cl_context,
+ * clfftSetup() не привязан к контексту (глобальная lib init), но мы
+ * отслеживаем флаг per-instance для корректного teardown при деструкторе.
+ *
+ * @throws std::runtime_error если clfftCreateDefaultPlan, clfftSetPlanCallback или clfftBakePlan провалились
+ */
 void SpectrumMaximaFinder::CreateFFTPlanWithCallback() {
     // Инициализация clFFT (один раз на экземпляр, НЕ static для multi-GPU!)
     if (!clfft_initialized_) {
@@ -699,6 +836,18 @@ void SpectrumMaximaFinder::CreateFFTPlanWithCallback() {
     plan_created_ = true;
 }
 
+/**
+ * @brief Скомпилировать post-kernel (peak search) в зависимости от params_.peak_mode
+ *
+ * Два варианта:
+ *   - ONE_PEAK:  "post_kernel_one_peak" — выдаёт 4 MaxValue/луч (interpolated+L+C+R)
+ *   - TWO_PEAKS: "post_kernel"          — выдаёт 8 MaxValue/луч (2 пика × 4 MaxValue)
+ *
+ * Режим ALL_MAXIMA не использует post-kernel — у него свой pipeline (detect+scan+compact).
+ * Компилируется один раз, повторные вызовы не проверяются (вызывается из Initialize единожды).
+ *
+ * При ошибке: выводит build log через ConsoleOutput, освобождает program, бросает runtime_error.
+ */
 void SpectrumMaximaFinder::CompilePostKernel() {
     cl_int err;
 
@@ -751,6 +900,27 @@ void SpectrumMaximaFinder::CompilePostKernel() {
 // ЧАСТЬ 6: GPU ОПЕРАЦИИ — UploadData(), ExecuteFFT(), ExecutePostKernel(), ReadResults()
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Загрузить входные данные на GPU в pre_callback_userdata_ (после заголовка)
+ *
+ * Два пути (автоматический fallback):
+ *
+ * PINNED PATH (быстрый, если pinned_staging_buffer_ создан):
+ *   1. MapBuffer(CL_MAP_WRITE_INVALIDATE_REGION) → page-locked указатель
+ *   2. memcpy данных в pinned память (быстрее чем pageable → UMA)
+ *   3. UnmapMemObject → разблокировать буфер (не запускает transfer!)
+ *   4. CopyBuffer(pinned → pre_callback_userdata_, offset=PRE_CALLBACK_HEADER_SIZE)
+ *   Пропускная способность DMA выше из-за page-locked памяти (нет page faults).
+ *
+ * REGULAR PATH (fallback если pinned недоступен или переполнен):
+ *   clEnqueueWriteBuffer(CL_FALSE, offset=PRE_CALLBACK_HEADER_SIZE)
+ *
+ * Данные пишутся с offset=PRE_CALLBACK_HEADER_SIZE (32 байта) — не затираем заголовок!
+ *
+ * @param input_data CPU данные [batch_count × n_point] complex<float>
+ * @return cl_event Upload события (caller ОБЯЗАН CollectOrRelease или clReleaseEvent)
+ * @throws std::runtime_error если clEnqueueWriteBuffer провалился (только в regular path)
+ */
 cl_event SpectrumMaximaFinder::UploadData(const std::vector<std::complex<float>>& input_data) {
     cl_event event = nullptr;
     size_t data_size = input_data.size() * sizeof(std::complex<float>);
@@ -822,6 +992,16 @@ cl_event SpectrumMaximaFinder::UploadData(const std::vector<std::complex<float>>
     return event;
 }
 
+/**
+ * @brief Запустить clFFT с plan_handle_ (pre-callback встроен в план)
+ *
+ * fft_input_ — технический буфер clFFT, реальные данные читает pre-callback из pre_callback_userdata_.
+ * fft_temp_buffer_ может быть nullptr (clFFT выделит internal temp в этом случае, медленнее).
+ *
+ * @param wait_event cl_event предыдущей операции (Upload); nullptr — без ожидания
+ * @return cl_event FFT операции (caller ОБЯЗАН CollectOrRelease или clReleaseEvent)
+ * @throws std::runtime_error если clfftEnqueueTransform провалился
+ */
 cl_event SpectrumMaximaFinder::ExecuteFFT(cl_event wait_event) {
     cl_event event = nullptr;
 
@@ -845,6 +1025,20 @@ cl_event SpectrumMaximaFinder::ExecuteFFT(cl_event wait_event) {
     return event;
 }
 
+/**
+ * @brief Запустить post-kernel (peak search) после FFT
+ *
+ * Читает fft_output_ (complex<float>[batch×nFFT]), пишет в maxima_output_ (MaxValue[batch×4/8]).
+ * Использует actual_batch_size_ (реальный batch), а не current_batch_size_ (размер буферов) —
+ * это позволяет безопасно обработать последний неполный batch.
+ *
+ * NDRange: global = actual_batch × LOCAL_SIZE, local = LOCAL_SIZE.
+ * Каждая work-group = одна антенна → нет конкуренции за maxima_output_.
+ *
+ * @param wait_event cl_event FFT операции; nullptr — без ожидания
+ * @return cl_event post-kernel операции (caller ОБЯЗАН CollectOrRelease или clReleaseEvent)
+ * @throws std::runtime_error если clSetKernelArg или clEnqueueNDRangeKernel провалился
+ */
 cl_event SpectrumMaximaFinder::ExecutePostKernel(cl_event wait_event) {
     cl_int err;
     cl_event event = nullptr;
@@ -888,6 +1082,24 @@ cl_event SpectrumMaximaFinder::ExecutePostKernel(cl_event wait_event) {
     return event;
 }
 
+/**
+ * @brief Читать maxima_output_ с GPU и преобразовать в vector<SpectrumResult>
+ *
+ * clEnqueueReadBuffer(CL_FALSE) + clWaitForEvents — non-blocking запрос + явное ожидание,
+ * чтобы read_event мог быть записан в prof_events (CollectOrRelease).
+ *
+ * Преобразование MaxValue[] → SpectrumResult[]:
+ * - ONE_PEAK:  4 MaxValue/луч → [interpolated, L, C, R] → 1 SpectrumResult/луч
+ * - TWO_PEAKS: 8 MaxValue/луч → [L_interp, L_L, L_C, L_R, R_interp, R_L, R_C, R_R]
+ *              → 2 SpectrumResult/луч (левый и правый пики)
+ *
+ * antenna_id заполняется относительным индексом (0..actual_batch-1),
+ * корректируется в ProcessBatch()/ProcessBatchFromGPU() на абсолютный.
+ *
+ * @param wait_event cl_event post-kernel; nullptr — без ожидания
+ * @param pe         Список событий для профилирования; "Download" записывается если pe != nullptr
+ * @return vector<SpectrumResult> размером actual_batch_size_ (ONE_PEAK) или 2×actual_batch (TWO_PEAKS)
+ */
 std::vector<SpectrumResult> SpectrumMaximaFinder::ReadResults(cl_event wait_event, ProfEvents* pe) {
     // Количество MaxValue зависит от режима: ONE_PEAK=4, TWO_PEAKS=8
     // Используем actual_batch_size_ — реальный размер текущего batch (не размер буферов!)
@@ -961,6 +1173,11 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ReadResults(cl_event wait_even
     return results;
 }
 
+/**
+ * @brief Получить накопленные данные профилирования из GPUProfiler
+ * Читает средние времена из GPUProfiler::GetStats(gpu_id)["SpectrumMaxima"].
+ * upload_time_ms включает "Upload" и "GPU→GPU Copy" — объединённый transfer time.
+ */
 ProfilingData SpectrumMaximaFinder::GetProfilingData() const {
     ProfilingData out{};
     const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
@@ -985,6 +1202,17 @@ ProfilingData SpectrumMaximaFinder::GetProfilingData() const {
 // ЧАСТЬ 7: ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ — WritePreCallbackHeader(), ReleaseResources()
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Обновить 32-байтный заголовок PreCallbackHeader в начале pre_callback_userdata_
+ *
+ * Заголовок содержит параметры, которые pre-callback kernel читает на GPU для zero-padding:
+ * {beam_count, count_points=n_point, nFFT, pad×5}. Всё — uint32_t.
+ *
+ * Вызывается при каждом batch (beam_count может меняться у последнего batch).
+ * CL_TRUE (blocking write) — гарантирует что заголовок записан до следующего UploadData.
+ *
+ * @param batch_count Реальное число лучей в текущем batch (не current_batch_size_!)
+ */
 void SpectrumMaximaFinder::WritePreCallbackHeader(size_t batch_count) {
     // Записать заголовок pre-callback с параметрами для GPU
     PreCallbackHeader header = {
@@ -1001,6 +1229,19 @@ void SpectrumMaximaFinder::WritePreCallbackHeader(size_t batch_count) {
     }
 }
 
+/**
+ * @brief Освободить все GPU ресурсы объекта (вызывается из деструктора и move operator=)
+ *
+ * Порядок освобождения критичен — нарушение может привести к use-after-free:
+ * 1. AllMaxima pipeline (kernels + programs) через ReleaseAllMaximaResources()
+ * 2. AllMaxima FFT план (allmax_plan_handle_) + magnitudes_buffer_
+ * 3. Post-kernel + post-program
+ * 4. Основной FFT план (plan_handle_)
+ * 5. GPU буферы: pre_callback_userdata_, fft_input/output, maxima_output, temp, pinned
+ *
+ * После вызова initialized_=false — объект может быть безопасно уничтожен или переиспользован.
+ * backend_ НЕ освобождается — мы не владеем им.
+ */
 void SpectrumMaximaFinder::ReleaseResources() {
     // AllMaxima ресурсы
     ReleaseAllMaximaResources();

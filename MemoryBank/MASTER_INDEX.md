@@ -22,6 +22,7 @@
 | **vector_algebra** | **COMPLETED** | Cholesky инверсия матриц (rocBLAS+rocSOLVER). **v2**: SymmetrizeMode (Roundtrip/GpuKernel), hiprtc, RAII CholeskyResult. C++ 23 PASSED, Python 6 PASSED. API: `Doc/Python/vector_algebra_api.md` |
 | **Statistics** | 🟢 **Active** | ROCm hiprtc: welford_fused, extract_medians, KernelCacheService. C++ 7/7 PASSED, Python 9/9 PASSED. `Doc/Modules/statistics/Full.md` |
 | **Heterodyne** | **Active** | LFM Dechirp (stretch-processing). См. `Doc/Modules/heterodyne/Full.md` |
+| **FM Correlator** | **Planned** | ФМ-корреляция M-последовательностями в частотной области (ROCm). См. `Doc/Modules/fm_correlator/Full.md` |
 | **Python_test** | **Active** | Тестовая инфраструктура Python (10 модулей, 24 файла). См. `Doc/Python_test/Full.md` |
 
 

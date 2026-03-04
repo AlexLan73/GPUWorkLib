@@ -1,7 +1,7 @@
 # C2 — Container Diagram
 
 > **Project**: GPUWorkLib
-> **Date**: 2026-03-03
+> **Date**: 2026-03-04
 > **Reference**: [c4model.com](https://c4model.com)
 > **Level**: 2 (Container) — основные "контейнеры" внутри системы
 
@@ -48,18 +48,19 @@ Container-уровень показывает основные развёрты�
   ║  │ ┌──────┴───────┐ ┌─────┴────────┐ ┌────────┴───────────┐│ ║
   ║  │ │ Filters      │ │ Heterodyne   │ │ LCH Farrow         ││ ║
   ║  │ │              │ │ (Dechirp)    │ │ (Fractional Delay)  ││ ║
-  ║  │ │ FIR, IIR     │ │ LFM Dechirp  │ │ Lagrange 5-point   ││ ║
-  ║  │ │ OpenCL+ROCm  │ │ Pipeline     │ │ OpenCL+ROCm        ││ ║
+  ║  │ │ FIR,IIR,SMA  │ │ LFM Dechirp  │ │ Lagrange 5-point   ││ ║
+  ║  │ │ Kalman,KAMA  │ │ Pipeline     │ │ OpenCL+ROCm        ││ ║
+  ║  │ │ OpenCL+ROCm  │ │              │ │                    ││ ║
   ║  │ └──────┬───────┘ └──────┬───────┘ └─────────┬──────────┘│ ║
   ║  │        │                │                    │            │ ║
-  ║  │ ┌──────┴───────┐ ┌─────┴────────┐                        │ ║
-  ║  │ │ Statistics   │ │ Vector       │                         │ ║
-  ║  │ │ (ROCm only)  │ │ Algebra      │                         │ ║
-  ║  │ │ Welford,     │ │ (ROCm only)  │                         │ ║
-  ║  │ │ Median,RadixS│ │ Cholesky     │                         │ ║
-  ║  │ └──────┬───────┘ └──────┬───────┘                        │ ║
-  ║  │        │                │                                  │ ║
-  ║  └────────┼────────────────┼──────────────────────────────────┘ ║
+  ║  │ ┌──────┴───────┐ ┌─────┴────────┐ ┌────────────────────┐│ ║
+  ║  │ │ Statistics   │ │ Vector       │ │ FM Correlator      ││ ║
+  ║  │ │ (ROCm only)  │ │ Algebra      │ │ (ROCm only)        ││ ║
+  ║  │ │ Welford,     │ │ (ROCm only)  │ │ M-seq LFSR,        ││ ║
+  ║  │ │ Median,RadixS│ │ Cholesky     │ │ R2C/C2R hipFFT     ││ ║
+  ║  │ └──────┬───────┘ └──────┬───────┘ └─────────┬──────────┘│ ║
+  ║  │        │                │                    │            │ ║
+  ║  └────────┼────────────────┼────────────────────┼────────────┘ ║
   ║           │                │                    │               ║
   ║  ┌────────┴────────────────┴────────────────────┴────────────┐ ║
   ║  │                     DrvGPU (Core Driver)                  │ ║
@@ -99,13 +100,14 @@ Container-уровень показывает основные развёрты�
 | 2 | **Signal Generators** | C++17 / OpenCL / HIP kernels | `modules/signal_generators/` | Генерация CW, LFM, Noise, Script, Conjugate |
 | 3 | **FFT Processor** | C++17 / clFFT / hipFFT | `modules/fft_processor/` | БПФ с режимами Complex / MagPhase |
 | 4 | **FFT Maxima** | C++17 / OpenCL / HIP kernels | `modules/fft_maxima/` | Поиск спектральных максимумов (OnePeak, AllMaxima) |
-| 5 | **Filters** | C++17 / OpenCL / HIP kernels | `modules/filters/` | FIR/IIR фильтрация (до 16000 taps) |
+| 5 | **Filters** | C++17 / OpenCL / HIP kernels | `modules/filters/` | FIR, IIR, SMA/EMA/DEMA/TEMA, Kalman, KAMA |
 | 6 | **Heterodyne** | C++17 / OpenCL / HIP kernels | `modules/heterodyne/` | LFM Dechirp pipeline (дальнометрия) |
 | 7 | **LCH Farrow** | C++17 / OpenCL / HIP kernels | `modules/lch_farrow/` | Дробная задержка (Lagrange 5-point, 48x5 matrix) |
 | 8 | **Statistics** | C++17 / HIP kernels (ROCm only) | `modules/statistics/` | Welford mean/variance, медиана, radix sort |
 | 9 | **Vector Algebra** | C++17 / rocSOLVER (ROCm only) | `modules/vector_algebra/` | Cholesky POTRF/POTRI инверсия матриц |
-| 10 | **Python Bindings** | pybind11 / NumPy | `python/` | Python API: `gpu_worklib.so` |
-| 11 | **Test Suite** | C++17 / pytest | `*/tests/`, `Python_test/` | C++ тесты (hpp) + Python тесты |
+| 10 | **FM Correlator** | C++17 / HIP + hipFFT (ROCm only) | `modules/fm_correlator/` | ФМ-корреляция M-последовательностями (R2C/C2R) |
+| 11 | **Python Bindings** | pybind11 / NumPy | `python/` | Python API: `gpu_worklib.so` |
+| 12 | **Test Suite** | C++17 / pytest | `*/tests/`, `Python_test/` | C++ тесты (hpp) + Python тесты |
 
 ---
 
@@ -147,17 +149,18 @@ Container-уровень показывает основные развёрты�
 
 ### Матрица зависимостей
 
-| Модуль ↓ \ Зависит от → | DrvGPU | SigGen | FFT | Maxima | Filters | Heterodyne | Farrow | Statistics | VecAlgebra |
-|--------------------------|:------:|:------:|:---:|:------:|:-------:|:----------:|:------:|:----------:|:----------:|
-| **Signal Generators**    |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |
-| **FFT Processor**        |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |
-| **FFT Maxima**           |   ✅   |   —    | ✅  |   —    |   —     |     —      |   —    |     —      |     —      |
-| **Filters**              |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |
-| **Heterodyne**           |   ✅   |  ✅    | ✅  |  ✅    |   —     |     —      |   —    |     —      |     —      |
-| **LCH Farrow**           |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |
-| **Statistics**           |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |
-| **Vector Algebra**       |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |
-| **Python Bindings**      |   ✅   |  ✅    | ✅  |  ✅    |  ✅     |    ✅      |  ✅    |    ✅      |    ✅      |
+| Модуль ↓ \ Зависит от → | DrvGPU | SigGen | FFT | Maxima | Filters | Heterodyne | Farrow | Statistics | VecAlgebra | FMCorr |
+|--------------------------|:------:|:------:|:---:|:------:|:-------:|:----------:|:------:|:----------:|:----------:|:------:|
+| **Signal Generators**    |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |   —    |
+| **FFT Processor**        |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |   —    |
+| **FFT Maxima**           |   ✅   |   —    | ✅  |   —    |   —     |     —      |   —    |     —      |     —      |   —    |
+| **Filters**              |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |   —    |
+| **Heterodyne**           |   ✅   |  ✅    | ✅  |  ✅    |   —     |     —      |   —    |     —      |     —      |   —    |
+| **LCH Farrow**           |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |   —    |
+| **Statistics**           |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |   —    |
+| **Vector Algebra**       |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |   —    |
+| **FM Correlator**        |   ✅   |   —    |  —  |   —    |   —     |     —      |   —    |     —      |     —      |   —    |
+| **Python Bindings**      |   ✅   |  ✅    | ✅  |  ✅    |  ✅     |    ✅      |  ✅    |    ✅      |    ✅      |  ✅    |
 
 ---
 
@@ -197,11 +200,12 @@ System_Boundary(gpuworklib, "GPUWorkLib") {
     Container(siggen, "Signal Generators", "C++17/OpenCL/HIP", "CW, LFM, Noise,\nForm, Conjugate")
     Container(fftproc, "FFT Processor", "C++17/clFFT/hipFFT", "Complex, MagPhase\nмоды вывода")
     Container(fftmax, "FFT Maxima", "C++17/OpenCL/HIP", "OnePeak,\nAllMaxima pipeline")
-    Container(filters, "Filters", "C++17/OpenCL/HIP", "FIR, IIR\n(до 16000 taps)")
+    Container(filters, "Filters", "C++17/OpenCL/HIP", "FIR, IIR, SMA/EMA\nKalman, KAMA")
     Container(hetero, "Heterodyne", "C++17/OpenCL/HIP", "LFM Dechirp\npipeline")
     Container(farrow, "LCH Farrow", "C++17/OpenCL/HIP", "Fractional Delay\nLagrange 5-pt")
     Container(stats, "Statistics", "C++17/HIP (ROCm)", "Welford mean/var,\nMedian, Radix Sort")
     Container(vecalg, "Vector Algebra", "C++17/rocSOLVER", "Cholesky POTRF/POTRI\nMatrix Inversion")
+    Container(fmcorr, "FM Correlator", "C++17/HIP+hipFFT (ROCm)", "M-seq LFSR, R2C/C2R\ncyclic shifts, conj fused")
 
     Container(drvgpu, "DrvGPU", "C++17", "Core Driver:\nBackends, Memory,\nServices, Profiler")
 }
@@ -222,6 +226,7 @@ Rel(pybind, hetero, "wraps")
 Rel(pybind, farrow, "wraps")
 Rel(pybind, stats, "wraps")
 Rel(pybind, vecalg, "wraps")
+Rel(pybind, fmcorr, "wraps")
 
 Rel(siggen, drvgpu, "IBackend*")
 Rel(fftproc, drvgpu, "IBackend*")
@@ -235,6 +240,7 @@ Rel(hetero, fftmax, "Peak find")
 Rel(farrow, drvgpu, "IBackend*")
 Rel(stats, drvgpu, "IBackend* (ROCm)")
 Rel(vecalg, drvgpu, "IBackend* (ROCm)")
+Rel(fmcorr, drvgpu, "IBackend* (ROCm)")
 
 Rel(drvgpu, gpu, "OpenCL/HIP API")
 Rel(fftproc, clfft, "clFFT API")

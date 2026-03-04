@@ -17,6 +17,12 @@
 // PyHeterodyneDechirp — LFM dechirp pipeline wrapper
 // ============================================================================
 
+// Высокоуровневый пайплайн LFM dechirp: полный цикл от RX-данных до диапазона.
+// Отличие от HeterodyneROCm (низкоуровневый): здесь внутри всё — генерация reference,
+// dechirp, FFT, поиск максимума, вычисление f_beat и дальности R = c*T*f_beat/(2B).
+// Два конструктора — OpenCL и ROCm — чтобы один класс работал в обоих бэкендах.
+// ctx_ / rocm_ctx_ — не владеют контекстом (raw pointer), lifetime контекста
+// должен превышать lifetime объекта!
 class PyHeterodyneDechirp {
 public:
   explicit PyHeterodyneDechirp(GPUContext& ctx)
@@ -73,6 +79,10 @@ public:
     return build_dict(result);
   }
 
+  // Обработка данных, уже находящихся на GPU (cl_mem адрес как целое число).
+  // Используется когда данные пришли из другого модуля через output="gpu" (PyGPUBuffer).
+  // Избегает лишнего round-trip CPU→GPU, который происходит в process().
+  // gpu_buffer_ptr — целочисленный адрес cl_mem объекта (получить через gpu_buf.ptr).
   py::dict process_external(uintptr_t gpu_buffer_ptr) {
     void* cl_mem_ptr = reinterpret_cast<void*>(gpu_buffer_ptr);
     auto& params = het_.GetParams();
@@ -102,6 +112,9 @@ public:
   }
 
 private:
+  // Конвертирует C++ HeterodyneResult в Python dict — удобно для распаковки
+  // в Python: result['antennas'][0]['range_m']. Каждая антенна — отдельный dict
+  // с полным набором результатов (частота, дальность, SNR).
   py::dict build_dict(const drv_gpu_lib::HeterodyneResult& result) {
     py::dict out;
     out["success"] = result.success;

@@ -100,11 +100,11 @@ public:
     
     GPUBuffer& operator=(GPUBuffer&& other) noexcept {
         if (this != &other) {
-            // Освободить старую память
+            // Free сначала — иначе текущая GPU память останется без владельца (утечка).
             if (ptr_ && backend_) {
                 backend_->Free(ptr_);
             }
-            
+
             // Переместить ресурсы
             ptr_ = other.ptr_;
             num_elements_ = other.num_elements_;
@@ -196,10 +196,10 @@ public:
     bool IsValid() const { return ptr_ != nullptr && backend_ != nullptr; }
 
 private:
-    void* ptr_;              ///< Указатель на GPU память
-    size_t num_elements_;    ///< Количество элементов
-    size_t size_bytes_;      ///< Размер в байтах
-    IBackend* backend_;      ///< Указатель на бэкенд (не владеет)
+    void* ptr_;              ///< Указатель на GPU память (hipDeviceptr_t или cl_mem void*, владеем)
+    size_t num_elements_;    ///< Количество элементов типа T
+    size_t size_bytes_;      ///< Кешировано: num_elements_ * sizeof(T), избегаем пересчёта
+    IBackend* backend_;      ///< Не владеет — lifetime backend должен превышать lifetime буфера
 };
 
 } // namespace drv_gpu_lib

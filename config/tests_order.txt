@@ -4,10 +4,11 @@
 
 # drvgpu        # набор драйверов 
 fft_processor
-statistics
-vector_algebra
-fft_maxima
-filters
-signal_generators
-lch_farrow
-heterodyne
+# statistics
+# vector_algebra
+# fft_maxima
+# filters
+# signal_generators
+# lch_farrow
+# heterodyne
+# fm_correlator

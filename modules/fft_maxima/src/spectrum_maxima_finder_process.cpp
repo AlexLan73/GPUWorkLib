@@ -26,6 +26,18 @@ namespace antenna_fft {
 // PrepareParams — подготовка параметров из InputData<T>
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Заполнить params_ из полей InputData<T> перед обработкой
+ *
+ * Вызывается в начале каждого Process/FindAllMaxima — копирует входные параметры
+ * в params_ и вычисляет nFFT = nextPow2(n_point) × repeat_count.
+ * search_range=0 → авто = nFFT/4 (первая четверть: положительные частоты).
+ *
+ * @param antenna_count Число антенн/лучей
+ * @param n_point       Точек на луч (сырого сигнала)
+ * @param proc_params   repeat_count, sample_rate, search_range, memory_limit
+ * @param mode          ONE_PEAK / TWO_PEAKS / ALL_MAXIMA
+ */
 void SpectrumMaximaFinder::PrepareParams(
     uint32_t antenna_count, uint32_t n_point,
     const ProcessingParams& proc_params, PeakSearchMode mode)
@@ -52,6 +64,20 @@ void SpectrumMaximaFinder::PrepareParams(
 // ProcessFromCPU — обработка CPU-данных (vector<complex<float>>)
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Обработать CPU данные: Upload → FFT → PostKernel → Results
+ *
+ * Вызывается из Process<vector<complex<float>>>. При нехватке памяти автоматически
+ * разбивает на batch'и через BatchManager (порог — memory_limit × VRAM).
+ *
+ * Почему не вызываем Initialize() здесь: Initialize() уже вызван в Process<T>
+ * перед вызовом ProcessFromCPU — гарантирует что буферы и FFT план готовы.
+ *
+ * @param data        Плоский массив [antenna_count × n_point] complex<float>
+ * @param prof_events Список OpenCL events для профилирования (nullptr = не профилируем)
+ * @return vector<SpectrumResult>[antenna_count]
+ * @throws std::runtime_error если объект не инициализирован или размер данных не совпадает
+ */
 std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromCPU(
     const std::vector<std::complex<float>>& data, ProfEvents* prof_events)
 {
@@ -119,6 +145,24 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromCPU(
 // ProcessFromGPU — обработка GPU-данных (cl_mem)
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Обработать GPU данные: GPU→GPU Copy → FFT → PostKernel → Results
+ *
+ * Вызывается из Process<cl_mem>. НЕ вызывает Initialize() самостоятельно —
+ * буферы создаются лениво внутри с учётом уже занятой памяти gpu_data.
+ *
+ * Ключевое отличие от ProcessFromCPU:
+ * - Данные уже на GPU → Upload не нужен, только clEnqueueCopyBuffer (G2G)
+ * - BatchManager учитывает gpu_memory_bytes как external_memory (уже занятое)
+ *   при расчёте доступной памяти для наших буферов
+ *
+ * @param gpu_data          cl_mem с данными [antenna_count × n_point × sizeof(complex)]
+ * @param antenna_count     Количество антенн
+ * @param n_point           Точек на антенну
+ * @param gpu_memory_bytes  Реальный размер gpu_data (0 = вычисляем сами по antenna_count×n_point)
+ * @param prof_events       OpenCL events для профилирования
+ * @return vector<SpectrumResult>[antenna_count]
+ */
 std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromGPU(
     cl_mem gpu_data, size_t antenna_count, size_t n_point,
     size_t gpu_memory_bytes, ProfEvents* prof_events)
@@ -223,6 +267,23 @@ std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessFromGPU(
 // ProcessBatchFromGPU — обработка одного batch с GPU-данными
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Обработать один batch из внешнего GPU буфера
+ *
+ * Вызывается из ProcessFromGPU() в цикле по batch'ам.
+ * Копирует slice [src_offset_bytes, src_offset_bytes + batch_size) из gpu_data
+ * в наш pre_callback_userdata_ (смещение PRE_CALLBACK_HEADER_SIZE, чтобы не затереть заголовок).
+ *
+ * Порядок: CopyBuffer → ExecuteFFT → ExecutePostKernel → ReadResults.
+ * antenna_id в результатах корректируется на start_antenna (абсолютный индекс в batch).
+ *
+ * @param gpu_data             Исходный внешний cl_mem буфер
+ * @param src_offset_bytes     Смещение в gpu_data для текущего batch (в байтах)
+ * @param start_antenna        Абсолютный индекс первой антенны batch (для antenna_id)
+ * @param batch_antenna_count  Число антенн в текущем batch
+ * @param prof_events          OpenCL events для профилирования
+ * @return vector<SpectrumResult>[batch_antenna_count] с корректными antenna_id
+ */
 std::vector<SpectrumResult> SpectrumMaximaFinder::ProcessBatchFromGPU(
     cl_mem gpu_data, size_t src_offset_bytes,
     size_t start_antenna, size_t batch_antenna_count, ProfEvents* prof_events)

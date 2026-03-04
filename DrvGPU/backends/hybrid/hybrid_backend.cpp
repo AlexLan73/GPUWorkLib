@@ -19,7 +19,7 @@ namespace drv_gpu_lib {
 HybridBackend::HybridBackend()
     : device_index_(-1)
     , initialized_(false)
-    , owns_resources_(true)
+    , owns_resources_(true)   // По умолчанию создаём sub-backends сами → мы же их и уничтожаем
     , opencl_(nullptr)
     , rocm_(nullptr) {
 }
@@ -34,13 +34,14 @@ HybridBackend::HybridBackend(HybridBackend&& other) noexcept
     , owns_resources_(other.owns_resources_)
     , opencl_(std::move(other.opencl_))
     , rocm_(std::move(other.rocm_)) {
+  // Сбрасываем источник: чтобы деструктор other не вызвал Cleanup() с уже переданными sub-backends.
   other.initialized_ = false;
   other.device_index_ = -1;
 }
 
 HybridBackend& HybridBackend::operator=(HybridBackend&& other) noexcept {
   if (this != &other) {
-    Cleanup();
+    Cleanup();  // Освобождаем свои sub-backends ПЕРЕД перемещением — иначе утечка ресурсов.
     device_index_ = other.device_index_;
     initialized_ = other.initialized_;
     owns_resources_ = other.owns_resources_;
@@ -91,6 +92,10 @@ void HybridBackend::Initialize(int device_index) {
 void HybridBackend::Cleanup() {
   std::lock_guard<std::mutex> lock(mutex_);
 
+  // ROCm освобождается ПЕРВЫМ — намеренный порядок.
+  // ZeroCopyBridge импортирует cl_mem в HIP: если сначала разрушить OpenCL (cl_mem исчезнет),
+  // а потом ROCm попытается освободить свою ссылку — получим use-after-free в драйвере.
+  // ROCm Cleanup() корректно снимает все HIP-ссылки до того, как OpenCL контекст уничтожается.
   if (rocm_) {
     rocm_->Cleanup();
     rocm_.reset();
@@ -186,6 +191,9 @@ void HybridBackend::MemcpyDeviceToDevice(void* dst, const void* src, size_t size
 // ════════════════════════════════════════════════════════════════════════════
 
 void HybridBackend::Synchronize() {
+  // Синхронизируем оба backend: caller не знает, в каком из них сейчас висит работа.
+  // Для точечной синхронизации вокруг ZeroCopy — используй SyncBeforeZeroCopy() / SyncAfterZeroCopy():
+  // они синхронизируют только нужный backend и поэтому дешевле по latency.
   if (opencl_ && opencl_->IsInitialized()) {
     opencl_->Synchronize();
   }
@@ -195,6 +203,9 @@ void HybridBackend::Synchronize() {
 }
 
 void HybridBackend::Flush() {
+  // Flush отправляет команды GPU без блокировки CPU (clFlush + hipStreamQuery).
+  // Позволяет GPU и CPU работать параллельно — GPU начинает исполнять, пока CPU занят другим.
+  // Для гарантии завершения используй Synchronize().
   if (opencl_ && opencl_->IsInitialized()) {
     opencl_->Flush();
   }
@@ -204,7 +215,9 @@ void HybridBackend::Flush() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Capabilities (от OpenCL)
+// Capabilities (от OpenCL — стандартные параметры IBackend интерфейса)
+// ROCm-специфика (warp size 64, L1/L2 cache, shared mem bank width) —
+// запрашивай через GetROCm()->... / hipDeviceGetAttribute() напрямую.
 // ════════════════════════════════════════════════════════════════════════════
 
 bool HybridBackend::SupportsSVM() const {
@@ -238,7 +251,9 @@ size_t HybridBackend::GetLocalMemorySize() const {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// MemoryManager (от OpenCL)
+// MemoryManager (от OpenCL — пул cl_mem объектов)
+// HIP-буферы (hipMalloc) MemoryManager не отслеживает:
+// ROCmBackend управляет ими напрямую внутри себя.
 // ════════════════════════════════════════════════════════════════════════════
 
 MemoryManager* HybridBackend::GetMemoryManager() {
@@ -267,10 +282,13 @@ std::unique_ptr<ZeroCopyBridge> HybridBackend::CreateZeroCopyBridge(
 
   auto bridge = std::make_unique<ZeroCopyBridge>();
 
-  // Получаем cl_device_id для проверки capabilities
+  // GetNativeDevice() возвращает void* — кастуем в cl_device_id для ImportFromOpenCl().
+  // cl_device_id нужен внутри: DetectBestZeroCopyMethod() запрашивает AMD-расширения
+  // (cl_amd_bus_addressable_memory, CL_DEVICE_EXTENSIONS) чтобы выбрать метод.
   cl_device_id cl_device = static_cast<cl_device_id>(opencl_->GetNativeDevice());
 
-  // Автоматический выбор метода
+  // ImportFromOpenCl() автоматически выбирает лучший метод:
+  // AMD_GPU_VA (прямой VA) → DMA-BUF (Linux kernel) → SVM → NONE.
   bridge->ImportFromOpenCl(cl_buffer, buffer_size, cl_device);
 
   DRVGPU_LOG_INFO("HybridBackend", "ZeroCopy bridge created: " +
@@ -285,6 +303,9 @@ ZeroCopyMethod HybridBackend::GetBestZeroCopyMethod() const {
     return ZeroCopyMethod::NONE;
   }
 
+  // Делегируем DetectBestZeroCopyMethod() из zero_copy_bridge — она опрашивает
+  // драйвер AMD о поддерживаемых расширениях. Вынесена в отдельную функцию,
+  // чтобы логику определения можно было переиспользовать без создания bridge-объекта.
   cl_device_id cl_device = static_cast<cl_device_id>(opencl_->GetNativeDevice());
   return DetectBestZeroCopyMethod(cl_device);
 }

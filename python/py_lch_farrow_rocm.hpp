@@ -22,6 +22,11 @@
 // PyLchFarrowROCm — standalone fractional delay processor (ROCm)
 // ============================================================================
 
+// ROCm-версия LchFarrow (Lagrange 48×5 дробная задержка).
+// Отличие от OpenCL PyLchFarrow:
+//   - ProcessFromCPU вместо Process: ROCm backend сам управляет GPU-памятью
+//   - result.data — void* (HIP ptr), освобождать через backend->Free()
+// Алгоритм и API идентичны OpenCL-версии — можно менять backend без правок Python-кода.
 class PyLchFarrowROCm {
 public:
   explicit PyLchFarrowROCm(ROCmGPUContext& ctx)
@@ -70,6 +75,7 @@ public:
       result = proc_.ProcessFromCPU(input_vec, antennas, points);
     }
 
+    // result.data — HIP device pointer, caller owns. Освобождать только через backend->Free().
     std::vector<std::complex<float>> data(total);
     ctx_.backend()->MemcpyDeviceToHost(data.data(), result.data,
                                         total * sizeof(std::complex<float>));

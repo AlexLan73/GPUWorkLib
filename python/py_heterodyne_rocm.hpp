@@ -27,6 +27,12 @@
 // PyHeterodyneROCm — LFM heterodyne processor (ROCm)
 // ============================================================================
 
+// Низкоуровневый процессор гетеродина (ROCm). В отличие от HeterodyneDechirp,
+// предоставляет отдельные операции без полного пайплайна:
+//   Dechirp: поэлементное rx * conj(ref) — только перемножение
+//   Correct: частотная коррекция exp(j*2pi*f_beat/fs * n) — сдвиг спектра
+// Нужен когда FFT/поиск максимума делается снаружи (например, собственный Python код).
+// params_ хранится отдельно от процессора — нет SetParams(), только поля структуры.
 class PyHeterodyneROCm {
 public:
   explicit PyHeterodyneROCm(ROCmGPUContext& ctx)

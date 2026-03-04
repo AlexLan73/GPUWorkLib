@@ -16,6 +16,19 @@
 
 namespace antenna_fft {
 
+/**
+ * @brief Создать ISpectrumProcessor для указанного backend'а
+ *
+ * AUTO → OPENCL (OpenCL является дефолтным для кросс-платформенных сборок).
+ * ROCm доступен только при ENABLE_ROCM=1 (Linux + AMD GPU).
+ * OPENCLandROCm → OPENCL (hybrid режим не поддерживается, fallback).
+ *
+ * @param backend_type OPENCL, ROCm, AUTO или OPENCLandROCm
+ * @param backend      Указатель на IBackend (не владеет)
+ * @return unique_ptr<ISpectrumProcessor>, никогда nullptr
+ * @throws std::invalid_argument если backend == nullptr
+ * @throws std::runtime_error    если запрошен ROCm без ENABLE_ROCM=1
+ */
 std::unique_ptr<ISpectrumProcessor> SpectrumProcessorFactory::Create(
     drv_gpu_lib::BackendType backend_type,
     drv_gpu_lib::IBackend* backend)

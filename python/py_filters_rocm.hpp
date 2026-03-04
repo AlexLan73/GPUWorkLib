@@ -26,6 +26,11 @@
 // PyFirFilterROCm — GPU FIR convolution filter (ROCm)
 // ============================================================================
 
+// ROCm-версия FirFilter. Отличие от OpenCL (PyFirFilter):
+//   - ProcessFromCPU вместо Process: ROCm backend сам копирует vector → GPU-память
+//     (нет нужды вручную создавать cl_mem и освобождать его)
+//   - результат result.data — void* (HIP-указатель), освобождать через backend->Free()
+//     а не clReleaseMemObject. Никогда не вызывать hipFree напрямую — только через backend!
 class PyFirFilterROCm {
 public:
   explicit PyFirFilterROCm(ROCmGPUContext& ctx)
@@ -63,6 +68,8 @@ public:
       result = fir_.ProcessFromCPU(input_vec, channels, points);
     }
 
+    // result.data — HIP device pointer, caller owns. Освобождаем через backend→Free()
+    // (не hipFree напрямую — backend может использовать пул памяти).
     std::vector<std::complex<float>> data(total);
     ctx_.backend()->MemcpyDeviceToHost(data.data(), result.data,
                                         total * sizeof(std::complex<float>));

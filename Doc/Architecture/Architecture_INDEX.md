@@ -40,10 +40,11 @@
 | **Statistics** | ROCm only | 🟢 Active | Welford mean/var, медиана, radix sort |
 | **Vector Algebra** | ROCm only | 🟢 Active | Cholesky POTRF/POTRI инверсия |
 | **FFT Maxima** | OpenCL / ROCm | 🟢 Active | Поиск спектральных максимумов |
-| **Filters** | OpenCL / ROCm | 🟢 Active | FIR, IIR фильтры |
+| **Filters** | OpenCL / ROCm | 🟢 Active | FIR, IIR, SMA/EMA/DEMA/TEMA, Kalman, KAMA |
 | **Signal Generators** | OpenCL / ROCm | 🟢 Active | CW, LFM, Noise, Form, Script |
 | **LCH Farrow** | OpenCL / ROCm | 🟢 Active | Дробная задержка Lagrange 5-pt |
 | **Heterodyne** | OpenCL / ROCm | 🟢 Active | LFM Dechirp pipeline |
+| **FM Correlator** | ROCm only | 🟡 Planned | ФМ-корреляция M-последовательностями (hipFFT) |
 | **DrvGPU** | OpenCL / ROCm | 🟢 Active | Ядро: backend, память, сервисы |
 
 ## Предыдущие документы (справочные)
@@ -65,4 +66,4 @@
 
 ---
 
-*Maintained by: Кодо (AI Assistant) | Last updated: 2026-03-03*
+*Maintained by: Кодо (AI Assistant) | Last updated: 2026-03-04*

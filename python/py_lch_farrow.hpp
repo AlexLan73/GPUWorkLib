@@ -19,6 +19,10 @@
 // PyLchFarrow — standalone fractional delay processor
 // ============================================================================
 
+// Применяет точную дробную задержку к входному сигналу через Lagrange-интерполяцию.
+// Матрица 48×5: 48 строк = 48 субинтервалов фракционной части (шаг 1/48),
+//               5 столбцов = 5 коэффициентов полинома 4-й степени.
+// Принимает любой complex64 сигнал — независим от генератора сигналов.
 class PyLchFarrow {
 public:
     explicit PyLchFarrow(GPUContext& ctx)
@@ -32,6 +36,8 @@ public:
         proc_.SetSampleRate(sample_rate);
     }
 
+    // norm_val = 1/sqrt(2) ≈ 0.7071 — нормировка RMS шума (Philox + Box-Muller даёт σ≈1,
+    // умножаем на norm_val чтобы RMS = noise_amplitude). noise_seed = 0 → детерминировано.
     void set_noise(float noise_amplitude, float norm_val = 0.7071067811865476f,
                    uint32_t noise_seed = 0) {
         proc_.SetNoise(noise_amplitude, norm_val, noise_seed);
@@ -60,7 +66,7 @@ public:
         size_t total = static_cast<size_t>(antennas) * points;
         auto* ptr = static_cast<std::complex<float>*>(buf.ptr);
 
-        // Upload to GPU
+        // Upload to GPU: LchFarrow.Process() ожидает cl_mem (как FirFilter).
         cl_context cl_ctx = static_cast<cl_context>(ctx_.backend()->GetNativeContext());
         cl_int err;
         cl_mem input_buf = clCreateBuffer(cl_ctx,
@@ -79,7 +85,7 @@ public:
 
         clReleaseMemObject(input_buf);
 
-        // Readback
+        // Readback: result.data — cl_mem, caller owns (LchFarrow не освобождает)
         std::vector<std::complex<float>> data(total);
         clEnqueueReadBuffer(ctx_.queue(), result.data, CL_TRUE, 0,
                             total * sizeof(std::complex<float>),
