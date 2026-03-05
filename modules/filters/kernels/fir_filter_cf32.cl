@@ -14,7 +14,7 @@
 __kernel void fir_filter_cf32(
     __global const float2* restrict input,
     __global       float2* restrict output,
-    __constant     float*  coeffs,
+    __constant     float*  coeffs,  // __constant: кешируется, до 64KB (~16000 тапов)
     const uint num_taps,
     const uint points)
 {
@@ -29,6 +29,8 @@ __kernel void fir_filter_cf32(
 
     for (uint k = 0; k < num_taps; k++) {
         int idx = (int)n - (int)k;
+        // Граничное условие: idx < 0 — сигнал ещё не начался (нулевой padding).
+        // Causal FIR: y[n] зависит только от x[n], x[n-1], ... (нет будущего).
         if (idx >= 0) {
             float2 x = input[base + (uint)idx];
             float  h = coeffs[k];

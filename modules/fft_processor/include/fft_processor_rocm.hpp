@@ -189,36 +189,42 @@ private:
     // =========================================================================
 
     // Backend
-    drv_gpu_lib::IBackend* backend_ = nullptr;
-    hipStream_t stream_ = nullptr;
+    drv_gpu_lib::IBackend* backend_ = nullptr;  ///< Не владеет; должен жить дольше FFTProcessorROCm
+    hipStream_t stream_ = nullptr;              ///< Получен из backend_->GetNativeQueue()
 
-    // hipFFT — two-plan cache (avoids Destroy+Create on last smaller batch)
+    // hipFFT — two-plan LRU-2 cache (избегаем Destroy+Create при чередовании двух размеров batch).
+    // Схема: plan_ = активный план, plan_last_ = вторичный кеш.
+    // При запросе нового batch size: если совпадает с plan_last_ → swap (план уже готов).
+    // При третьем размере: plan_last_ уничтожается, plan_ перемещается в plan_last_, создаётся новый plan_.
+    // Для матричного бенчмарка с N разными nFFT: создавать отдельный FFTProcessorROCm на каждый размер.
     hipfftHandle plan_ = 0;
     bool plan_created_ = false;
-    hipfftHandle plan_last_ = 0;      ///< Cached secondary plan (different batch size)
-    size_t plan_last_batch_ = 0;
+    hipfftHandle plan_last_ = 0;   ///< Вторичный кеш: план для альтернативного batch size
+    size_t plan_last_batch_ = 0;   ///< batch size, под который создан plan_last_
 
-    // GPU buffers (device pointers)
-    void* input_buffer_ = nullptr;         ///< Raw input data: batch * n_point * sizeof(complex)
-    void* fft_input_ = nullptr;            ///< Padded input:   batch * nFFT * sizeof(complex)
-    void* fft_output_ = nullptr;           ///< FFT output:     batch * nFFT * sizeof(complex)
-    void* mag_phase_interleaved_ = nullptr;///< Interleaved {mag, phase}: batch * nFFT * 2*sizeof(float)
+    // GPU buffers (device pointers, hipMalloc)
+    // Стадии pipeline: input_buffer_ → [pad_data kernel] → fft_input_ → [hipFFT] → fft_output_ → [c2mp kernel] → mag_phase_interleaved_
+    void* input_buffer_ = nullptr;          ///< Сырые данные без padding: batch × n_point × complex<float>
+    void* fft_input_ = nullptr;             ///< После zero-padding: batch × nFFT × complex<float>; заполняет pad_data kernel
+    void* fft_output_ = nullptr;            ///< Результат hipFFT: batch × nFFT × complex<float>
+    void* mag_phase_interleaved_ = nullptr; ///< Интерливованный вывод: batch × nFFT × float2_t {mag, phase}.
+                                            ///< Один D2H вместо двух раздельных (оптимизация). nullptr если режим COMPLEX.
 
-    // hiprtc compiled kernels
+    // hiprtc compiled kernels — загружаются из HSACO-кеша или компилируются lazy при первом вызове
     hipModule_t module_ = nullptr;
-    hipFunction_t pad_kernel_ = nullptr;
-    hipFunction_t mag_phase_kernel_ = nullptr;
-    bool kernels_compiled_ = false;
+    hipFunction_t pad_kernel_ = nullptr;       ///< pad_data: input_buffer_ → fft_input_ (zero-padding)
+    hipFunction_t mag_phase_kernel_ = nullptr; ///< complex_to_mag_phase: fft_output_ → mag_phase_interleaved_
+    bool kernels_compiled_ = false;            ///< Guard lazy-init: CompileKernels() вызывается один раз
 
-    // HSACO kernel cache (disk)
+    // HSACO kernel cache (disk) — кеш по ключу "fft_processor_kernels"
     std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
 
     // State
-    uint32_t nFFT_ = 0;
-    uint32_t n_point_ = 0;
-    size_t current_buffer_beams_ = 0;
-    size_t plan_batch_size_ = 0;
-    bool has_mag_phase_buffers_ = false;
+    uint32_t nFFT_ = 0;                    ///< Текущий размер FFT = nextPow2(n_point_) × repeat_count
+    uint32_t n_point_ = 0;                 ///< Реальный размер входа на луч (до padding)
+    size_t current_buffer_beams_ = 0;      ///< Batch size, под который выделены input/fft/output буферы
+    size_t plan_batch_size_ = 0;           ///< Batch size активного плана plan_ (может != current_buffer_beams_)
+    bool has_mag_phase_buffers_ = false;   ///< true если mag_phase_interleaved_ выделен
 };
 
 }  // namespace fft_processor

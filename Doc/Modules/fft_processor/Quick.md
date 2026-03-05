@@ -96,7 +96,10 @@ auto results = fft.ProcessComplex(data, params);
 // С детальным профилированием
 fft_processor::ROCmProfEvents events;
 fft.ProcessComplex(data, params, &events);
-// events["Upload"].end_ns - events["Upload"].start_ns
+for (const auto& [stage, ev] : events) {
+    double ms = (ev.end_ns - ev.start_ns) / 1e6;
+    // stage: "Upload", "PadData", "FFT", "MagPhase", "Download"
+}
 ```
 
 ### C++ — ComplexToMagPhaseROCm (без FFT)
@@ -121,13 +124,24 @@ void* gpu_out = converter.ProcessToGPU(data, params);
 
 ```python
 import gpuworklib
+import numpy as np
 
 ctx = gpuworklib.GPUContext(0)
 fft = gpuworklib.FFTProcessor(ctx)
 
-results = fft.process_complex(signal, beam_count=8, n_point=1024, sample_rate=50000.0)
-results = fft.process_mag_phase(signal, 8, 1024, 50000.0, include_freq=True)
-# results[i].magnitude, .phase, .frequency
+# ВАЖНО: sample_rate — второй ПОЗИЦИОННЫЙ аргумент (не keyword-only)!
+spectrum = fft.process_complex(signal, 1000.0)
+spectrum = fft.process_complex(signal, 1000.0, beam_count=8, n_point=1024)
+
+result = fft.process_mag_phase(signal, 1000.0, beam_count=8, n_point=1024,
+                                include_freq=True)
+# result — dict: 'magnitude', 'phase', 'frequency', 'nFFT', 'sample_rate'
+
+prof = fft.get_profiling()
+# {'upload_ms':..., 'fft_ms':..., 'post_processing_ms':...,
+#  'download_ms':..., 'total_ms':...}
+
+nfft = fft.nfft  # property
 ```
 
 ---
@@ -153,4 +167,4 @@ results = fft.process_mag_phase(signal, 8, 1024, 50000.0, include_freq=True)
 
 ---
 
-*Обновлено: 2026-03-02*
+*Обновлено: 2026-03-05*

@@ -39,7 +39,15 @@ namespace fft_processor {
 // Helper: create ROCmProfilingData from hipEvent timing
 // =========================================================================
 
-/// Extract elapsed time from hipEvent pair → ROCmProfilingData, destroy events.
+/**
+ * @brief Конвертирует пару hipEvent → ROCmProfilingData и уничтожает events.
+ *
+ * hipEventElapsedTime возвращает относительное время (мс) между двумя event'ами.
+ * ROCmProfilingData ожидает абсолютные метки в нс (start_ns, end_ns).
+ * Решение: синтетические метки start=0, end=elapsed_ns — разница корректна,
+ * GetAvgTimeMs() использует (end_ns - start_ns)/1e6, результат верный.
+ * Абсолютные метки (queued/submit) не важны для бенчмаркинга — ставим 0.
+ */
 static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
     hipEvent_t ev_start, hipEvent_t ev_end, uint32_t kind,
     const char* op_string = "")
@@ -51,8 +59,6 @@ static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
 
     drv_gpu_lib::ROCmProfilingData d;
     uint64_t elapsed_ns = static_cast<uint64_t>(elapsed_ms * 1e6f);
-    // Синтетические абсолютные метки: start=0, end=elapsed
-    // exec_time (end-start) = elapsed_ns → корректное значение в профайлере
     d.queued_ns   = 0;
     d.submit_ns   = 0;
     d.start_ns    = 0;
@@ -63,7 +69,13 @@ static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
     return d;
 }
 
-/// Extract elapsed time from wall-clock pair → ROCmProfilingData (для синхронных DtoH).
+/**
+ * @brief Конвертирует пару wall-clock временных точек → ROCmProfilingData.
+ *
+ * Используется для синхронных операций (hipMemcpyDtoH), которые блокируют CPU —
+ * hipEvent там нельзя использовать (нет async-записи). std::chrono измеряет
+ * реальное время включая ожидание device-sync, что корректно отражает overhead DtoH.
+ */
 static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromClock(
     std::chrono::high_resolution_clock::time_point t_start,
     std::chrono::high_resolution_clock::time_point t_end,
@@ -565,22 +577,27 @@ void FFTProcessorROCm::AllocateBuffers(size_t batch_beam_count, FFTOutputMode mo
 }
 
 void FFTProcessorROCm::CreateFFTPlan(size_t batch_beam_count) {
-    // Already active?
+    // Активный план подходит — переиспользуем
     if (plan_created_ && plan_batch_size_ == batch_beam_count) {
         return;
     }
 
-    // TASK-4B: Check secondary plan cache before creating a new plan
+    // Two-plan LRU-2 cache: позволяет чередовать два разных batch size без пересоздания планов.
+    // Типичный кейс: BatchManager разбивает N лучей на батчи, последний меньше остальных.
+    // → первые батчи используют plan_ (большой), последний — plan_last_ (меньший), оба готовы.
     if (plan_last_ != 0 && plan_last_batch_ == batch_beam_count) {
-        // Swap: promote secondary plan to active, demote current to secondary
+        // Размер совпадает с вторичным кешем — swap: plan_last_ становится активным
         std::swap(plan_, plan_last_);
         std::swap(plan_batch_size_, plan_last_batch_);
         plan_created_ = true;
         return;
     }
 
-    // Need a new plan — evict secondary cache slot if occupied, then move
-    // current active plan to secondary (keeps it alive for alternating sizes)
+    // Нужен план нового размера: вытесняем вторичный кеш (он больше не нужен),
+    // перемещаем текущий активный план в кеш (может пригодиться для чередования).
+    // ВНИМАНИЕ: если используются 3+ разных размеров подряд — старый plan_ теряется,
+    // при следующем обращении к нему план пересоздаётся. Для матричного бенчмарка
+    // с N разными nFFT → создавать отдельный экземпляр FFTProcessorROCm на каждый размер!
     if (plan_last_ != 0) {
         hipfftDestroy(plan_last_);
         plan_last_ = 0;
@@ -644,7 +661,8 @@ void FFTProcessorROCm::CompileKernels() {
                     DRVGPU_LOG_INFO_GPU(gpu_id, "FFTProcessorROCm", "HIP kernels loaded from cache");
                     return;
                 }
-                // Stale cache (different arch) — fall through to recompile
+                // Stale cache: .hsaco скомпилирован для другой архитектуры GPU (напр., gfx1100 → gfx1201).
+                // hipModuleLoadData вернула не hipSuccess → модуль не загружен, нужна перекомпиляция.
                 (void)hipModuleUnload(module_);
                 module_ = nullptr;
             }
@@ -786,7 +804,9 @@ void FFTProcessorROCm::ExecutePadKernel(size_t beam_count) {
     unsigned int np   = n_point_;
     unsigned int nfft = nFFT_;
 
-    // TASK-3: Zero the entire padded buffer async — no divergent else-branch in kernel
+    // Обнуляем весь padded-буфер перед запуском kernel (асинхронно на stream_).
+    // ЗАЧЕМ: kernel копирует только n_point точек (idx < n_point), остаток [n_point..nFFT-1]
+    // уже нулевой после hipMemsetAsync — нет else-ветки в kernel, нет warp divergence.
     hipError_t err = hipMemsetAsync(fft_input_,
                                      0,
                                      beam_count * nFFT_ * sizeof(std::complex<float>),
@@ -796,7 +816,9 @@ void FFTProcessorROCm::ExecutePadKernel(size_t beam_count) {
                                   std::string(hipGetErrorString(err)));
     }
 
-    // TASK-2: 2D grid — blockIdx.y = beam_id, eliminates int div/mod per thread
+    // 2D grid: X покрывает n_point точек на луч, Y = beam_id.
+    // blockIdx.y = beam_id — избегаем деления и остатка для вычисления номера луча.
+    // grid_x = ceil(n_point/256) — обрабатываем только реальные точки, нули уже в буфере.
     unsigned int block_x = 256;
     unsigned int grid_x  = static_cast<unsigned int>((n_point_ + block_x - 1) / block_x);
     unsigned int grid_y  = static_cast<unsigned int>(beam_count);

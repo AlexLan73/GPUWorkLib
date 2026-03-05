@@ -26,6 +26,9 @@ namespace kernels {
 inline const char* GetFMCorrelatorKernelSource() {
   return R"HIP(
 
+// Собственный float2_t вместо hipfloat2: hiprtc не имеет доступа к device-заголовкам
+// ROCm по умолчанию, и hipfloat2/float2 из <hip/hip_runtime.h> недоступны в строке
+// hiprtcCompileProgram. Поэтому объявляем минимальный эквивалент прямо здесь.
 struct float2_t {
     float x;
     float y;
@@ -71,7 +74,7 @@ extern "C" __global__ void multiply_conj_fused(
     if (i >= half_N || k >= K || s >= S) return;
 
     float2_t a = ref_fft[k * ref_stride + i];
-    a.y = -a.y;  // conj inline
+    a.y = -a.y;  // сопряжение: conj(a+jb) = a-jb; нет hipConjf в hiprtc → inline
     float2_t b = inp_fft[s * half_N + i];
 
     float2_t out;
@@ -98,7 +101,9 @@ extern "C" __global__ void extract_magnitudes_real(
 
     int src = (s * K + k) * N + j;
     float val = corr_time[src];
-    if (val < 0.0f) val = -val;
+    if (val < 0.0f) val = -val;  // |val| без sqrtf — C2R результат вещественный
+    // hipFFT не нормирует IFFT (в отличие от numpy.ifft): результат умножен на N.
+    // Делим на N чтобы получить нормализованную корреляцию ∈ [0..1].
     peaks[(s * K + k) * n_kg + j] = val / (float)N;
 }
 

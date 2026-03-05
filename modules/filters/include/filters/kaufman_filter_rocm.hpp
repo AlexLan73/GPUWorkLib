@@ -85,14 +85,18 @@ private:
   hipFunction_t kernel_ = nullptr;
   bool          kernel_compiled_ = false;
 
-  KaufmanParams params_;
-  float fast_sc_ = 2.0f / 3.0f;    // precomputed: 2/(fast_period+1)
-  float slow_sc_ = 2.0f / 31.0f;   // precomputed: 2/(slow_period+1)
+  KaufmanParams params_;  ///< er_period, fast_period, slow_period
+  // fast_sc_ и slow_sc_ — предельные EMA-константы для SC-интерполяции:
+  // SC = (ER*(fast_sc-slow_sc)+slow_sc)^2. Precomputed в SetParams()
+  // чтобы не вычислять 2/(N+1) внутри kernel при каждом sample.
+  float fast_sc_ = 2.0f / 3.0f;   ///< 2/(fast_period+1), default fast=2 → 2/3
+  float slow_sc_ = 2.0f / 31.0f;  ///< 2/(slow_period+1), default slow=30 → 2/31
 
-  void*  cached_input_buf_  = nullptr;
-  size_t cached_input_size_ = 0;
+  // Кешированный input-буфер — переиспользуется при одинаковом размере
+  void*  cached_input_buf_  = nullptr;  ///< GPU-буфер [channels * points] float2, принадлежит объекту
+  size_t cached_input_size_ = 0;        ///< Размер cached_input_buf_ в байтах
 
-  unsigned int block_size_ = 256;
+  unsigned int block_size_ = 256;  ///< Threads per block (1 thread per channel)
 };
 
 }  // namespace filters

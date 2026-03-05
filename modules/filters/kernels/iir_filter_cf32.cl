@@ -38,7 +38,9 @@ __kernel void iir_biquad_cascade_cf32(
         float2 w2 = (float2)(0.0f, 0.0f);
 
         for (uint n = 0; n < points; n++) {
-            // First section reads from input, subsequent from output
+            // Первая секция читает из input, последующие — из output (in-place cascade).
+            // ЗАЧЕМ так: каждая секция переписывает output[], следующая читает
+            // уже отфильтрованный результат предыдущей — классический каскад биквадов.
             float2 x = (sec == 0u) ? input[base + n] : output[base + n];
 
             // DFII Transposed

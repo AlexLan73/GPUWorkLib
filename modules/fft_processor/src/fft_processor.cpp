@@ -370,13 +370,15 @@ void FFTProcessor::AllocateBuffers(size_t batch_beam_count, FFTOutputMode mode) 
     bool need_realloc = (batch_beam_count > current_buffer_beams_) || !pre_callback_userdata_;
 
     if (!need_realloc) {
-        // Обновить только заголовок
+        // Буферы достаточного размера — обновляем только заголовок (batch_beam_count мог уменьшиться)
         WritePreCallbackHeader(batch_beam_count);
 
-        // Проверить mag/phase буферы
         bool need_mag_phase = (mode != FFTOutputMode::COMPLEX);
         if (need_mag_phase && !has_mag_phase_buffers_) {
-            // Нужно доаллоцировать mag/phase буферы
+            // mag/phase буферы нужны, но не выделены (первый вызов ProcessMagPhase после ProcessComplex).
+            // Пустой if-блок — намеренно! Падаем ниже на полный realloc, который
+            // пересоздаст ВСЕ буферы включая mag/phase. Это проще и надёжнее, чем
+            // частичный realloc только mag/phase при уже живых fft_input_/fft_output_.
         } else {
             return;
         }
@@ -426,10 +428,11 @@ void FFTProcessor::AllocateBuffers(size_t batch_beam_count, FFTOutputMode mode) 
 
 void FFTProcessor::CreateFFTPlan(size_t batch_beam_count) {
     if (plan_created_ && plan_batch_size_ == batch_beam_count) {
-        return;  // План уже создан для этого batch size
+        return;  // План уже создан для этого batch size — переиспользуем
     }
 
-    // Инициализировать clFFT (один раз)
+    // clfftSetup() — глобальная инициализация clFFT; вызывается один раз на весь объект.
+    // (clFFT использует ref-count: несколько объектов безопасны, clfftTeardown не нужен явно)
     if (!clfft_initialized_) {
         clfftSetupData setup;
         setup.major = clfftVersionMajor;
@@ -440,14 +443,14 @@ void FFTProcessor::CreateFFTPlan(size_t batch_beam_count) {
         clfft_initialized_ = true;
     }
 
-    // Уничтожить старый план
+    // OpenCL не имеет two-plan cache (в отличие от ROCm): при смене batch size план пересоздаётся.
     if (plan_created_ && plan_handle_) {
         clfftDestroyPlan(&plan_handle_);
         plan_handle_ = 0;
         plan_created_ = false;
     }
 
-    // Создать план
+    // Создать 1D batch-план: nFFT_ точек × batch_beam_count лучей
     size_t dim = nFFT_;
     clfftStatus status = clfftCreateDefaultPlan(&plan_handle_, context_, CLFFT_1D, &dim);
     if (status != CLFFT_SUCCESS) {
@@ -456,16 +459,19 @@ void FFTProcessor::CreateFFTPlan(size_t batch_beam_count) {
 
     clfftSetPlanPrecision(plan_handle_, CLFFT_SINGLE);
     clfftSetLayout(plan_handle_, CLFFT_COMPLEX_INTERLEAVED, CLFFT_COMPLEX_INTERLEAVED);
+    // OUTOFPLACE: fft_input_ → fft_output_ (fft_input_ не трогается после FFT — может переиспользоваться)
     clfftSetResultLocation(plan_handle_, CLFFT_OUTOFPLACE);
     clfftSetPlanBatchSize(plan_handle_, batch_beam_count);
 
+    // Stride=1, dist=nFFT: лучи лежат непрерывно в памяти [beam0: 0..nFFT-1][beam1: nFFT..2*nFFT-1]...
     size_t strides[1] = {1};
     size_t dist = nFFT_;
     clfftSetPlanInStride(plan_handle_, CLFFT_1D, strides);
     clfftSetPlanOutStride(plan_handle_, CLFFT_1D, strides);
     clfftSetPlanDistance(plan_handle_, dist, dist);
 
-    // Регистрировать pre-callback (padding)
+    // Регистрируем pre-callback: clFFT будет вызывать prepareDataPre() вместо чтения из fft_input_.
+    // pre_callback_userdata_ содержит заголовок + реальные данные (см. PreCallbackHeader).
     const char* pre_source = kernels::GetPreCallbackSource_opencl();
     status = clfftSetPlanCallback(plan_handle_, "prepareDataPre", pre_source, 0,
                                    PRECALLBACK, &pre_callback_userdata_, 1);
@@ -474,14 +480,16 @@ void FFTProcessor::CreateFFTPlan(size_t batch_beam_count) {
         throw std::runtime_error("CreateFFTPlan: clfftSetPlanCallback failed: " + std::to_string(status));
     }
 
-    // Bake
+    // clfftBakePlan — финализирует план: выбирает оптимальные размеры work-group,
+    // компилирует OpenCL-код под конкретный device. Обязательно перед clfftEnqueueTransform!
     status = clfftBakePlan(plan_handle_, 1, &queue_, nullptr, nullptr);
     if (status != CLFFT_SUCCESS) {
         clfftDestroyPlan(&plan_handle_);
         throw std::runtime_error("CreateFFTPlan: clfftBakePlan failed: " + std::to_string(status));
     }
 
-    // Temp buffer
+    // Некоторые размеры FFT требуют scratch-буфера. Выделяем только если нужен больший размер.
+    // tmp_size=0 для степеней 2 при малых batch — обычный случай.
     size_t tmp_size = 0;
     clfftGetTmpBufSize(plan_handle_, &tmp_size);
     if (tmp_size > fft_temp_buffer_size_) {
@@ -575,10 +583,13 @@ cl_event FFTProcessor::UploadData(const std::complex<float>* data, size_t count)
     cl_event event = nullptr;
     size_t data_size = count * sizeof(std::complex<float>);
 
+    // Данные записываются ПОСЛЕ заголовка в pre_callback_userdata_!
+    // Не в fft_input_ — потому что pre-callback читает из userdata (не из fft_input_).
+    // PRE_CALLBACK_HEADER_SIZE = 32 байта = смещение сразу за PreCallbackHeader.
     cl_int err = clEnqueueWriteBuffer(
         queue_, pre_callback_userdata_,
         CL_FALSE,
-        PRE_CALLBACK_HEADER_SIZE,
+        PRE_CALLBACK_HEADER_SIZE,   // dst_offset: пропустить заголовок
         data_size,
         data,
         0, nullptr, &event);
@@ -748,7 +759,8 @@ std::vector<FFTMagPhaseResult> FFTProcessor::ReadMagPhaseResults(
             raw_phase.begin() + i * nFFT_,
             raw_phase.begin() + (i + 1) * nFFT_);
 
-        // Рассчитать частоты на CPU (быстрее чем запуск отдельного kernel)
+        // frequency[] вычисляется на CPU: запуск отдельного kernel для nFFT умножений
+        // не имеет смысла — overhead kernel launch >> само вычисление.
         if (include_freq) {
             result.frequency.resize(nFFT_);
             float freq_step = sample_rate / static_cast<float>(nFFT_);
@@ -767,6 +779,9 @@ std::vector<FFTMagPhaseResult> FFTProcessor::ReadMagPhaseResults(
 // ЧАСТЬ 5: Утилиты
 // ════════════════════════════════════════════════════════════════════════════
 
+// Bit-twiddling: заполняем все биты ниже старшего → n+1 = следующая степень двойки.
+// Пример: 1000 (8) → 0111 (7) → fill → 1111 (15) → +1 = 10000 (16).
+// Особый случай: n=0 → 1 (hipFFT/clFFT требуют nFFT >= 1)
 uint32_t FFTProcessor::NextPowerOf2(uint32_t n) {
     if (n == 0) return 1;
     n--;

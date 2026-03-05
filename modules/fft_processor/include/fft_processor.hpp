@@ -233,7 +233,7 @@ private:
     // ═══════════════════════════════════════════════════════════════════════
 
     // DrvGPU
-    drv_gpu_lib::IBackend* backend_ = nullptr;
+    drv_gpu_lib::IBackend* backend_ = nullptr;  ///< Не владеет; должен жить дольше FFTProcessor
 
     // OpenCL ресурсы
     cl_context context_ = nullptr;
@@ -243,38 +243,46 @@ private:
     // clFFT
     clfftPlanHandle plan_handle_ = 0;
     bool plan_created_ = false;
-    bool clfft_initialized_ = false;
+    bool clfft_initialized_ = false;  ///< clfftSetup() вызывается один раз на всё время жизни объекта
 
     // GPU буферы
-    cl_mem pre_callback_userdata_ = nullptr;  ///< [32B header][input data]
-    cl_mem fft_input_ = nullptr;              ///< Входной буфер FFT (nFFT * batch)
-    cl_mem fft_output_ = nullptr;             ///< Выходной буфер FFT
-    cl_mem fft_temp_buffer_ = nullptr;        ///< Temp буфер clFFT
-    cl_mem mag_output_ = nullptr;             ///< Магнитуды (nFFT * batch)
-    cl_mem phase_output_ = nullptr;           ///< Фазы (nFFT * batch)
+    // ВАЖНО: pre_callback_userdata_ содержит И заголовок (32 байта) И входные данные!
+    // Layout: [beam_count:4][count_points:4][nFFT:4][pad×5:20][data: beam_count × n_point × float2]
+    // clFFT pre-callback читает из него напрямую (userdata в OpenCL kernel = этот буфер).
+    // fft_input_ — "объявленный" входной буфер для clfftEnqueueTransform, его содержимое
+    //              НЕ используется — pre-callback перехватывает чтение и даёт данные из userdata.
+    cl_mem pre_callback_userdata_ = nullptr;  ///< [32B header][beam_count × n_point × complex<float>]
+    cl_mem fft_input_ = nullptr;              ///< "Dummy" input для clFFT; pre-callback подставляет реальные данные
+    cl_mem fft_output_ = nullptr;             ///< Результат FFT [beam_count × nFFT × complex<float>]
+    cl_mem fft_temp_buffer_ = nullptr;        ///< Scratch-буфер clFFT; размер зависит от nFFT и batch — смотри clfftGetTmpBufSize
+    cl_mem mag_output_ = nullptr;             ///< |X[k]| после kernel; [beam_count × nFFT × float]
+    cl_mem phase_output_ = nullptr;           ///< arg(X[k]) после kernel; [beam_count × nFFT × float]
 
-    // Post-processing kernel
+    // Post-processing kernel (complex_to_mag_phase)
     cl_program mag_phase_program_ = nullptr;
-    cl_kernel mag_phase_kernel_ = nullptr;
+    cl_kernel mag_phase_kernel_ = nullptr;  ///< Скомпилирован lazily при первом вызове ProcessMagPhase
 
     // Параметры текущей обработки
-    uint32_t nFFT_ = 0;
-    uint32_t n_point_ = 0;
+    uint32_t nFFT_ = 0;     ///< Актуальный размер FFT = nextPow2(n_point_) × repeat_count
+    uint32_t n_point_ = 0;  ///< Реальный размер входа на луч (до padding)
 
     // Batch management
-    size_t current_buffer_beams_ = 0;  ///< Размер выделенных буферов
-    size_t plan_batch_size_ = 0;       ///< Batch size текущего FFT плана
-    size_t fft_temp_buffer_size_ = 0;
+    size_t current_buffer_beams_ = 0;  ///< Batch size, под который выделены GPU-буферы; если batch.count > этого — realloc
+    size_t plan_batch_size_ = 0;       ///< Batch size, под который создан текущий FFT-план; может отличаться от current_buffer_beams_
+    size_t fft_temp_buffer_size_ = 0;  ///< Текущий размер fft_temp_buffer_; растёт при необходимости, не уменьшается
     bool has_mag_phase_buffers_ = false;
 
     // Константы
-    static constexpr size_t PRE_CALLBACK_HEADER_SIZE = 32;
+    static constexpr size_t PRE_CALLBACK_HEADER_SIZE = 32;  ///< Размер заголовка в pre_callback_userdata_: 8 × uint32_t = 32 байта
 
+    // Заголовок в начале pre_callback_userdata_: передаёт параметры в OpenCL pre-callback kernel.
+    // Данные начинаются сразу после: (uint32_t*)userdata + 8 == (float2*) данные.
+    // ВНИМАНИЕ: порядок полей изменять нельзя — pre-callback kernel читает по фиксированным offset'ам!
     struct PreCallbackHeader {
-        uint32_t beam_count;
-        uint32_t count_points;
-        uint32_t nFFT;
-        uint32_t padding1;
+        uint32_t beam_count;   // header[0]: количество лучей в батче
+        uint32_t count_points; // header[1]: n_point — реальный размер входа на луч
+        uint32_t nFFT;         // header[2]: целевой размер FFT (со zero-padding)
+        uint32_t padding1;     // header[3..7]: выравнивание до 32 байт
         uint32_t padding2;
         uint32_t padding3;
         uint32_t padding4;

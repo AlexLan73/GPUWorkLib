@@ -90,6 +90,18 @@ KalmanFilterROCm& KalmanFilterROCm::operator=(
 // Configuration
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Устанавливает параметры фильтра Калмана
+ *
+ * Q (process noise) и R (measurement noise) должны быть > 0:
+ * при Q=0 фильтр полностью "замирает" (K→0, игнорирует измерения),
+ * при R=0 фильтр полностью доверяет измерениям (K→1, нет сглаживания).
+ * P0 = начальная неопределённость; обычно P0 = R (мы не знаем начального состояния).
+ *
+ * Практика настройки: Q/R = 0.01 → сильное сглаживание; Q/R = 1.0 → быстрая реакция.
+ *
+ * @param params Q, R, x0, P0 — все должны быть > 0
+ */
 void KalmanFilterROCm::SetParams(const KalmanParams& params) {
   if (params.Q <= 0.0f)
     throw std::invalid_argument("KalmanFilterROCm: Q must be > 0");
@@ -273,6 +285,8 @@ KalmanFilterROCm::ProcessFromCPU(
   if (data.size() < total)
     throw std::runtime_error("KalmanFilterROCm::ProcessFromCPU: data too small");
 
+  // Кешируем input-буфер: hipMalloc дорогой (~0.5 мс).
+  // При одинаковом размере просто перезаписываем — без повторной аллокации.
   if (buffer_size != cached_input_size_) {
     if (cached_input_buf_) hipFree(cached_input_buf_);
     hipError_t err = hipMalloc(&cached_input_buf_, buffer_size);
@@ -299,19 +313,22 @@ KalmanFilterROCm::ProcessCpu(
   for (uint32_t ch = 0; ch < channels; ++ch) {
     size_t base = static_cast<size_t>(ch) * points;
 
+    // Re и Im фильтруются независимо (2 отдельных скалярных фильтра).
+    // ПОЧЕМУ: предполагаем AWGN-шум — Re и Im не коррелированы.
+    // Для коррелированного шума нужен полноценный 2D Kalman, но он в 4× дороже.
     float x_re = params_.x0, x_im = params_.x0;
     float P_re = params_.P0, P_im = params_.P0;
 
     for (uint32_t n = 0; n < points; ++n) {
       auto z = input[base + n];
 
-      // Re
+      // ── Predict & Update Re ───────────────────────────────────────────
       float P_pred_re = P_re + params_.Q;
-      float K_re = P_pred_re / (P_pred_re + params_.R);
-      x_re = x_re + K_re * (z.real() - x_re);
-      P_re = (1.0f - K_re) * P_pred_re;
+      float K_re = P_pred_re / (P_pred_re + params_.R);  // Kalman gain
+      x_re = x_re + K_re * (z.real() - x_re);            // update state
+      P_re = (1.0f - K_re) * P_pred_re;                  // update covariance
 
-      // Im
+      // ── Predict & Update Im ───────────────────────────────────────────
       float P_pred_im = P_im + params_.Q;
       float K_im = P_pred_im / (P_pred_im + params_.R);
       x_im = x_im + K_im * (z.imag() - x_im);

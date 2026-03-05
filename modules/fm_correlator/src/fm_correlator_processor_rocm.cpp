@@ -34,6 +34,14 @@ namespace drv_gpu_lib {
 // PART 1: Constructor, Destructor
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Конструктор: проверяет backend, создаёт два HIP-потока.
+ *
+ * Два потока нужны для параллельной обработки:
+ *   stream0: ref-путь (H2D ref → apply_shifts → C2C FFT) и финальная корреляция
+ *   stream1: inp-путь (H2D inp → R2C FFT) — выполняется одновременно со stream0
+ * Синхронизируются через hipStreamSynchronize перед multiply_conj_fused.
+ */
 FMCorrelatorProcessorROCm::FMCorrelatorProcessorROCm(IBackend* backend)
     : backend_(backend) {
   if (!backend_ || !backend_->IsInitialized()) {
@@ -60,14 +68,23 @@ FMCorrelatorProcessorROCm::~FMCorrelatorProcessorROCm() {
 // PART 2: SetParams
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Применить новые параметры FFT/сигналов.
+ *
+ * Сбрасывает ref_prepared_ — после смены параметров размеры буферов изменились,
+ * старые спектры эталона недействительны → требуется повторный PrepareReference().
+ * Порядок: compile (lazy) → FreeBuffers → DestroyPlans → AllocateBuffers → CreatePlans.
+ */
 void FMCorrelatorProcessorROCm::SetParams(const FMCorrelatorParams& params) {
   params_ = params;
+  // Эталон становится невалидным — размер N мог измениться
   ref_prepared_ = false;
 
   if (!kernels_compiled_) {
     CompileKernels();
   }
 
+  // Пересоздаём буферы и планы под новые N/K/S: старые размеры несовместимы
   FreeBuffers();
   DestroyPlans();
 
@@ -79,6 +96,22 @@ void FMCorrelatorProcessorROCm::SetParams(const FMCorrelatorParams& params) {
 // PART 3: PrepareReference
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Подготовить эталонный сигнал: загрузить, создать K циклических сдвигов,
+ *        вычислить C2C FFT для каждого сдвига.
+ *
+ * После этого d_ref_complex_ содержит [K × N] float2 — спектры K сдвигов.
+ * Эти спектры используются многократно в Process() без повторной загрузки.
+ *
+ * Почему C2C, а не R2C для эталона: сдвиги формируют комплексный массив
+ * float2 (мнимая часть = 0). R2C принимает только вещественный float* —
+ * пришлось бы иметь отдельный буфер. Проще один C2C на готовый float2.
+ *
+ * Синхронизируем stream0_ в конце, чтобы ref_prepared_ = true означало
+ * «данные действительно готовы на GPU».
+ *
+ * @param ref Эталонный сигнал размером fft_size (значения ±1.0f)
+ */
 void FMCorrelatorProcessorROCm::PrepareReference(
     const std::vector<float>& ref) {
   const size_t N = params_.fft_size;
@@ -89,7 +122,7 @@ void FMCorrelatorProcessorROCm::PrepareReference(
         std::to_string(ref.size()) + " != fft_size " + std::to_string(N));
   }
 
-  // H2D: upload ref to d_ref_float_
+  // H2D: загружаем вещественный ref в d_ref_float_ (временный, только для shifts)
   hipError_t err = hipMemcpyHtoDAsync(
       d_ref_float_, const_cast<float*>(ref.data()),
       N * sizeof(float), stream0_);
@@ -97,7 +130,8 @@ void FMCorrelatorProcessorROCm::PrepareReference(
     throw std::runtime_error("PrepareReference: H2D failed: " +
                              std::string(hipGetErrorString(err)));
 
-  // Kernel: apply_cyclic_shifts
+  // Kernel: apply_cyclic_shifts — заполняет d_ref_complex_[K×N] float2
+  // out[k][i] = {ref[(i+k)%N], 0.0f} — K параллельных циклических сдвигов
   int N_int = static_cast<int>(N);
   int K_int = K;
   void* args_shift[] = { &d_ref_float_, &d_ref_complex_, &N_int, &K_int };
@@ -113,7 +147,8 @@ void FMCorrelatorProcessorROCm::PrepareReference(
     throw std::runtime_error("PrepareReference: apply_cyclic_shifts failed: " +
                              std::string(hipGetErrorString(err)));
 
-  // C2C FFT Forward on ref_complex -> ref_fft (in-place)
+  // C2C FFT Forward, in-place: d_ref_complex_ → d_ref_complex_ (теперь спектры)
+  // plan_ref_ привязан к stream0_ через hipfftSetStream в CreatePlans()
   hipfftResult fft_err = hipfftExecC2C(
       plan_ref_,
       static_cast<hipfftComplex*>(d_ref_complex_),
@@ -123,6 +158,7 @@ void FMCorrelatorProcessorROCm::PrepareReference(
     throw std::runtime_error("PrepareReference: hipfftExecC2C failed: " +
                              std::to_string(fft_err));
 
+  // Ждём завершения stream0_ — ref готов, Process() может использовать спектры
   (void)hipStreamSynchronize(stream0_);
   ref_prepared_ = true;
 }
@@ -131,6 +167,19 @@ void FMCorrelatorProcessorROCm::PrepareReference(
 // PART 4: Process
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Полный пайплайн корреляции для S входных сигналов.
+ *
+ * Два параллельных потока:
+ *   stream0: был занят PrepareReference() (уже завершён и синхронизирован)
+ *   stream1: H2D(inp) → R2C FFT — запускаем здесь
+ *
+ * Потоки синхронизируются перед RunCorrelationPipeline(): нужно гарантировать,
+ * что и ref-спектры (stream0), и inp-спектры (stream1) готовы к multiply.
+ *
+ * @param inp Flat [S × N] float, row-major (signal 0 first)
+ * @return FMCorrelatorResult с peaks [S × K × n_kg]
+ */
 FMCorrelatorResult FMCorrelatorProcessorROCm::Process(
     const std::vector<float>& inp) {
   if (!ref_prepared_) {
@@ -146,7 +195,7 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::Process(
         std::to_string(static_cast<size_t>(S) * N));
   }
 
-  // H2D: upload inp to d_inp_float_ on stream1
+  // H2D на stream1 — параллельно с любыми вычислениями на stream0
   hipError_t err = hipMemcpyHtoDAsync(
       d_inp_float_, const_cast<float*>(inp.data()),
       S * N * sizeof(float), stream1_);
@@ -154,7 +203,8 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::Process(
     throw std::runtime_error("Process: H2D inp failed: " +
                              std::string(hipGetErrorString(err)));
 
-  // R2C FFT on inp on stream1
+  // R2C FFT на stream1: результат [S × (N/2+1)] float2 в d_inp_fft_
+  // plan_inp_ привязан к stream1_ через hipfftSetStream в CreatePlans()
   hipfftResult fft_err = hipfftExecR2C(
       plan_inp_, d_inp_float_,
       static_cast<hipfftComplex*>(d_inp_fft_));
@@ -162,7 +212,7 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::Process(
     throw std::runtime_error("Process: hipfftExecR2C failed: " +
                              std::to_string(fft_err));
 
-  // Sync both streams before correlation
+  // Синхронизируем ОБА потока: multiply_conj_fused читает и d_ref_complex_, и d_inp_fft_
   (void)hipStreamSynchronize(stream0_);
   (void)hipStreamSynchronize(stream1_);
 
@@ -173,16 +223,33 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::Process(
 // RunCorrelationPipeline — shared by Process and RunTestPattern
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Финальная часть пайплайна: multiply → IFFT → extract → D2H.
+ *
+ * Вызывается из Process() и RunTestPattern() после того как оба потока
+ * завершили и d_ref_complex_, и d_inp_fft_ готовы.
+ *
+ * Шаги (все на stream0):
+ * 1. multiply_conj_fused: corr_fft[s,k,i] = conj(ref_fft[k,i]) * inp_fft[s,i]
+ * 2. C2R IFFT (plan_corr): batch S*K, выход d_corr_time_ [S×K×N] float
+ * 3. extract_magnitudes_real: |corr_time[j]| / N → d_peaks_ [S×K×n_kg]
+ * 4. D2H: d_peaks_ → host, sync stream0
+ *
+ * @return FMCorrelatorResult с заполненным peaks вектором
+ */
 FMCorrelatorResult FMCorrelatorProcessorROCm::RunCorrelationPipeline() {
   int N = static_cast<int>(params_.fft_size);
   int K = params_.num_shifts;
   int S = params_.num_signals;
   int n_kg = params_.num_output_points;
+  // R2C даёт N/2+1 точек (hermitian symmetry) — ровно столько нужно для C2R
   int half_N = N / 2 + 1;
 
   hipError_t err;
 
-  // multiply_conj_fused on stream0
+  // Step 1: multiply_conj_fused на stream0
+  // ref_stride=N (не half_N!): d_ref_complex_ хранит полные C2C спектры [K×N] float2,
+  // а не R2C-усечённые. Stride между сдвигами = N комплексных элементов.
   int ref_stride = N;
   void* args_mul[] = { &d_ref_complex_, &d_inp_fft_, &d_corr_fft_,
                         &half_N, &ref_stride, &K, &S };
@@ -198,7 +265,9 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::RunCorrelationPipeline() {
     throw std::runtime_error("RunCorrelationPipeline: multiply_conj_fused failed: " +
                              std::string(hipGetErrorString(err)));
 
-  // C2R IFFT on stream0
+  // Step 2: C2R IFFT на stream0, batch S*K
+  // Вход [S×K×(N/2+1)] float2 → выход [S×K×N] float
+  // plan_corr_ привязан к stream0_ через hipfftSetStream в CreatePlans()
   hipfftResult fft_err = hipfftExecC2R(
       plan_corr_,
       static_cast<hipfftComplex*>(d_corr_fft_),
@@ -207,7 +276,8 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::RunCorrelationPipeline() {
     throw std::runtime_error("RunCorrelationPipeline: hipfftExecC2R failed: " +
                              std::to_string(fft_err));
 
-  // extract_magnitudes_real on stream0
+  // Step 3: extract_magnitudes_real на stream0
+  // |corr_time[j]| / N → peaks (только первые n_kg точек — дальнейшие бесполезны)
   void* args_ext[] = { &d_corr_time_, &d_peaks_,
                         &N, &n_kg, &K, &S };
   unsigned int grid_ext_x = (static_cast<unsigned int>(n_kg) + kBlockSize - 1) / kBlockSize;
@@ -222,7 +292,7 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::RunCorrelationPipeline() {
     throw std::runtime_error("RunCorrelationPipeline: extract_magnitudes failed: " +
                              std::string(hipGetErrorString(err)));
 
-  // D2H: peaks
+  // Step 4: D2H peaks → host, затем sync для гарантии завершения копирования
   size_t peaks_size = static_cast<size_t>(S) * K * n_kg;
   FMCorrelatorResult result;
   result.peaks.resize(peaks_size);
@@ -245,6 +315,18 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::RunCorrelationPipeline() {
 // PART 5: RunTestPattern
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Тестовый паттерн: генерация входных сигналов прямо на GPU.
+ *
+ * Входной сигнал s = circshift(ref, s*shift_step): сигнал s — это ref,
+ * сдвинутый на s*shift_step позиций. Ожидаемый пик сигнала s, сдвига k
+ * находится в позиции (s*shift_step - k + N) % N.
+ *
+ * Зачем: тест без H2D для входных данных — полностью на GPU, быстро.
+ * d_ref_float_ должен быть актуальным (заполняется в PrepareReference).
+ *
+ * @param shift_step Шаг сдвига между сигналами (в сэмплах)
+ */
 FMCorrelatorResult FMCorrelatorProcessorROCm::RunTestPattern(int shift_step) {
   if (!ref_prepared_) {
     throw std::runtime_error("RunTestPattern: reference not prepared");
@@ -253,7 +335,7 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::RunTestPattern(int shift_step) {
   int N = static_cast<int>(params_.fft_size);
   int S = params_.num_signals;
 
-  // generate_test_inputs on stream1
+  // generate_test_inputs на stream1: inp[s*N+i] = ref[(i+s*shift_step) % N]
   void* args_gen[] = { &d_ref_float_, &d_inp_float_,
                         &N, &S, &shift_step };
   unsigned int grid_gen_x = (static_cast<unsigned int>(N) + kBlockSize - 1) / kBlockSize;
@@ -287,12 +369,27 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::RunTestPattern(int shift_step) {
 // PART 6: ProcessWithBatching
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Авто-батчинг для случая когда total_signals > допустимого S.
+ *
+ * BatchManager::CalculateOptimalBatchSize считает сколько сигналов влезает
+ * в 70% свободной GPU-памяти (external_mem вычтен — он всегда занят ref_fft).
+ * Для каждого батча пересоздаём буферы/планы если batch_S изменился.
+ *
+ * ВАЖНО: ref_prepared_ остаётся true и эталон на GPU не трогается — только
+ * буферы под inp/corr пересоздаются под batch_S.
+ *
+ * @param inp         Flat [total_signals × N] float
+ * @param total_signals Реальное число сигналов (может быть > params_.num_signals)
+ * @return Объединённый результат [total_signals × K × n_kg]
+ */
 FMCorrelatorResult FMCorrelatorProcessorROCm::ProcessWithBatching(
     const std::vector<float>& inp, int total_signals) {
   const size_t N = params_.fft_size;
   const int K = params_.num_shifts;
   const int n_kg = params_.num_output_points;
 
+  // Память на один сигнал: строки inp_float + inp_fft + (K строк corr_fft/time/peaks)
   size_t per_signal_memory =
       N * sizeof(float)                               // d_inp_float row
     + (N / 2 + 1) * sizeof(hipfftComplex)             // d_inp_fft row
@@ -300,8 +397,9 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::ProcessWithBatching(
     + K * N * sizeof(float)                            // d_corr_time
     + K * n_kg * sizeof(float);                        // d_peaks
 
-  size_t external_mem = K * N * sizeof(hipfftComplex)  // ref_fft on GPU
-                      + N * sizeof(float);             // ref_float on GPU
+  // ref-буферы постоянно заняты — вычитаем из бюджета при расчёте батча
+  size_t external_mem = K * N * sizeof(hipfftComplex)  // ref_fft на GPU
+                      + N * sizeof(float);             // ref_float на GPU
 
   size_t batch_sz = BatchManager::CalculateOptimalBatchSize(
       backend_, total_signals, per_signal_memory, 0.7, external_mem);
@@ -316,11 +414,9 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::ProcessWithBatching(
   for (auto& b : batches) {
     int batch_S = static_cast<int>(b.count);
 
-    // Recreate plans if batch size changed
+    // Пересоздаём буферы/планы только при смене размера батча (частый случай:
+    // все батчи одного размера, кроме последнего — пересоздание 1-2 раза)
     if (batch_S != current_batch_S_) {
-      FMCorrelatorParams batch_params = params_;
-      batch_params.num_signals = batch_S;
-
       DestroyPlans();
       FreeBuffers();
       params_.num_signals = batch_S;
@@ -329,7 +425,7 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::ProcessWithBatching(
       current_batch_S_ = batch_S;
     }
 
-    // Slice input
+    // Вырезаем срез входных данных для этого батча
     size_t offset = b.start * N;
     std::vector<float> batch_inp(
         inp.begin() + static_cast<ptrdiff_t>(offset),
@@ -341,7 +437,8 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::ProcessWithBatching(
                           batch_result.peaks.end());
   }
 
-  // Restore original params
+  // Восстанавливаем оригинальные params: следующий вызов Process()/SetParams()
+  // должен видеть total_signals, а не последний batch_S
   params_.num_signals = total_signals;
   current_batch_S_ = 0;
 
@@ -352,6 +449,25 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::ProcessWithBatching(
 // PART 7: CompileKernels
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Компилирует 4 HIP кернела через hiprtc (lazy, один раз).
+ *
+ * Почему hiprtc, а не заранее скомпилированные .hsaco файлы:
+ * - нет зависимости от конкретной архитектуры GPU при сборке
+ * - компиляция происходит на целевом устройстве → оптимальный код
+ * - все 4 кернела в одном строковом литерале (GetFMCorrelatorKernelSource)
+ *
+ * Процесс:
+ * 1. hiprtcCreateProgram — загрузить исходник
+ * 2. hiprtcCompileProgram с -O3 — компилировать
+ * 3. hiprtcGetCode — извлечь бинарный код (.hsaco)
+ * 4. hipModuleLoadData — загрузить модуль в память GPU
+ * 5. hipModuleGetFunction × 4 — получить хэндлы кернелов по именам
+ *
+ * При ошибке компиляции выводим полный лог (ошибки, предупреждения hiprtc).
+ *
+ * @note kernels_compiled_ = true только при успехе всех 5 шагов.
+ */
 void FMCorrelatorProcessorROCm::CompileKernels() {
   if (kernels_compiled_) return;
 
@@ -367,9 +483,11 @@ void FMCorrelatorProcessorROCm::CompileKernels() {
         std::string(hiprtcGetErrorString(rtcResult)));
   }
 
+  // -O3: агрессивная оптимизация — критично для throughput на больших батчах
   const char* options[] = { "-O3" };
   rtcResult = hiprtcCompileProgram(prog, 1, options);
   if (rtcResult != HIPRTC_SUCCESS) {
+    // Выводим лог компилятора — там ошибки и строки исходника
     size_t logSize = 0;
     hiprtcGetProgramLogSize(prog, &logSize);
     std::string log(logSize, '\0');
@@ -383,7 +501,7 @@ void FMCorrelatorProcessorROCm::CompileKernels() {
   hiprtcGetCodeSize(prog, &codeSize);
   std::vector<char> code(codeSize);
   hiprtcGetCode(prog, code.data());
-  hiprtcDestroyProgram(&prog);
+  hiprtcDestroyProgram(&prog);  // prog больше не нужен после извлечения кода
 
   hipError_t hipErr = hipModuleLoadData(&module_, code.data());
   if (hipErr != hipSuccess) {
@@ -392,6 +510,7 @@ void FMCorrelatorProcessorROCm::CompileKernels() {
         std::string(hipGetErrorString(hipErr)));
   }
 
+  // Лямбда для извлечения функций: при ошибке выгружает модуль чтобы не было утечки
   auto getFunc = [&](hipFunction_t* fn, const char* name) {
     hipErr = hipModuleGetFunction(fn, module_, name);
     if (hipErr != hipSuccess) {
@@ -417,11 +536,22 @@ void FMCorrelatorProcessorROCm::CompileKernels() {
 // PART 8: Buffer/Plan management
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Выделить GPU-буферы под текущие параметры (N, K, S, n_kg).
+ *
+ * half_N = N/2+1: R2C FFT возвращает hermitian-усечённый спектр (N/2+1 точек),
+ * поэтому d_inp_fft_ и d_corr_fft_ используют именно этот размер.
+ * d_ref_complex_ хранит полные C2C спектры [K×N] — stride=N, не half_N.
+ *
+ * Порядок выделения не критичен, но при ошибке throw прерывает — частично
+ * выделенные буферы будут освобождены в деструкторе через ReleaseAll().
+ */
 void FMCorrelatorProcessorROCm::AllocateBuffers() {
   const size_t N = params_.fft_size;
   const int K = params_.num_shifts;
   const int S = params_.num_signals;
   const int n_kg = params_.num_output_points;
+  // R2C output size: N/2+1 (hermitian symmetry saves ~50% памяти vs C2C)
   const size_t half_N = N / 2 + 1;
 
   hipError_t err;
@@ -435,12 +565,12 @@ void FMCorrelatorProcessorROCm::AllocateBuffers() {
   };
 
   alloc(reinterpret_cast<void**>(&d_ref_float_),   N * sizeof(float),                       "ref_float");
-  alloc(&d_ref_complex_,                            K * N * sizeof(hipfftComplex),            "ref_complex");
+  alloc(&d_ref_complex_,                            K * N * sizeof(hipfftComplex),            "ref_complex");   // C2C: полный спектр K×N
   alloc(reinterpret_cast<void**>(&d_inp_float_),    S * N * sizeof(float),                   "inp_float");
-  alloc(&d_inp_fft_,                                S * half_N * sizeof(hipfftComplex),       "inp_fft");
+  alloc(&d_inp_fft_,                                S * half_N * sizeof(hipfftComplex),       "inp_fft");        // R2C: usечённый S×(N/2+1)
   alloc(&d_corr_fft_,                               static_cast<size_t>(S) * K * half_N * sizeof(hipfftComplex), "corr_fft");
   alloc(reinterpret_cast<void**>(&d_corr_time_),    static_cast<size_t>(S) * K * N * sizeof(float),              "corr_time");
-  alloc(reinterpret_cast<void**>(&d_peaks_),         static_cast<size_t>(S) * K * n_kg * sizeof(float),          "peaks");
+  alloc(reinterpret_cast<void**>(&d_peaks_),        static_cast<size_t>(S) * K * n_kg * sizeof(float),           "peaks");
 
   buffers_allocated_ = true;
   current_batch_S_ = S;
@@ -467,6 +597,20 @@ void FMCorrelatorProcessorROCm::FreeBuffers() {
   buffers_allocated_ = false;
 }
 
+/**
+ * @brief Создать три hipFFT-плана и привязать их к потокам.
+ *
+ * Планы создаются при SetParams() и хранятся постоянно — не пересоздавать
+ * в каждом Process()! Создание плана дорого (~миллисекунды).
+ *
+ * hipfftSetStream ОБЯЗАТЕЛЕН: без него план выполняется на default stream
+ * (нулевой поток), что блокирует всё и нарушает параллелизм stream0/stream1.
+ *
+ * Параметры hipfftPlanMany (inembed=nullptr → contiguous layout):
+ *   plan_ref:  C2C Forward,  batch=K,   stream0
+ *   plan_inp:  R2C Forward,  batch=S,   stream1
+ *   plan_corr: C2R Inverse,  batch=S*K, stream0
+ */
 void FMCorrelatorProcessorROCm::CreatePlans() {
   const int N = static_cast<int>(params_.fft_size);
   const int K = params_.num_shifts;
@@ -475,7 +619,7 @@ void FMCorrelatorProcessorROCm::CreatePlans() {
   hipfftResult res;
   int n_arr[1] = { N };
 
-  // plan_ref: C2C Forward, batch=K
+  // plan_ref: K параллельных C2C FFT для сдвигов эталона (stream0)
   res = hipfftPlanMany(&plan_ref_, 1, n_arr,
       nullptr, 1, N,
       nullptr, 1, N,
@@ -484,7 +628,8 @@ void FMCorrelatorProcessorROCm::CreatePlans() {
     throw std::runtime_error("CreatePlans: plan_ref failed: " + std::to_string(res));
   (void)hipfftSetStream(plan_ref_, stream0_);
 
-  // plan_inp: R2C Forward, batch=S
+  // plan_inp: S параллельных R2C FFT для входных сигналов (stream1)
+  // Выходной stride = N/2+1 (hermitian), не N
   res = hipfftPlanMany(&plan_inp_, 1, n_arr,
       nullptr, 1, N,
       nullptr, 1, N / 2 + 1,
@@ -493,7 +638,8 @@ void FMCorrelatorProcessorROCm::CreatePlans() {
     throw std::runtime_error("CreatePlans: plan_inp failed: " + std::to_string(res));
   (void)hipfftSetStream(plan_inp_, stream1_);
 
-  // plan_corr: C2R Inverse, batch=S*K
+  // plan_corr: S*K параллельных C2R IFFT для всех пар (сигнал, сдвиг) (stream0)
+  // Входной stride = N/2+1, выходной = N
   res = hipfftPlanMany(&plan_corr_, 1, n_arr,
       nullptr, 1, N / 2 + 1,
       nullptr, 1, N,
@@ -513,6 +659,13 @@ void FMCorrelatorProcessorROCm::DestroyPlans() {
   plans_created_ = false;
 }
 
+/**
+ * @brief Полное освобождение всех GPU-ресурсов.
+ *
+ * Порядок важен: сначала планы и буферы (зависят от модуля),
+ * потом модуль (зависит от потоков), потом потоки.
+ * Нулим fn_* указатели после выгрузки модуля — они больше невалидны.
+ */
 void FMCorrelatorProcessorROCm::ReleaseAll() {
   DestroyPlans();
   FreeBuffers();
@@ -520,6 +673,7 @@ void FMCorrelatorProcessorROCm::ReleaseAll() {
   if (module_) {
     (void)hipModuleUnload(module_);
     module_ = nullptr;
+    // После выгрузки модуля хэндлы кернелов невалидны — обнуляем явно
     fn_apply_shifts_ = nullptr;
     fn_multiply_conj_ = nullptr;
     fn_extract_mag_ = nullptr;

@@ -112,6 +112,11 @@ void KaufmanFilterROCm::SetParams(uint32_t er_period,
   params_.fast_period = fast_period;
   params_.slow_period = slow_period;
 
+  // fast_sc_ и slow_sc_ — EMA-сглаживающие константы для предельных случаев KAMA:
+  // При ER=1 (чистый тренд) используем fast_sc = 2/(fast+1) → быстрое следование
+  // При ER=0 (шум) используем slow_sc = 2/(slow+1) → почти нет изменений
+  // SC (smoothing constant) интерполируется: SC = (ER*(fast-slow)+slow)^2
+  // Формула 2/(N+1) — стандартная EMA, возводим в квадрат для нелинейного отклика
   fast_sc_ = 2.0f / static_cast<float>(fast_period + 1);
   slow_sc_ = 2.0f / static_cast<float>(slow_period + 1);
 }
@@ -284,6 +289,8 @@ KaufmanFilterROCm::ProcessFromCPU(
   if (data.size() < total)
     throw std::runtime_error("KaufmanFilterROCm::ProcessFromCPU: data too small");
 
+  // Кешируем input-буфер — hipMalloc дорогой (~0.5 мс).
+  // При неизменном размере только перезаписываем данные без повторной аллокации.
   if (buffer_size != cached_input_size_) {
     if (cached_input_buf_) hipFree(cached_input_buf_);
     hipError_t err = hipMalloc(&cached_input_buf_, buffer_size);

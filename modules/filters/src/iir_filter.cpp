@@ -30,6 +30,16 @@ namespace filters {
 #define FILTERS_KERNELS_DIR "modules/filters/kernels"
 #endif
 
+/**
+ * @brief Конструктор: инициализирует IIR фильтр и компилирует OpenCL-ядро
+ *
+ * Ядро компилируется сразу в конструкторе (не lazy), чтобы первый Process()
+ * не получил неожиданный spike latency ~50 мс.
+ * KernelCacheService: первый запуск — компиляция из source, сохраняет бинарник;
+ * повторный запуск — загружает cached бинарник (~1 мс).
+ *
+ * @param backend Указатель на IBackend (не владеет), должен пережить объект
+ */
 IirFilter::IirFilter(drv_gpu_lib::IBackend* backend)
     : backend_(backend) {
 
@@ -38,6 +48,8 @@ IirFilter::IirFilter(drv_gpu_lib::IBackend* backend)
         "IirFilter: backend is null or not initialized");
   }
 
+  // Cast void* из IBackend в нативные OpenCL-дескрипторы — безопасно,
+  // т.к. OpenCL-backend гарантированно возвращает именно эти типы
   context_ = static_cast<cl_context>(backend_->GetNativeContext());
   queue_   = static_cast<cl_command_queue>(backend_->GetNativeQueue());
   device_  = static_cast<cl_device_id>(backend_->GetNativeDevice());
@@ -95,6 +107,18 @@ void IirFilter::LoadConfig(const std::string& json_path) {
   SetBiquadSections(cfg.sections);
 }
 
+/**
+ * @brief Устанавливает биквад-секции и загружает SOS-матрицу на GPU
+ *
+ * Каскад биквад-секций — стандартный способ задать IIR фильтр любого порядка.
+ * Каждая секция — фильтр 2-го порядка (biquad), N секций → фильтр 2N-го порядка.
+ * Коэффициенты получают через `scipy.signal.butter(N, Wn, output='sos')`.
+ *
+ * @note scipy SOS: a0 всегда = 1.0 (нормализовано), поэтому BiquadSection
+ *       содержит только {b0,b1,b2,a1,a2} без a0.
+ * @param sections Вектор биквад-секций, length = filter_order/2
+ * @throws std::invalid_argument если sections пуст
+ */
 void IirFilter::SetBiquadSections(const std::vector<BiquadSection>& sections) {
   if (sections.empty()) {
     throw std::invalid_argument("IirFilter::SetBiquadSections: empty sections");
@@ -155,8 +179,11 @@ IirFilter::Process(cl_mem input_buf, uint32_t channels, uint32_t points,
     throw std::runtime_error("IirFilter: clSetKernelArg failed");
   }
 
-  // Launch: 1D NDRange [channels]
-  // IIR: one work-item per channel (data dependency within channel)
+  // 1D NDRange: dim0 = channels, один work-item на канал.
+  // ПОЧЕМУ не 2D как в FIR? IIR — рекурсивный фильтр: y[n] зависит от y[n-1].
+  // Семплы в одном канале нельзя распараллелить — каждый work-item
+  // обходит все points в цикле последовательно.
+  // Параллелизм только по каналам — поэтому GPU выгоден лишь при >= 8 каналах.
   size_t local_size  = std::min(static_cast<size_t>(channels), static_cast<size_t>(256));
   size_t global_size = ((static_cast<size_t>(channels) + local_size - 1) / local_size) * local_size;
 
@@ -234,10 +261,17 @@ IirFilter::ProcessCpu(
 // GPU Internals
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Компилирует OpenCL-ядро IIR-фильтра (или загружает из кеша)
+ *
+ * Стратегия cache-first: KernelCacheService хранит бинарник в
+ * `modules/filters/kernels/bin/`. При промахе компилирует из source (~50 мс).
+ * Флаг `-cl-fast-relaxed-math` ускоряет FP (reorder, fused ops).
+ */
 void IirFilter::CompileKernel() {
   const std::string kernel_name = "iir_filter_cf32";
 
-  // Try loading from cache (binary fast path)
+  // Try loading from cache (binary fast path ~1 ms)
   try {
     auto entry = kernel_cache_->Load(kernel_name);
     if (entry.has_binary()) {
@@ -248,7 +282,7 @@ void IirFilter::CompileKernel() {
     // Cache miss or load error — compile from source
   }
 
-  // Compile from source
+  // Compile from source (~50 ms first time)
   cl_int err;
   const char* source = kernels::GetIirBiquadCascadeSource_opencl();
   size_t source_len = strlen(source);
@@ -336,6 +370,14 @@ void IirFilter::LoadFromBinary(const std::vector<uint8_t>& binary) {
   }
 }
 
+/**
+ * @brief Упаковывает SOS-матрицу в плоский float[] и загружает на GPU
+ *
+ * Layout: [sec * 5 + {0:b0, 1:b1, 2:b2, 3:a1, 4:a2}]
+ * Ядро читает stride-5 доступом: sos[sec*5+0], sos[sec*5+1], ...
+ * Это единственный буфер — читается только на GPU (READ_ONLY),
+ * повторно загружается при каждом SetBiquadSections().
+ */
 void IirFilter::UploadSosMatrix() {
   if (sos_buf_) {
     clReleaseMemObject(sos_buf_);

@@ -29,6 +29,16 @@ namespace filters {
 #define FILTERS_KERNELS_DIR "modules/filters/kernels"
 #endif
 
+/**
+ * @brief Конструктор: инициализирует FIR фильтр и компилирует OpenCL-ядро
+ *
+ * Компиляция ядра выполняется сразу (не lazy) — стоимость первого Process()
+ * должна быть предсказуемой, без скачка. KernelCacheService при первом запуске
+ * компилирует из source (~50 мс), сохраняет SPIR-V/binary на диск;
+ * при повторном запуске загружает бинарник (~1 мс).
+ *
+ * @param backend Указатель на IBackend (не владеет), должен пережить объект
+ */
 FirFilter::FirFilter(drv_gpu_lib::IBackend* backend)
     : backend_(backend) {
 
@@ -37,6 +47,8 @@ FirFilter::FirFilter(drv_gpu_lib::IBackend* backend)
         "FirFilter: backend is null or not initialized");
   }
 
+  // Cast void* из IBackend в нативные OpenCL-дескрипторы — безопасно,
+  // т.к. OpenCL-backend гарантированно возвращает именно эти типы
   context_ = static_cast<cl_context>(backend_->GetNativeContext());
   queue_   = static_cast<cl_command_queue>(backend_->GetNativeQueue());
   device_  = static_cast<cl_device_id>(backend_->GetNativeDevice());
@@ -96,12 +108,24 @@ void FirFilter::LoadConfig(const std::string& json_path) {
   SetCoefficients(cfg.coefficients);
 }
 
+/**
+ * @brief Устанавливает коэффициенты FIR-фильтра и загружает их на GPU
+ *
+ * При num_taps > kMaxConstantTaps (16000) автоматически переключается
+ * на `__global` буфер вместо `__constant` памяти OpenCL. `__constant` быстрее
+ * (cached, broadcast), но ограничена ~64 KB. Для больших фильтров (>16000 тапов)
+ * используется `fir_filter_cf32_global` — та же математика, медленнее.
+ *
+ * @param coeffs h[k] — коэффициенты импульсной характеристики, length = num_taps
+ * @throws std::invalid_argument если массив пуст
+ */
 void FirFilter::SetCoefficients(const std::vector<float>& coeffs) {
   if (coeffs.empty()) {
     throw std::invalid_argument("FirFilter::SetCoefficients: empty coefficients");
   }
 
   coefficients_ = coeffs;
+  // Флаг выбора kernel: constant-memory fast path vs global-memory fallback
   use_global_coeffs_ = (coefficients_.size() > kMaxConstantTaps);
 
   UploadCoefficients();
@@ -162,7 +186,11 @@ FirFilter::Process(cl_mem input_buf, uint32_t channels, uint32_t points,
     throw std::runtime_error("FirFilter: clSetKernelArg failed");
   }
 
-  // Launch: 2D NDRange [channels, points_padded]
+  // 2D NDRange: dim0 = channels (один work-item = один канал),
+  // dim1 = points (один work-item = один семпл в канале).
+  // FIR параллелится по обоим измерениям — нет зависимости между семплами!
+  // local_x=1: между каналами общая память не нужна, каждый канал независим.
+  // local_y=256: оптимальный размер group для GPU (одна wavefront = 64 на AMD).
   size_t local_x = 1;
   size_t local_y = 256;
   size_t global_x = channels;
@@ -241,10 +269,19 @@ FirFilter::ProcessCpu(
 // GPU Internals
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * @brief Компилирует OpenCL-ядро FIR фильтра (или загружает из кеша)
+ *
+ * Стратегия: cache-first.
+ * 1. Пробуем загрузить бинарник из KernelCacheService (~1 мс).
+ * 2. При промахе — компилируем из source (~50 мс), сохраняем в cache.
+ * Флаг `-cl-fast-relaxed-math` разрешает агрессивные FP оптимизации
+ * (reorder, fast reciprocal) — допустимо для float32 ЦОС.
+ */
 void FirFilter::CompileKernel() {
   const std::string kernel_name = "fir_filter_cf32";
 
-  // Try loading from cache (binary fast path)
+  // Try loading from cache (binary fast path ~1 ms)
   try {
     auto entry = kernel_cache_->Load(kernel_name);
     if (entry.has_binary()) {
@@ -255,7 +292,7 @@ void FirFilter::CompileKernel() {
     // Cache miss or load error — compile from source
   }
 
-  // Compile from source
+  // Compile from source (~50 ms first time)
   cl_int err;
   const char* source = kernels::GetFirDirectSource_opencl();
   size_t source_len = strlen(source);
@@ -343,6 +380,14 @@ void FirFilter::LoadFromBinary(const std::vector<uint8_t>& binary) {
   }
 }
 
+/**
+ * @brief Загружает коэффициенты на GPU в OpenCL-буфер
+ *
+ * Используем CL_MEM_COPY_HOST_PTR — данные копируются сразу при создании
+ * буфера, без явного clEnqueueWriteBuffer. После этого host-вектор
+ * coefficients_ может быть изменён без влияния на GPU-буфер.
+ * При повторном вызове старый буфер освобождается и создаётся новый.
+ */
 void FirFilter::UploadCoefficients() {
   if (coeff_buf_) {
     clReleaseMemObject(coeff_buf_);

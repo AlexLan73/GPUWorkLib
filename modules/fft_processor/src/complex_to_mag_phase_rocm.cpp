@@ -238,7 +238,10 @@ void* ComplexToMagPhaseROCm::ProcessToGPU(
 
     size_t total = static_cast<size_t>(params.beam_count) * params.n_point;
 
-    // Allocate temporary input buffer on GPU
+    // ProcessToGPU использует отдельные tmp_input/output_ptr вместо internal input_buffer_/output_buffer_.
+    // ЗАЧЕМ: internal буферы принадлежат объекту и переиспользуются между вызовами.
+    // output_ptr возвращается caller'у — caller владеет и обязан вызвать backend->Free(ptr).
+    // Если бы мы вернули output_buffer_, объект потерял бы владение — двойной hipFree в деструкторе.
     void* tmp_input = nullptr;
     size_t input_size = total * sizeof(std::complex<float>);
     hipError_t err = hipMalloc(&tmp_input, input_size);
@@ -247,7 +250,6 @@ void* ComplexToMagPhaseROCm::ProcessToGPU(
                                   std::string(hipGetErrorString(err)));
     }
 
-    // Upload CPU data to temporary GPU buffer
     err = hipMemcpyHtoDAsync(tmp_input, const_cast<std::complex<float>*>(data.data()),
                               input_size, stream_);
     if (err != hipSuccess) {
@@ -256,7 +258,8 @@ void* ComplexToMagPhaseROCm::ProcessToGPU(
                                   std::string(hipGetErrorString(err)));
     }
 
-    // Allocate output buffer -- CALLER WILL OWN THIS
+    // output_ptr — CALLER OWNS: размер = total × 2 × sizeof(float)
+    // Layout: interleaved float2_t[total], .x=mag, .y=phase
     void* output_ptr = nullptr;
     size_t output_size = total * 2 * sizeof(float);
     err = hipMalloc(&output_ptr, output_size);
@@ -266,15 +269,11 @@ void* ComplexToMagPhaseROCm::ProcessToGPU(
                                   std::string(hipGetErrorString(err)));
     }
 
-    // Launch kernel directly: tmp_input -> output_ptr
     ExecuteKernelDirect(tmp_input, output_ptr, total);
-
     hipStreamSynchronize(stream_);
 
-    // Free temporary input buffer
-    (void)hipFree(tmp_input);
+    (void)hipFree(tmp_input);  // Временный input больше не нужен — output_ptr остаётся у caller'а
 
-    // Return output pointer -- caller owns!
     return output_ptr;
 }
 
@@ -304,7 +303,8 @@ void* ComplexToMagPhaseROCm::ProcessToGPU(
                                   std::string(hipGetErrorString(err)));
     }
 
-    // Launch kernel directly: gpu_data -> output_ptr (ZERO COPY path!)
+    // Zero-copy: данные уже на GPU — kernel читает прямо из gpu_data, без D2D copy.
+    // Это отличает GPU→GPU от CPU→GPU пути (там нужен tmp_input для H2D upload).
     ExecuteKernelDirect(gpu_data, output_ptr, total);
 
     hipStreamSynchronize(stream_);

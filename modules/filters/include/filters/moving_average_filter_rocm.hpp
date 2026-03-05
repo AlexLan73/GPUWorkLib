@@ -88,15 +88,16 @@ private:
   hipFunction_t kernel_tema_  = nullptr;
   bool          kernel_compiled_ = false;
 
-  MAType   ma_type_     = MAType::EMA;
-  uint32_t window_size_ = 10;
-  float    alpha_        = 2.0f / 11.0f;  // precomputed
+  MAType   ma_type_     = MAType::EMA;  ///< Текущий тип скользящей средней
+  uint32_t window_size_ = 10;           ///< N — размер окна (для SMA: max 128)
+  float    alpha_        = 2.0f / 11.0f;  ///< Сглаживающий коэффициент: EMA=2/(N+1), MMA=1/N. Precomputed в SetParams()
 
-  // Cached input buffer (reused if size matches)
-  void*  cached_input_buf_  = nullptr;
-  size_t cached_input_size_ = 0;
+  // Кешированный input-буфер на GPU — переиспользуется если размер совпадает,
+  // чтобы избежать дорогого hipMalloc/hipFree (~0.5 мс) на каждый вызов ProcessFromCPU
+  void*  cached_input_buf_  = nullptr;  ///< GPU-буфер [channels * points] float2, принадлежит объекту
+  size_t cached_input_size_ = 0;        ///< Текущий размер cached_input_buf_ в байтах
 
-  unsigned int block_size_ = 256;
+  unsigned int block_size_ = 256;  ///< Threads per block для hipModuleLaunchKernel (1 thread per channel)
 };
 
 }  // namespace filters

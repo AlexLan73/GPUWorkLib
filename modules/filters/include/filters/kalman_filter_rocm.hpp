@@ -83,12 +83,14 @@ private:
   hipFunction_t kernel_ = nullptr;
   bool          kernel_compiled_ = false;
 
-  KalmanParams params_;
+  KalmanParams params_;  ///< Текущие параметры Q, R, x0, P0
 
-  void*  cached_input_buf_  = nullptr;
-  size_t cached_input_size_ = 0;
+  // Кешированный input-буфер — переиспользуется при одинаковом размере,
+  // чтобы избежать hipMalloc/hipFree (~0.5 мс) на каждый ProcessFromCPU
+  void*  cached_input_buf_  = nullptr;  ///< GPU-буфер [channels * points] float2, принадлежит объекту
+  size_t cached_input_size_ = 0;        ///< Размер cached_input_buf_ в байтах
 
-  unsigned int block_size_ = 256;
+  unsigned int block_size_ = 256;  ///< Threads per block (1 thread per channel)
 };
 
 }  // namespace filters

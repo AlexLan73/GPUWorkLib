@@ -113,6 +113,20 @@ void MovingAverageFilterROCm::SetParams(const MovingAverageParams& params) {
   SetParams(params.type, params.window_size);
 }
 
+/**
+ * @brief Устанавливает тип и размер окна скользящей средней
+ *
+ * Вычисляет alpha (сглаживающий коэффициент) для передачи в kernel:
+ * - EMA/DEMA/TEMA: alpha = 2/(N+1) — классическая формула: при N=10 → alpha=0.182
+ * - MMA (Wilder): alpha = 1/N — более медленная реакция чем EMA при том же N
+ * - SMA: alpha не используется ядром (работает ring buffer + inv_N)
+ *
+ * SMA ограничен N <= 128 — ring buffer хранится в thread-local регистрах
+ * (float2_t ring[128]), превышение ведёт к spill в global memory.
+ *
+ * @param type Тип скользящей средней (SMA/EMA/MMA/DEMA/TEMA)
+ * @param window_size N — размер окна; SMA: max 128
+ */
 void MovingAverageFilterROCm::SetParams(MAType type, uint32_t window_size) {
   if (window_size == 0)
     throw std::invalid_argument("MovingAverageFilterROCm: window_size must be > 0");
@@ -284,7 +298,11 @@ MovingAverageFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t po
   float inv_N = 1.0f / static_cast<float>(window_size_);
   float alpha = alpha_;
 
-  // Select kernel and build args based on MA type
+  // Выбор kernel и набора аргументов по типу MA:
+  // SMA: signature (in, out, ch, pts, N, inv_N) — 6 аргументов
+  //      N передаём явно для ring buffer, inv_N = 1/N — избегаем деления в kernel
+  // EMA/MMA/DEMA/TEMA: signature (in, out, ch, pts, alpha) — 5 аргументов
+  //      Alpha уже вычислен в SetParams() и не зависит от N во время работы
   hipFunction_t kernel = nullptr;
   void* args[7];
 
@@ -295,9 +313,9 @@ MovingAverageFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t po
     args[2] = &ch;
     args[3] = &pts;
     args[4] = &N;
-    args[5] = &inv_N;
+    args[5] = &inv_N;  // precomputed 1/N: передаём чтобы избежать деления в kernel
   } else {
-    // EMA, MMA, DEMA, TEMA — same signature with alpha
+    // EMA, MMA, DEMA, TEMA — единая сигнатура с alpha
     switch (ma_type_) {
       case MAType::EMA:  kernel = kernel_ema_;  break;
       case MAType::MMA:  kernel = kernel_mma_;  break;
@@ -348,7 +366,9 @@ MovingAverageFilterROCm::ProcessFromCPU(
   if (data.size() < total)
     throw std::runtime_error("MovingAverageFilterROCm::ProcessFromCPU: data too small");
 
-  // Reuse cached input buffer
+  // Кешируем input-буфер на GPU: hipMalloc/hipFree дорогие операции (~0.5 мс).
+  // Если размер совпадает — просто перезаписываем данные без переаллокации.
+  // Буфер принадлежит объекту (освобождается в ReleaseGpuResources).
   if (buffer_size != cached_input_size_) {
     if (cached_input_buf_) hipFree(cached_input_buf_);
     hipError_t err = hipMalloc(&cached_input_buf_, buffer_size);
