@@ -44,7 +44,7 @@
 | **Signal Generators** | OpenCL / ROCm | 🟢 Active | CW, LFM, Noise, Form, Script |
 | **LCH Farrow** | OpenCL / ROCm | 🟢 Active | Дробная задержка Lagrange 5-pt |
 | **Heterodyne** | OpenCL / ROCm | 🟢 Active | LFM Dechirp pipeline |
-| **FM Correlator** | ROCm only | 🟡 Planned | ФМ-корреляция M-последовательностями (hipFFT) |
+| **FM Correlator** | ROCm only | 🟢 Active | ФМ-корреляция M-последовательностями (hipFFT) |
 | **DrvGPU** | OpenCL / ROCm | 🟢 Active | Ядро: backend, память, сервисы |
 
 ## Предыдущие документы (справочные)

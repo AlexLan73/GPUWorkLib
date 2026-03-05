@@ -1,22 +1,4 @@
-#pragma once
 
-/**
- * @file kaufman_kernels_rocm.hpp
- * @brief HIP kernel source for Kaufman Adaptive Moving Average (KAMA)
- *
- * 1D grid: one thread per channel, sequential loop over points.
- * Ring buffer (er_period <= 128) in thread-local registers.
- * Re and Im parts processed independently.
- *
- * @author Kodo (AI Assistant)
- * @date 2026-03-01
- */
-
-namespace filters {
-namespace kernels {
-
-inline const char* GetKaufmanSource_rocm() {
-  return R"HIP(
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 #ifndef BLOCK_SIZE
@@ -91,8 +73,3 @@ void kaufman_kernel(
     }
 }
 
-)HIP";
-}
-
-}  // namespace kernels
-}  // namespace filters

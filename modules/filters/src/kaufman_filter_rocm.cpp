@@ -314,52 +314,34 @@ KaufmanFilterROCm::ProcessCpu(
   for (uint32_t ch = 0; ch < channels; ++ch) {
     size_t base = static_cast<size_t>(ch) * points;
 
-    // Ring buffer
-    std::vector<std::complex<float>> ring(N);
-
-    // Fill ring and passthrough first N samples
+    // Passthrough first N samples
     for (uint32_t i = 0; i < N && i < points; ++i) {
-      ring[i] = input[base + i];
       output[base + i] = input[base + i];
     }
     if (points <= N) continue;
 
-    auto kama = ring[0];
-
-    // Initial volatility
-    float vol_re = 0.0f, vol_im = 0.0f;
-    for (uint32_t i = 1; i < N; ++i) {
-      vol_re += std::abs(ring[i].real() - ring[i - 1].real());
-      vol_im += std::abs(ring[i].imag() - ring[i - 1].imag());
-    }
-
-    uint32_t head = 0;
+    // KAMA initial state = last sample of warmup period
+    auto kama = input[base + N - 1];
 
     for (uint32_t n = N; n < points; ++n) {
       auto x = input[base + n];
 
-      uint32_t prev_idx = (head + N - 1) % N;
-      auto prev_x = ring[prev_idx];
-      auto oldest = ring[head];
-      uint32_t before_head = (head == 0) ? N - 1 : head - 1;
+      // Direction: |x[n] - x[n-N]|
+      float dir_re = std::abs(x.real() - input[base + n - N].real());
+      float dir_im = std::abs(x.imag() - input[base + n - N].imag());
 
-      // Direction
-      float dir_re = std::abs(x.real() - oldest.real());
-      float dir_im = std::abs(x.imag() - oldest.imag());
-
-      // Rolling volatility
-      float old_diff_re = std::abs(ring[head].real() - ring[before_head].real());
-      float old_diff_im = std::abs(ring[head].imag() - ring[before_head].imag());
-      float new_diff_re = std::abs(x.real() - prev_x.real());
-      float new_diff_im = std::abs(x.imag() - prev_x.imag());
-      vol_re = vol_re - old_diff_re + new_diff_re;
-      vol_im = vol_im - old_diff_im + new_diff_im;
+      // Volatility: sum |x[i] - x[i-1]| for i = n-N+1 to n (N terms)
+      float vol_re = 0.0f, vol_im = 0.0f;
+      for (uint32_t i = n - N + 1; i <= n; ++i) {
+        vol_re += std::abs(input[base + i].real() - input[base + i - 1].real());
+        vol_im += std::abs(input[base + i].imag() - input[base + i - 1].imag());
+      }
 
       // ER
       float er_re = (vol_re > eps) ? dir_re / vol_re : 0.0f;
       float er_im = (vol_im > eps) ? dir_im / vol_im : 0.0f;
 
-      // SC
+      // SC = (ER*(fast-slow)+slow)^2
       float sc_re = er_re * sc_diff + slow_sc_;
       float sc_im = er_im * sc_diff + slow_sc_;
       sc_re *= sc_re;
@@ -369,10 +351,6 @@ KaufmanFilterROCm::ProcessCpu(
       float kama_re = kama.real() + sc_re * (x.real() - kama.real());
       float kama_im = kama.imag() + sc_im * (x.imag() - kama.imag());
       kama = {kama_re, kama_im};
-
-      // Update ring
-      ring[head] = x;
-      head = (head + 1) % N;
 
       output[base + n] = kama;
     }

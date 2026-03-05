@@ -15,11 +15,11 @@
 | 2 | [Statistics](#2-statistics-rocm) | Welford mean/var, медиана | [Doc/Modules/statistics/](Modules/statistics/) |
 | 3 | [Vector Algebra](#3-vector-algebra-rocm) | Cholesky инверсия матриц | [Doc/Modules/vector_algebra/](Modules/vector_algebra/) |
 | 4 | [FFT Maxima](#4-fft-maxima) | Поиск спектральных пиков | [Doc/Modules/fft_maxima/](Modules/fft_maxima/) |
-| 5 | [Filters](#5-filters) | FIR / IIR фильтрация | [Doc/Modules/filters/](Modules/filters/) |
+| 5 | [Filters](#5-filters) | FIR / IIR фильтрация (OpenCL + ROCm, протестированы) | [Doc/Modules/filters/](Modules/filters/) |
 | 6 | [Signal Generators](#6-signal-generators) | CW, LFM, Noise, Form | [Doc/Modules/signal_generators/](Modules/signal_generators/) |
 | 7 | [LCH Farrow](#7-lch-farrow) | Дробная задержка | [Doc/Modules/lch_farrow/](Modules/lch_farrow/) |
 | 8 | [Heterodyne](#8-heterodyne) | LFM Dechirp pipeline | [Doc/Modules/heterodyne/](Modules/heterodyne/) |
-| 9 | [FM Correlator](#9-fm-correlator) | FM-корреляция с M-sequence | [Doc/Modules/fm_correlator/](Modules/fm_correlator/) |
+| 9 | [FM Correlator](#9-fm-correlator) | FM-корреляция с M-sequence (ROCm, протестирован) | [Doc/Modules/fm_correlator/](Modules/fm_correlator/) |
 | 10 | [DrvGPU](#10-drvgpu) | Ядро: backend, память, сервисы | [Doc/DrvGPU/](DrvGPU/) |
 
 ---

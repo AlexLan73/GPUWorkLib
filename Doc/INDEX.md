@@ -207,7 +207,8 @@ GPUWorkLib/
 │   ├── filters/
 │   ├── signal_generators/
 │   ├── lch_farrow/
-│   └── heterodyne/
+│   ├── heterodyne/
+│   └── fm_correlator/
 ├── python/                      # Python биндинги (pybind11)
 ├── Python_test/                 # Python тесты по модулям
 ├── Results/                     # Результаты тестов и профилирования
@@ -234,6 +235,7 @@ GPUWorkLib/
 | lch_farrow | `tests/lch_farrow_benchmark.hpp` | `tests/test_lch_farrow_benchmark.hpp` | ✅ Готово |
 | statistics | `tests/statistics_benchmark.hpp` | `tests/test_statistics_benchmark.hpp` | ✅ Готово |
 | vector_algebra | `tests/vector_algebra_benchmark.hpp` | `tests/test_vector_algebra_benchmark.hpp` | ✅ Готово |
+| fm_correlator | `tests/test_fm_benchmark_rocm.hpp` | sweep S=5, parametric N×K | ✅ Готово |
 
 **Профилирование выполняется только через:**
 - 📊 `GPUProfiler::PrintReport()` — консоль

@@ -17,7 +17,7 @@
 | **Statistics** | `modules/statistics/` | `StatisticsProcessor` | ROCm only | `StatisticsProcessor` | ✅ Активен |
 | **VectorAlgebra** | `modules/vector_algebra/` | `VectorAlgebra` (Cholesky POTRF/POTRI) | ROCm only | `VectorAlgebra` | ✅ Активен |
 | **LchFarrow** | `modules/lch_farrow/` | `LchFarrow`, `LchFarrowROCm` | OpenCL, ROCm | `LchFarrow` | ✅ Активен |
-| **FMCorrelator** | `modules/fm_correlator/` | `FMCorrelator` | ROCm only | `FMCorrelatorROCm` | 🟡 Planned |
+| **FMCorrelator** | `modules/fm_correlator/` | `FMCorrelator` | ROCm only | `FMCorrelatorROCm` | ✅ Активен |
 
 ---
 
@@ -158,7 +158,7 @@ add_subdirectory(modules/statistics)
 # add_subdirectory(modules/heterodyne)          # отключено
 # add_subdirectory(modules/lch_farrow)          # отключено
 # add_subdirectory(modules/vector_algebra)      # отключено
-# add_subdirectory(modules/fm_correlator)       # отключено (ROCm-only, planned)
+# add_subdirectory(modules/fm_correlator)       # ROCm-only
 ```
 
 ---
@@ -292,7 +292,7 @@ result = het.process(rx_signal)
 | Тип | Путь |
 |-----|------|
 | Графики Python | `Results/Plots/<module>/` |
-| Профайлер GPU (JSON/MD) | `Results/Profiler/<GPU_ID_ModuleName>/` |
+| Профайлер GPU (JSON/MD) | `Results/Profiler/<module>/` (fm_correlator, cholesky, lch_farrow, …) |
 | Логи | `Logs/DRVGPU_XX/YYYY-MM-DD/HH-MM-SS.log` |
 
 ---

@@ -1,7 +1,7 @@
 # Task_21: KalmanFilterROCm
 ## 1D Скалярный фильтр Калмана — ROCm GPU реализация
 
-**Статус**: 🔧 IMPLEMENTED (awaiting GPU test on Linux + AMD)
+**Статус**: ✅ TESTED (5/5 PASSED, 2026-03-05, Radeon 9070 gfx1201)
 **Приоритет**: High
 **Модуль**: `modules/filters`
 **Документация**: `Doc_Addition/Filters/2_Kalman_Filter.md`

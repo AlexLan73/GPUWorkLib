@@ -11,6 +11,7 @@
  */
 
 #include <algorithm>
+#include <chrono>
 #include <map>
 #include <numeric>
 #include <string>
@@ -82,6 +83,7 @@ inline void run_step_profiling() {
   drv_map["driver_version"] = dev.driver_version;
   report_info.drivers.push_back(drv_map);
   profiler.SetGPUInfo(gpu_id, report_info);
+  profiler.Reset();   // сброс накопленных событий от предыдущих тестов
   profiler.Start();
 
   // ── hipEvent (создаём один раз, переиспользуем) ───────────────────────────
@@ -89,22 +91,44 @@ inline void run_step_profiling() {
   (void)hipEventCreate(&ev_start);
   (void)hipEventCreate(&ev_stop);
 
+  using SClock = std::chrono::steady_clock;
+  using NS     = std::chrono::nanoseconds;
+
   // ── Замер step1: PrepareReference — kSpRuns итераций ─────────────────────
+  // Все 5 полей ROCmProfilingData:
+  //   В очереди  = submit - queued  = hipDeviceSynchronize (ожидание свободного GPU)
+  //   Запуск     = start  - submit  = hipEventRecord overhead (отправка маркера)
+  //   Выполн.    = end    - start   = аппаратное время GPU (hipEventElapsedTime)
+  //   Заверш.    = complete - end   = hipEventSynchronize overhead (CPU ждёт GPU)
   con.Print(gpu_id, "FM_Step", "  Measuring step1 (PrepareReference)...");
   for (int r = 0; r < kSpRuns; ++r) {
+    auto tq = SClock::now();
     (void)hipDeviceSynchronize();
+    auto ts = SClock::now();
     (void)hipEventRecord(ev_start, nullptr);
+    auto tk = SClock::now();
 
     corr.PrepareReference();
 
     (void)hipEventRecord(ev_stop, nullptr);
     (void)hipEventSynchronize(ev_stop);
+    auto tc = SClock::now();
 
     float ms = 0.0f;
     (void)hipEventElapsedTime(&ms, ev_start, ev_stop);
 
+    uint64_t ns_queue    = (uint64_t)std::chrono::duration_cast<NS>(ts - tq).count();
+    uint64_t ns_submit   = (uint64_t)std::chrono::duration_cast<NS>(tk - ts).count();
+    uint64_t ns_exec     = (uint64_t)(ms * 1.0e6f);
+    double   tc_tk_ns    = (double)std::chrono::duration_cast<NS>(tc - tk).count();
+    uint64_t ns_complete = (uint64_t)std::max(0.0, tc_tk_ns - (double)ns_exec);
+
     drv_gpu_lib::ROCmProfilingData pd{};
-    pd.end_ns      = static_cast<uint64_t>(ms * 1.0e6f);
+    pd.queued_ns   = 0;
+    pd.submit_ns   = ns_queue;
+    pd.start_ns    = ns_queue + ns_submit;
+    pd.end_ns      = ns_queue + ns_submit + ns_exec;
+    pd.complete_ns = ns_queue + ns_submit + ns_exec + ns_complete;
     pd.kernel_name = "PrepareReference";
     profiler.Record(gpu_id, "FM_Step", "step1", pd);
   }
@@ -113,19 +137,33 @@ inline void run_step_profiling() {
   // Ссылка валидна после последнего PrepareReference в цикле step1.
   con.Print(gpu_id, "FM_Step", "  Measuring step2 (Process)...");
   for (int r = 0; r < kSpRuns; ++r) {
+    auto tq = SClock::now();
     (void)hipDeviceSynchronize();
+    auto ts = SClock::now();
     (void)hipEventRecord(ev_start, nullptr);
+    auto tk = SClock::now();
 
     (void)corr.Process(inp);
 
     (void)hipEventRecord(ev_stop, nullptr);
     (void)hipEventSynchronize(ev_stop);
+    auto tc = SClock::now();
 
     float ms = 0.0f;
     (void)hipEventElapsedTime(&ms, ev_start, ev_stop);
 
+    uint64_t ns_queue    = (uint64_t)std::chrono::duration_cast<NS>(ts - tq).count();
+    uint64_t ns_submit   = (uint64_t)std::chrono::duration_cast<NS>(tk - ts).count();
+    uint64_t ns_exec     = (uint64_t)(ms * 1.0e6f);
+    double   tc_tk_ns    = (double)std::chrono::duration_cast<NS>(tc - tk).count();
+    uint64_t ns_complete = (uint64_t)std::max(0.0, tc_tk_ns - (double)ns_exec);
+
     drv_gpu_lib::ROCmProfilingData pd{};
-    pd.end_ns      = static_cast<uint64_t>(ms * 1.0e6f);
+    pd.queued_ns   = 0;
+    pd.submit_ns   = ns_queue;
+    pd.start_ns    = ns_queue + ns_submit;
+    pd.end_ns      = ns_queue + ns_submit + ns_exec;
+    pd.complete_ns = ns_queue + ns_submit + ns_exec + ns_complete;
     pd.kernel_name = "Process";
     profiler.Record(gpu_id, "FM_Step", "step2", pd);
   }

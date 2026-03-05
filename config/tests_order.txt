@@ -3,7 +3,7 @@
 # Order is mandatory. Used by default (no args) and by "all"
 
 # drvgpu        # набор драйверов 
-fft_processor
+# fft_processor
 # statistics
 # vector_algebra
 # fft_maxima
@@ -11,4 +11,4 @@ fft_processor
 # signal_generators
 # lch_farrow
 # heterodyne
-# fm_correlator
+fm_correlator

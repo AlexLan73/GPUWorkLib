@@ -472,6 +472,7 @@ ProfilingData GetProfilingData() const;
 > **Путь**: `modules/filters/`
 > **Документация**: [Modules/filters/Full.md](Modules/filters/Full.md)
 > **Backend**: OpenCL / ROCm
+> **Статус**: реализован и протестирован (C++ тесты, Python тесты, бенчмарки).
 
 Реализует два вида цифровых фильтров: **FIR** (КИХ) с прямой свёрткой и **IIR** (БИХ) в форме каскадных бикватных секций (Direct Form II Transposed).
 
@@ -832,6 +833,7 @@ const HeterodyneResult& GetLastResult() const;
 > **Путь**: `modules/fm_correlator/`
 > **Документация**: [Modules/fm_correlator/Full.md](Modules/fm_correlator/Full.md)
 > **Backend**: ROCm only — требует `ENABLE_ROCM=1`
+> **Статус**: реализован и протестирован (C++ тесты, Python тесты, бенчмарки).
 
 Вычисляет FM-корреляцию сигналов с M-sequence эталоном. M-последовательность генерируется на CPU через LFSR (Linear Feedback Shift Register). Pipeline: генерация M-seq → FFT эталона (GPU) → FFT входных сигналов → перемножение в частотной области → IFFT → поиск пиков.
 

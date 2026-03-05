@@ -38,9 +38,9 @@ inline void run() {
 //  test_filters_benchmark_rocm::run();
 
   // ROCm — Linux + AMD GPU только:
-  // test_moving_average_rocm::run();   // Task_20: SMA/EMA/MMA/DEMA/TEMA
-  // test_kalman_rocm::run();           // Task_21: 1D Kalman filter
-  // test_kaufman_rocm::run();          // Task_22: KAMA (Kaufman adaptive MA)
+  test_moving_average_rocm::run();   // Task_20: SMA/EMA/MMA/DEMA/TEMA
+  test_kalman_rocm::run();           // Task_21: 1D Kalman filter
+  test_kaufman_rocm::run();          // Task_22: KAMA (Kaufman adaptive MA)
 #endif
 }
 

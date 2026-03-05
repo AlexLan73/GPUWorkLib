@@ -82,6 +82,7 @@ inline void run_combined() {
   drv_map["driver_version"] = dev.driver_version;
   report_info.drivers.push_back(drv_map);
   profiler.SetGPUInfo(gpu_id, report_info);
+  profiler.Reset();
   profiler.Start();
 
   // ── hipEvent ──────────────────────────────────────────────────────────────

@@ -280,15 +280,16 @@ MovingAverageFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t po
 
   unsigned int ch = channels;
   unsigned int pts = points;
+  unsigned int N = window_size_;
+  float inv_N = 1.0f / static_cast<float>(window_size_);
+  float alpha = alpha_;
 
   // Select kernel and build args based on MA type
   hipFunction_t kernel = nullptr;
-  void* args[7];  // max 7 args (SMA has 6: in, out, ch, pts, N, inv_N)
+  void* args[7];
 
   if (ma_type_ == MAType::SMA) {
     kernel = kernel_sma_;
-    unsigned int N = window_size_;
-    float inv_N = 1.0f / static_cast<float>(window_size_);
     args[0] = &input_ptr;
     args[1] = &output_ptr;
     args[2] = &ch;
@@ -304,7 +305,6 @@ MovingAverageFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t po
       case MAType::TEMA: kernel = kernel_tema_; break;
       default: break;
     }
-    float alpha = alpha_;
     args[0] = &input_ptr;
     args[1] = &output_ptr;
     args[2] = &ch;

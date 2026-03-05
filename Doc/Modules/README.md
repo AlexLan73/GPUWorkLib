@@ -14,7 +14,7 @@
 | **Filters** | [filters/](filters/) | Active | FIR, IIR, SMA/EMA/DEMA/TEMA, Kalman, KAMA на GPU (OpenCL + ROCm) |
 | **LchFarrow** | [lch_farrow/](lch_farrow/) | Active | Дробная задержка Lagrange 48×5 |
 | **Heterodyne** | [heterodyne/](heterodyne/) | Active | Дечирп, stretch processing для ЛЧМ-радара (OpenCL + ROCm) |
-| **FM Correlator** | [fm_correlator/](fm_correlator/) | Planned | ФМ-корреляция с M-последовательностями в частотной области (ROCm) |
+| **FM Correlator** | [fm_correlator/](fm_correlator/) | Active | ФМ-корреляция с M-последовательностями в частотной области (ROCm) |
 | **Python Bindings** | [python_bindings/](python_bindings/) | Active | pybind11 модуль `gpuworklib` для Python 3.12 |
 
 ---

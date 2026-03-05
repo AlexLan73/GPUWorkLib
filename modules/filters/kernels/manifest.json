@@ -14,6 +14,27 @@
       "created": "2026-02-24T16:34:21",
       "params": "",
       "backend": "opencl"
+    },
+    {
+      "name": "moving_average_kernels_rocm",
+      "comment": "MA filters: SMA/EMA/MMA/DEMA/TEMA",
+      "created": "2026-03-05T07:36:07",
+      "params": "gfx1201",
+      "backend": "rocm"
+    },
+    {
+      "name": "kalman_kernel_rocm",
+      "comment": "1D scalar Kalman filter",
+      "created": "2026-03-05T07:36:07",
+      "params": "gfx1201",
+      "backend": "rocm"
+    },
+    {
+      "name": "kaufman_kernel_rocm",
+      "comment": "KAMA (Kaufman Adaptive MA)",
+      "created": "2026-03-05T07:36:07",
+      "params": "gfx1201",
+      "backend": "rocm"
     }
   ]
 }

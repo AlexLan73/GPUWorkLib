@@ -12,6 +12,7 @@
  */
 
 #include <algorithm>
+#include <chrono>
 #include <map>
 #include <numeric>
 #include <string>
@@ -80,6 +81,7 @@ inline void run_avg_summary() {
   drv_map["driver_version"] = dev.driver_version;
   report_info.drivers.push_back(drv_map);
   profiler.SetGPUInfo(gpu_id, report_info);
+  profiler.Reset();   // сброс накопленных событий от предыдущих тестов
   profiler.Start();
 
   // ── hipEvent ──────────────────────────────────────────────────────────────
@@ -87,56 +89,93 @@ inline void run_avg_summary() {
   (void)hipEventCreate(&ev_start);
   (void)hipEventCreate(&ev_stop);
 
-  // ── Замер step1: собираем в вектор → вычисляем avg ────────────────────────
-  std::vector<double> step1_times(kAvgRuns);
+  using SClock = std::chrono::steady_clock;
+  using NS     = std::chrono::nanoseconds;
+
+  // ── Замер step1: все 4 задержки → усредняем → 1 событие ──────────────────
+  double sum1_queue = 0, sum1_submit = 0, sum1_exec = 0, sum1_complete = 0;
   con.Print(gpu_id, "FM_Avg", "  Measuring step1 (PrepareReference)...");
   for (int r = 0; r < kAvgRuns; ++r) {
+    auto tq = SClock::now();
     (void)hipDeviceSynchronize();
+    auto ts = SClock::now();
     (void)hipEventRecord(ev_start, nullptr);
+    auto tk = SClock::now();
 
     corr.PrepareReference();
 
     (void)hipEventRecord(ev_stop, nullptr);
     (void)hipEventSynchronize(ev_stop);
+    auto tc = SClock::now();
+
     float ms = 0.0f;
     (void)hipEventElapsedTime(&ms, ev_start, ev_stop);
-    step1_times[r] = static_cast<double>(ms);
-  }
-  const double avg_step1_ms =
-      std::accumulate(step1_times.begin(), step1_times.end(), 0.0) / kAvgRuns;
 
-  // ── Замер step2: собираем в вектор → вычисляем avg ────────────────────────
-  std::vector<double> step2_times(kAvgRuns);
+    sum1_queue    += (double)std::chrono::duration_cast<NS>(ts - tq).count();
+    sum1_submit   += (double)std::chrono::duration_cast<NS>(tk - ts).count();
+    sum1_exec     += (double)(ms * 1.0e6f);
+    double tc_tk   = (double)std::chrono::duration_cast<NS>(tc - tk).count();
+    sum1_complete += std::max(0.0, tc_tk - (double)(ms * 1.0e6f));
+  }
+  const double avg1_queue    = sum1_queue    / kAvgRuns;
+  const double avg1_submit   = sum1_submit   / kAvgRuns;
+  const double avg1_exec     = sum1_exec     / kAvgRuns;
+  const double avg1_complete = sum1_complete / kAvgRuns;
+  const double avg_step1_ms  = avg1_exec / 1.0e6;
+
+  // ── Замер step2: все 4 задержки → усредняем → 1 событие ──────────────────
+  double sum2_queue = 0, sum2_submit = 0, sum2_exec = 0, sum2_complete = 0;
   con.Print(gpu_id, "FM_Avg", "  Measuring step2 (Process)...");
   for (int r = 0; r < kAvgRuns; ++r) {
+    auto tq = SClock::now();
     (void)hipDeviceSynchronize();
+    auto ts = SClock::now();
     (void)hipEventRecord(ev_start, nullptr);
+    auto tk = SClock::now();
 
     (void)corr.Process(inp);
 
     (void)hipEventRecord(ev_stop, nullptr);
     (void)hipEventSynchronize(ev_stop);
+    auto tc = SClock::now();
+
     float ms = 0.0f;
     (void)hipEventElapsedTime(&ms, ev_start, ev_stop);
-    step2_times[r] = static_cast<double>(ms);
+
+    sum2_queue    += (double)std::chrono::duration_cast<NS>(ts - tq).count();
+    sum2_submit   += (double)std::chrono::duration_cast<NS>(tk - ts).count();
+    sum2_exec     += (double)(ms * 1.0e6f);
+    double tc_tk   = (double)std::chrono::duration_cast<NS>(tc - tk).count();
+    sum2_complete += std::max(0.0, tc_tk - (double)(ms * 1.0e6f));
   }
-  const double avg_step2_ms =
-      std::accumulate(step2_times.begin(), step2_times.end(), 0.0) / kAvgRuns;
+  const double avg2_queue    = sum2_queue    / kAvgRuns;
+  const double avg2_submit   = sum2_submit   / kAvgRuns;
+  const double avg2_exec     = sum2_exec     / kAvgRuns;
+  const double avg2_complete = sum2_complete / kAvgRuns;
+  const double avg_step2_ms  = avg2_exec / 1.0e6;
 
   // ── Cleanup hipEvents ─────────────────────────────────────────────────────
   (void)hipEventDestroy(ev_start);
   (void)hipEventDestroy(ev_stop);
 
-  // ── Записываем 1 синтетическое событие на шаг в GPUProfiler ──────────────
+  // ── Записываем 1 усреднённое событие на шаг (все 5 полей времени) ─────────
   {
     drv_gpu_lib::ROCmProfilingData pd{};
-    pd.end_ns      = static_cast<uint64_t>(avg_step1_ms * 1.0e6);
+    pd.queued_ns   = 0;
+    pd.submit_ns   = (uint64_t)avg1_queue;
+    pd.start_ns    = (uint64_t)(avg1_queue + avg1_submit);
+    pd.end_ns      = (uint64_t)(avg1_queue + avg1_submit + avg1_exec);
+    pd.complete_ns = (uint64_t)(avg1_queue + avg1_submit + avg1_exec + avg1_complete);
     pd.kernel_name = "PrepareReference_avg";
     profiler.Record(gpu_id, "FM_Avg", "step1", pd);
   }
   {
     drv_gpu_lib::ROCmProfilingData pd{};
-    pd.end_ns      = static_cast<uint64_t>(avg_step2_ms * 1.0e6);
+    pd.queued_ns   = 0;
+    pd.submit_ns   = (uint64_t)avg2_queue;
+    pd.start_ns    = (uint64_t)(avg2_queue + avg2_submit);
+    pd.end_ns      = (uint64_t)(avg2_queue + avg2_submit + avg2_exec);
+    pd.complete_ns = (uint64_t)(avg2_queue + avg2_submit + avg2_exec + avg2_complete);
     pd.kernel_name = "Process_avg";
     profiler.Record(gpu_id, "FM_Avg", "step2", pd);
   }

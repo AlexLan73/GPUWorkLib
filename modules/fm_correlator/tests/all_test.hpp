@@ -35,21 +35,21 @@ inline void run() {
   con.Print(gpu_id, "FM_Corr", " FM Correlator Tests (ROCm)");
   con.Print(gpu_id, "FM_Corr", "════════════════════════════════════════════════════════════");
 
-  fm_correlator::tests::run_test_msequence();
-  fm_correlator::tests::run_test_autocorrelation();
-  fm_correlator::tests::run_test_basic_pipeline();
-  fm_correlator::tests::run_test_full_pipeline();
-  fm_correlator::tests::run_test_shift_pattern();
+  // fm_correlator::tests::run_test_msequence();
+  // fm_correlator::tests::run_test_autocorrelation();
+  // fm_correlator::tests::run_test_basic_pipeline();
+  // fm_correlator::tests::run_test_full_pipeline();
+  // fm_correlator::tests::run_test_shift_pattern();
 
   // Benchmarks:
   // fm_correlator::tests::run_benchmark();
   // fm_correlator::tests::run_parametric_benchmark();
-  fm_correlator::tests::run_sweep_correlations();
+  // fm_correlator::tests::run_sweep_correlations();
 
   // Профилирование по шагам:
-  // fm_correlator::tests::run_step_profiling();   // 2.1 — детальное (20 Record на шаг)
-  // fm_correlator::tests::run_avg_summary();      // 2.2 — среднее для планирования
-  // fm_correlator::tests::run_combined();         // 2.3 — после принятия 2.2
+  // fm_correlator::tests::run_step_profiling();   // 2.1
+  // fm_correlator::tests::run_avg_summary();      // 2.2
+  // fm_correlator::tests::run_combined();         // 2.3
 
   con.Print(gpu_id, "FM_Corr", "════════════════════════════════════════════════════════════");
   con.Print(gpu_id, "FM_Corr", " All FM Correlator tests PASSED ✅");

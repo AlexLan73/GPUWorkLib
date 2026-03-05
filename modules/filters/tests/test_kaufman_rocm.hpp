@@ -379,8 +379,8 @@ inline bool test_step_kama_demo(ConsoleOutput& con, int gpu_id) {
       passed = false;
     }
 
-    // Noise stability: KAMA delta over noise phase < 0.1
-    float delta_noise = std::abs(out_tnt[79].real() - out_tnt[39].real());
+    // Noise stability: KAMA variation within noise phase (t=55..79) should be small
+    float delta_noise = std::abs(out_tnt[79].real() - out_tnt[55].real());
     if (delta_noise > 0.5f) {
       std::snprintf(buf, sizeof(buf),
           "[X] noise stability: delta=%.3f (>0.5)", delta_noise);

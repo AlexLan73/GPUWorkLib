@@ -59,9 +59,53 @@ struct BenchConfig {
   int num_signals;
   int num_output_points;
   BenchStats stats;
+  double step1_ms = 0.0;  // PrepareReference avg
+  double step2_ms = 0.0;  // Process avg
   bool failed = false;
   std::string fail_reason;
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// MeasurePrepareTime — hipEvent timing for PrepareReference (Step 1)
+// ════════════════════════════════════════════════════════════════════════════
+
+inline BenchStats MeasurePrepareTime(
+    drv_gpu_lib::FMCorrelator& corr,
+    int warmup = kWarmupRuns, int runs = kBenchmarkRuns) {
+
+  for (int w = 0; w < warmup; ++w) {
+    corr.PrepareReference();
+    (void)hipDeviceSynchronize();
+  }
+
+  hipEvent_t ev_start, ev_stop;
+  (void)hipEventCreate(&ev_start);
+  (void)hipEventCreate(&ev_stop);
+
+  std::vector<double> times(runs);
+  for (int r = 0; r < runs; ++r) {
+    (void)hipDeviceSynchronize();
+    (void)hipEventRecord(ev_start, nullptr);
+
+    corr.PrepareReference();
+
+    (void)hipEventRecord(ev_stop, nullptr);
+    (void)hipEventSynchronize(ev_stop);
+
+    float ms = 0.0f;
+    (void)hipEventElapsedTime(&ms, ev_start, ev_stop);
+    times[r] = static_cast<double>(ms);
+  }
+
+  (void)hipEventDestroy(ev_start);
+  (void)hipEventDestroy(ev_stop);
+
+  BenchStats stats;
+  stats.avg_ms = std::accumulate(times.begin(), times.end(), 0.0) / runs;
+  stats.min_ms = *std::min_element(times.begin(), times.end());
+  stats.max_ms = *std::max_element(times.begin(), times.end());
+  return stats;
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // MeasureProcessTime — hipEvent timing (warmup + N measurements)
@@ -523,21 +567,26 @@ inline void run_sweep_correlations() {
       try {
         drv_gpu_lib::FMCorrelator corr(backend);
         corr.SetParams(params);
+
+        // Step 1: PrepareReference (K FFT-планов + FFT опорного)
+        auto stats1 = MeasurePrepareTime(corr);
+        // После замера — финальный вызов PrepareReference для корректного состояния
         corr.PrepareReference();
 
-        auto stats = MeasureProcessTime(corr, 2);
+        // Step 2: Process (S каналов: FFT вход → multiply_conj → IFFT → maxima)
+        auto stats2 = MeasureProcessTime(corr, 2);
 
         char buf[256];
         std::snprintf(buf, sizeof(buf),
-            "  N=%6d K=%3d S=%d | avg=%.3f  min=%.3f  max=%.3f ms",
-            N, K, fixed_S, stats.avg_ms, stats.min_ms, stats.max_ms);
+            "  N=%6d K=%3d S=%d | step1=%.3f  step2=%.3f ms",
+            N, K, fixed_S, stats1.avg_ms, stats2.avg_ms);
         con.Print(gpu_id, "FM_Sweep", buf);
 
         char event_name[64];
         std::snprintf(event_name, sizeof(event_name), "N%d_K%d_S%d", N, K, fixed_S);
         drv_gpu_lib::ROCmProfilingData pd;
-        pd.end_ns      = static_cast<uint64_t>(stats.avg_ms * 1e6);
-        pd.kernel_name = "FM_Correlator_Process";
+        pd.end_ns      = static_cast<uint64_t>((stats1.avg_ms + stats2.avg_ms) * 1e6);
+        pd.kernel_name = "FM_Correlator_Total";
         profiler.Record(gpu_id, "FM_Correlator", event_name, pd);
 
         BenchConfig bc;
@@ -545,7 +594,9 @@ inline void run_sweep_correlations() {
         bc.num_shifts        = K;
         bc.num_signals       = fixed_S;
         bc.num_output_points = params.num_output_points;
-        bc.stats             = stats;
+        bc.stats             = stats2;
+        bc.step1_ms          = stats1.avg_ms;
+        bc.step2_ms          = stats2.avg_ms;
         results.push_back(bc);
 
       } catch (const std::exception& e) {
@@ -598,15 +649,17 @@ inline void run_sweep_correlations() {
     f << "| **ROCm** | " << FmGetRocmVersion() << " |\n";
     f << "| **Дата** | " << FmGetDatetime() << " |\n\n";
 
-    // Шапка: N + колонки K
-    f << "## avg (мс) по N и K\n\n";
+    // Шапка: N + колонки K (каждая ячейка = Step1 / Step2)
+    f << "## Step1 / Step2 (мс) по N и K\n\n";
+    f << "> **Step1** = PrepareReference (K FFT опорных + планы)  \n";
+    f << "> **Step2** = Process (S×FFT вход + multiply\\_conj + IFFT + maxima)\n\n";
     f << "| N |";
     for (int K : shifts) f << " K=" << K << " |";
     f << "\n|--:|";
-    for (size_t ki = 0; ki < sizeof(shifts)/sizeof(shifts[0]); ++ki) f << "------:|";
+    for (size_t ki = 0; ki < sizeof(shifts)/sizeof(shifts[0]); ++ki) f << "-----------:|";
     f << "\n";
 
-    // Строки: одна на N, ячейки — avg для каждого K
+    // Строки: одна на N, ячейки — step1/step2 для каждого K
     for (int N : fft_sizes) {
       f << "| **" << fmt_N(N) << "** |";
       for (int K : shifts) {
@@ -617,7 +670,7 @@ inline void run_sweep_correlations() {
               cell = " *" + r.fail_reason + "* |";
             } else {
               char buf[32];
-              std::snprintf(buf, sizeof(buf), " %.3f |", r.stats.avg_ms);
+              std::snprintf(buf, sizeof(buf), " %.3f/%.3f |", r.step1_ms, r.step2_ms);
               cell = buf;
             }
             break;
@@ -628,7 +681,7 @@ inline void run_sweep_correlations() {
       f << "\n";
     }
 
-    f << "\n*Время в мс. S=5 антенн фиксировано.*\n";
+    f << "\n*Формат ячейки: Step1 / Step2 (мс). S=5 антенн фиксировано.*\n";
     f.close();
     con2.Print(gpu_id, "FM_Sweep", "  Report: " + base + ".md");
   }

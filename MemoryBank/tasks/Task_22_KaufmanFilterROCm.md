@@ -1,7 +1,7 @@
 # Task_22: KaufmanFilterROCm (KAMA)
 ## Адаптивная скользящая средняя Кауфмана — ROCm GPU реализация
 
-**Статус**: 🔧 IMPLEMENTED (awaiting GPU test on Linux + AMD)
+**Статус**: ✅ TESTED (5/5 PASSED, 2026-03-05, Radeon 9070 gfx1201)
 **Приоритет**: High
 **Модуль**: `modules/filters`
 **Документация**: `Doc_Addition/Filters/1_Moving_Averages.md` (раздел KAMA)

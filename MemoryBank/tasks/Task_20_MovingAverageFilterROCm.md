@@ -1,7 +1,7 @@
 # Task_20: MovingAverageFilterROCm
 ## SMA · EMA · MMA · DEMA · TEMA — ROCm GPU реализация
 
-**Статус**: 🔧 IMPLEMENTED (awaiting GPU test on Linux + AMD)
+**Статус**: ✅ TESTED (6/6 PASSED, 2026-03-05, Radeon 9070 gfx1201)
 **Приоритет**: High
 **Модуль**: `modules/filters`
 **Документация**: `Doc_Addition/Filters/1_Moving_Averages.md`
