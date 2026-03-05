@@ -3,7 +3,7 @@
 > Краткий справочник публичных API всех модулей.
 > Порядок: по приоритету использования (от обработки до инфраструктуры).
 >
-> **Date**: 2026-03-03 | **Full Reference**: [Full_Reference.md](Full_Reference.md) | **Index**: [INDEX.md](INDEX.md)
+> **Date**: 2026-03-05 | **Full Reference**: [Full_Reference.md](Full_Reference.md) | **Index**: [INDEX.md](INDEX.md)
 
 ---
 
@@ -19,7 +19,8 @@
 | 6 | [Signal Generators](#6-signal-generators) | CW, LFM, Noise, Form | [Doc/Modules/signal_generators/](Modules/signal_generators/) |
 | 7 | [LCH Farrow](#7-lch-farrow) | Дробная задержка | [Doc/Modules/lch_farrow/](Modules/lch_farrow/) |
 | 8 | [Heterodyne](#8-heterodyne) | LFM Dechirp pipeline | [Doc/Modules/heterodyne/](Modules/heterodyne/) |
-| 9 | [DrvGPU](#9-drvgpu) | Ядро: backend, память, сервисы | [Doc/DrvGPU/](DrvGPU/) |
+| 9 | [FM Correlator](#9-fm-correlator) | FM-корреляция с M-sequence | [Doc/Modules/fm_correlator/](Modules/fm_correlator/) |
+| 10 | [DrvGPU](#10-drvgpu) | Ядро: backend, память, сервисы | [Doc/DrvGPU/](DrvGPU/) |
 
 ---
 
@@ -60,14 +61,14 @@ uint32_t n = proc.GetNFFT();
 
 ---
 
-## 2. Statistics *(ROCm)*
+## 2. Statistics *(OpenCL / ROCm)*
 
 **Заголовок**: `modules/statistics/include/statistics_processor.hpp`
-**Backend**: ROCm only (`ENABLE_ROCM=1`)
+**Backend**: OpenCL (CPU reference) / ROCm GPU (`ENABLE_ROCM=1`)
 
 ```cpp
 // Создание
-StatisticsProcessor stat(backend);   // backend — ROCm IBackend*
+StatisticsProcessor stat(backend);   // backend — OpenCL или ROCm IBackend*
 
 // Params
 StatisticsParams params;
@@ -92,10 +93,10 @@ auto res = stat.ComputeStatistics(gpu_ptr, params);
 
 ---
 
-## 3. Vector Algebra *(ROCm)*
+## 3. Vector Algebra *(OpenCL / ROCm)*
 
 **Заголовок**: `modules/vector_algebra/include/cholesky_inverter_rocm.hpp`
-**Backend**: ROCm only (`ENABLE_ROCM=1`)
+**Backend**: OpenCL (CPU reference) / ROCm GPU (`ENABLE_ROCM=1`)
 
 ```cpp
 // Создание
@@ -306,7 +307,46 @@ float range = HeterodyneResult::CalcRange(f_beat, sample_rate, n_samples, bw);
 
 ---
 
-## 9. DrvGPU
+## 9. FM Correlator
+
+**Заголовок**: `modules/fm_correlator/include/fm_correlator.hpp`
+**Backend**: ROCm only (`ENABLE_ROCM=1`)
+
+```cpp
+// Создание
+FMCorrelator corr(backend);   // backend — ROCm IBackend*
+
+// Параметры
+FMCorrelatorParams p;
+p.fft_size          = 32768;        // размер FFT
+p.num_shifts        = 32;           // количество сдвигов K
+p.num_signals       = 5;            // количество сигналов S
+p.num_output_points = 2000;         // точек в выводе n_kg
+p.lfsr_seed         = 0x12345678;   // seed LFSR для M-seq
+corr.SetParams(p);
+
+// Генерация M-sequence
+auto mseq = corr.GenerateMSequence();        // seed из params
+auto mseq = corr.GenerateMSequence(seed);    // custom seed
+
+// Подготовить эталон (FFT на GPU)
+corr.PrepareReference();                      // из M-seq (seed из params)
+corr.PrepareReference(ref_vec);              // из внешнего вектора
+
+// Корреляция
+FMCorrelatorResult res = corr.Process(inp);  // inp — vector<float>, S сигналов
+
+// Тестовый паттерн (без H2D)
+FMCorrelatorResult res = corr.RunTestPattern(shift_step);
+
+// Доступ к результатам [S × K × n_kg]
+float v = res.at(signal, shift, point);      // accessor по индексам
+// res.peaks — flat vector<float>, row-major
+```
+
+---
+
+## 10. DrvGPU
 
 **Заголовок**: `DrvGPU/include/drv_gpu.hpp`
 
@@ -366,5 +406,30 @@ con.Print(gpu_id, "ModuleName", "сообщение");   // 3-arg (мультиG
 
 ---
 
+## 📊 Профилирование (все модули)
+
+Каждый модуль имеет набор **benchmark классов** в `tests/{module}_benchmark.hpp`:
+
+```cpp
+// Профилирование: только через GPUProfiler!
+GPUProfiler profiler;
+profiler.SetGPUInfo(mgr.GetGPUReportInfo(gpu_id));  // ⚠️ Обязательно!
+profiler.Start();
+
+// ... операция ...
+
+profiler.Stop("my_kernel");
+
+// Вывод (запрещено вручную GetStats() + con.Print)
+profiler.PrintReport();              // консоль
+profiler.ExportMarkdown("out.md");   // файл
+profiler.ExportJSON("out.json");     // JSON
+```
+
+**Запрещено**: `GetStats()` → цикл → `con.Print()` или `std::cout`.
+**Разрешено**: только `PrintReport()` / `ExportMarkdown()` / `ExportJSON()`.
+
+---
+
 *See also: [Full_Reference.md](Full_Reference.md) · [INDEX.md](INDEX.md) · [Architecture/](Architecture/)*
-*Last updated: 2026-03-03 | Maintained by: Кодо*
+*Last updated: 2026-03-05 | Maintained by: Кодо*

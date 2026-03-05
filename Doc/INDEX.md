@@ -3,7 +3,7 @@
 > Главный индекс документации проекта.
 > Здесь: навигация по всем разделам, статус модулей, структура файлов.
 >
-> **Date**: 2026-03-03 | **Maintained by**: Кодо (AI Assistant)
+> **Date**: 2026-03-05 | **Maintained by**: Кодо (AI Assistant)
 
 ---
 
@@ -27,20 +27,21 @@
 
 | # | Модуль | Backend | Статус | Quick | Full | Python API | Python тесты |
 |---|--------|---------|--------|-------|------|------------|-------------|
-| 1 | **FFT Processor** | OpenCL / ROCm | 🟢 Active | [QR §1](Quick_Reference.md#1-fft-processor) | [FR §1](Full_Reference.md#1-fft-processor) | — | [Python_test/fft_maxima/](../Python_test/fft_maxima/) |
-| 2 | **Statistics** | ROCm only | 🟢 Active | [QR §2](Quick_Reference.md#2-statistics-rocm) | [FR §2](Full_Reference.md#2-statistics-rocm) | [rocm_modules_api.md](Python/rocm_modules_api.md) | [Python_test/statistics/](../Python_test/statistics/) |
-| 3 | **Vector Algebra** | ROCm only | 🟢 Active | [QR §3](Quick_Reference.md#3-vector-algebra-rocm) | [FR §3](Full_Reference.md#3-vector-algebra-rocm) | [vector_algebra_api.md](Python/vector_algebra_api.md) | [Python_test/vector_algebra/](../Python_test/vector_algebra/) |
+| 1 | **FFT Processor** | OpenCL / ROCm | 🟢 Active | [QR §1](Quick_Reference.md#1-fft-processor) | [FR §1](Full_Reference.md#1-fft-processor) | — | [Python_test/fft_processor/](../Python_test/fft_processor/) |
+| 2 | **Statistics** | OpenCL / ROCm | 🟢 Active | [QR §2](Quick_Reference.md#2-statistics-rocm) | [FR §2](Full_Reference.md#2-statistics-rocm) | [rocm_modules_api.md](Python/rocm_modules_api.md) | [Python_test/statistics/](../Python_test/statistics/) |
+| 3 | **Vector Algebra** | OpenCL / ROCm | 🟢 Active | [QR §3](Quick_Reference.md#3-vector-algebra-rocm) | [FR §3](Full_Reference.md#3-vector-algebra-rocm) | [vector_algebra_api.md](Python/vector_algebra_api.md) | [Python_test/vector_algebra/](../Python_test/vector_algebra/) |
 | 4 | **FFT Maxima** | OpenCL / ROCm | 🟢 Active | [QR §4](Quick_Reference.md#4-fft-maxima) | [FR §4](Full_Reference.md#4-fft-maxima) | [spectrum_maxima_api.md](Python/spectrum_maxima_api.md) | [Python_test/fft_maxima/](../Python_test/fft_maxima/) |
 | 5 | **Filters** | OpenCL / ROCm | 🟢 Active | [QR §5](Quick_Reference.md#5-filters) | [FR §5](Full_Reference.md#5-filters) | [rocm_modules_api.md](Python/rocm_modules_api.md) | [Python_test/filters/](../Python_test/filters/) |
 | 6 | **Signal Generators** | OpenCL / ROCm | 🟢 Active | [QR §6](Quick_Reference.md#6-signal-generators) | [FR §6](Full_Reference.md#6-signal-generators) | [signal_generators_api.md](Python/signal_generators_api.md) | [Python_test/signal_generators/](../Python_test/signal_generators/) |
 | 7 | **LCH Farrow** | OpenCL / ROCm | 🟢 Active | [QR §7](Quick_Reference.md#7-lch-farrow) | [FR §7](Full_Reference.md#7-lch-farrow) | [lch_farrow_api.md](Python/lch_farrow_api.md) | [Python_test/lch_farrow/](../Python_test/lch_farrow/) |
 | 8 | **Heterodyne** | OpenCL / ROCm | 🟢 Active | [QR §8](Quick_Reference.md#8-heterodyne) | [FR §8](Full_Reference.md#8-heterodyne) | [rocm_modules_api.md](Python/rocm_modules_api.md) | [Python_test/heterodyne/](../Python_test/heterodyne/) |
+| 9 | **FM Correlator** | ROCm only | 🟢 Active | [QR §9](Quick_Reference.md#9-fm-correlator) | [FR §9](Full_Reference.md#9-fm-correlator) | [fm_correlator_api.md](Python/fm_correlator_api.md) | [Python_test/fm_correlator/](../Python_test/fm_correlator/) |
 
 ### Инфраструктура
 
 | # | Модуль | Статус | Quick | Full | Подробная документация |
 |---|--------|--------|-------|------|------------------------|
-| 9 | **DrvGPU** | 🟢 Active | [QR §9](Quick_Reference.md#9-drvgpu) | [FR §9](Full_Reference.md#9-drvgpu--core-driver) | [DrvGPU/Architecture.md](DrvGPU/Architecture.md) |
+| 10 | **DrvGPU** | 🟢 Active | [QR §10](Quick_Reference.md#10-drvgpu) | [FR §10](Full_Reference.md#10-drvgpu--core-driver) | [DrvGPU/Architecture.md](DrvGPU/Architecture.md) |
 
 ---
 
@@ -58,6 +59,7 @@
 | Signal Generators | [signal_generators/Full.md](Modules/signal_generators/Full.md) | [signal_generators/Quick.md](Modules/signal_generators/Quick.md) | [ScriptGenerator.md](Modules/signal_generators/ScriptGenerator.md) |
 | LCH Farrow | [lch_farrow/Full.md](Modules/lch_farrow/Full.md) | [lch_farrow/Quick.md](Modules/lch_farrow/Quick.md) | |
 | Heterodyne | [heterodyne/Full.md](Modules/heterodyne/Full.md) | [heterodyne/Quick.md](Modules/heterodyne/Quick.md) | |
+| FM Correlator | [fm_correlator/Full.md](Modules/fm_correlator/Full.md) | [fm_correlator/Quick.md](Modules/fm_correlator/Quick.md) | |
 
 ### `Doc/DrvGPU/` — документация ядра
 
@@ -76,7 +78,7 @@
 ## Python
 
 > Python биндинги через **pybind11**. Конвертация типов C++ ↔ Python — автоматическая.
-> Подробнее о механике: [Full_Reference.md §10](Full_Reference.md#10-python-api)
+> Подробнее о механике: [Full_Reference.md §11](Full_Reference.md#11-python-api)
 
 ### `Doc/Python/` — Python API документация
 
@@ -131,8 +133,10 @@ Python_test/
 │   └── test_gpuworklib.py              # Интеграционные тесты
 ├── hybrid/
 │   └── test_hybrid_backend.py          # OpenCL + ROCm одновременно
-└── zero_copy/
-    └── test_zero_copy.py               # Zero-copy буферы
+├── zero_copy/
+│   └── test_zero_copy.py               # Zero-copy буферы
+└── fm_correlator/
+    └── test_fm_correlator_rocm.py      # FMCorrelator: M-seq, correlation pipeline
 ```
 
 ### Биндинги `python/`
@@ -149,6 +153,7 @@ python/
 ├── py_lfm_analytical_delay.hpp # LfmAnalyticalDelay
 ├── py_statistics.hpp           # StatisticsProcessor (ROCm)
 ├── py_vector_algebra_rocm.hpp  # CholeskyInverterROCm
+├── py_fm_correlator_rocm.hpp   # FMCorrelatorROCm
 └── CMakeLists.txt              # Сборка pybind11 модуля
 ```
 
@@ -215,4 +220,26 @@ GPUWorkLib/
 
 ---
 
-*Last updated: 2026-03-03 | Maintained by: Кодо (AI Assistant)*
+## 📊 Профилирование и бенчмарки
+
+Все модули имеют собственные **benchmark классы** (наследники `GpuBenchmarkBase`) и **test runners** для измерения производительности:
+
+| Модуль | Benchmark классы | Test Runners | Статус |
+|--------|-------------------|--------------|--------|
+| signal_generators | `tests/signal_generators_benchmark.hpp` + `tests/form_signal_benchmark.hpp` | `tests/test_signal_generators_benchmark.hpp` + ROCm версии | ✅ Готово |
+| fft_processor | `tests/fft_processor_benchmark.hpp` | `tests/test_fft_processor_benchmark.hpp` | ✅ Готово |
+| fft_maxima | `tests/fft_maxima_benchmark.hpp` | `tests/test_fft_maxima_benchmark.hpp` | ✅ Готово |
+| filters | `tests/filters_benchmark.hpp` | `tests/test_filters_benchmark.hpp` | ✅ Готово |
+| heterodyne | `tests/heterodyne_benchmark.hpp` | `tests/test_heterodyne_benchmark.hpp` | ✅ Готово |
+| lch_farrow | `tests/lch_farrow_benchmark.hpp` | `tests/test_lch_farrow_benchmark.hpp` | ✅ Готово |
+| statistics | `tests/statistics_benchmark.hpp` | `tests/test_statistics_benchmark.hpp` | ✅ Готово |
+| vector_algebra | `tests/vector_algebra_benchmark.hpp` | `tests/test_vector_algebra_benchmark.hpp` | ✅ Готово |
+
+**Профилирование выполняется только через:**
+- 📊 `GPUProfiler::PrintReport()` — консоль
+- 📄 `GPUProfiler::ExportMarkdown()` — файл Markdown
+- 📋 `GPUProfiler::ExportJSON()` — JSON результаты (→ `Results/Profiler/`)
+
+---
+
+*Last updated: 2026-03-05 | Maintained by: Кодо (AI Assistant)*

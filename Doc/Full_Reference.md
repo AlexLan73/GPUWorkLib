@@ -3,22 +3,23 @@
 > Развёрнутое описание всех публичных классов, структур, перечислений и методов.
 > Назначение: читатель должен понять **что есть**, **зачем нужно** и **как использовать**.
 >
-> **Date**: 2026-03-03 | **Quick Reference**: [Quick_Reference.md](Quick_Reference.md) | **Index**: [INDEX.md](INDEX.md)
+> **Date**: 2026-03-05 | **Quick Reference**: [Quick_Reference.md](Quick_Reference.md) | **Index**: [INDEX.md](INDEX.md)
 
 ---
 
 ## Содержание
 
 1. [FFT Processor](#1-fft-processor)
-2. [Statistics (ROCm)](#2-statistics-rocm)
-3. [Vector Algebra (ROCm)](#3-vector-algebra-rocm)
+2. [Statistics (OpenCL / ROCm)](#2-statistics-rocm)
+3. [Vector Algebra (OpenCL / ROCm)](#3-vector-algebra-rocm)
 4. [FFT Maxima](#4-fft-maxima)
 5. [Filters](#5-filters)
 6. [Signal Generators](#6-signal-generators)
 7. [LCH Farrow](#7-lch-farrow)
 8. [Heterodyne](#8-heterodyne)
-9. [DrvGPU — Core Driver](#9-drvgpu--core-driver)
-10. [Python API](#10-python-api)
+9. [FM Correlator](#9-fm-correlator)
+10. [DrvGPU — Core Driver](#10-drvgpu--core-driver)
+11. [Python API](#11-python-api)
 
 ---
 
@@ -125,11 +126,11 @@ uint32_t GetNFFT() const;                   // текущий размер FFT
 
 ---
 
-## 2. Statistics *(ROCm)*
+## 2. Statistics *(OpenCL / ROCm)*
 
 > **Путь**: `modules/statistics/`
 > **Документация**: [Modules/statistics/](Modules/statistics/)
-> **Backend**: ROCm only — требует `ENABLE_ROCM=1`
+> **Backend**: OpenCL (CPU reference) / ROCm (GPU, требует `ENABLE_ROCM=1`)
 
 Вычисляет статистические характеристики комплексных сигналов. Использует алгоритм **Welford** для численно устойчивого однопроходного вычисления среднего и дисперсии. Медиана вычисляется через **radix sort** на GPU.
 
@@ -145,7 +146,7 @@ modules/statistics/include/statistics_processor.hpp
 explicit StatisticsProcessor(drv_gpu_lib::IBackend* backend);
 ```
 
-Бэкенд должен быть ROCm (`BackendType::ROCM`). При использовании с OpenCL бэкендом бросит исключение.
+Бэкенд может быть OpenCL (CPU reference) или ROCm (GPU). На OpenCL выполняется CPU версия алгоритма, на ROCm — GPU HIP ядро.
 
 ---
 
@@ -166,7 +167,7 @@ std::vector<MeanResult> ComputeMean(
     const std::vector<std::complex<float>>& data,
     const StatisticsParams& params);
 
-// Медиана амплитуд |z[i]| по radix sort на GPU
+// Медиана амплитуд |z[i]| (radix sort на GPU для ROCm, CPU для OpenCL)
 std::vector<MedianResult> ComputeMedian(
     const std::vector<std::complex<float>>& data,
     const StatisticsParams& params);
@@ -208,11 +209,11 @@ struct StatisticsResult {
 
 ---
 
-## 3. Vector Algebra *(ROCm)*
+## 3. Vector Algebra *(OpenCL / ROCm)*
 
 > **Путь**: `modules/vector_algebra/`
 > **Документация**: [Doc/Python/vector_algebra_api.md](Python/vector_algebra_api.md)
-> **Backend**: ROCm only — использует `rocSOLVER` (`POTRF` + `POTRI`)
+> **Backend**: OpenCL (CPU reference) / ROCm (GPU `rocSOLVER`: `POTRF` + `POTRI`)
 
 Инверсия эрмитовых положительно-определённых матриц через разложение Холецкого.
 **Важно**: rocSOLVER работает в column-major формате. Для row-major данных используем `rocblas_fill_lower` (эквивалентно `fill_upper` при транспонировании).
@@ -826,7 +827,82 @@ const HeterodyneResult& GetLastResult() const;
 
 ---
 
-## 9. DrvGPU — Core Driver
+## 9. FM Correlator
+
+> **Путь**: `modules/fm_correlator/`
+> **Документация**: [Modules/fm_correlator/Full.md](Modules/fm_correlator/Full.md)
+> **Backend**: ROCm only — требует `ENABLE_ROCM=1`
+
+Вычисляет FM-корреляцию сигналов с M-sequence эталоном. M-последовательность генерируется на CPU через LFSR (Linear Feedback Shift Register). Pipeline: генерация M-seq → FFT эталона (GPU) → FFT входных сигналов → перемножение в частотной области → IFFT → поиск пиков.
+
+### Структура `FMCorrelatorParams`
+
+```cpp
+struct FMCorrelatorParams {
+    size_t   fft_size         = 32768;        // размер FFT
+    int      num_shifts       = 32;           // количество сдвигов (K)
+    int      num_signals      = 5;            // количество входных сигналов (S)
+    int      num_output_points = 2000;        // точек в выходном массиве (n_kg)
+    uint32_t lfsr_polynomial  = 0x00400007;   // полином LFSR: x^32+x^22+x^2+x+1
+    uint32_t lfsr_seed        = 0x12345678;   // начальное состояние LFSR
+};
+```
+
+### Структура `FMCorrelatorResult`
+
+```cpp
+struct FMCorrelatorResult {
+    std::vector<float> peaks;   // [S * K * n_kg], row-major: [signal][shift][point]
+    int num_signals       = 0;
+    int num_shifts        = 0;
+    int num_output_points = 0;
+
+    // Удобный accessor
+    float at(int signal, int shift, int point) const;
+};
+```
+
+### Класс `FMCorrelator`
+
+```
+modules/fm_correlator/include/fm_correlator.hpp
+```
+
+**Конструктор**
+
+```cpp
+explicit FMCorrelator(drv_gpu_lib::IBackend* backend);  // backend — ROCm IBackend*
+```
+
+**Методы**
+
+```cpp
+// Установить параметры
+void SetParams(const FMCorrelatorParams& params);
+const FMCorrelatorParams& GetParams() const;
+
+// Генерация M-sequence на CPU (LFSR)
+std::vector<float> GenerateMSequence() const;           // seed из params
+std::vector<float> GenerateMSequence(uint32_t seed) const; // custom seed
+
+// Подготовить эталон (FFT на GPU)
+void PrepareReference(const std::vector<float>& ref);  // из внешнего вектора
+void PrepareReference();                                // из M-seq (seed из params)
+
+// Корреляция входных данных с эталоном
+FMCorrelatorResult Process(const std::vector<float>& inp);
+
+// Тестовый паттерн: входные данные = circshift(ref, s * shift_step) на GPU
+// ref должен быть подготовлен заранее. Не требует H2D для входных данных.
+FMCorrelatorResult RunTestPattern(int shift_step = 2);
+
+// Auto-batching для больших S
+FMCorrelatorResult ProcessWithBatching(const std::vector<float>& inp, int total_signals);
+```
+
+---
+
+## 10. DrvGPU — Core Driver
 
 > **Путь**: `DrvGPU/`
 > **Документация**: [DrvGPU/Architecture.md](DrvGPU/Architecture.md) · [DrvGPU/Classes.md](DrvGPU/Classes.md)
@@ -1025,7 +1101,7 @@ InputData<cl_mem>  input_cl{cl_buffer};
 
 ---
 
-## 10. Python API
+## 11. Python API
 
 > **Документация**: [Python/](Python/) · [Python_test/Full.md](Python_test/Full.md)
 > **Биндинги**: `python/gpu_worklib_bindings.cpp` (pybind11)
@@ -1093,6 +1169,7 @@ py::class_<PyStatisticsProcessor>(m, "StatisticsProcessor")
 | `StatisticsProcessor` | `StatisticsProcessor` | `py_statistics.hpp` | [Python/rocm_modules_api.md](Python/rocm_modules_api.md) |
 | `CholeskyInverterROCm` | `CholeskyInverterROCm` | `py_vector_algebra_rocm.hpp` | [Python/vector_algebra_api.md](Python/vector_algebra_api.md) |
 | `LfmAnalyticalDelay` | `LfmAnalyticalDelay` | `py_lfm_analytical_delay.hpp` | [Python/signal_generators_api.md](Python/signal_generators_api.md) |
+| `FMCorrelatorROCm` | `FMCorrelator` | `py_fm_correlator_rocm.hpp` | [Python/fm_correlator_api.md](Python/fm_correlator_api.md) |
 
 ### Примеры Python использования
 
@@ -1123,6 +1200,22 @@ peaks = finder.find_all_maxima(spectrum)
 # peaks — list of dicts: [{'antenna_id': 0, 'maxima': [{'freq': ..., 'magnitude': ...}]}]
 ```
 
+**OpenCL (CPU reference, любой GPU)**
+
+```python
+import gpu_worklib as gw
+import numpy as np
+
+# OpenCL контекст
+ctx = gw.GPUContext(device_index=0)
+
+# Статистика (CPU reference версия)
+stat = gw.StatisticsProcessor(ctx)
+data = np.random.randn(8, 1024).astype(np.complex64)
+result = stat.compute_statistics(data, n_beams=8, n_points=1024)
+# result — list of dicts: [{'beam_id': 0, 'mean': ..., 'std_dev': ..., 'variance': ...}]
+```
+
 **ROCm (AMD GPU)**
 
 ```python
@@ -1132,7 +1225,7 @@ import numpy as np
 # ROCm контекст
 ctx = gw.ROCmGPUContext(device_index=0)
 
-# Статистика
+# Статистика (GPU версия на ROCm)
 stat = gw.StatisticsProcessor(ctx)
 data = np.random.randn(8, 1024).astype(np.complex64)
 result = stat.compute_statistics(data, n_beams=8, n_points=1024)
@@ -1164,8 +1257,9 @@ filtered = fir.process(signal, channels=8, points=1024)
 | `statistics/` | StatisticsProcessor (ROCm) | 1 файл | [test_statistics_rocm.py](../Python_test/statistics/test_statistics_rocm.py) |
 | `vector_algebra/` | CholeskyInverterROCm | 2 файла | [test_cholesky_inverter_rocm.py](../Python_test/vector_algebra/test_cholesky_inverter_rocm.py) |
 | `integration/` | Все модули совместно | 1 файл | [test_gpuworklib.py](../Python_test/integration/test_gpuworklib.py) |
+| `fm_correlator/` | FMCorrelatorROCm | 1 файл | [test_fm_correlator_rocm.py](../Python_test/fm_correlator/test_fm_correlator_rocm.py) |
 
 ---
 
 *See also: [Quick_Reference.md](Quick_Reference.md) · [INDEX.md](INDEX.md) · [Architecture/](Architecture/)*
-*Last updated: 2026-03-03 | Maintained by: Кодо*
+*Last updated: 2026-03-05 | Maintained by: Кодо*
