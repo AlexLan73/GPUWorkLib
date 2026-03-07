@@ -4,16 +4,20 @@
  * @file heterodyne_kernels_rocm.hpp
  * @brief HIP kernel sources for heterodyne dechirp processing
  *
- * Contains:
+ * Contains (single compilation unit):
  * - dechirp_multiply: s_dc = conj(s_rx * s_ref) on GPU
  * - dechirp_correct:  frequency correction exp(j * phase_step * n)
  *
  * Port of dechirp_multiply.cl and dechirp_correct.cl (OpenCL -> HIP).
  * Embedded as raw strings for hiprtc runtime compilation.
  *
- * Optimizations preserved from OpenCL version:
- *   OPT-5: 1D kernel launch (gid = ant*N + n)
- *   OPT-6: phase_step precomputed on CPU (no division in kernel)
+ * Optimizations:
+ *   OPT-5:  2D grid (x=sample, y=antenna) — eliminates div/mod
+ *   OPT-6:  phase_step precomputed on CPU (no division in kernel)
+ *   OPT-7:  __launch_bounds__(256) for optimal register allocation
+ *   OPT-8:  aligned(8) float2_t for 64-bit load/store
+ *   OPT-9:  sincosf for single SFU pass (cos+sin in one call)
+ *   OPT-10: Single hiprtc compilation unit (both kernels)
  *
  * @author Kodo (AI Assistant)
  * @date 2026-02-23
@@ -25,27 +29,24 @@ namespace drv_gpu_lib {
 namespace kernels {
 
 // ════════════════════════════════════════════════════════════════════════════
-// Dechirp multiply kernel source
+// Combined kernel source: dechirp_multiply + dechirp_correct
 // ════════════════════════════════════════════════════════════════════════════
 
-inline const char* GetDechirpMultiplySource_rocm() {
+inline const char* GetHeterodyneKernelSource_rocm() {
   return R"HIP(
 
-// ════════════════════════════════════════════════════════════════════════════
 // float2_t — complex number (hiprtc has no built-in float2)
-// ════════════════════════════════════════════════════════════════════════════
-
-struct float2_t {
+// aligned(8) ensures 64-bit load/store instead of two 32-bit transactions
+struct __attribute__((aligned(8))) float2_t {
     float x;
     float y;
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// dechirp_multiply: output[gid] = conj(rx[gid] * ref[n])
+// dechirp_multiply: output[ant][n] = conj(rx[ant][n] * ref[n])
 //
-// Each thread processes 1 sample of 1 antenna.
-// OPT-5: 1D global: total = num_antennas * num_samples
-//   ant = gid / num_samples, n = gid % num_samples
+// OPT-5: 2D grid (x=sample, y=antenna) — no div/mod
+//   Grid: ((num_samples+255)/256, num_antennas), Block: (256)
 //
 // ref = conj(s_tx) from LfmConjugateGenerator (broadcast to all antennas).
 // conj(rx * ref) = conj(s_rx * conj(s_tx)) = conj(s_rx) * s_tx
@@ -54,17 +55,19 @@ struct float2_t {
 // Math: conj((a+jb)(c+jd)) = (ac-bd) - j(ad+bc)
 // ════════════════════════════════════════════════════════════════════════════
 
-extern "C" __global__ void dechirp_multiply(
-    const float2_t* __restrict__ rx,       // [num_antennas * num_samples]
-    const float2_t* __restrict__ ref,      // [num_samples] broadcast
-          float2_t* __restrict__ dc_out,   // [num_antennas * num_samples]
+extern "C" __launch_bounds__(256)
+__global__ void dechirp_multiply(
+    const float2_t* __restrict__ rx,
+    const float2_t* __restrict__ ref,
+          float2_t* __restrict__ dc_out,
     const int num_samples,
-    const int total_elements)
+    const int num_antennas)
 {
-    const int gid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (gid >= total_elements) return;
+    const int n   = blockIdx.x * blockDim.x + threadIdx.x;
+    const int ant = blockIdx.y;
+    if (n >= num_samples || ant >= num_antennas) return;
 
-    const int n = gid % num_samples;       // sample index
+    const int gid = ant * num_samples + n;
 
     const float2_t rx_v = rx[gid];
     const float2_t re_v = ref[n];          // broadcast: one ref for all antennas
@@ -76,54 +79,37 @@ extern "C" __global__ void dechirp_multiply(
     dc_out[gid] = out;
 }
 
-)HIP";
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Dechirp correct kernel source
-// ════════════════════════════════════════════════════════════════════════════
-
-inline const char* GetDechirpCorrectSource_rocm() {
-  return R"HIP(
-
-// ════════════════════════════════════════════════════════════════════════════
-// float2_t — complex number
-// ════════════════════════════════════════════════════════════════════════════
-
-struct float2_t {
-    float x;
-    float y;
-};
-
 // ════════════════════════════════════════════════════════════════════════════
 // dechirp_correct: output = input * exp(j * phase_step * n)
 //
 // After dechirp, signal has a tone at f_beat.
 // Multiplying by exp(j * phase_step * n) shifts spectrum to DC (0 Hz).
 //
-// OPT-5: 1D global: total = num_antennas * num_samples
+// OPT-5: 2D grid (x=sample, y=antenna) — no div/mod
 // OPT-6: phase_step[] precomputed on CPU = -2*pi*f_beat/sample_rate
-//         kernel uses phase = phase_step[ant] * n (no division)
+// OPT-9: sincosf computes sin+cos in single SFU pass
 // ════════════════════════════════════════════════════════════════════════════
 
-extern "C" __global__ void dechirp_correct(
-    const float2_t* __restrict__ dc_in,       // [num_antennas * num_samples]
-          float2_t* __restrict__ corrected,   // [num_antennas * num_samples]
-    const float*    __restrict__ phase_step,  // [-2*pi*f_beat/fs] per antenna
+extern "C" __launch_bounds__(256)
+__global__ void dechirp_correct(
+    const float2_t* __restrict__ dc_in,
+          float2_t* __restrict__ corrected,
+    const float*    __restrict__ phase_step,
     const int num_samples,
-    const int total_elements)
+    const int num_antennas)
 {
-    const int gid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (gid >= total_elements) return;
+    const int n   = blockIdx.x * blockDim.x + threadIdx.x;
+    const int ant = blockIdx.y;
+    if (n >= num_samples || ant >= num_antennas) return;
 
-    const int ant = gid / num_samples;
-    const int n   = gid % num_samples;
+    const int gid = ant * num_samples + n;
 
     // OPT-6: phase = phase_step[ant] * n (no division in kernel)
     const float phase = phase_step[ant] * (float)n;
 
-    const float cos_p = cosf(phase);
-    const float sin_p = sinf(phase);
+    // OPT-9: sincosf — один вызов SFU вместо двух раздельных cosf/sinf
+    float sin_p, cos_p;
+    sincosf(phase, &sin_p, &cos_p);
 
     // Complex multiply: corrected = dc_in * exp(j*phase)
     const float2_t in = dc_in[gid];

@@ -9,14 +9,19 @@
  *
  * No PRNG required.
  *
+ * Оптимизации:
+ *   - sincos() вместо отдельных cos/sin
+ *   - restrict на указателях
+ *   - native_cos для real-only варианта
+ *
  * @author Kodo (AI Assistant)
  * @date 2026-02-18
  */
 
 // Complex IQ variant
 __kernel void generate_lfm_analytical_delay(
-    __global float2* output,
-    __global const float* delay_us,
+    __global float2* restrict output,
+    __global const float* restrict delay_us,
     const uint antennas,
     const uint points,
     const float sample_rate,
@@ -24,12 +29,11 @@ __kernel void generate_lfm_analytical_delay(
     const float chirp_rate,
     const float amplitude)
 {
-    const uint gid = get_global_id(0);
-    const uint total = antennas * points;
-    if (gid >= total) return;
+    const uint sample_id  = get_global_id(0);
+    const uint antenna_id = get_global_id(1);
+    if (sample_id >= points || antenna_id >= antennas) return;
 
-    const uint antenna_id = gid / points;
-    const uint sample_id  = gid % points;
+    const uint gid = antenna_id * points + sample_id;
 
     // Time in seconds
     float t = (float)sample_id / sample_rate;
@@ -50,13 +54,16 @@ __kernel void generate_lfm_analytical_delay(
     float phase = M_PI_F * chirp_rate * t_local * t_local
                 + 2.0f * M_PI_F * f_start * t_local;
 
-    output[gid] = (float2)(amplitude * cos(phase), amplitude * sin(phase));
+    float cos_val;
+    float sin_val = sincos(phase, &cos_val);
+
+    output[gid] = (float2)(amplitude * cos_val, amplitude * sin_val);
 }
 
 // Real-only variant (imag = 0)
 __kernel void generate_lfm_analytical_delay_real(
-    __global float2* output,
-    __global const float* delay_us,
+    __global float2* restrict output,
+    __global const float* restrict delay_us,
     const uint antennas,
     const uint points,
     const float sample_rate,
@@ -64,12 +71,11 @@ __kernel void generate_lfm_analytical_delay_real(
     const float chirp_rate,
     const float amplitude)
 {
-    const uint gid = get_global_id(0);
-    const uint total = antennas * points;
-    if (gid >= total) return;
+    const uint sample_id  = get_global_id(0);
+    const uint antenna_id = get_global_id(1);
+    if (sample_id >= points || antenna_id >= antennas) return;
 
-    const uint antenna_id = gid / points;
-    const uint sample_id  = gid % points;
+    const uint gid = antenna_id * points + sample_id;
 
     float t = (float)sample_id / sample_rate;
     float tau = delay_us[antenna_id] * 1e-6f;
@@ -83,5 +89,5 @@ __kernel void generate_lfm_analytical_delay_real(
     float phase = M_PI_F * chirp_rate * t_local * t_local
                 + 2.0f * M_PI_F * f_start * t_local;
 
-    output[gid] = (float2)(amplitude * cos(phase), 0.0f);
+    output[gid] = (float2)(amplitude * native_cos(phase), 0.0f);
 }

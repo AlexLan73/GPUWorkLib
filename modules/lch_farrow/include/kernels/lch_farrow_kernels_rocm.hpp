@@ -79,7 +79,8 @@ __device__ uint2_t philox2x32_10(uint2_t ctr, unsigned int key) {
 // LCH Farrow: fractional delay kernel (Lagrange 48x5)
 // ═══════════════════════════════════════════════════════════════════════
 
-extern "C" __global__ void lch_farrow_delay(
+extern "C" __launch_bounds__(256)
+__global__ void lch_farrow_delay(
     const float2_t* __restrict__ input,
     float2_t* __restrict__ output,
     const float* __restrict__ lagrange_matrix,
@@ -91,12 +92,11 @@ extern "C" __global__ void lch_farrow_delay(
     float norm_val,
     unsigned int noise_seed)
 {
-    unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int total = antennas * points;
-    if (gid >= total) return;
-
-    unsigned int antenna_id = gid / points;
-    unsigned int sample_id  = gid % points;
+    // 2D grid: Y=antenna, X=sample (eliminates div/mod ~40 cycles/thread)
+    unsigned int antenna_id = blockIdx.y;
+    unsigned int sample_id  = blockIdx.x * blockDim.x + threadIdx.x;
+    if (sample_id >= points) return;
+    unsigned int gid = antenna_id * points + sample_id;
 
     // Delay in samples
     float delay_samples = delay_us[antenna_id] * 1e-6f * sample_rate;
@@ -158,11 +158,13 @@ extern "C" __global__ void lch_farrow_delay(
         float u1 = (float)(n_rnd.x) / 4294967296.0f + 1e-10f;
         float u2 = (float)(n_rnd.y) / 4294967296.0f;
 
-        float r = sqrtf(-2.0f * logf(u1));
+        float r = __fsqrt_rn(-2.0f * __logf(u1));
         float theta = 2.0f * 3.14159265358979323846f * u2;
+        float sin_t, cos_t;
+        __sincosf(theta, &sin_t, &cos_t);
 
-        float noise_re = noise_amplitude * norm_val * r * cosf(theta);
-        float noise_im = noise_amplitude * norm_val * r * sinf(theta);
+        float noise_re = noise_amplitude * norm_val * r * cos_t;
+        float noise_im = noise_amplitude * norm_val * r * sin_t;
 
         result.x += noise_re;
         result.y += noise_im;

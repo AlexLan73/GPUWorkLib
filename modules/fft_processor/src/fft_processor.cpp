@@ -518,7 +518,7 @@ void FFTProcessor::CompileMagPhaseKernel() {
         throw std::runtime_error("CompileMagPhaseKernel: clCreateProgramWithSource failed: " + std::to_string(err));
     }
 
-    err = clBuildProgram(mag_phase_program_, 1, &device_, "-cl-fast-relaxed-math", nullptr, nullptr);
+    err = clBuildProgram(mag_phase_program_, 1, &device_, "-cl-fast-relaxed-math -cl-std=CL2.0", nullptr, nullptr);
     if (err != CL_SUCCESS) {
         size_t log_size;
         clGetProgramBuildInfo(mag_phase_program_, device_, CL_PROGRAM_BUILD_LOG, 0, nullptr, &log_size);

@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES
 /**
  * @file heterodyne_dechirp.cpp
  * @brief Heterodyne dechirp LFM - facade implementation

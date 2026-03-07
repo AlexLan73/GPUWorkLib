@@ -403,8 +403,14 @@ void ComplexToMagPhaseROCm::CompileKernels() {
                                   std::to_string(static_cast<int>(rtcResult)));
     }
 
+    // P4: Determine WARP_SIZE by GPU architecture (CDNA=64, RDNA=32)
+    int warp_size = 32;  // default: RDNA (gfx10xx, gfx11xx, gfx12xx)
+    if (arch_name.find("gfx9") == 0) {
+        warp_size = 64;  // CDNA / Vega
+    }
+    std::string warp_define = "-DWARP_SIZE=" + std::to_string(warp_size);
     std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
-    std::vector<const char*> opts = {"-O3", "-DBLOCK_SIZE=256"};
+    std::vector<const char*> opts = {"-O3", "-std=c++17", "-DBLOCK_SIZE=256", warp_define.c_str()};
     if (!arch_flag.empty()) {
         opts.push_back(arch_flag.c_str());
     }

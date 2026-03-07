@@ -80,7 +80,8 @@ __device__ float philox_uniform(unsigned int id, unsigned int seed) {
 // generate_form_signal kernel
 // ════════════════════════════════════════════════════════════════════════════
 
-extern "C" __global__ void generate_form_signal(
+extern "C" __global__ __launch_bounds__(256)
+void generate_form_signal(
     float2_t* __restrict__ output,
     unsigned int antennas,
     unsigned int points,
@@ -100,12 +101,12 @@ extern "C" __global__ void generate_form_signal(
     unsigned int noise_seed,
     unsigned int tau_mode)
 {
-    const unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
-    const unsigned int total = antennas * points;
-    if (gid >= total) return;
+    // 2D grid: blockIdx.x = sample blocks, blockIdx.y = antenna
+    const unsigned int sample_id  = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int antenna_id = blockIdx.y;
+    if (sample_id >= points || antenna_id >= antennas) return;
 
-    const unsigned int antenna_id = gid / points;
-    const unsigned int sample_id  = gid % points;
+    const unsigned int gid = antenna_id * points + sample_id;
 
     // Tau per-channel
     float tau;
@@ -140,8 +141,10 @@ extern "C" __global__ void generate_form_signal(
                 + PI_F * fdev / ti * (t_centered * t_centered)
                 + phase_offset;
 
-    float sig_re = amplitude * norm_val * cosf(phase);
-    float sig_im = amplitude * norm_val * sinf(phase);
+    float sin_phase, cos_phase;
+    __sincosf(phase, &sin_phase, &cos_phase);
+    float sig_re = amplitude * norm_val * cos_phase;
+    float sig_im = amplitude * norm_val * sin_phase;
 
     // Noise (Philox + Box-Muller)
     float noise_re = 0.0f;
@@ -156,11 +159,13 @@ extern "C" __global__ void generate_form_signal(
         float u1 = (float)(n_rnd.x) / 4294967296.0f + 1e-10f;
         float u2 = (float)(n_rnd.y) / 4294967296.0f;
 
-        float r = sqrtf(-2.0f * logf(u1));
+        float r = __fsqrt_rn(-2.0f * __logf(u1));
         float theta = 2.0f * PI_F * u2;
 
-        noise_re = noise_amplitude * norm_val * r * cosf(theta);
-        noise_im = noise_amplitude * norm_val * r * sinf(theta);
+        float sin_theta, cos_theta;
+        __sincosf(theta, &sin_theta, &cos_theta);
+        noise_re = noise_amplitude * norm_val * r * cos_theta;
+        noise_im = noise_amplitude * norm_val * r * sin_theta;
     }
 
     float2_t result;

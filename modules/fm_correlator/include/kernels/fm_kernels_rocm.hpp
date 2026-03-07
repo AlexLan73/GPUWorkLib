@@ -29,7 +29,8 @@ inline const char* GetFMCorrelatorKernelSource() {
 // Собственный float2_t вместо hipfloat2: hiprtc не имеет доступа к device-заголовкам
 // ROCm по умолчанию, и hipfloat2/float2 из <hip/hip_runtime.h> недоступны в строке
 // hiprtcCompileProgram. Поэтому объявляем минимальный эквивалент прямо здесь.
-struct float2_t {
+// aligned(8) гарантирует 64-bit load/store вместо двух 32-bit транзакций
+struct __attribute__((aligned(8))) float2_t {
     float x;
     float y;
 };
@@ -40,7 +41,8 @@ struct float2_t {
 //   Grid: ((N+255)/256, K), Block: (256)
 // ════════════════════════════════════════════════════════════════════════════
 
-extern "C" __global__ void apply_cyclic_shifts(
+extern "C" __launch_bounds__(256)
+__global__ void apply_cyclic_shifts(
     const float*  __restrict__ ref,
     float2_t*     __restrict__ out,
     int N, int num_shifts)
@@ -49,7 +51,7 @@ extern "C" __global__ void apply_cyclic_shifts(
     int k = blockIdx.y;
     if (i >= N || k >= num_shifts) return;
 
-    int src = (i + k) % N;
+    int src = (i + k) & (N - 1);  // N — степень 2 (гарантировано FMCorrelatorParams)
     float2_t v;
     v.x = ref[src];
     v.y = 0.0f;
@@ -62,7 +64,8 @@ extern "C" __global__ void apply_cyclic_shifts(
 //   Grid: ((half_N+255)/256, K, S), Block: (256)
 // ════════════════════════════════════════════════════════════════════════════
 
-extern "C" __global__ void multiply_conj_fused(
+extern "C" __launch_bounds__(256)
+__global__ void multiply_conj_fused(
     const float2_t* __restrict__ ref_fft,
     const float2_t* __restrict__ inp_fft,
     float2_t*       __restrict__ corr_fft,
@@ -89,10 +92,11 @@ extern "C" __global__ void multiply_conj_fused(
 //   Grid: ((n_kg+255)/256, K, S), Block: (256)
 // ════════════════════════════════════════════════════════════════════════════
 
-extern "C" __global__ void extract_magnitudes_real(
+extern "C" __launch_bounds__(256)
+__global__ void extract_magnitudes_real(
     const float* __restrict__ corr_time,
     float*       __restrict__ peaks,
-    int N, int n_kg, int K, int S)
+    int N, int n_kg, int K, int S, float inv_N)
 {
     int j = blockIdx.x * blockDim.x + threadIdx.x;
     int k = blockIdx.y;
@@ -101,10 +105,13 @@ extern "C" __global__ void extract_magnitudes_real(
 
     int src = (s * K + k) * N + j;
     float val = corr_time[src];
-    if (val < 0.0f) val = -val;  // |val| без sqrtf — C2R результат вещественный
+    // bitwise fabsf: убираем знаковый бит без branch divergence (1 инструкция V_AND)
+    union { float f; unsigned u; } u = { val };
+    u.u &= 0x7FFFFFFFu;
+    val = u.f;
     // hipFFT не нормирует IFFT (в отличие от numpy.ifft): результат умножен на N.
-    // Делим на N чтобы получить нормализованную корреляцию ∈ [0..1].
-    peaks[(s * K + k) * n_kg + j] = val / (float)N;
+    // inv_N = 1/N передан параметром: FMUL (~4 такта) вместо FDIV (~20 тактов).
+    peaks[(s * K + k) * n_kg + j] = val * inv_N;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -112,7 +119,8 @@ extern "C" __global__ void extract_magnitudes_real(
 //   Grid: ((N+255)/256, S), Block: (256)
 // ════════════════════════════════════════════════════════════════════════════
 
-extern "C" __global__ void generate_test_inputs(
+extern "C" __launch_bounds__(256)
+__global__ void generate_test_inputs(
     const float* __restrict__ ref,
     float*       __restrict__ inp,
     int N, int S, int shift_step)
@@ -121,7 +129,7 @@ extern "C" __global__ void generate_test_inputs(
     int s = blockIdx.y;
     if (i >= N || s >= S) return;
 
-    int src = (i + s * shift_step) % N;
+    int src = (i + s * shift_step) & (N - 1);  // N — степень 2
     inp[s * N + i] = ref[src];
 }
 

@@ -5,7 +5,7 @@
  * @brief HIP kernel sources for SpectrumProcessorROCm
  *
  * Contains:
- * - pad_data: zero-padding n_point -> nFFT for batch FFT
+ * - pad_data: zero-padding n_point -> nFFT for batch FFT (2D grid)
  * - compute_magnitudes: |FFT[i]| = sqrt(re^2 + im^2)
  * - post_kernel_one_peak: ONE_PEAK search with parabolic interpolation
  * - post_kernel_two_peaks: TWO_PEAKS search (left + right independent maxima)
@@ -14,6 +14,14 @@
  * Uses custom float2_t struct to avoid hiprtc built-in type issues.
  *
  * Ported from fft_kernel_sources.hpp (OpenCL -> HIP).
+ *
+ * Optimizations ported from OpenCL:
+ *   - __launch_bounds__(256) on all kernels
+ *   - __fsqrt_rn instead of sqrtf (hardware intrinsic)
+ *   - Tree-reduction O(log2(N)) instead of O(N) sequential loop
+ *   - LDS +1 padding to avoid bank conflicts
+ *   - 2D grid for pad_data (eliminates div/mod)
+ *   - hipMemsetAsync + early return (no else-branch divergence)
  *
  * @author Kodo (AI Assistant)
  * @date 2026-02-23
@@ -28,7 +36,7 @@ namespace kernels {
 // Combined HIP kernel source for SpectrumProcessorROCm
 //
 // Kernels:
-//   1. pad_data           - zero-padding n_point -> nFFT (batch, beam_offset)
+//   1. pad_data           - zero-padding n_point -> nFFT (2D grid, beam_offset)
 //   2. compute_magnitudes - |FFT[i]| computation
 //   3. post_kernel_one_peak  - ONE_PEAK mode (4 MaxValue per beam)
 //   4. post_kernel_two_peaks - TWO_PEAKS mode (8 MaxValue per beam)
@@ -58,16 +66,15 @@ struct MaxValue_t {
 };
 
 // ============================================================================
-// 1. pad_data - Zero-padding with beam_offset support (batch processing)
+// 1. pad_data - Zero-padding with 2D grid (no div/mod)
 // ============================================================================
 //
-// Copies count_points -> nFFT with zero padding.
-// beam_offset allows processing subsets of the full beam array.
+// 2D grid: blockIdx.x = position blocks, blockIdx.y = beam index
+// Output must be pre-zeroed via hipMemsetAsync before kernel launch.
+// Only copies valid data (pos < count_points), no else-branch.
 //
-// Input layout:  [beam0][beam1]...[beamN] (full array, count_points per beam)
-// Output layout: [batch_beam0][batch_beam1]... (nFFT per beam)
-//
-extern "C" __global__ void pad_data(
+extern "C" __launch_bounds__(256)
+__global__ void pad_data(
     const float2_t* __restrict__ input,
     float2_t* __restrict__ output,
     unsigned int batch_beam_count,
@@ -75,29 +82,23 @@ extern "C" __global__ void pad_data(
     unsigned int nFFT,
     unsigned int beam_offset)
 {
-    unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int local_beam_idx = gid / nFFT;
-    unsigned int pos_in_fft = gid % nFFT;
+    unsigned int pos_in_fft     = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int local_beam_idx = blockIdx.y;
 
     if (local_beam_idx >= batch_beam_count) return;
+    if (pos_in_fft >= count_points) return;
 
     unsigned int global_beam_idx = local_beam_idx + beam_offset;
-
-    if (pos_in_fft < count_points) {
-        unsigned int src_idx = global_beam_idx * count_points + pos_in_fft;
-        output[gid] = input[src_idx];
-    } else {
-        float2_t zero;
-        zero.x = 0.0f;
-        zero.y = 0.0f;
-        output[gid] = zero;
-    }
+    unsigned int src_idx = global_beam_idx * count_points + pos_in_fft;
+    unsigned int dst_idx = local_beam_idx * nFFT + pos_in_fft;
+    output[dst_idx] = input[src_idx];
 }
 
 // ============================================================================
 // 2. compute_magnitudes - |FFT[i]| = sqrt(re^2 + im^2)
 // ============================================================================
-extern "C" __global__ void compute_magnitudes(
+extern "C" __launch_bounds__(256)
+__global__ void compute_magnitudes(
     const float2_t* __restrict__ fft_output,
     float* __restrict__ magnitudes,
     unsigned int total_size)
@@ -106,7 +107,7 @@ extern "C" __global__ void compute_magnitudes(
     if (gid >= total_size) return;
 
     float2_t val = fft_output[gid];
-    magnitudes[gid] = sqrtf(val.x * val.x + val.y * val.y);
+    magnitudes[gid] = __fsqrt_rn(val.x * val.x + val.y * val.y);
 }
 
 // ============================================================================
@@ -122,8 +123,11 @@ extern "C" __global__ void compute_magnitudes(
 //   [3] right neighbor (index+1)
 //
 // One block per beam, 256 threads per block for parallel reduction.
+// Tree-reduction O(log2(256))=8 steps instead of O(256) sequential loop.
+// LDS +1 padding to avoid bank conflicts during reduction.
 //
-extern "C" __global__ void post_kernel_one_peak(
+extern "C" __launch_bounds__(256)
+__global__ void post_kernel_one_peak(
     const float2_t* __restrict__ fft_output,
     MaxValue_t* __restrict__ maxima_output,
     unsigned int beam_count,
@@ -139,11 +143,11 @@ extern "C" __global__ void post_kernel_one_peak(
 
     unsigned int half_range = search_range / 2;
 
-    // Shared memory for parallel reduction
-    __shared__ float local_left_mag[256];
-    __shared__ unsigned int local_left_idx[256];
-    __shared__ float local_right_mag[256];
-    __shared__ unsigned int local_right_idx[256];
+    // +1 padding eliminates LDS bank conflicts during tree-reduction
+    __shared__ float local_left_mag[257];
+    __shared__ unsigned int local_left_idx[257];
+    __shared__ float local_right_mag[257];
+    __shared__ unsigned int local_right_idx[257];
 
     float my_left_mag = -1.0f;
     unsigned int my_left_idx = 0;
@@ -154,7 +158,7 @@ extern "C" __global__ void post_kernel_one_peak(
     for (unsigned int i = lid; i < half_range; i += local_size) {
         unsigned int fft_idx = beam_idx * nFFT + i;
         float2_t val = fft_output[fft_idx];
-        float mag = sqrtf(val.x * val.x + val.y * val.y);
+        float mag = __fsqrt_rn(val.x * val.x + val.y * val.y);
         if (mag > my_left_mag) {
             my_left_mag = mag;
             my_left_idx = i;
@@ -166,7 +170,7 @@ extern "C" __global__ void post_kernel_one_peak(
     for (unsigned int i = range2_start + lid; i < nFFT; i += local_size) {
         unsigned int fft_idx = beam_idx * nFFT + i;
         float2_t val = fft_output[fft_idx];
-        float mag = sqrtf(val.x * val.x + val.y * val.y);
+        float mag = __fsqrt_rn(val.x * val.x + val.y * val.y);
         if (mag > my_right_mag) {
             my_right_mag = mag;
             my_right_idx = i;
@@ -179,23 +183,27 @@ extern "C" __global__ void post_kernel_one_peak(
     local_right_idx[lid] = my_right_idx;
     __syncthreads();
 
-    // Thread 0: reduce and output
-    if (lid == 0) {
-        float global_left_mag = -1.0f;
-        unsigned int global_left_idx = 0;
-        float global_right_mag = -1.0f;
-        unsigned int global_right_idx = range2_start;
-
-        for (unsigned int j = 0; j < local_size; ++j) {
-            if (local_left_mag[j] > global_left_mag) {
-                global_left_mag = local_left_mag[j];
-                global_left_idx = local_left_idx[j];
+    // Tree-reduction: O(log2(256))=8 parallel steps instead of O(256) sequential
+    for (unsigned int stride = 128; stride > 0; stride >>= 1) {
+        if (lid < stride) {
+            if (local_left_mag[lid + stride] > local_left_mag[lid]) {
+                local_left_mag[lid] = local_left_mag[lid + stride];
+                local_left_idx[lid] = local_left_idx[lid + stride];
             }
-            if (local_right_mag[j] > global_right_mag) {
-                global_right_mag = local_right_mag[j];
-                global_right_idx = local_right_idx[j];
+            if (local_right_mag[lid + stride] > local_right_mag[lid]) {
+                local_right_mag[lid] = local_right_mag[lid + stride];
+                local_right_idx[lid] = local_right_idx[lid + stride];
             }
         }
+        __syncthreads();
+    }
+
+    // Thread 0: read reduction result from [0] and write output
+    if (lid == 0) {
+        unsigned int global_left_idx  = local_left_idx[0];
+        float global_left_mag         = local_left_mag[0];
+        unsigned int global_right_idx = local_right_idx[0];
+        float global_right_mag        = local_right_mag[0];
 
         // Select LARGER of left/right
         unsigned int center_idx;
@@ -214,15 +222,15 @@ extern "C" __global__ void post_kernel_one_peak(
 
         // Read center and neighbors
         float2_t cv = fft_output[base_fft_idx + center_idx];
-        float y_c = sqrtf(cv.x * cv.x + cv.y * cv.y);
+        float y_c = __fsqrt_rn(cv.x * cv.x + cv.y * cv.y);
 
         float2_t lv; lv.x = 0.0f; lv.y = 0.0f;
         float2_t rv; rv.x = 0.0f; rv.y = 0.0f;
         float y_l = 0.0f, y_r = 0.0f;
         int hl = (center_idx > 0) ? 1 : 0;
         int hr = (center_idx < nFFT - 1) ? 1 : 0;
-        if (hl) { lv = fft_output[base_fft_idx + center_idx - 1]; y_l = sqrtf(lv.x*lv.x + lv.y*lv.y); }
-        if (hr) { rv = fft_output[base_fft_idx + center_idx + 1]; y_r = sqrtf(rv.x*rv.x + rv.y*rv.y); }
+        if (hl) { lv = fft_output[base_fft_idx + center_idx - 1]; y_l = __fsqrt_rn(lv.x*lv.x + lv.y*lv.y); }
+        if (hr) { rv = fft_output[base_fft_idx + center_idx + 1]; y_r = __fsqrt_rn(rv.x*rv.x + rv.y*rv.y); }
 
         // Parabolic interpolation
         float fo = 0.0f;
@@ -296,7 +304,10 @@ extern "C" __global__ void post_kernel_one_peak(
 //   [4..7] right peak (interpolated, left, center, right)
 //   Right peak frequencies are mirrored: sample_rate - raw_freq
 //
-extern "C" __global__ void post_kernel_two_peaks(
+// Tree-reduction + LDS +1 padding (same as one_peak).
+//
+extern "C" __launch_bounds__(256)
+__global__ void post_kernel_two_peaks(
     const float2_t* __restrict__ fft_output,
     MaxValue_t* __restrict__ maxima_output,
     unsigned int beam_count,
@@ -312,10 +323,11 @@ extern "C" __global__ void post_kernel_two_peaks(
 
     unsigned int half_range = search_range / 2;
 
-    __shared__ float local_left_mag[256];
-    __shared__ unsigned int local_left_idx[256];
-    __shared__ float local_right_mag[256];
-    __shared__ unsigned int local_right_idx[256];
+    // +1 padding eliminates LDS bank conflicts
+    __shared__ float local_left_mag[257];
+    __shared__ unsigned int local_left_idx[257];
+    __shared__ float local_right_mag[257];
+    __shared__ unsigned int local_right_idx[257];
 
     float my_left_mag = -1.0f;
     unsigned int my_left_idx = 0;
@@ -326,7 +338,7 @@ extern "C" __global__ void post_kernel_two_peaks(
     for (unsigned int i = lid; i < half_range; i += local_size) {
         unsigned int fft_idx = beam_idx * nFFT + i;
         float2_t val = fft_output[fft_idx];
-        float mag = sqrtf(val.x * val.x + val.y * val.y);
+        float mag = __fsqrt_rn(val.x * val.x + val.y * val.y);
         if (mag > my_left_mag) {
             my_left_mag = mag;
             my_left_idx = i;
@@ -338,7 +350,7 @@ extern "C" __global__ void post_kernel_two_peaks(
     for (unsigned int i = range2_start + lid; i < nFFT; i += local_size) {
         unsigned int fft_idx = beam_idx * nFFT + i;
         float2_t val = fft_output[fft_idx];
-        float mag = sqrtf(val.x * val.x + val.y * val.y);
+        float mag = __fsqrt_rn(val.x * val.x + val.y * val.y);
         if (mag > my_right_mag) {
             my_right_mag = mag;
             my_right_idx = i;
@@ -351,23 +363,25 @@ extern "C" __global__ void post_kernel_two_peaks(
     local_right_idx[lid] = my_right_idx;
     __syncthreads();
 
-    // Thread 0: reduce and write 8 MaxValues
-    if (lid == 0) {
-        float global_left_mag = -1.0f;
-        unsigned int global_left_idx = 0;
-        float global_right_mag = -1.0f;
-        unsigned int global_right_idx = range2_start;
-
-        for (unsigned int j = 0; j < local_size; ++j) {
-            if (local_left_mag[j] > global_left_mag) {
-                global_left_mag = local_left_mag[j];
-                global_left_idx = local_left_idx[j];
+    // Tree-reduction: O(log2(256))=8 parallel steps
+    for (unsigned int stride = 128; stride > 0; stride >>= 1) {
+        if (lid < stride) {
+            if (local_left_mag[lid + stride] > local_left_mag[lid]) {
+                local_left_mag[lid] = local_left_mag[lid + stride];
+                local_left_idx[lid] = local_left_idx[lid + stride];
             }
-            if (local_right_mag[j] > global_right_mag) {
-                global_right_mag = local_right_mag[j];
-                global_right_idx = local_right_idx[j];
+            if (local_right_mag[lid + stride] > local_right_mag[lid]) {
+                local_right_mag[lid] = local_right_mag[lid + stride];
+                local_right_idx[lid] = local_right_idx[lid + stride];
             }
         }
+        __syncthreads();
+    }
+
+    // Thread 0: write 8 MaxValues
+    if (lid == 0) {
+        unsigned int global_left_idx  = local_left_idx[0];
+        unsigned int global_right_idx = local_right_idx[0];
 
         unsigned int base_fft_idx = beam_idx * nFFT;
         float bin_width = sample_rate / (float)nFFT;
@@ -380,14 +394,14 @@ extern "C" __global__ void post_kernel_two_peaks(
         {
             unsigned int cidx = global_left_idx;
             float2_t cv = fft_output[base_fft_idx + cidx];
-            float y_c = sqrtf(cv.x * cv.x + cv.y * cv.y);
+            float y_c = __fsqrt_rn(cv.x * cv.x + cv.y * cv.y);
             float2_t lv; lv.x = 0.0f; lv.y = 0.0f;
             float2_t rv; rv.x = 0.0f; rv.y = 0.0f;
             float y_l = 0.0f, y_r = 0.0f;
             int hl = (cidx > 0) ? 1 : 0;
             int hr = (cidx < nFFT - 1) ? 1 : 0;
-            if (hl) { lv = fft_output[base_fft_idx + cidx - 1]; y_l = sqrtf(lv.x*lv.x + lv.y*lv.y); }
-            if (hr) { rv = fft_output[base_fft_idx + cidx + 1]; y_r = sqrtf(rv.x*rv.x + rv.y*rv.y); }
+            if (hl) { lv = fft_output[base_fft_idx + cidx - 1]; y_l = __fsqrt_rn(lv.x*lv.x + lv.y*lv.y); }
+            if (hr) { rv = fft_output[base_fft_idx + cidx + 1]; y_r = __fsqrt_rn(rv.x*rv.x + rv.y*rv.y); }
 
             float fo = 0.0f;
             float rf = (float)cidx * bin_width;
@@ -445,14 +459,14 @@ extern "C" __global__ void post_kernel_two_peaks(
         {
             unsigned int cidx = global_right_idx;
             float2_t cv = fft_output[base_fft_idx + cidx];
-            float y_c = sqrtf(cv.x * cv.x + cv.y * cv.y);
+            float y_c = __fsqrt_rn(cv.x * cv.x + cv.y * cv.y);
             float2_t lv; lv.x = 0.0f; lv.y = 0.0f;
             float2_t rv; rv.x = 0.0f; rv.y = 0.0f;
             float y_l = 0.0f, y_r = 0.0f;
             int hl = (cidx > 0) ? 1 : 0;
             int hr = (cidx < nFFT - 1) ? 1 : 0;
-            if (hl) { lv = fft_output[base_fft_idx + cidx - 1]; y_l = sqrtf(lv.x*lv.x + lv.y*lv.y); }
-            if (hr) { rv = fft_output[base_fft_idx + cidx + 1]; y_r = sqrtf(rv.x*rv.x + rv.y*rv.y); }
+            if (hl) { lv = fft_output[base_fft_idx + cidx - 1]; y_l = __fsqrt_rn(lv.x*lv.x + lv.y*lv.y); }
+            if (hr) { rv = fft_output[base_fft_idx + cidx + 1]; y_r = __fsqrt_rn(rv.x*rv.x + rv.y*rv.y); }
 
             float fo = 0.0f;
             float rf = (float)cidx * bin_width;

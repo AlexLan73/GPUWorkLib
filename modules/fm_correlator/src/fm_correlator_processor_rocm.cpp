@@ -22,6 +22,8 @@
 #include "kernels/fm_kernels_rocm.hpp"
 #include "services/console_output.hpp"
 #include "services/batch_manager.hpp"
+#include "services/kernel_cache_service.hpp"
+#include "backends/rocm/rocm_backend.hpp"
 
 #include <stdexcept>
 #include <string>
@@ -220,6 +222,39 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::Process(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// ProcessFromPtr — H2D из raw pointer без CPU-копии (для ProcessWithBatching)
+// ════════════════════════════════════════════════════════════════════════════
+
+FMCorrelatorResult FMCorrelatorProcessorROCm::ProcessFromPtr(
+    const float* data, int num_signals) {
+  if (!ref_prepared_) {
+    throw std::runtime_error("ProcessFromPtr: reference not prepared");
+  }
+
+  const size_t N = params_.fft_size;
+
+  // H2D напрямую из указателя — без промежуточной std::vector копии
+  hipError_t err = hipMemcpyHtoDAsync(
+      d_inp_float_, const_cast<float*>(data),
+      static_cast<size_t>(num_signals) * N * sizeof(float), stream1_);
+  if (err != hipSuccess)
+    throw std::runtime_error("ProcessFromPtr: H2D inp failed: " +
+                             std::string(hipGetErrorString(err)));
+
+  hipfftResult fft_err = hipfftExecR2C(
+      plan_inp_, d_inp_float_,
+      static_cast<hipfftComplex*>(d_inp_fft_));
+  if (fft_err != HIPFFT_SUCCESS)
+    throw std::runtime_error("ProcessFromPtr: hipfftExecR2C failed: " +
+                             std::to_string(fft_err));
+
+  (void)hipStreamSynchronize(stream0_);
+  (void)hipStreamSynchronize(stream1_);
+
+  return RunCorrelationPipeline();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // RunCorrelationPipeline — shared by Process and RunTestPattern
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -277,9 +312,11 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::RunCorrelationPipeline() {
                              std::to_string(fft_err));
 
   // Step 3: extract_magnitudes_real на stream0
-  // |corr_time[j]| / N → peaks (только первые n_kg точек — дальнейшие бесполезны)
+  // |corr_time[j]| * inv_N → peaks (только первые n_kg точек — дальнейшие бесполезны)
+  // inv_N передаём параметром: FMUL вместо FDIV в каждом потоке
+  float inv_N = 1.0f / static_cast<float>(N);
   void* args_ext[] = { &d_corr_time_, &d_peaks_,
-                        &N, &n_kg, &K, &S };
+                        &N, &n_kg, &K, &S, &inv_N };
   unsigned int grid_ext_x = (static_cast<unsigned int>(n_kg) + kBlockSize - 1) / kBlockSize;
 
   err = hipModuleLaunchKernel(
@@ -425,13 +462,9 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::ProcessWithBatching(
       current_batch_S_ = batch_S;
     }
 
-    // Вырезаем срез входных данных для этого батча
+    // Передаём указатель напрямую — без CPU-аллокации и копии std::vector
     size_t offset = b.start * N;
-    std::vector<float> batch_inp(
-        inp.begin() + static_cast<ptrdiff_t>(offset),
-        inp.begin() + static_cast<ptrdiff_t>(offset + b.count * N));
-
-    auto batch_result = Process(batch_inp);
+    auto batch_result = ProcessFromPtr(inp.data() + offset, batch_S);
     combined.peaks.insert(combined.peaks.end(),
                           batch_result.peaks.begin(),
                           batch_result.peaks.end());
@@ -472,6 +505,57 @@ void FMCorrelatorProcessorROCm::CompileKernels() {
   if (kernels_compiled_) return;
 
   auto& con = ConsoleOutput::GetInstance();
+
+  // Инициализация кеша (lazy, один раз)
+  if (!kernel_cache_) {
+    kernel_cache_ = std::make_unique<drv_gpu_lib::KernelCacheService>(
+        "modules/fm_correlator/kernels", drv_gpu_lib::BackendType::ROCm);
+  }
+
+  static constexpr const char* kKernelName = "fm_correlator_kernels";
+
+  // Лямбда загрузки модуля + функций из бинаря
+  auto loadModuleAndFunctions = [&](const void* data, size_t size) {
+    hipError_t hipErr = hipModuleLoadData(&module_, data);
+    if (hipErr != hipSuccess)
+      throw std::runtime_error(
+          "FMCorrelator CompileKernels: hipModuleLoadData failed: " +
+          std::string(hipGetErrorString(hipErr)));
+
+    auto getFunc = [&](hipFunction_t* fn, const char* name) {
+      hipErr = hipModuleGetFunction(fn, module_, name);
+      if (hipErr != hipSuccess) {
+        (void)hipModuleUnload(module_);
+        module_ = nullptr;
+        throw std::runtime_error(
+            std::string("FMCorrelator CompileKernels: hipModuleGetFunction(") +
+            name + ") failed: " + hipGetErrorString(hipErr));
+      }
+    };
+
+    getFunc(&fn_apply_shifts_,    "apply_cyclic_shifts");
+    getFunc(&fn_multiply_conj_,   "multiply_conj_fused");
+    getFunc(&fn_extract_mag_,     "extract_magnitudes_real");
+    getFunc(&fn_gen_test_inputs_, "generate_test_inputs");
+  };
+
+  // Шаг 1: попробовать загрузить из дискового кеша (~1-5 мс вместо ~100-200 мс)
+  if (kernel_cache_) {
+    try {
+      auto entry = kernel_cache_->Load(kKernelName);
+      if (entry.has_binary()) {
+        loadModuleAndFunctions(entry.binary.data(), entry.binary.size());
+        kernels_compiled_ = true;
+        con.Print(0, "FM_Corr[ROCm]",
+            "HIP kernels loaded from cache (4 kernels)");
+        return;
+      }
+    } catch (...) {
+      // Cache miss или повреждение — компилируем из исходника
+    }
+  }
+
+  // Шаг 2: компиляция из исходника через hiprtc
   const char* source = kernels::GetFMCorrelatorKernelSource();
 
   hiprtcProgram prog;
@@ -483,11 +567,32 @@ void FMCorrelatorProcessorROCm::CompileKernels() {
         std::string(hiprtcGetErrorString(rtcResult)));
   }
 
-  // -O3: агрессивная оптимизация — критично для throughput на больших батчах
-  const char* options[] = { "-O3" };
-  rtcResult = hiprtcCompileProgram(prog, 1, options);
+  // Получить целевую архитектуру GPU для --offload-arch (ISA-оптимизации)
+  std::string arch_name;
+  try {
+    auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
+    arch_name = rocm_backend->GetCore().GetArchName();
+  } catch (...) {
+    arch_name = "";
+  }
+
+  // WARP_SIZE: RDNA (gfx10xx/11xx/12xx) = 32, CDNA/Vega (gfx9xx) = 64
+  int warp_size = 32;
+  if (arch_name.find("gfx9") == 0) {
+    warp_size = 64;
+  }
+
+  std::string warp_define = "-DWARP_SIZE=" + std::to_string(warp_size);
+  std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
+
+  std::vector<const char*> opts = { "-O3", warp_define.c_str() };
+  if (!arch_flag.empty()) {
+    opts.push_back(arch_flag.c_str());
+  }
+
+  rtcResult = hiprtcCompileProgram(prog,
+      static_cast<int>(opts.size()), opts.data());
   if (rtcResult != HIPRTC_SUCCESS) {
-    // Выводим лог компилятора — там ошибки и строки исходника
     size_t logSize = 0;
     hiprtcGetProgramLogSize(prog, &logSize);
     std::string log(logSize, '\0');
@@ -501,35 +606,24 @@ void FMCorrelatorProcessorROCm::CompileKernels() {
   hiprtcGetCodeSize(prog, &codeSize);
   std::vector<char> code(codeSize);
   hiprtcGetCode(prog, code.data());
-  hiprtcDestroyProgram(&prog);  // prog больше не нужен после извлечения кода
+  hiprtcDestroyProgram(&prog);
 
-  hipError_t hipErr = hipModuleLoadData(&module_, code.data());
-  if (hipErr != hipSuccess) {
-    throw std::runtime_error(
-        "FMCorrelator CompileKernels: hipModuleLoadData failed: " +
-        std::string(hipGetErrorString(hipErr)));
-  }
+  loadModuleAndFunctions(code.data(), code.size());
 
-  // Лямбда для извлечения функций: при ошибке выгружает модуль чтобы не было утечки
-  auto getFunc = [&](hipFunction_t* fn, const char* name) {
-    hipErr = hipModuleGetFunction(fn, module_, name);
-    if (hipErr != hipSuccess) {
-      (void)hipModuleUnload(module_);
-      module_ = nullptr;
-      throw std::runtime_error(
-          std::string("FMCorrelator CompileKernels: hipModuleGetFunction(") +
-          name + ") failed: " + hipGetErrorString(hipErr));
+  // Шаг 3: сохранить бинарь в кеш для следующих запусков
+  if (kernel_cache_) {
+    try {
+      std::vector<uint8_t> binary(code.begin(), code.end());
+      kernel_cache_->Save(kKernelName, std::string(source),
+                          binary, arch_name, "fm_correlator");
+    } catch (...) {
+      // Не критично: кеш не удалось сохранить — следующий запуск перекомпилирует
     }
-  };
-
-  getFunc(&fn_apply_shifts_,    "apply_cyclic_shifts");
-  getFunc(&fn_multiply_conj_,   "multiply_conj_fused");
-  getFunc(&fn_extract_mag_,     "extract_magnitudes_real");
-  getFunc(&fn_gen_test_inputs_, "generate_test_inputs");
+  }
 
   kernels_compiled_ = true;
   con.Print(0, "FM_Corr[ROCm]",
-      "HIP kernels compiled (4 kernels: shifts, multiply, extract, gen_test)");
+      "HIP kernels compiled (4 kernels, arch=" + arch_name + ")");
 }
 
 // ════════════════════════════════════════════════════════════════════════════

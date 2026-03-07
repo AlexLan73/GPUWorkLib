@@ -14,6 +14,8 @@
 #include "filters/fir_filter_rocm.hpp"
 #include "kernels/fir_kernels_rocm.hpp"
 #include "services/console_output.hpp"
+#include "backends/rocm/rocm_backend.hpp"
+#include "services/kernel_cache_service.hpp"
 
 #include <stdexcept>
 #include <cstring>
@@ -21,7 +23,7 @@
 
 namespace {
 
-/// Helper: hipEvent → elapsed → ROCmProfilingData (уничтожает events)
+/// Helper: hipEvent -> elapsed -> ROCmProfilingData
 drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
     hipEvent_t ev_start, hipEvent_t ev_end,
     uint32_t kind = 0, const char* op = "")
@@ -42,9 +44,9 @@ drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
 
 namespace filters {
 
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 // Constructor / Destructor
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 
 FirFilterROCm::FirFilterROCm(drv_gpu_lib::IBackend* backend)
     : backend_(backend) {
@@ -103,9 +105,9 @@ FirFilterROCm& FirFilterROCm::operator=(FirFilterROCm&& other) noexcept {
   return *this;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 // Configuration
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 
 void FirFilterROCm::LoadConfig(const std::string& json_path) {
   auto cfg = FilterConfig::LoadJson(json_path);
@@ -125,9 +127,9 @@ void FirFilterROCm::SetCoefficients(const std::vector<float>& coeffs) {
   UploadCoefficients();
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 // GPU Processing
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 
 drv_gpu_lib::InputData<void*>
 FirFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points,
@@ -169,9 +171,10 @@ FirFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points,
     &pts
   };
 
-  // Launch: 1D grid covering channels * points
-  unsigned int grid_size = static_cast<unsigned int>(
-      (total_points + kBlockSize - 1) / kBlockSize);
+  // 2D grid: X = samples, Y = channels (eliminates div/mod in kernel)
+  unsigned int grid_x = static_cast<unsigned int>(
+      (points + kBlockSize - 1) / kBlockSize);
+  unsigned int grid_y = channels;
 
   hipEvent_t ev_k_s = nullptr, ev_k_e = nullptr;
   if (prof_events) {
@@ -182,7 +185,7 @@ FirFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points,
 
   err = hipModuleLaunchKernel(
       kernel_,
-      grid_size, 1, 1,
+      grid_x, grid_y, 1,
       kBlockSize, 1, 1,
       0, stream_,
       args, nullptr);
@@ -258,7 +261,7 @@ FirFilterROCm::ProcessFromCPU(
     throw std::runtime_error(
         "FirFilterROCm::ProcessFromCPU: hipMemcpyHtoDAsync(input) failed");
   }
-  (void)hipStreamSynchronize(stream_);
+  // No hipStreamSynchronize here: kernel in same stream will wait for H2D
 
   if (prof_events) {
     prof_events->push_back({"Upload",
@@ -271,9 +274,9 @@ FirFilterROCm::ProcessFromCPU(
   return result;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 // CPU Reference Implementation
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 
 std::vector<std::complex<float>>
 FirFilterROCm::ProcessCpu(
@@ -309,13 +312,36 @@ FirFilterROCm::ProcessCpu(
   return output;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 // GPU Internals
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 
 void FirFilterROCm::CompileKernel() {
   if (kernel_compiled_) return;
 
+  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
+  const std::string cache_name = "fir_filter_cf32_rocm";
+
+  // Try loading from KernelCacheService (HSACO fast path)
+  try {
+    drv_gpu_lib::KernelCacheService cache(
+        FILTERS_KERNELS_DIR, drv_gpu_lib::BackendType::ROCm);
+    auto entry = cache.Load(cache_name);
+    if (entry.has_binary()) {
+      hipError_t hipErr = hipModuleLoadData(&module_, entry.binary.data());
+      if (hipErr == hipSuccess) {
+        hipErr = hipModuleGetFunction(&kernel_, module_, "fir_filter_cf32");
+        if (hipErr == hipSuccess) {
+          kernel_compiled_ = true;
+          con.Print(0, "FirFilter[ROCm]",
+              "HIP kernel loaded from cache (fir_filter_cf32)");
+          return;
+        }
+      }
+    }
+  } catch (...) {}
+
+  // Compile from source (hiprtc)
   const char* source = kernels::GetFirDirectSource_rocm();
 
   hiprtcProgram prog;
@@ -327,15 +353,28 @@ void FirFilterROCm::CompileKernel() {
         std::string(hiprtcGetErrorString(rtcResult)));
   }
 
-  const char* options[] = { "-O3" };
-  rtcResult = hiprtcCompileProgram(prog, 1, options);
+  // -O3, --offload-arch=gfxXXXX, -DBLOCK_SIZE=256
+  std::string arch_name;
+  try {
+    auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
+    arch_name = rocm_backend->GetCore().GetArchName();
+  } catch (...) {
+    arch_name = "";
+  }
+  std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
+  std::string block_size_def = "-DBLOCK_SIZE=" + std::to_string(kBlockSize);
+  std::vector<const char*> opts = {"-O3", block_size_def.c_str()};
+  if (!arch_flag.empty())
+    opts.push_back(arch_flag.c_str());
+
+  rtcResult = hiprtcCompileProgram(prog,
+      static_cast<int>(opts.size()), opts.data());
   if (rtcResult != HIPRTC_SUCCESS) {
     size_t logSize = 0;
     hiprtcGetProgramLogSize(prog, &logSize);
     std::string log(logSize, '\0');
     hiprtcGetProgramLog(prog, &log[0]);
 
-    auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
     con.PrintError(0, "FirFilter[ROCm]", "Kernel compile log:\n" + log);
 
     (void)hiprtcDestroyProgram(&prog);
@@ -365,8 +404,18 @@ void FirFilterROCm::CompileKernel() {
 
   kernel_compiled_ = true;
 
-  drv_gpu_lib::ConsoleOutput::GetInstance().Print(0, "FirFilter[ROCm]",
-      "HIP kernel compiled (fir_filter_cf32)");
+  // Save to cache
+  try {
+    drv_gpu_lib::KernelCacheService cache(
+        FILTERS_KERNELS_DIR, drv_gpu_lib::BackendType::ROCm);
+    std::vector<uint8_t> binary(code.begin(), code.end());
+    cache.Save(cache_name, std::string(source), binary,
+               arch_name, "FIR direct-form convolution");
+  } catch (...) {}
+
+  con.Print(0, "FirFilter[ROCm]",
+      "HIP kernel compiled (fir_filter_cf32)" +
+      (arch_name.empty() ? "" : " [" + arch_name + "]"));
 }
 
 void FirFilterROCm::UploadCoefficients() {

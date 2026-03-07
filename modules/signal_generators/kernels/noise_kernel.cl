@@ -8,6 +8,11 @@
  * - Gaussian noise (Box-Muller transform)
  * - White noise (uniform [-1, 1])
  *
+ * Оптимизации:
+ *   - sincos() вместо отдельных cos/sin в Box-Muller
+ *   - native_sqrt / native_log для Box-Muller
+ *   - restrict на указателях
+ *
  * @author Kodo (AI Assistant)
  * @date 2026-02-18
  */
@@ -19,7 +24,7 @@
  * with normal distribution N(0, std_dev).
  */
 __kernel void generate_noise_gaussian(
-    __global float2* output,
+    __global float2* restrict output,
     const uint total_points,
     const float std_dev,
     const uint seed)
@@ -36,17 +41,18 @@ __kernel void generate_noise_gaussian(
     float u2 = (float)(rnd.y) / 4294967296.0f;
 
     // Box-Muller transform: uniform -> Gaussian
-    float r = sqrt(-2.0f * log(u1)) * std_dev;
-    float theta = 2.0f * M_PI_F * u2;
+    float r = native_sqrt(-2.0f * native_log(u1)) * std_dev;
+    float cos_val;
+    float sin_val = sincos(2.0f * M_PI_F * u2, &cos_val);
 
-    output[gid] = (float2)(r * cos(theta), r * sin(theta));
+    output[gid] = (float2)(r * cos_val, r * sin_val);
 }
 
 /**
  * @brief White noise (uniform [-amplitude, +amplitude])
  */
 __kernel void generate_noise_white(
-    __global float2* output,
+    __global float2* restrict output,
     const uint total_points,
     const float amplitude,
     const uint seed)

@@ -51,6 +51,9 @@ add_subdirectory(modules/vector_algebra)
 # FM Correlator module (ROCm only: frequency-domain correlation for M-sequence FM)
 add_subdirectory(modules/fm_correlator)
 
+# Strategies module (ROCm only: antenna array processor pipeline)
+add_subdirectory(modules/strategies)
+
 # Main executable (src/)
 add_subdirectory(src)
 

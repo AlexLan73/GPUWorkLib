@@ -27,9 +27,11 @@
 #include "../i_heterodyne_processor.hpp"
 #include "interface/i_backend.hpp"
 #include "services/profiling_types.hpp"
+#include "services/kernel_cache_service.hpp"
 
 #include <hip/hip_runtime.h>
 #include <hip/hiprtc.h>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -117,12 +119,14 @@ private:
   IBackend*    backend_ = nullptr;
   hipStream_t  stream_  = nullptr;
 
-  // OPT-1: Cached kernel objects (compiled once via hiprtc)
-  hipModule_t   module_multiply_ = nullptr;
-  hipModule_t   module_correct_  = nullptr;
+  // OPT-1/10: Single hiprtc module with both kernels (compiled once)
+  hipModule_t   module_          = nullptr;
   hipFunction_t kernel_multiply_ = nullptr;
   hipFunction_t kernel_correct_  = nullptr;
   bool          kernels_compiled_ = false;
+
+  // Дисковый кеш HSACO-бинарей — ~1-5 мс загрузка вместо ~200 мс hiprtc-компиляции
+  std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
 
   // OPT-2: Cached GPU buffers (reused across calls)
   void*  buf_rx_   = nullptr;   // [antennas * samples] complex

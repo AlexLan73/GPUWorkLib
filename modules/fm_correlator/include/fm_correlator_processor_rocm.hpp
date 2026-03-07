@@ -18,10 +18,12 @@
 
 #include "fm_correlator_types.hpp"
 #include "interface/i_backend.hpp"
+#include "services/kernel_cache_service.hpp"
 
 #include <hip/hip_runtime.h>
 #include <hip/hiprtc.h>
 #include <hipfft/hipfft.h>
+#include <memory>
 
 // ROCm-бэкенд FM-коррелятора: hipFFT + hiprtc-кернелы.
 // Владеет GPU-буферами, hipFFT-планами и HIP-потоками.
@@ -73,6 +75,9 @@ private:
   // multiply_conj_fused → C2R IFFT → extract_magnitudes → D2H peaks.
   FMCorrelatorResult RunCorrelationPipeline();
 
+  // H2D(inp) из raw pointer без CPU-копии — используется из ProcessWithBatching
+  FMCorrelatorResult ProcessFromPtr(const float* data, int num_signals);
+
   IBackend* backend_;   ///< Не владеем — lifetime управляется снаружи
   FMCorrelatorParams params_;
 
@@ -110,6 +115,9 @@ private:
   bool ref_prepared_ = false;       ///< true после успешного PrepareReference()
   bool buffers_allocated_ = false;
   int  current_batch_S_ = 0;        ///< S для которого выделены текущие буферы/планы
+
+  // Дисковый кеш HSACO-бинарей — ~1-5 мс загрузка вместо ~100-200 мс hiprtc-компиляции
+  std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
 
   // 256 threads/block — оптимум для RDNA/CDNA: кратно warp_size=64 (4 варпа),
   // достаточно для хорошего occupancy, не вызывает register spill для этих кернелов.

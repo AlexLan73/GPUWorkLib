@@ -27,16 +27,13 @@ __kernel void fir_filter_cf32(
 
     float2 acc = (float2)(0.0f, 0.0f);
 
-    for (uint k = 0; k < num_taps; k++) {
-        int idx = (int)n - (int)k;
-        // Граничное условие: idx < 0 — сигнал ещё не начался (нулевой padding).
-        // Causal FIR: y[n] зависит только от x[n], x[n-1], ... (нет будущего).
-        if (idx >= 0) {
-            float2 x = input[base + (uint)idx];
-            float  h = coeffs[k];
-            acc.x += h * x.x;
-            acc.y += h * x.y;
-        }
+    // Branch-free inner loop: limit k to valid range [0, min(num_taps, n+1))
+    const uint k_max = min(num_taps, n + 1u);
+    for (uint k = 0; k < k_max; k++) {
+        float2 x = input[base + n - k];
+        float  h = coeffs[k];
+        acc.x += h * x.x;
+        acc.y += h * x.y;
     }
 
     output[base + n] = acc;
@@ -63,14 +60,12 @@ __kernel void fir_filter_cf32_global(
 
     float2 acc = (float2)(0.0f, 0.0f);
 
-    for (uint k = 0; k < num_taps; k++) {
-        int idx = (int)n - (int)k;
-        if (idx >= 0) {
-            float2 x = input[base + (uint)idx];
-            float  h = coeffs[k];
-            acc.x += h * x.x;
-            acc.y += h * x.y;
-        }
+    const uint k_max = min(num_taps, n + 1u);
+    for (uint k = 0; k < k_max; k++) {
+        float2 x = input[base + n - k];
+        float  h = coeffs[k];
+        acc.x += h * x.x;
+        acc.y += h * x.y;
     }
 
     output[base + n] = acc;

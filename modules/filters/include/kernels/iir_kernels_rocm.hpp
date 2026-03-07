@@ -38,6 +38,10 @@ struct float2_t {
     float y;
 };
 
+#ifndef BLOCK_SIZE
+#define BLOCK_SIZE 256
+#endif
+
 // ─────────────────────────────────────────────────────────────────────────
 // IIR Biquad Cascade - Direct Form II Transposed (HIP)
 //
@@ -50,7 +54,8 @@ struct float2_t {
 //   w2   = b2*x[n] - a2*y[n]
 // ─────────────────────────────────────────────────────────────────────────
 
-extern "C" __global__ void iir_biquad_cascade_cf32(
+extern "C" __global__ __launch_bounds__(BLOCK_SIZE)
+void iir_biquad_cascade_cf32(
     const float2_t* __restrict__ input,
     float2_t* __restrict__ output,
     const float* __restrict__ sos_matrix,
@@ -72,18 +77,16 @@ extern "C" __global__ void iir_biquad_cascade_cf32(
         float a1 = sos_matrix[sec * 5u + 3u];
         float a2 = sos_matrix[sec * 5u + 4u];
 
+        // Source pointer: first section reads input, subsequent read output
+        // Extracted outside points-loop to eliminate per-sample branch
+        const float2_t* src = (sec == 0u) ? input : output;
+
         // State (Direct Form II Transposed)
         float w1_x = 0.0f, w1_y = 0.0f;
         float w2_x = 0.0f, w2_y = 0.0f;
 
         for (unsigned int n = 0; n < points; n++) {
-            // First section reads from input, subsequent from output
-            float2_t x;
-            if (sec == 0u) {
-                x = input[base + n];
-            } else {
-                x = output[base + n];
-            }
+            float2_t x = src[base + n];
 
             // DFII Transposed
             float2_t y;

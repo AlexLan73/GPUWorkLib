@@ -25,7 +25,8 @@
       "mcp__dap-debug__get-variables-scope",
       "mcp__dap-debug__get-debug-console",
       "Bash(ls -lh /home/alex/C++/GPUWorkLib/Python_test/*/test_*.py)",
-      "Bash(grep -l \"filters\\\\|fm_correlator\\\\|FM_correlator\" /home/alex/C++/GPUWorkLib/MemoryBank/specs/*.md)"
+      "Bash(grep -l \"filters\\\\|fm_correlator\\\\|FM_correlator\" /home/alex/C++/GPUWorkLib/MemoryBank/specs/*.md)",
+      "Bash(./GPUWorkLib.exe signal_generators)"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -53,6 +53,12 @@ if(ROCM_ENABLED)
     target_link_libraries(${MODULE_NAME} PUBLIC hip::host)
 endif()
 
+# OpenCL kernel directory (for LoadKernelFile)
+set(LCH_FARROW_KERNELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/kernels")
+target_compile_definitions(${MODULE_NAME} PRIVATE
+    LCH_FARROW_KERNELS_DIR="${LCH_FARROW_KERNELS_DIR}"
+)
+
 target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
 
 # Alias

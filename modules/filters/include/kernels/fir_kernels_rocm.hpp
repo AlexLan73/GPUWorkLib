@@ -39,16 +39,22 @@ struct float2_t {
     float y;
 };
 
+#ifndef BLOCK_SIZE
+#define BLOCK_SIZE 256
+#endif
+
 // ─────────────────────────────────────────────────────────────────────────
 // FIR Direct-Form Convolution (HIP)
 //
 // Layout: [channels * points] float2_t (channel-sequential)
 //   input[ch * points + n] = complex sample (ch, n)
 //
-// 1D grid: gid = ch * points + n
+// 2D grid: blockIdx.y = channel, blockIdx.x * blockDim.x + threadIdx.x = sample
+// Eliminates expensive integer division/modulo (~20 cycles each)
 // ─────────────────────────────────────────────────────────────────────────
 
-extern "C" __global__ void fir_filter_cf32(
+extern "C" __global__ __launch_bounds__(BLOCK_SIZE)
+void fir_filter_cf32(
     const float2_t* __restrict__ input,
     float2_t* __restrict__ output,
     const float* __restrict__ coeffs,
@@ -56,25 +62,24 @@ extern "C" __global__ void fir_filter_cf32(
     unsigned int channels,
     unsigned int points)
 {
-    unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int total = channels * points;
-    if (gid >= total) return;
+    unsigned int n  = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int ch = blockIdx.y;
+    if (n >= points || ch >= channels) return;
 
-    unsigned int ch = gid / points;
-    unsigned int n  = gid % points;
     unsigned int base = ch * points;
 
     float acc_x = 0.0f;
     float acc_y = 0.0f;
 
-    for (unsigned int k = 0; k < num_taps; k++) {
-        int idx = (int)n - (int)k;
-        if (idx >= 0) {
-            float2_t x = input[base + (unsigned int)idx];
-            float h = coeffs[k];
-            acc_x += h * x.x;
-            acc_y += h * x.y;
-        }
+    // Branch-free inner loop: limit k to valid range
+    unsigned int k_max = (n + 1u < num_taps) ? n + 1u : num_taps;
+
+    #pragma unroll 4
+    for (unsigned int k = 0; k < k_max; k++) {
+        float2_t x = input[base + n - k];
+        float h = coeffs[k];
+        acc_x += h * x.x;
+        acc_y += h * x.y;
     }
 
     float2_t result;

@@ -29,7 +29,7 @@ namespace signal_generators_all_test {
 
 inline void run() {
     // Signal Generators: CW, LFM, Noise
-    // test_signal_generators::run();
+    test_signal_generators::run();
 
     // FormSignalGenerator: getX formula, multi-channel, noise
     test_form_signal::run();

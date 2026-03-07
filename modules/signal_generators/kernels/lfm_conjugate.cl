@@ -6,12 +6,16 @@
  *   s_dc = s_rx(t) * conj(s_tx(t))
  *   Result is a tone at f_beat = mu * tau
  *
+ * Оптимизации:
+ *   - sincos() вместо отдельных cos/sin
+ *   - restrict на указателях
+ *
  * @author Kodo (AI Assistant)
  * @date 2026-02-21
  */
 
 __kernel void generate_lfm_conjugate(
-    __global float2* output,
+    __global float2* restrict output,
     const uint        num_samples,
     const float       sample_rate,
     const float       f_start,
@@ -26,5 +30,8 @@ __kernel void generate_lfm_conjugate(
     // conj(LFM) = exp(-j[pi*mu*t^2 + 2*pi*f_start*t])
     float phase = -(M_PI_F * chirp_rate * t * t + 2.0f * M_PI_F * f_start * t);
 
-    output[n] = (float2)(amplitude * cos(phase), amplitude * sin(phase));
+    float cos_val;
+    float sin_val = sincos(phase, &cos_val);
+
+    output[n] = (float2)(amplitude * cos_val, amplitude * sin_val);
 }

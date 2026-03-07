@@ -15,6 +15,8 @@
 #include "kernels/all_maxima_kernel_sources_rocm.hpp"
 #include "services/console_output.hpp"
 #include "services/gpu_profiler.hpp"
+#include "services/kernel_cache_service.hpp"
+#include "backends/rocm/rocm_backend.hpp"
 
 #include <cstring>
 #include <stdexcept>
@@ -82,8 +84,39 @@ AllMaximaPipelineROCm::~AllMaximaPipelineROCm() {
 void AllMaximaPipelineROCm::CompileKernels() {
     if (kernels_compiled_) return;
 
+    auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
+    constexpr const char* kCacheName = "all_maxima_kernels";
     const char* src = kernels::GetAllMaximaHIPKernelSource();
 
+    // ── Try loading from disk cache (HSACO) ──
+    drv_gpu_lib::KernelCacheService cache(
+        "modules/fft_maxima/kernels", drv_gpu_lib::BackendType::ROCm);
+    try {
+        auto entry = cache.Load(kCacheName);
+        if (entry.has_binary()) {
+            hipError_t hip_err = hipModuleLoadData(&module_, entry.binary.data());
+            if (hip_err == hipSuccess) {
+                hip_err = hipModuleGetFunction(&detect_kernel_, module_, "detect_all_maxima");
+                if (hip_err == hipSuccess)
+                    hip_err = hipModuleGetFunction(&block_scan_kernel_, module_, "block_scan");
+                if (hip_err == hipSuccess)
+                    hip_err = hipModuleGetFunction(&block_add_kernel_, module_, "block_add");
+                if (hip_err == hipSuccess)
+                    hip_err = hipModuleGetFunction(&compact_kernel_, module_, "compact_maxima");
+                if (hip_err == hipSuccess) {
+                    kernels_compiled_ = true;
+                    con.Print(0, "AllMaximaPipelineROCm",
+                        "Pipeline kernels loaded from cache (HSACO)");
+                    return;
+                }
+            }
+            if (module_) { hipModuleUnload(module_); module_ = nullptr; }
+        }
+    } catch (...) {
+        // Cache miss — compile from source
+    }
+
+    // ── Compile from source (hiprtc) ──
     hiprtcProgram prog;
     hiprtcResult rtc_err = hiprtcCreateProgram(&prog, src, "all_maxima_kernels.hip",
                                                 0, nullptr, nullptr);
@@ -92,15 +125,27 @@ void AllMaximaPipelineROCm::CompileKernels() {
                                   std::string(hiprtcGetErrorString(rtc_err)));
     }
 
-    const char* options[] = { "-O3" };
-    rtc_err = hiprtcCompileProgram(prog, 1, options);
+    // Build compile options: -O3, --offload-arch, -DWARP_SIZE
+    std::string arch_name;
+    try {
+        auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
+        arch_name = rocm_backend->GetCore().GetArchName();
+    } catch (...) {
+        arch_name = "";
+    }
+    std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
+    std::vector<const char*> opts = {"-O3", "-DWARP_SIZE=32"};
+    if (!arch_flag.empty())
+        opts.push_back(arch_flag.c_str());
+
+    rtc_err = hiprtcCompileProgram(prog,
+        static_cast<int>(opts.size()), opts.data());
     if (rtc_err != HIPRTC_SUCCESS) {
         size_t log_size = 0;
         hiprtcGetProgramLogSize(prog, &log_size);
         std::string log(log_size, '\0');
         hiprtcGetProgramLog(prog, log.data());
 
-        auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
         con.PrintError(0, "AllMaximaPipelineROCm", "Kernel compile log:\n" + log);
 
         (void)hiprtcDestroyProgram(&prog);
@@ -138,8 +183,18 @@ void AllMaximaPipelineROCm::CompileKernels() {
 
     kernels_compiled_ = true;
 
-    drv_gpu_lib::ConsoleOutput::GetInstance().Print(0, "AllMaximaPipelineROCm",
-        "Pipeline kernels compiled (detect + scan + compact)");
+    // ── Save to cache for next run ──
+    try {
+        std::vector<uint8_t> binary(code.begin(), code.end());
+        cache.Save(kCacheName, std::string(src), binary,
+                   arch_name, "all_maxima: detect + scan + add + compact");
+    } catch (...) {
+        // Non-critical
+    }
+
+    con.Print(0, "AllMaximaPipelineROCm",
+        "Pipeline kernels compiled (detect + scan + compact)" +
+        (arch_name.empty() ? "" : " [" + arch_name + "]"));
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -173,7 +228,8 @@ void AllMaximaPipelineROCm::ExecutePrefixSum(
     unsigned int bc = static_cast<unsigned int>(beam_count);
     unsigned int bpb = static_cast<unsigned int>(blocks_per_beam);
 
-    size_t shared_mem_size = SCAN_BLOCK_SIZE * sizeof(unsigned int);
+    // +1 padding eliminates LDS bank conflicts in Blelloch up/down sweep
+    size_t shared_mem_size = (SCAN_BLOCK_SIZE + 1) * sizeof(unsigned int);
 
     if (blocks_per_beam == 1) {
         // Single block per beam — no block_add needed
@@ -239,7 +295,7 @@ void AllMaximaPipelineROCm::ExecutePrefixSum(
     // Step 2: Recursive scan of block sums
     ExecutePrefixSum(block_sums, block_sums_scanned, blocks_per_beam, beam_count);
 
-    // Step 3: Add scanned block sums back
+    // Step 3: Add scanned block sums back (2D grid: X=positions, Y=beams)
     {
         unsigned int block_size_uint = static_cast<unsigned int>(SCAN_BLOCK_SIZE);
 
@@ -248,13 +304,13 @@ void AllMaximaPipelineROCm::ExecutePrefixSum(
             &npb, &bc, &bpb, &block_size_uint
         };
 
-        size_t total_n = beam_count * n_per_beam;
-        unsigned int grid_x = static_cast<unsigned int>((total_n + 255) / 256);
+        unsigned int grid_x = static_cast<unsigned int>((n_per_beam + 255) / 256);
+        unsigned int grid_y = bc;
         unsigned int block_x = 256;
 
         err = hipModuleLaunchKernel(
             block_add_kernel_,
-            grid_x, 1, 1,
+            grid_x, grid_y, 1,
             block_x, 1, 1,
             0, stream_,
             args, nullptr);
@@ -366,7 +422,7 @@ AllMaximaResult AllMaximaPipelineROCm::Execute(
     }
 
     // ────────────────────────────────────────────────────────────────────
-    // Step 1: Detect maxima
+    // Step 1: Detect maxima (2D grid: X=positions, Y=beams)
     // ────────────────────────────────────────────────────────────────────
 
     {
@@ -375,12 +431,13 @@ AllMaximaResult AllMaximaPipelineROCm::Execute(
             &beam_count, &nFFT, &search_start, &search_end
         };
 
-        unsigned int grid_x = static_cast<unsigned int>((total_elements + 255) / 256);
+        unsigned int grid_x = static_cast<unsigned int>((nFFT + 255) / 256);
+        unsigned int grid_y = beam_count;
         unsigned int block_x = 256;
 
         err = hipModuleLaunchKernel(
             detect_kernel_,
-            grid_x, 1, 1,
+            grid_x, grid_y, 1,
             block_x, 1, 1,
             0, stream_,
             args, nullptr);
@@ -398,7 +455,7 @@ AllMaximaResult AllMaximaPipelineROCm::Execute(
     ExecutePrefixSum(flags_buf, scan_buf, nFFT, beam_count);
 
     // ────────────────────────────────────────────────────────────────────
-    // Step 3: Stream compaction
+    // Step 3: Stream compaction (2D grid: X=positions, Y=beams)
     // ────────────────────────────────────────────────────────────────────
 
     {
@@ -412,12 +469,13 @@ AllMaximaResult AllMaximaPipelineROCm::Execute(
             &max_output_per_beam, &beam_offset
         };
 
-        unsigned int grid_x = static_cast<unsigned int>((total_elements + 255) / 256);
+        unsigned int grid_x = static_cast<unsigned int>((nFFT + 255) / 256);
+        unsigned int grid_y = beam_count;
         unsigned int block_x = 256;
 
         err = hipModuleLaunchKernel(
             compact_kernel_,
-            grid_x, 1, 1,
+            grid_x, grid_y, 1,
             block_x, 1, 1,
             0, stream_,
             args, nullptr);

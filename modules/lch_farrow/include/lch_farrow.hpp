@@ -137,7 +137,12 @@ private:
   cl_command_queue queue_ = nullptr;
   cl_device_id device_ = nullptr;
   cl_program program_ = nullptr;
+  cl_kernel kernel_ = nullptr;
   cl_mem matrix_buf_ = nullptr;
+
+  // Persistent delay buffer (resized on demand)
+  cl_mem delay_buf_ = nullptr;
+  size_t delay_buf_size_ = 0;
 };
 
 } // namespace lch_farrow

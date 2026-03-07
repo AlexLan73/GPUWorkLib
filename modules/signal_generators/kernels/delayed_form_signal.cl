@@ -13,15 +13,20 @@
  *   output[n] = sum(k=0..4) L[row][k] * input[center - 1 + k]
  *   (boundary samples = 0)
  *
+ * Оптимизации:
+ *   - sincos() вместо отдельных cos/sin для Box-Muller
+ *   - native_sqrt / native_log для Box-Muller
+ *   - restrict на всех указателях (input, output, lagrange_matrix, delay_us)
+ *
  * @author Kodo (AI Assistant)
  * @date 2026-02-18
  */
 
 __kernel void apply_fractional_delay(
-    __global const float2* input,        // Clean signal (from FormSignalGenerator)
-    __global float2* output,             // Result: delayed + noise
-    __constant float* lagrange_matrix,   // 48x5 = 240 floats
-    __global const float* delay_us,      // Per-antenna delays (us)
+    __global const float2* restrict input,
+    __global float2* restrict output,
+    __constant float* restrict lagrange_matrix,
+    __global const float* restrict delay_us,
     const uint antennas,
     const uint points,
     const float sample_rate,
@@ -29,12 +34,11 @@ __kernel void apply_fractional_delay(
     const float norm_val,
     const uint noise_seed)
 {
-    const uint gid = get_global_id(0);
-    const uint total = antennas * points;
-    if (gid >= total) return;
+    const uint sample_id  = get_global_id(0);
+    const uint antenna_id = get_global_id(1);
+    if (sample_id >= points || antenna_id >= antennas) return;
 
-    const uint antenna_id = gid / points;
-    const uint sample_id  = gid % points;
+    const uint gid = antenna_id * points + sample_id;
 
     // Convert delay (us) to samples
     float delay_samples = delay_us[antenna_id] * 1e-6f * sample_rate;
@@ -87,11 +91,13 @@ __kernel void apply_fractional_delay(
         float u1 = (float)(n_rnd.x) / 4294967296.0f + 1e-10f;
         float u2 = (float)(n_rnd.y) / 4294967296.0f;
 
-        float r = sqrt(-2.0f * log(u1));
+        float r = native_sqrt(-2.0f * native_log(u1));
         float theta = 2.0f * M_PI_F * u2;
 
-        float noise_re = noise_amplitude * norm_val * r * cos(theta);
-        float noise_im = noise_amplitude * norm_val * r * sin(theta);
+        float cos_theta, sin_theta;
+        sin_theta = sincos(theta, &cos_theta);
+        float noise_re = noise_amplitude * norm_val * r * cos_theta;
+        float noise_im = noise_amplitude * norm_val * r * sin_theta;
 
         result += (float2)(noise_re, noise_im);
     }

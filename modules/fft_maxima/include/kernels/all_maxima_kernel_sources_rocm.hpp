@@ -7,12 +7,19 @@
  * Pipeline: Detection -> Prefix Sum (Blelloch Scan) -> Stream Compaction
  *
  * Contains:
- * - detect_all_maxima: mark local maxima (mag[i] > mag[i-1] && mag[i] > mag[i+1])
+ * - detect_all_maxima: mark local maxima (2D grid, no div/mod)
  * - block_scan: Blelloch work-efficient exclusive scan (beam-aware)
- * - block_add: add scanned block sums to each element
- * - compact_maxima: stream compaction -> MaxValue[]
+ * - block_add: add scanned block sums to each element (2D grid)
+ * - compact_maxima: stream compaction -> MaxValue[] (2D grid)
  *
  * Ported from all_maxima_kernel_sources.hpp (OpenCL -> HIP).
+ *
+ * Optimizations ported from OpenCL:
+ *   - __launch_bounds__(256) on all kernels
+ *   - 2D grid for detect/block_add/compact (eliminates div/mod)
+ *   - __restrict__ on all pointer params
+ *   - INV_PI_DEG constant (multiply instead of divide)
+ *   - +1 LDS padding in block_scan (via dispatch shared_mem_size)
  *
  * @author Kodo (AI Assistant)
  * @date 2026-02-23
@@ -47,13 +54,14 @@ struct MaxValue_t {
 };
 
 // ============================================================================
-// 1. detect_all_maxima - Mark local maxima in pre-computed magnitudes
+// 1. detect_all_maxima - Mark local maxima (2D grid, no div/mod)
 // ============================================================================
 //
+// 2D grid: blockIdx.x = position blocks, blockIdx.y = beam index
 // For each element: if mag[i] > mag[i-1] && mag[i] > mag[i+1] -> flags[i] = 1
-// Reads float* (pre-computed magnitudes), no sqrt needed.
 //
-extern "C" __global__ void detect_all_maxima(
+extern "C" __launch_bounds__(256)
+__global__ void detect_all_maxima(
     const float* __restrict__ magnitudes,
     unsigned int* __restrict__ flags,
     unsigned int beam_count,
@@ -61,11 +69,13 @@ extern "C" __global__ void detect_all_maxima(
     unsigned int search_start,
     unsigned int search_end)
 {
-    unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int beam_idx = gid / nFFT;
-    unsigned int pos = gid % nFFT;
+    unsigned int pos      = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int beam_idx = blockIdx.y;
 
     if (beam_idx >= beam_count) return;
+    if (pos >= nFFT) return;
+
+    unsigned int gid = beam_idx * nFFT + pos;
 
     // Outside search range -> not a maximum
     if (pos < search_start || pos >= search_end) {
@@ -89,16 +99,15 @@ extern "C" __global__ void detect_all_maxima(
 // One work-group processes BLOCK_SIZE = 2 * blockDim.x elements.
 // All beams are scanned in parallel.
 //
-// Layout: [beam0: nFFT elements][beam1: nFFT elements][...]
-// blockIdx.x = beam_idx * blocks_per_beam + block_idx
-//
 // Dynamic shared memory: extern __shared__ unsigned int temp[]
-// Size must be BLOCK_SIZE * sizeof(uint) — passed via launch parameter.
+// Size must be (BLOCK_SIZE + 1) * sizeof(uint) — passed via launch parameter.
+// +1 padding eliminates LDS bank conflicts in up/down sweep.
 //
-extern "C" __global__ void block_scan(
+extern "C" __launch_bounds__(256)
+__global__ void block_scan(
     const unsigned int* __restrict__ input,
     unsigned int* __restrict__ output,
-    unsigned int* block_sums,
+    unsigned int* __restrict__ block_sums,
     unsigned int n_per_beam,
     unsigned int beam_count,
     unsigned int blocks_per_beam)
@@ -164,9 +173,13 @@ extern "C" __global__ void block_scan(
 }
 
 // ============================================================================
-// 3. block_add - Add scanned block sums back to each element
+// 3. block_add - Add scanned block sums back (2D grid, no div/mod for beam)
 // ============================================================================
-extern "C" __global__ void block_add(
+//
+// 2D grid: blockIdx.x = position blocks, blockIdx.y = beam index
+//
+extern "C" __launch_bounds__(256)
+__global__ void block_add(
     unsigned int* __restrict__ data,
     const unsigned int* __restrict__ block_sums,
     unsigned int n_per_beam,
@@ -174,27 +187,29 @@ extern "C" __global__ void block_add(
     unsigned int blocks_per_beam,
     unsigned int block_size)
 {
-    unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int total_n = beam_count * n_per_beam;
-    if (gid >= total_n) return;
+    unsigned int pos_in_beam = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int beam_idx    = blockIdx.y;
 
-    unsigned int beam_idx = gid / n_per_beam;
-    unsigned int pos_in_beam = gid % n_per_beam;
+    if (beam_idx >= beam_count) return;
+    if (pos_in_beam >= n_per_beam) return;
+
     unsigned int block_idx = pos_in_beam / block_size;
 
     if (block_idx > 0) {
+        unsigned int gid = beam_idx * n_per_beam + pos_in_beam;
         data[gid] += block_sums[beam_idx * blocks_per_beam + block_idx];
     }
 }
 
 // ============================================================================
-// 4. compact_maxima - Stream compaction -> MaxValue[]
+// 4. compact_maxima - Stream compaction -> MaxValue[] (2D grid)
 // ============================================================================
 //
-// For each flags[i] == 1: write MaxValue to compact output using scan_output[i]
-// as the write index. Also writes beam counts.
+// 2D grid: blockIdx.x = position blocks, blockIdx.y = beam index
+// For each flags[i] == 1: write MaxValue using scan_output[i] as write index.
 //
-extern "C" __global__ void compact_maxima(
+extern "C" __launch_bounds__(256)
+__global__ void compact_maxima(
     const float2_t* __restrict__ fft_output,
     const float* __restrict__ magnitudes,
     const unsigned int* __restrict__ flags,
@@ -207,12 +222,13 @@ extern "C" __global__ void compact_maxima(
     unsigned int max_output_per_beam,
     unsigned int beam_offset)
 {
-    unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int beam_idx = gid / nFFT;
-    unsigned int pos = gid % nFFT;
+    unsigned int pos      = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int beam_idx = blockIdx.y;
 
     if (beam_idx >= beam_count) return;
+    if (pos >= nFFT) return;
 
+    unsigned int gid = beam_idx * nFFT + pos;
     unsigned int global_beam_idx = beam_offset + beam_idx;
 
     // Last element in beam -> write count
@@ -234,8 +250,7 @@ extern "C" __global__ void compact_maxima(
             float re = cv.x;
             float im = cv.y;
             float mag = magnitudes[gid];
-            float phase_rad = atan2f(im, re);
-            float phase_deg = phase_rad * 180.0f / 3.14159265358979323846f;
+            float phase_deg = atan2f(im, re) * 57.29577951f;
             float bin_width = sample_rate / (float)nFFT;
             float refined_freq = (float)pos * bin_width;
 

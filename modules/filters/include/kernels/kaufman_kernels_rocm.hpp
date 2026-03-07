@@ -56,28 +56,36 @@ void kaufman_kernel(
     }
     if (points <= N) return;
 
-    // KAMA initial state = last sample of warmup period
+    // ── Sliding window for Volatility: O(1) per sample instead of O(N) ──
+    float delta_re[128], delta_im[128];
+    float vol_re = 0.0f, vol_im = 0.0f;
+    unsigned int head = 0;
+
+    for (unsigned int i = 0; i < N; i++) {
+        float dr = fabsf(in[base + i + 1].x - in[base + i].x);
+        float di = fabsf(in[base + i + 1].y - in[base + i].y);
+        delta_re[i] = dr;
+        delta_im[i] = di;
+        vol_re += dr;
+        vol_im += di;
+    }
+
     float2_t kama = in[base + N - 1];
 
     for (unsigned int n = N; n < points; n++) {
         float2_t x = in[base + n];
 
-        // 1. Direction: |x[n] - x[n-N]|
+        // 1. Direction
         float dir_re = fabsf(x.x - in[base + n - N].x);
         float dir_im = fabsf(x.y - in[base + n - N].y);
 
-        // 2. Volatility: sum |x[i] - x[i-1]| for i = n-N+1..n (N terms)
-        float vol_re = 0.0f, vol_im = 0.0f;
-        for (unsigned int i = n - N + 1; i <= n; i++) {
-            vol_re += fabsf(in[base + i].x - in[base + i - 1].x);
-            vol_im += fabsf(in[base + i].y - in[base + i - 1].y);
-        }
+        // 2. Volatility: sliding window (vol_re, vol_im)
 
-        // 3. Efficiency Ratio — __frcp_rn instead of full division
-        float er_re = (vol_re > eps) ? dir_re * __frcp_rn(vol_re) : 0.0f;
-        float er_im = (vol_im > eps) ? dir_im * __frcp_rn(vol_im) : 0.0f;
+        // 3. ER — branchless
+        float er_re = dir_re * __frcp_rn(vol_re + eps);
+        float er_im = dir_im * __frcp_rn(vol_im + eps);
 
-        // 4. Smoothing Constant: SC = (ER*(fast-slow)+slow)^2
+        // 4. SC = (ER*(fast-slow)+slow)^2
         float sc_re = er_re * sc_diff + slow_sc;
         float sc_im = er_im * sc_diff + slow_sc;
         sc_re *= sc_re;
@@ -86,8 +94,18 @@ void kaufman_kernel(
         // 5. Update KAMA
         kama.x = kama.x + sc_re * (x.x - kama.x);
         kama.y = kama.y + sc_im * (x.y - kama.y);
-
         out[base + n] = kama;
+
+        // 6. Sliding window update
+        if (n + 1 < points) {
+            float new_dr = fabsf(in[base + n + 1].x - in[base + n].x);
+            float new_di = fabsf(in[base + n + 1].y - in[base + n].y);
+            vol_re += new_dr - delta_re[head];
+            vol_im += new_di - delta_im[head];
+            delta_re[head] = new_dr;
+            delta_im[head] = new_di;
+            if (++head >= N) head = 0;
+        }
     }
 }
 

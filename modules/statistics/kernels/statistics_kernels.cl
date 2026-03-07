@@ -19,8 +19,10 @@ struct WelfordResult {
 };
 
 // =========================================================================
-// Kernel 1: compute_magnitudes   [TASK-4.1, 4.5]
+// Kernel 1: compute_magnitudes   [TASK-4.1, 4.5, P3-D]
 // Still used for ComputeMedian path (magnitudes → rocPRIM sort).
+// P3-D: double-load — each thread processes 2 elements for better ILP.
+// Grid: ceil(total / (blockDim.x * 2))
 // =========================================================================
 __launch_bounds__(256)
 extern "C" __global__ void compute_magnitudes(
@@ -28,17 +30,24 @@ extern "C" __global__ void compute_magnitudes(
     float* __restrict__ magnitudes,
     unsigned int total_elements)
 {
-    unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (gid >= total_elements) return;
+    unsigned int gid1 = blockIdx.x * blockDim.x * 2 + threadIdx.x;
+    unsigned int gid2 = gid1 + blockDim.x;
 
-    float2_t z = input[gid];
-    magnitudes[gid] = __fsqrt_rn(z.x * z.x + z.y * z.y);
+    if (gid1 < total_elements) {
+        float2_t z = input[gid1];
+        magnitudes[gid1] = __fsqrt_rn(z.x * z.x + z.y * z.y);
+    }
+    if (gid2 < total_elements) {
+        float2_t z = input[gid2];
+        magnitudes[gid2] = __fsqrt_rn(z.x * z.x + z.y * z.y);
+    }
 }
 
 // =========================================================================
-// Kernel 2: mean_reduce_phase1   [TASK-4.1, 4.2, 4.3, 4.4, P2-B]
+// Kernel 2: mean_reduce_phase1   [TASK-4.1, 4.2, 4.3, 4.4, P2-B, P3-A]
 // Block-level complex sum with double-load + warp shuffle.
-// Grid: (blocks_per_beam * beam_count, 1, 1)  where
+// P3-A: 2D grid — blockIdx.y = beam_id, blockIdx.x = block_in_beam
+//   Grid: (blocks_per_beam, beam_count, 1)
 //   blocks_per_beam = ceil(n_point / (blockDim.x * 2))  -- double-load!
 // P2-B: LDS accessed as float[] with +1 padding to avoid bank conflicts.
 // =========================================================================
@@ -47,8 +56,7 @@ extern "C" __global__ void mean_reduce_phase1(
     const float2_t* __restrict__ input,
     float2_t* __restrict__ partial_sums,
     unsigned int beam_count,
-    unsigned int n_point,
-    unsigned int blocks_per_beam)   // TASK-4.2: passed from CPU, avoids intra-kernel div
+    unsigned int n_point)
 {
     // P2-B: LDS with +1 padding per row to avoid bank conflicts
     __shared__ float sdata_x[256 + 1];
@@ -57,9 +65,9 @@ extern "C" __global__ void mean_reduce_phase1(
     unsigned int tid        = threadIdx.x;
     unsigned int block_size = blockDim.x;
 
-    // Determine beam and block position (2 divs, blocks_per_beam is from CPU)
-    unsigned int beam_id       = blockIdx.x / blocks_per_beam;
-    unsigned int block_in_beam = blockIdx.x % blocks_per_beam;
+    // P3-A: 2D grid eliminates div/mod (~40 cycles saved per thread)
+    unsigned int beam_id       = blockIdx.y;
+    unsigned int block_in_beam = blockIdx.x;
 
     if (beam_id >= beam_count) return;
 
@@ -94,8 +102,9 @@ extern "C" __global__ void mean_reduce_phase1(
             vy += __shfl_down(vy, offset);
         }
         if (tid == 0) {
-            partial_sums[blockIdx.x].x = vx;
-            partial_sums[blockIdx.x].y = vy;
+            unsigned int out_idx = beam_id * gridDim.x + block_in_beam;
+            partial_sums[out_idx].x = vx;
+            partial_sums[out_idx].y = vy;
         }
     }
 }
@@ -161,9 +170,11 @@ extern "C" __global__ void mean_reduce_final(
 }
 
 // =========================================================================
-// Kernel 4: welford_stats   [TASK-4.1, 4.4, 4.5]
+// Kernel 4: welford_stats   [TASK-4.1, 4.4, 4.5, P3-B, P3-C]
 // Optimized version of original kernel (kept for backward compat).
 // Reads both input + magnitudes (used internally if needed).
+// P3-B: LDS +1 padding to avoid bank conflicts in tree reduction.
+// P3-C: #pragma unroll 4 on grid-stride loop for ILP.
 // =========================================================================
 __launch_bounds__(256)
 extern "C" __global__ void welford_stats(
@@ -179,15 +190,17 @@ extern "C" __global__ void welford_stats(
     unsigned int tid        = threadIdx.x;
     unsigned int block_size = blockDim.x;
 
+    // P3-B: +1 padding per array to avoid LDS bank conflicts
     extern __shared__ char shared_mem[];
     float* s_sum_re  = (float*)shared_mem;
-    float* s_sum_im  = s_sum_re  + block_size;
-    float* s_sum_mag = s_sum_im  + block_size;
-    float* s_sum_sq  = s_sum_mag + block_size;
+    float* s_sum_im  = s_sum_re  + block_size + 1;
+    float* s_sum_mag = s_sum_im  + block_size + 1;
+    float* s_sum_sq  = s_sum_mag + block_size + 1;
 
     float sum_re = 0.0f, sum_im = 0.0f, sum_mag = 0.0f, sum_sq = 0.0f;
     unsigned int base = beam_id * n_point;
 
+    #pragma unroll 4
     for (unsigned int i = tid; i < n_point; i += block_size) {
         float2_t z  = input[base + i];
         float mag   = magnitudes[base + i];
@@ -238,10 +251,11 @@ extern "C" __global__ void welford_stats(
 }
 
 // =========================================================================
-// Kernel 5: welford_fused   [TASK-1, TASK-4.1, 4.4, 4.5]
+// Kernel 5: welford_fused   [TASK-1, TASK-4.1, 4.4, 4.5, P3-B, P3-C]
 // Single pass: reads only input[], computes |z| on the fly.
 // Eliminates separate compute_magnitudes call for ComputeStatistics path.
-// Expected speedup: -40-50% on ComputeStatistics.
+// P3-B: LDS +1 padding to avoid bank conflicts in tree reduction.
+// P3-C: #pragma unroll 4 on grid-stride loop for ILP.
 // =========================================================================
 __launch_bounds__(256)
 extern "C" __global__ void welford_fused(
@@ -256,16 +270,18 @@ extern "C" __global__ void welford_fused(
     unsigned int tid        = threadIdx.x;
     unsigned int block_size = blockDim.x;
 
+    // P3-B: +1 padding per array to avoid LDS bank conflicts
     extern __shared__ char shared_mem[];
     float* s_sum_re  = (float*)shared_mem;
-    float* s_sum_im  = s_sum_re  + block_size;
-    float* s_sum_mag = s_sum_im  + block_size;
-    float* s_sum_sq  = s_sum_mag + block_size;
+    float* s_sum_im  = s_sum_re  + block_size + 1;
+    float* s_sum_mag = s_sum_im  + block_size + 1;
+    float* s_sum_sq  = s_sum_mag + block_size + 1;
 
     float sum_re = 0.0f, sum_im = 0.0f, sum_mag = 0.0f, sum_sq = 0.0f;
     unsigned int base = beam_id * n_point;
 
-    // Grid-stride loop: reads input ONCE, computes |z| on the fly (TASK-1)
+    // P3-C: unroll grid-stride loop for ILP (overlap sqrt with memory latency)
+    #pragma unroll 4
     for (unsigned int i = tid; i < n_point; i += block_size) {
         float2_t z   = input[base + i];
         float mag    = __fsqrt_rn(z.x * z.x + z.y * z.y);  // TASK-4.5

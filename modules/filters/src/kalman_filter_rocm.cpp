@@ -295,7 +295,7 @@ KalmanFilterROCm::ProcessFromCPU(
     cached_input_size_ = buffer_size;
   }
 
-  hipMemcpyHtoD(cached_input_buf_, data.data(), buffer_size);
+  hipMemcpyHtoDAsync(cached_input_buf_, data.data(), buffer_size, stream_);
   return Process(cached_input_buf_, channels, points);
 }
 

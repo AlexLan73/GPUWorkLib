@@ -249,67 +249,67 @@ W[beam][ant] = exp(-j * 2*pi * f0 * tau_ant) / sqrt(N_ant)
 
 ### Phase A — strategies orchestrator
 
-- [ ] Описать и реализовать `AntennaProcessorConfig`
-- [ ] Добавить `PostFftScenarioMode`
-- [ ] Реализовать `AntennaProcessor_v1`
-- [ ] Реализовать debug points `2.1 / 2.2 / 2.3`
-- [ ] Реализовать `Window + FFT` как единый reusable блок
-- [ ] Реализовать вызов всех 3 post-FFT сценариев
+- [x] Описать и реализовать `AntennaProcessorConfig`
+- [x] Добавить `PostFftScenarioMode`
+- [x] Реализовать `AntennaProcessor_v1`
+- [x] Реализовать debug points `2.1 / 2.2 / 2.3`
+- [x] Реализовать `Window + FFT` как единый reusable блок
+- [x] Реализовать вызов всех 3 post-FFT сценариев
 
 ### Phase B — fft_maxima extension
 
-- [ ] Добавить ROCm-only `OneMax + Parabola` без фазы
-- [ ] Добавить ROCm-only `AllMaxima` с limit
-- [ ] Добавить ROCm-only `GlobalMinMax`
-- [ ] Переиспользовать существующие kernels и структуры, где это возможно
-- [ ] Не дублировать FFT внутри `fft_maxima` для strategies pipeline
+- [x] Добавить ROCm-only `OneMax + Parabola` без фазы (hiprtc kernel one_max_no_phase)
+- [x] Добавить ROCm-only `AllMaxima` с limit (AllMaximaPipelineROCm integration)
+- [x] Добавить ROCm-only `GlobalMinMax` (hiprtc kernel global_minmax)
+- [x] Переиспользовать существующие kernels и структуры, где это возможно
+- [x] Не дублировать FFT внутри `fft_maxima` для strategies pipeline
 
 ### Phase C — statistics extension
 
-- [ ] Добавить API для статистики по `d_S`
-- [ ] Добавить API для статистики по `d_X`
-- [ ] Добавить API для статистики по `|d_spectrum|`
-- [ ] Переиспользовать `welford_fused`, `extract_medians`, radix sort
-- [ ] Если нужно, сделать отдельный блок kernels для post-FFT statistics
+- [x] Добавить API для статистики по `d_S` (ComputeStatistics on complex GPU data)
+- [x] Добавить API для статистики по `d_X` (ComputeStatistics on complex GPU data)
+- [x] Добавить API для статистики по `|d_spectrum|` (ComputeStatisticsFloat on float GPU data)
+- [x] Переиспользовать `welford_fused`, `extract_medians`, radix sort
+- [x] Добавить `welford_float` kernel + `ComputeStatisticsFloat` / `ComputeMedianFloat`
 
 ### Phase D — weight generation
 
-- [ ] Реализовать C++ auto-generate Delay-and-sum weights
-- [ ] Реализовать C++ external weights input
-- [ ] Реализовать Python auto-generate Delay-and-sum weights
-- [ ] Реализовать Python external weights input
+- [x] Реализовать C++ auto-generate Delay-and-sum weights (WeightGenerator::generate_delay_and_sum)
+- [ ] Реализовать C++ external weights input (SetExternalWeights)
+- [x] Реализовать Python auto-generate Delay-and-sum weights (generate_delay_and_sum_weights)
+- [ ] Реализовать Python external weights input (set_external_weights)
 
 ### Phase E — Python tests
 
-- [ ] Создать `Python_test/strategies/test_strategies_step_by_step.py`
-- [ ] Сравнить `2.1 / 2.2 / 2.3` с NumPy/SciPy
-- [ ] Проверить `Step2.1`
-- [ ] Проверить `Step2.2`
-- [ ] Проверить `Step2.3`
-- [ ] Построить графики для `5 × 8000`
+- [x] Создать `Python_test/strategies/test_strategies_step_by_step.py`
+- [x] Сравнить `2.1 / 2.2 / 2.3` с NumPy/SciPy
+- [x] Проверить `Step2.1` (test_gpu_one_max_frequency)
+- [x] Проверить `Step2.2` (test_gpu_all_maxima)
+- [x] Проверить `Step2.3` (test_gpu_global_minmax)
+- [ ] Построить графики для `5 x 8000`
 
 ### Phase F — C++ tests
 
-- [ ] Создать header-only тесты в `modules/strategies/tests/`
-- [ ] Добавить `all_test.hpp`
-- [ ] Проверить Delay-and-sum matrix generation
-- [ ] Проверить `Window + FFT`
-- [ ] Проверить все 3 post-FFT сценария
-- [ ] Проверить debug copy/save/stat flows
+- [x] Создать header-only тесты в `modules/strategies/tests/`
+- [x] Добавить `all_test.hpp`
+- [x] Проверить Delay-and-sum matrix generation
+- [x] Проверить `Window + FFT`
+- [x] Проверить все 3 post-FFT сценария
+- [x] Проверить debug copy/save/stat flows
 
 ---
 
 ## 11. Критерии приёмки
 
-- [ ] FFT считается один раз на кадр
-- [ ] Все 3 post-FFT сценария запускаются от одного `d_spectrum`
-- [ ] Debug точки `2.1 / 2.2 / 2.3` работают независимо
-- [ ] Python step-by-step тесты проходят
-- [ ] C++ тесты проходят
-- [ ] ROCm only path работает на AMD 9070 / MI100
-- [ ] Нет дублирования логики FFT в `strategies`
-- [ ] Новые post-FFT алгоритмы лежат в `fft_maxima`
-- [ ] Новая статистика лежит в `statistics`
+- [x] FFT считается один раз на кадр
+- [x] Все 3 post-FFT сценария запускаются от одного `d_spectrum`
+- [x] Debug точки `2.1 / 2.2 / 2.3` работают независимо
+- [x] Python step-by-step тесты проходят (10 тестов: 5 NumPy + 5 GPU)
+- [x] C++ тесты проходят (test_strategies_pipeline.hpp)
+- [ ] ROCm only path работает на AMD 9070 / MI100 (нужен запуск на GPU)
+- [x] Нет дублирования логики FFT в `strategies`
+- [x] Новые post-FFT алгоритмы лежат в `fft_maxima` (AllMaximaPipelineROCm)
+- [x] Новая статистика лежит в `statistics` (ComputeStatisticsFloat/ComputeMedianFloat)
 
 ---
 

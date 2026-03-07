@@ -75,6 +75,10 @@ if(TARGET GPUWorkLib::fm_correlator)
     target_link_libraries(gpuworklib PRIVATE fm_correlator)
 endif()
 
+if(TARGET GPUWorkLib::strategies)
+    target_link_libraries(gpuworklib PRIVATE strategies)
+endif()
+
 if(CLFFT_FOUND AND CLFFT_LIB)
     target_link_libraries(gpuworklib PRIVATE "${CLFFT_LIB}")
 endif()
@@ -92,6 +96,7 @@ target_include_directories(gpuworklib PRIVATE
     ${CMAKE_SOURCE_DIR}/modules/statistics/include
     ${CMAKE_SOURCE_DIR}/modules/vector_algebra/include
     ${CMAKE_SOURCE_DIR}/modules/fm_correlator/include
+    ${CMAKE_SOURCE_DIR}/modules/strategies/include
     ${CMAKE_SOURCE_DIR}/modules
     ${Python3_NumPy_INCLUDE_DIRS}
 )

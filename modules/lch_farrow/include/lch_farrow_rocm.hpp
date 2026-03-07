@@ -29,6 +29,9 @@
 #include <string>
 #include <cstdint>
 #include <utility>
+#include <memory>
+
+namespace drv_gpu_lib { class KernelCacheService; }
 
 namespace lch_farrow {
 
@@ -154,6 +157,13 @@ private:
 
   // GPU buffer for matrix (persistent)
   void* matrix_buf_ = nullptr;
+
+  // GPU buffer for delay_us (persistent, resized on demand)
+  void* delay_buf_ = nullptr;
+  size_t delay_buf_size_ = 0;
+
+  // HSACO disk cache (avoids hiprtc recompile ~100-200ms)
+  std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
 
   static constexpr unsigned int kBlockSize = 256;
 };

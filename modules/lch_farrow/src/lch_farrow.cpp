@@ -13,6 +13,7 @@
  */
 
 #include "lch_farrow.hpp"
+#include "kernels/kernel_loader.hpp"
 
 #include <stdexcept>
 #include <cmath>
@@ -130,125 +131,7 @@ static const float kBuiltinLagrangeMatrix[48 * 5] = {
   -0.4347f,-13.3521f, 20.0547f,  0.4347f,  0.0f
 };
 
-// ════════════════════════════════════════════════════════════════════════════
-// OpenCL Kernel: Fractional delay (Lagrange 48x5) + optional Noise
-// ════════════════════════════════════════════════════════════════════════════
-
-static const char* LCH_FARROW_KERNEL_SOURCE = R"CL(
-
-// Philox-2x32-10: counter-based PRNG
-uint2 philox2x32_round(uint2 ctr, uint key) {
-    const uint PHILOX_M = 0xD2511F53u;
-    uint hi = mul_hi(ctr.x, PHILOX_M);
-    uint lo = ctr.x * PHILOX_M;
-    return (uint2)(hi ^ key ^ ctr.y, lo);
-}
-
-uint2 philox2x32_10(uint2 ctr, uint key) {
-    const uint PHILOX_BUMP = 0x9E3779B9u;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
-    ctr = philox2x32_round(ctr, key);
-    return ctr;
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// LCH Farrow: standalone fractional delay kernel (DelayedFormSignal_Kernel_CORRECT)
-//
-// delay_us -> delay_samples = delay_us * 1e-6 * sample_rate
-// read_pos = sample_id - delay_samples
-// center = floor(read_pos), frac = read_pos - center
-// row = uint(frac * 48) % 48
-// output[n] = sum(L[row][k] * input[center - 1 + k], k=0..4)
-// ─────────────────────────────────────────────────────────────────────────
-
-__kernel void lch_farrow_delay(
-    __global const float2* input,
-    __global float2* output,
-    __constant float* lagrange_matrix,
-    __global const float* delay_us,
-    const uint antennas,
-    const uint points,
-    const float sample_rate,
-    const float noise_amplitude,
-    const float norm_val,
-    const uint noise_seed)
-{
-    const uint gid = get_global_id(0);
-    const uint total = antennas * points;
-    if (gid >= total) return;
-
-    const uint antenna_id = gid / points;
-    const uint sample_id  = gid % points;
-
-    // delay in samples
-    float delay_samples = delay_us[antenna_id] * 1e-6f * sample_rate;
-    float read_pos = (float)sample_id - delay_samples;
-
-    // Before signal start -> zero
-    if (read_pos < 0.0f) {
-        output[gid] = (float2)(0.0f, 0.0f);
-        return;
-    }
-
-    // center = floor(read_pos), frac = read_pos - center
-    int center = (int)floor(read_pos);
-    float frac = read_pos - (float)center;
-    uint row = ((uint)(frac * 48.0f)) % 48u;
-
-    // 5 Lagrange coefficients
-    float L0 = lagrange_matrix[row * 5u + 0u];
-    float L1 = lagrange_matrix[row * 5u + 1u];
-    float L2 = lagrange_matrix[row * 5u + 2u];
-    float L3 = lagrange_matrix[row * 5u + 3u];
-    float L4 = lagrange_matrix[row * 5u + 4u];
-
-    // Read 5 input samples around center (center-1, center, center+1, center+2, center+3)
-    uint base = antenna_id * points;
-
-    #define READ_SAMPLE(idx) \
-        (((idx) >= 0 && (idx) < (int)points) ? \
-         input[base + (uint)(idx)] : (float2)(0.0f, 0.0f))
-
-    float2 s0 = READ_SAMPLE(center - 1);
-    float2 s1 = READ_SAMPLE(center);
-    float2 s2 = READ_SAMPLE(center + 1);
-    float2 s3 = READ_SAMPLE(center + 2);
-    float2 s4 = READ_SAMPLE(center + 3);
-
-    #undef READ_SAMPLE
-
-    // 5-point Lagrange interpolation
-    float2 result = L0 * s0 + L1 * s1 + L2 * s2 + L3 * s3 + L4 * s4;
-
-    // Optional noise (Philox + Box-Muller)
-    if (noise_amplitude > 0.0f) {
-        uint2 n_ctr = (uint2)(gid, noise_seed);
-        uint2 n_rnd = philox2x32_10(n_ctr, 0xCD9E8D57u);
-
-        float u1 = (float)(n_rnd.x) / 4294967296.0f + 1e-10f;
-        float u2 = (float)(n_rnd.y) / 4294967296.0f;
-
-        float r = sqrt(-2.0f * log(u1));
-        float theta = 2.0f * M_PI_F * u2;
-
-        float noise_re = noise_amplitude * norm_val * r * cos(theta);
-        float noise_im = noise_amplitude * norm_val * r * sin(theta);
-
-        result += (float2)(noise_re, noise_im);
-    }
-
-    output[gid] = result;
-}
-
-)CL";
+// OpenCL kernel loaded from kernels/lch_farrow_delay.cl via LoadKernelFile
 
 // ════════════════════════════════════════════════════════════════════════════
 // Constructor / Destructor
@@ -292,9 +175,15 @@ LchFarrow::LchFarrow(LchFarrow&& other) noexcept
     , queue_(other.queue_)
     , device_(other.device_)
     , program_(other.program_)
-    , matrix_buf_(other.matrix_buf_) {
+    , kernel_(other.kernel_)
+    , matrix_buf_(other.matrix_buf_)
+    , delay_buf_(other.delay_buf_)
+    , delay_buf_size_(other.delay_buf_size_) {
   other.program_ = nullptr;
+  other.kernel_ = nullptr;
   other.matrix_buf_ = nullptr;
+  other.delay_buf_ = nullptr;
+  other.delay_buf_size_ = 0;
 }
 
 LchFarrow& LchFarrow::operator=(LchFarrow&& other) noexcept {
@@ -312,9 +201,15 @@ LchFarrow& LchFarrow::operator=(LchFarrow&& other) noexcept {
     queue_ = other.queue_;
     device_ = other.device_;
     program_ = other.program_;
+    kernel_ = other.kernel_;
     matrix_buf_ = other.matrix_buf_;
+    delay_buf_ = other.delay_buf_;
+    delay_buf_size_ = other.delay_buf_size_;
     other.program_ = nullptr;
+    other.kernel_ = nullptr;
     other.matrix_buf_ = nullptr;
+    other.delay_buf_ = nullptr;
+    other.delay_buf_size_ = 0;
   }
   return *this;
 }
@@ -433,37 +328,34 @@ LchFarrow::Process(cl_mem input_buf, uint32_t antennas, uint32_t points,
         "LchFarrow: clCreateBuffer(output) failed: " + std::to_string(err));
   }
 
-  // Upload delay_us (async with event for profiling)
-  cl_mem delay_buf = clCreateBuffer(
-      context_, CL_MEM_READ_ONLY,
-      delay_us_.size() * sizeof(float), nullptr, &err);
-  if (err != CL_SUCCESS) {
-    clReleaseMemObject(output_buf);
-    throw std::runtime_error(
-        "LchFarrow: clCreateBuffer(delay) failed: " + std::to_string(err));
+  // Persistent delay_buf_: resize only when needed
+  size_t delay_size = delay_us_.size() * sizeof(float);
+  if (delay_buf_size_ < delay_size) {
+    if (delay_buf_) clReleaseMemObject(delay_buf_);
+    delay_buf_ = clCreateBuffer(
+        context_, CL_MEM_READ_ONLY, delay_size, nullptr, &err);
+    if (err != CL_SUCCESS) {
+      delay_buf_ = nullptr;
+      delay_buf_size_ = 0;
+      clReleaseMemObject(output_buf);
+      throw std::runtime_error(
+          "LchFarrow: clCreateBuffer(delay) failed: " + std::to_string(err));
+    }
+    delay_buf_size_ = delay_size;
   }
+
   cl_event upload_event = nullptr;
   err = clEnqueueWriteBuffer(
-      queue_, delay_buf, CL_FALSE, 0,
-      delay_us_.size() * sizeof(float), delay_us_.data(),
+      queue_, delay_buf_, CL_FALSE, 0,
+      delay_size, delay_us_.data(),
       0, nullptr, &upload_event);
   if (err != CL_SUCCESS) {
     clReleaseMemObject(output_buf);
-    clReleaseMemObject(delay_buf);
     throw std::runtime_error(
         "LchFarrow: clEnqueueWriteBuffer(delay) failed: " + std::to_string(err));
   }
 
-  // Create kernel
-  cl_kernel k = clCreateKernel(program_, "lch_farrow_delay", &err);
-  if (err != CL_SUCCESS) {
-    clReleaseMemObject(output_buf);
-    clReleaseMemObject(delay_buf);
-    throw std::runtime_error(
-        "LchFarrow: clCreateKernel failed: " + std::to_string(err));
-  }
-
-  // Set arguments
+  // Set arguments (kernel_ created once in CompileKernel)
   uint32_t ant = antennas;
   uint32_t pts = points;
   float sr = sample_rate_;
@@ -477,36 +369,33 @@ LchFarrow::Process(cl_mem input_buf, uint32_t antennas, uint32_t points,
         & 0xFFFFFFFF);
   }
 
-  err  = clSetKernelArg(k, 0, sizeof(cl_mem),   &input_buf);
-  err |= clSetKernelArg(k, 1, sizeof(cl_mem),   &output_buf);
-  err |= clSetKernelArg(k, 2, sizeof(cl_mem),   &matrix_buf_);
-  err |= clSetKernelArg(k, 3, sizeof(cl_mem),   &delay_buf);
-  err |= clSetKernelArg(k, 4, sizeof(uint32_t), &ant);
-  err |= clSetKernelArg(k, 5, sizeof(uint32_t), &pts);
-  err |= clSetKernelArg(k, 6, sizeof(float),    &sr);
-  err |= clSetKernelArg(k, 7, sizeof(float),    &an);
-  err |= clSetKernelArg(k, 8, sizeof(float),    &nv);
-  err |= clSetKernelArg(k, 9, sizeof(uint32_t), &ns);
+  err  = clSetKernelArg(kernel_, 0, sizeof(cl_mem),   &input_buf);
+  err |= clSetKernelArg(kernel_, 1, sizeof(cl_mem),   &output_buf);
+  err |= clSetKernelArg(kernel_, 2, sizeof(cl_mem),   &matrix_buf_);
+  err |= clSetKernelArg(kernel_, 3, sizeof(cl_mem),   &delay_buf_);
+  err |= clSetKernelArg(kernel_, 4, sizeof(uint32_t), &ant);
+  err |= clSetKernelArg(kernel_, 5, sizeof(uint32_t), &pts);
+  err |= clSetKernelArg(kernel_, 6, sizeof(float),    &sr);
+  err |= clSetKernelArg(kernel_, 7, sizeof(float),    &an);
+  err |= clSetKernelArg(kernel_, 8, sizeof(float),    &nv);
+  err |= clSetKernelArg(kernel_, 9, sizeof(uint32_t), &ns);
 
   if (err != CL_SUCCESS) {
-    clReleaseKernel(k);
     clReleaseMemObject(output_buf);
-    clReleaseMemObject(delay_buf);
     throw std::runtime_error("LchFarrow: clSetKernelArg failed");
   }
 
-  // Launch kernel (with event for profiling)
-  size_t local_size = 256;
-  size_t global_size =
-      ((total_points + local_size - 1) / local_size) * local_size;
+  // 2D NDRange: dim0=samples (ceil to local), dim1=antennas
+  size_t local_2d[2] = { 256, 1 };
+  size_t global_2d[2] = {
+      ((static_cast<size_t>(points) + 255) / 256) * 256,
+      static_cast<size_t>(antennas)
+  };
 
   cl_event kernel_event = nullptr;
   err = clEnqueueNDRangeKernel(
-      queue_, k, 1, nullptr,
-      &global_size, &local_size, 1, &upload_event, &kernel_event);
-
-  clReleaseKernel(k);
-  clReleaseMemObject(delay_buf);
+      queue_, kernel_, 2, nullptr,
+      global_2d, local_2d, 1, &upload_event, &kernel_event);
 
   if (err != CL_SUCCESS) {
     if (upload_event) clReleaseEvent(upload_event);
@@ -516,7 +405,7 @@ LchFarrow::Process(cl_mem input_buf, uint32_t antennas, uint32_t points,
         "LchFarrow: enqueue failed: " + std::to_string(err));
   }
 
-  // upload_event уже использован как wait в clEnqueueNDRangeKernel — теперь можно собрать/освободить
+  // upload_event уже использован как wait — собрать/освободить
   CollectOrRelease(upload_event, "Upload_delay", prof_events);
   CollectOrRelease(kernel_event, "Kernel", prof_events);
 
@@ -583,10 +472,12 @@ LchFarrow::ProcessCpu(
 
 void LchFarrow::CompileKernel() {
   cl_int err;
-  size_t source_len = strlen(LCH_FARROW_KERNEL_SOURCE);
+  std::string kernel_source = LoadKernelFile("lch_farrow_delay.cl");
+  const char* source_ptr = kernel_source.c_str();
+  size_t source_len = kernel_source.size();
 
   program_ = clCreateProgramWithSource(
-      context_, 1, &LCH_FARROW_KERNEL_SOURCE, &source_len, &err);
+      context_, 1, &source_ptr, &source_len, &err);
   if (err != CL_SUCCESS) {
     throw std::runtime_error(
         "LchFarrow: clCreateProgramWithSource failed");
@@ -606,6 +497,15 @@ void LchFarrow::CompileKernel() {
     program_ = nullptr;
     throw std::runtime_error(
         "LchFarrow kernel build failed:\n" + std::string(log.data()));
+  }
+
+  // Create kernel once — reuse in Process()
+  kernel_ = clCreateKernel(program_, "lch_farrow_delay", &err);
+  if (err != CL_SUCCESS) {
+    clReleaseProgram(program_);
+    program_ = nullptr;
+    throw std::runtime_error(
+        "LchFarrow: clCreateKernel failed: " + std::to_string(err));
   }
 }
 
@@ -627,6 +527,10 @@ void LchFarrow::UploadMatrix() {
 }
 
 void LchFarrow::ReleaseGpuResources() {
+  if (kernel_) {
+    clReleaseKernel(kernel_);
+    kernel_ = nullptr;
+  }
   if (program_) {
     clReleaseProgram(program_);
     program_ = nullptr;
@@ -634,6 +538,11 @@ void LchFarrow::ReleaseGpuResources() {
   if (matrix_buf_) {
     clReleaseMemObject(matrix_buf_);
     matrix_buf_ = nullptr;
+  }
+  if (delay_buf_) {
+    clReleaseMemObject(delay_buf_);
+    delay_buf_ = nullptr;
+    delay_buf_size_ = 0;
   }
 }
 

@@ -162,12 +162,16 @@ cl_mem LfmGenerator::GenerateToGpu(const SystemSampling& system, size_t beam_cou
         throw std::runtime_error("LfmGenerator::GenerateToGpu: clSetKernelArg failed");
     }
 
-    size_t local_size = 256;
-    size_t global_size = ((total_points + local_size - 1) / local_size) * local_size;
+    // 2D grid: dim0 = samples, dim1 = beams (eliminates div/mod in kernel)
+    size_t local_size[2]  = { 256, 1 };
+    size_t global_size[2] = {
+        ((system.length + 255) / 256) * 256,
+        beam_count
+    };
 
     cl_event ev_kernel = nullptr;
-    err = clEnqueueNDRangeKernel(queue_, k, 1, nullptr,
-                                  &global_size, &local_size,
+    err = clEnqueueNDRangeKernel(queue_, k, 2, nullptr,
+                                  global_size, local_size,
                                   0, nullptr, prof_events ? &ev_kernel : nullptr);
     clReleaseKernel(k);
 

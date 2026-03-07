@@ -31,6 +31,8 @@
 #include "processors/heterodyne_processor_rocm.hpp"
 #include "kernels/heterodyne_kernels_rocm.hpp"
 #include "services/console_output.hpp"
+#include "services/kernel_cache_service.hpp"
+#include "backends/rocm/rocm_backend.hpp"
 
 #include <stdexcept>
 #include <cstring>
@@ -96,11 +98,11 @@ HeterodyneProcessorROCm::HeterodyneProcessorROCm(
     HeterodyneProcessorROCm&& other) noexcept
     : backend_(other.backend_)
     , stream_(other.stream_)
-    , module_multiply_(other.module_multiply_)
-    , module_correct_(other.module_correct_)
+    , module_(other.module_)
     , kernel_multiply_(other.kernel_multiply_)
     , kernel_correct_(other.kernel_correct_)
     , kernels_compiled_(other.kernels_compiled_)
+    , kernel_cache_(std::move(other.kernel_cache_))
     , buf_rx_(other.buf_rx_)
     , buf_ref_(other.buf_ref_)
     , buf_dc_(other.buf_dc_)
@@ -111,8 +113,7 @@ HeterodyneProcessorROCm::HeterodyneProcessorROCm(
     , cached_antennas_(other.cached_antennas_) {
   other.backend_ = nullptr;
   other.stream_ = nullptr;
-  other.module_multiply_ = nullptr;
-  other.module_correct_ = nullptr;
+  other.module_ = nullptr;
   other.kernel_multiply_ = nullptr;
   other.kernel_correct_ = nullptr;
   other.kernels_compiled_ = false;
@@ -132,11 +133,11 @@ HeterodyneProcessorROCm& HeterodyneProcessorROCm::operator=(
     ReleaseGpuResources();
     backend_ = other.backend_;
     stream_ = other.stream_;
-    module_multiply_ = other.module_multiply_;
-    module_correct_ = other.module_correct_;
+    module_ = other.module_;
     kernel_multiply_ = other.kernel_multiply_;
     kernel_correct_ = other.kernel_correct_;
     kernels_compiled_ = other.kernels_compiled_;
+    kernel_cache_ = std::move(other.kernel_cache_);
     buf_rx_ = other.buf_rx_;
     buf_ref_ = other.buf_ref_;
     buf_dc_ = other.buf_dc_;
@@ -147,8 +148,7 @@ HeterodyneProcessorROCm& HeterodyneProcessorROCm::operator=(
     cached_antennas_ = other.cached_antennas_;
     other.backend_ = nullptr;
     other.stream_ = nullptr;
-    other.module_multiply_ = nullptr;
-    other.module_correct_ = nullptr;
+    other.module_ = nullptr;
     other.kernel_multiply_ = nullptr;
     other.kernel_correct_ = nullptr;
     other.kernels_compiled_ = false;
@@ -282,13 +282,14 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::Dechirp(
         std::string(hipGetErrorString(err)));
   if (prof_events) hipEventRecord(ev_ref_e, stream_);
 
-  // OPT-1: Use cached kernel, OPT-5: 1D launch
+  // OPT-1: Use cached kernel, OPT-5: 2D grid (x=sample, y=antenna)
   int n_pts = params.num_samples;
-  int total_elem = total;
+  int n_ant = params.num_antennas;
 
-  void* args[] = { &buf_rx_, &buf_ref_, &buf_dc_, &n_pts, &total_elem };
+  void* args[] = { &buf_rx_, &buf_ref_, &buf_dc_, &n_pts, &n_ant };
 
-  unsigned int grid_size = (static_cast<unsigned int>(total) + kBlockSize - 1) / kBlockSize;
+  unsigned int grid_x = (static_cast<unsigned int>(n_pts) + kBlockSize - 1) / kBlockSize;
+  unsigned int grid_y = static_cast<unsigned int>(n_ant);
 
   hipEvent_t ev_k_s = nullptr, ev_k_e = nullptr;
   if (prof_events) {
@@ -297,7 +298,7 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::Dechirp(
   }
   err = hipModuleLaunchKernel(
       kernel_multiply_,
-      grid_size, 1, 1,
+      grid_x, grid_y, 1,
       kBlockSize, 1, 1,
       0, stream_,
       args, nullptr);
@@ -391,13 +392,14 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::Correct(
         std::string(hipGetErrorString(err)));
   if (prof_events) hipEventRecord(ev_ps_e, stream_);
 
-  // OPT-1: Use cached kernel, OPT-5: 1D launch
+  // OPT-1: Use cached kernel, OPT-5: 2D grid (x=sample, y=antenna)
   int n_pts = params.num_samples;
-  int total_elem = total;
+  int n_ant = params.num_antennas;
 
-  void* args[] = { &buf_dc_, &buf_corr_, &buf_freq_, &n_pts, &total_elem };
+  void* args[] = { &buf_dc_, &buf_corr_, &buf_freq_, &n_pts, &n_ant };
 
-  unsigned int grid_size = (static_cast<unsigned int>(total) + kBlockSize - 1) / kBlockSize;
+  unsigned int grid_x = (static_cast<unsigned int>(n_pts) + kBlockSize - 1) / kBlockSize;
+  unsigned int grid_y = static_cast<unsigned int>(n_ant);
 
   hipEvent_t ev_k_s = nullptr, ev_k_e = nullptr;
   if (prof_events) {
@@ -406,7 +408,7 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::Correct(
   }
   err = hipModuleLaunchKernel(
       kernel_correct_,
-      grid_size, 1, 1,
+      grid_x, grid_y, 1,
       kBlockSize, 1, 1,
       0, stream_,
       args, nullptr);
@@ -479,12 +481,13 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::DechirpFromGPU(
   if (prof_events) hipEventRecord(ev_ref_e, stream_);
 
   int n_pts = params.num_samples;
-  int total_elem = total;
+  int n_ant = params.num_antennas;
 
   // Use external rx buffer directly (DO NOT free — caller owns it)
-  void* args[] = { &rx_gpu_ptr, &buf_ref_, &buf_dc_, &n_pts, &total_elem };
+  void* args[] = { &rx_gpu_ptr, &buf_ref_, &buf_dc_, &n_pts, &n_ant };
 
-  unsigned int grid_size = (static_cast<unsigned int>(total) + kBlockSize - 1) / kBlockSize;
+  unsigned int grid_x = (static_cast<unsigned int>(n_pts) + kBlockSize - 1) / kBlockSize;
+  unsigned int grid_y = static_cast<unsigned int>(n_ant);
 
   hipEvent_t ev_k_s = nullptr, ev_k_e = nullptr;
   if (prof_events) {
@@ -493,7 +496,7 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::DechirpFromGPU(
   }
   err = hipModuleLaunchKernel(
       kernel_multiply_,
-      grid_size, 1, 1,
+      grid_x, grid_y, 1,
       kBlockSize, 1, 1,
       0, stream_,
       args, nullptr);
@@ -548,11 +551,12 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::DechirpWithGPURef(
   EnsureBuffers(total, params.num_samples);
 
   int n_pts = params.num_samples;
-  int total_elem = total;
+  int n_ant = params.num_antennas;
 
-  void* args[] = { &rx_gpu_ptr, &ref_gpu_ptr, &buf_dc_, &n_pts, &total_elem };
+  void* args[] = { &rx_gpu_ptr, &ref_gpu_ptr, &buf_dc_, &n_pts, &n_ant };
 
-  unsigned int grid_size = (static_cast<unsigned int>(total) + kBlockSize - 1) / kBlockSize;
+  unsigned int grid_x = (static_cast<unsigned int>(n_pts) + kBlockSize - 1) / kBlockSize;
+  unsigned int grid_y = static_cast<unsigned int>(n_ant);
 
   hipEvent_t ev_k_s = nullptr, ev_k_e = nullptr;
   if (prof_events) {
@@ -561,7 +565,7 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::DechirpWithGPURef(
   }
   hipError_t err = hipModuleLaunchKernel(
       kernel_multiply_,
-      grid_size, 1, 1,
+      grid_x, grid_y, 1,
       kBlockSize, 1, 1,
       0, stream_,
       args, nullptr);
@@ -603,117 +607,123 @@ void HeterodyneProcessorROCm::CompileKernels() {
 
   auto& con = ConsoleOutput::GetInstance();
 
-  // --- dechirp_multiply ---
-  {
-    const char* source = kernels::GetDechirpMultiplySource_rocm();
+  // Инициализация кеша (lazy, один раз)
+  if (!kernel_cache_) {
+    kernel_cache_ = std::make_unique<drv_gpu_lib::KernelCacheService>(
+        "modules/heterodyne/kernels", drv_gpu_lib::BackendType::ROCm);
+  }
 
-    hiprtcProgram prog;
-    hiprtcResult rtcResult = hiprtcCreateProgram(
-        &prog, source, "dechirp_multiply.hip", 0, nullptr, nullptr);
-    if (rtcResult != HIPRTC_SUCCESS) {
+  static constexpr const char* kKernelName = "heterodyne_kernels";
+
+  // Загрузка модуля + извлечение двух функций
+  auto loadModuleAndFunctions = [&](const void* data, size_t size) {
+    hipError_t hipErr = hipModuleLoadData(&module_, data);
+    if (hipErr != hipSuccess)
       throw std::runtime_error(
-          "CompileKernels: hiprtcCreateProgram(multiply) failed: " +
-          std::string(hiprtcGetErrorString(rtcResult)));
-    }
-
-    const char* options[] = { "-O3" };
-    rtcResult = hiprtcCompileProgram(prog, 1, options);
-    if (rtcResult != HIPRTC_SUCCESS) {
-      size_t logSize = 0;
-      hiprtcGetProgramLogSize(prog, &logSize);
-      std::string log(logSize, '\0');
-      hiprtcGetProgramLog(prog, &log[0]);
-      con.PrintError(0, "Heterodyne[ROCm]", "multiply kernel compile log:\n" + log);
-      (void)hiprtcDestroyProgram(&prog);
-      throw std::runtime_error("CompileKernels: dechirp_multiply compilation failed");
-    }
-
-    size_t codeSize = 0;
-    hiprtcGetCodeSize(prog, &codeSize);
-    std::vector<char> code(codeSize);
-    hiprtcGetCode(prog, code.data());
-    (void)hiprtcDestroyProgram(&prog);
-
-    hipError_t hipErr = hipModuleLoadData(&module_multiply_, code.data());
-    if (hipErr != hipSuccess) {
-      throw std::runtime_error(
-          "CompileKernels: hipModuleLoadData(multiply) failed: " +
+          "CompileKernels: hipModuleLoadData failed: " +
           std::string(hipGetErrorString(hipErr)));
-    }
 
-    hipErr = hipModuleGetFunction(&kernel_multiply_, module_multiply_, "dechirp_multiply");
-    if (hipErr != hipSuccess) {
-      (void)hipModuleUnload(module_multiply_);
-      module_multiply_ = nullptr;
-      throw std::runtime_error(
-          "CompileKernels: hipModuleGetFunction(dechirp_multiply) failed: " +
-          std::string(hipGetErrorString(hipErr)));
+    auto getFunc = [&](hipFunction_t* fn, const char* name) {
+      hipErr = hipModuleGetFunction(fn, module_, name);
+      if (hipErr != hipSuccess) {
+        (void)hipModuleUnload(module_);
+        module_ = nullptr;
+        kernel_multiply_ = nullptr;
+        kernel_correct_ = nullptr;
+        throw std::runtime_error(
+            std::string("CompileKernels: hipModuleGetFunction(") +
+            name + ") failed: " + hipGetErrorString(hipErr));
+      }
+    };
+
+    getFunc(&kernel_multiply_, "dechirp_multiply");
+    getFunc(&kernel_correct_,  "dechirp_correct");
+  };
+
+  // Шаг 1: попробовать загрузить из дискового кеша (~1-5 мс)
+  if (kernel_cache_) {
+    try {
+      auto entry = kernel_cache_->Load(kKernelName);
+      if (entry.has_binary()) {
+        loadModuleAndFunctions(entry.binary.data(), entry.binary.size());
+        kernels_compiled_ = true;
+        con.Print(0, "Heterodyne[ROCm]",
+            "HIP kernels loaded from cache (multiply, correct)");
+        return;
+      }
+    } catch (...) {
+      // Cache miss — компилируем
     }
   }
 
-  // --- dechirp_correct ---
-  {
-    const char* source = kernels::GetDechirpCorrectSource_rocm();
+  // Шаг 2: компиляция из исходника через hiprtc (один модуль на оба ядра)
+  const char* source = kernels::GetHeterodyneKernelSource_rocm();
 
-    hiprtcProgram prog;
-    hiprtcResult rtcResult = hiprtcCreateProgram(
-        &prog, source, "dechirp_correct.hip", 0, nullptr, nullptr);
-    if (rtcResult != HIPRTC_SUCCESS) {
-      (void)hipModuleUnload(module_multiply_);
-      module_multiply_ = nullptr;
-      kernel_multiply_ = nullptr;
-      throw std::runtime_error(
-          "CompileKernels: hiprtcCreateProgram(correct) failed: " +
-          std::string(hiprtcGetErrorString(rtcResult)));
-    }
+  hiprtcProgram prog;
+  hiprtcResult rtcResult = hiprtcCreateProgram(
+      &prog, source, "heterodyne_kernels.hip", 0, nullptr, nullptr);
+  if (rtcResult != HIPRTC_SUCCESS) {
+    throw std::runtime_error(
+        "CompileKernels: hiprtcCreateProgram failed: " +
+        std::string(hiprtcGetErrorString(rtcResult)));
+  }
 
-    const char* options[] = { "-O3" };
-    rtcResult = hiprtcCompileProgram(prog, 1, options);
-    if (rtcResult != HIPRTC_SUCCESS) {
-      size_t logSize = 0;
-      hiprtcGetProgramLogSize(prog, &logSize);
-      std::string log(logSize, '\0');
-      hiprtcGetProgramLog(prog, &log[0]);
-      con.PrintError(0, "Heterodyne[ROCm]", "correct kernel compile log:\n" + log);
-      (void)hiprtcDestroyProgram(&prog);
-      (void)hipModuleUnload(module_multiply_);
-      module_multiply_ = nullptr;
-      kernel_multiply_ = nullptr;
-      throw std::runtime_error("CompileKernels: dechirp_correct compilation failed");
-    }
+  // Получить целевую архитектуру GPU
+  std::string arch_name;
+  try {
+    auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
+    arch_name = rocm_backend->GetCore().GetArchName();
+  } catch (...) {
+    arch_name = "";
+  }
 
-    size_t codeSize = 0;
-    hiprtcGetCodeSize(prog, &codeSize);
-    std::vector<char> code(codeSize);
-    hiprtcGetCode(prog, code.data());
+  int warp_size = 32;
+  if (arch_name.find("gfx9") == 0) {
+    warp_size = 64;
+  }
+
+  std::string warp_define = "-DWARP_SIZE=" + std::to_string(warp_size);
+  std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
+
+  std::vector<const char*> opts = { "-O3", warp_define.c_str() };
+  if (!arch_flag.empty()) {
+    opts.push_back(arch_flag.c_str());
+  }
+
+  rtcResult = hiprtcCompileProgram(prog,
+      static_cast<int>(opts.size()), opts.data());
+  if (rtcResult != HIPRTC_SUCCESS) {
+    size_t logSize = 0;
+    hiprtcGetProgramLogSize(prog, &logSize);
+    std::string log(logSize, '\0');
+    hiprtcGetProgramLog(prog, &log[0]);
+    con.PrintError(0, "Heterodyne[ROCm]", "Kernel compile log:\n" + log);
     (void)hiprtcDestroyProgram(&prog);
+    throw std::runtime_error("CompileKernels: compilation failed");
+  }
 
-    hipError_t hipErr = hipModuleLoadData(&module_correct_, code.data());
-    if (hipErr != hipSuccess) {
-      (void)hipModuleUnload(module_multiply_);
-      module_multiply_ = nullptr;
-      kernel_multiply_ = nullptr;
-      throw std::runtime_error(
-          "CompileKernels: hipModuleLoadData(correct) failed: " +
-          std::string(hipGetErrorString(hipErr)));
-    }
+  size_t codeSize = 0;
+  hiprtcGetCodeSize(prog, &codeSize);
+  std::vector<char> code(codeSize);
+  hiprtcGetCode(prog, code.data());
+  (void)hiprtcDestroyProgram(&prog);
 
-    hipErr = hipModuleGetFunction(&kernel_correct_, module_correct_, "dechirp_correct");
-    if (hipErr != hipSuccess) {
-      (void)hipModuleUnload(module_correct_);
-      module_correct_ = nullptr;
-      (void)hipModuleUnload(module_multiply_);
-      module_multiply_ = nullptr;
-      kernel_multiply_ = nullptr;
-      throw std::runtime_error(
-          "CompileKernels: hipModuleGetFunction(dechirp_correct) failed: " +
-          std::string(hipGetErrorString(hipErr)));
+  loadModuleAndFunctions(code.data(), code.size());
+
+  // Шаг 3: сохранить бинарь в кеш
+  if (kernel_cache_) {
+    try {
+      std::vector<uint8_t> binary(code.begin(), code.end());
+      kernel_cache_->Save(kKernelName, std::string(source),
+                          binary, arch_name, "heterodyne");
+    } catch (...) {
+      // Не критично
     }
   }
 
   kernels_compiled_ = true;
   con.Print(0, "Heterodyne[ROCm]",
-      "HIP kernels compiled (dechirp_multiply, dechirp_correct)");
+      "HIP kernels compiled (multiply+correct, arch=" + arch_name + ")");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -721,15 +731,11 @@ void HeterodyneProcessorROCm::CompileKernels() {
 // ════════════════════════════════════════════════════════════════════════════
 
 void HeterodyneProcessorROCm::ReleaseGpuResources() {
-  // OPT-1: Release cached modules (kernels are invalidated with module)
-  if (module_multiply_) {
-    (void)hipModuleUnload(module_multiply_);
-    module_multiply_ = nullptr;
+  // OPT-1/10: Release single cached module (both kernels invalidated)
+  if (module_) {
+    (void)hipModuleUnload(module_);
+    module_ = nullptr;
     kernel_multiply_ = nullptr;
-  }
-  if (module_correct_) {
-    (void)hipModuleUnload(module_correct_);
-    module_correct_ = nullptr;
     kernel_correct_ = nullptr;
   }
   kernels_compiled_ = false;

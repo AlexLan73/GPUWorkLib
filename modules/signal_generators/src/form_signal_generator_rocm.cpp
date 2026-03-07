@@ -14,6 +14,7 @@
 #include "generators/form_signal_generator_rocm.hpp"
 #include "kernels/form_signal_kernels_rocm.hpp"
 #include "services/console_output.hpp"
+#include "backends/rocm/rocm_backend.hpp"
 
 #include <stdexcept>
 #include <cmath>
@@ -172,9 +173,10 @@ FormSignalGeneratorROCm::GenerateInputData(ROCmProfEvents* prof_events) {
     &tau_mode
   };
 
-  // Launch: 1D grid covering antennas * points
-  unsigned int grid_size = static_cast<unsigned int>(
-      (total_points + kBlockSize - 1) / kBlockSize);
+  // 2D grid: gridX = sample blocks, gridY = antennas (eliminates div/mod)
+  unsigned int grid_x = static_cast<unsigned int>(
+      (params_.points + kBlockSize - 1) / kBlockSize);
+  unsigned int grid_y = params_.antennas;
 
   hipEvent_t ev_k_s = nullptr, ev_k_e = nullptr;
   if (prof_events) {
@@ -185,7 +187,7 @@ FormSignalGeneratorROCm::GenerateInputData(ROCmProfEvents* prof_events) {
 
   err = hipModuleLaunchKernel(
       kernel_,
-      grid_size, 1, 1,
+      grid_x, grid_y, 1,
       kBlockSize, 1, 1,
       0, stream_,
       args, nullptr);
@@ -271,8 +273,13 @@ void FormSignalGeneratorROCm::CompileKernel() {
         std::string(hiprtcGetErrorString(rtcResult)));
   }
 
-  const char* options[] = { "-O3" };
-  rtcResult = hiprtcCompileProgram(prog, 1, options);
+  // Get target arch from backend for architecture-specific optimizations
+  auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
+  std::string arch = rocm_backend->GetCore().GetArchName();
+  std::string arch_flag = "--offload-arch=" + arch;
+
+  const char* options[] = { "-O3", arch_flag.c_str(), "-std=c++17" };
+  rtcResult = hiprtcCompileProgram(prog, 3, options);
   if (rtcResult != HIPRTC_SUCCESS) {
     size_t logSize = 0;
     hiprtcGetProgramLogSize(prog, &logSize);

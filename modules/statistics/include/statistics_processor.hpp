@@ -124,6 +124,29 @@ public:
       void* gpu_data,
       const StatisticsParams& params);
 
+  // =========================================================================
+  // Public API -- GPU float data (magnitudes already computed)
+  // =========================================================================
+
+  /**
+   * @brief Compute statistics on float magnitudes per beam (GPU data)
+   * @param gpu_float_data Device pointer to float data [beam_count x n_point]
+   * @param params Statistics parameters
+   * @return StatisticsResult with mean_magnitude, variance, std_dev (mean complex = 0)
+   */
+  std::vector<StatisticsResult> ComputeStatisticsFloat(
+      void* gpu_float_data,
+      const StatisticsParams& params);
+
+  /**
+   * @brief Compute median of float magnitudes per beam (GPU data)
+   * @param gpu_float_data Device pointer to float data [beam_count x n_point]
+   * @param params Statistics parameters
+   */
+  std::vector<MedianResult> ComputeMedianFloat(
+      void* gpu_float_data,
+      const StatisticsParams& params);
+
 private:
   // =========================================================================
   // GPU Resources management
@@ -166,6 +189,12 @@ private:
   /// TASK-2: Execute extract_medians kernel → compact medians_compact_buf_
   void ExecuteExtractMediansKernel(size_t beam_count, size_t n_point);
 
+  /// Execute Welford on float input (magnitudes already computed)
+  void ExecuteWelfordFloatKernel(size_t beam_count, size_t n_point);
+
+  /// Copy float GPU data to magnitudes_buf_ (D2D, float-sized)
+  void CopyFloatGpuData(void* src, size_t count);
+
   // =========================================================================
   // Members
   // =========================================================================
@@ -191,6 +220,7 @@ private:
   hipFunction_t mean_final_kernel_      = nullptr;  ///< final mean division
   hipFunction_t welford_kernel_         = nullptr;  ///< Welford (magnitudes + input)
   hipFunction_t welford_fused_kernel_   = nullptr;  ///< TASK-1: fused, input only
+  hipFunction_t welford_float_kernel_  = nullptr;  ///< Welford for float input (magnitudes)
   hipFunction_t extract_medians_kernel_ = nullptr;  ///< TASK-2: compact median extract
   bool kernels_compiled_ = false;
 

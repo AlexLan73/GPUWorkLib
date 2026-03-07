@@ -10,12 +10,17 @@
  *
  * gid = antenna_id * points + sample_id
  *
+ * Оптимизации:
+ *   - sincos() вместо отдельных cos/sin (signal + noise)
+ *   - native_sqrt / native_log для Box-Muller
+ *   - restrict на указателях
+ *
  * @author Kodo (AI Assistant)
  * @date 2026-02-18
  */
 
 __kernel void generate_form_signal(
-    __global float2* output,
+    __global float2* restrict output,
     const uint antennas,
     const uint points,
     const float dt,
@@ -34,12 +39,11 @@ __kernel void generate_form_signal(
     const uint noise_seed,
     const uint tau_mode)
 {
-    const uint gid = get_global_id(0);
-    const uint total = antennas * points;
-    if (gid >= total) return;
+    const uint sample_id  = get_global_id(0);
+    const uint antenna_id = get_global_id(1);
+    if (sample_id >= points || antenna_id >= antennas) return;
 
-    const uint antenna_id = gid / points;
-    const uint sample_id  = gid % points;
+    const uint gid = antenna_id * points + sample_id;
 
     // Tau per-channel
     float tau;
@@ -72,8 +76,10 @@ __kernel void generate_form_signal(
                 + M_PI_F * fdev / ti * (t_centered * t_centered)
                 + phase_offset;
 
-    float sig_re = amplitude * norm_val * cos(phase);
-    float sig_im = amplitude * norm_val * sin(phase);
+    float cos_phase, sin_phase;
+    sin_phase = sincos(phase, &cos_phase);
+    float sig_re = amplitude * norm_val * cos_phase;
+    float sig_im = amplitude * norm_val * sin_phase;
 
     // Noise (Philox + Box-Muller)
     float noise_re = 0.0f;
@@ -86,11 +92,13 @@ __kernel void generate_form_signal(
         float u1 = (float)(n_rnd.x) / 4294967296.0f + 1e-10f;
         float u2 = (float)(n_rnd.y) / 4294967296.0f;
 
-        float r = sqrt(-2.0f * log(u1));
+        float r = native_sqrt(-2.0f * native_log(u1));
         float theta = 2.0f * M_PI_F * u2;
 
-        noise_re = noise_amplitude * norm_val * r * cos(theta);
-        noise_im = noise_amplitude * norm_val * r * sin(theta);
+        float cos_theta, sin_theta;
+        sin_theta = sincos(theta, &cos_theta);
+        noise_re = noise_amplitude * norm_val * r * cos_theta;
+        noise_im = noise_amplitude * norm_val * r * sin_theta;
     }
 
     output[gid] = (float2)(sig_re + noise_re, sig_im + noise_im);

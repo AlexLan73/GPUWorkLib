@@ -92,6 +92,7 @@ StatisticsProcessor::StatisticsProcessor(StatisticsProcessor&& other) noexcept
     , mean_final_kernel_(other.mean_final_kernel_)
     , welford_kernel_(other.welford_kernel_)
     , welford_fused_kernel_(other.welford_fused_kernel_)
+    , welford_float_kernel_(other.welford_float_kernel_)
     , extract_medians_kernel_(other.extract_medians_kernel_)
     , kernels_compiled_(other.kernels_compiled_)
     , current_beams_(other.current_beams_)
@@ -115,6 +116,7 @@ StatisticsProcessor::StatisticsProcessor(StatisticsProcessor&& other) noexcept
   other.mean_final_kernel_     = nullptr;
   other.welford_kernel_        = nullptr;
   other.welford_fused_kernel_  = nullptr;
+  other.welford_float_kernel_  = nullptr;
   other.extract_medians_kernel_ = nullptr;
   other.kernels_compiled_      = false;
   other.current_beams_         = 0;
@@ -142,6 +144,7 @@ StatisticsProcessor& StatisticsProcessor::operator=(StatisticsProcessor&& other)
     mean_final_kernel_     = other.mean_final_kernel_;
     welford_kernel_        = other.welford_kernel_;
     welford_fused_kernel_  = other.welford_fused_kernel_;
+    welford_float_kernel_  = other.welford_float_kernel_;
     extract_medians_kernel_ = other.extract_medians_kernel_;
     kernels_compiled_      = other.kernels_compiled_;
     current_beams_         = other.current_beams_;
@@ -455,6 +458,7 @@ void StatisticsProcessor::CompileKernels() {
           getKernel(&welford_kernel_,         "welford_stats");
           getKernel(&welford_fused_kernel_,   "welford_fused");
           getKernel(&extract_medians_kernel_, "extract_medians");
+          getKernel(&welford_float_kernel_,  "welford_float");
           kernels_compiled_ = true;
           con.Print(0, "Statistics", "kernels loaded from cache (HSACO)");
           return;
@@ -489,9 +493,16 @@ void StatisticsProcessor::CompileKernels() {
   }
 
   // TASK-3: Compile with explicit arch + optimizations
-  // TASK-4.4: -DWARP_SIZE=32 for RDNA4 warp shuffle
+  // P3: Determine WARP_SIZE by GPU architecture (CDNA=64, RDNA=32)
+  int warp_size = 32;  // default: RDNA (gfx10xx, gfx11xx, gfx12xx)
+  if (arch_name.find("gfx9") == 0) {
+    warp_size = 64;  // CDNA / Vega (gfx900, gfx906, gfx908, gfx90a, gfx940, gfx942)
+  }
+  std::string warp_define  = "-DWARP_SIZE="  + std::to_string(warp_size);
+  std::string block_define = "-DBLOCK_SIZE=" + std::to_string(kBlockSize);
   std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
-  std::vector<const char*> opts = {"-O3", "-DWARP_SIZE=32"};
+  std::vector<const char*> opts = {"-O3", "-std=c++17",
+                                    warp_define.c_str(), block_define.c_str()};
   if (!arch_flag.empty()) {
     opts.push_back(arch_flag.c_str());
   }
@@ -533,6 +544,7 @@ void StatisticsProcessor::CompileKernels() {
   getKernel(&welford_kernel_,         "welford_stats");
   getKernel(&welford_fused_kernel_,   "welford_fused");
   getKernel(&extract_medians_kernel_, "extract_medians");
+  getKernel(&welford_float_kernel_,  "welford_float");
 
   kernels_compiled_ = true;
   con.Print(0, "Statistics",
@@ -681,6 +693,7 @@ void StatisticsProcessor::ReleaseResources() {
     mean_final_kernel_     = nullptr;
     welford_kernel_        = nullptr;
     welford_fused_kernel_  = nullptr;
+    welford_float_kernel_  = nullptr;
     extract_medians_kernel_ = nullptr;
     kernels_compiled_      = false;
   }
@@ -716,9 +729,10 @@ void StatisticsProcessor::CopyGpuData(void* src, size_t count) {
   }
 }
 
+// P3-D: double-load — each thread processes 2 elements, grid halved
 void StatisticsProcessor::ExecuteMagnitudesKernel(size_t total_elements) {
   unsigned int total     = static_cast<unsigned int>(total_elements);
-  unsigned int grid_size = (total + kBlockSize - 1) / kBlockSize;
+  unsigned int grid_size = (total + kBlockSize * 2 - 1) / (kBlockSize * 2);
 
   void* args[] = {
     &input_buffer_,
@@ -746,24 +760,22 @@ void StatisticsProcessor::ExecuteMeanReduction(size_t beam_count, size_t n_point
 
   // TASK-4.3: Double-load — blocks_per_beam is halved compared to v1
   unsigned int blocks_per_beam = (np + kDoubleLoadElements - 1) / kDoubleLoadElements;
-  unsigned int total_blocks    = bc * blocks_per_beam;
 
   // P2-B: LDS is now static __shared__ (256+1 float per component) — no dynamic alloc
   size_t shared_mem = 0;
 
   // Phase 1: block-level reduction
-  // TASK-4.2: Pass blocks_per_beam as kernel parameter
+  // P3-A: 2D grid — gridDimX=blocks_per_beam, gridDimY=beam_count (no div/mod in kernel)
   void* args1[] = {
     &input_buffer_,
     &reduce_buf_,
     &bc,
-    &np,
-    &blocks_per_beam   // NEW: avoid intra-kernel division
+    &np
   };
 
   hipError_t err = hipModuleLaunchKernel(
       mean_reduce_kernel_,
-      total_blocks, 1, 1,
+      blocks_per_beam, bc, 1,
       kBlockSize, 1, 1,
       shared_mem, stream_,
       args1, nullptr);
@@ -806,11 +818,12 @@ void StatisticsProcessor::ExecuteMeanReduction(size_t beam_count, size_t n_point
 }
 
 // Original Welford (kept for backward compat)
+// P3-B: shared_mem with +1 padding per array
 void StatisticsProcessor::ExecuteWelfordKernel(size_t beam_count, size_t n_point) {
   unsigned int bc = static_cast<unsigned int>(beam_count);
   unsigned int np = static_cast<unsigned int>(n_point);
 
-  size_t shared_mem = 4 * kBlockSize * sizeof(float);
+  size_t shared_mem = 4 * (kBlockSize + 1) * sizeof(float);
 
   void* args[] = {
     &input_buffer_,
@@ -834,12 +847,13 @@ void StatisticsProcessor::ExecuteWelfordKernel(size_t beam_count, size_t n_point
 }
 
 // TASK-1: Fused Welford — reads only input[], no magnitudes buffer
+// P3-B: shared_mem with +1 padding per array
 void StatisticsProcessor::ExecuteWelfordFusedKernel(size_t beam_count, size_t n_point) {
   unsigned int bc = static_cast<unsigned int>(beam_count);
   unsigned int np = static_cast<unsigned int>(n_point);
 
-  // One block per beam; 4 arrays of kBlockSize floats in shared mem
-  size_t shared_mem = 4 * kBlockSize * sizeof(float);
+  // One block per beam; 4 arrays of (kBlockSize+1) floats in shared mem
+  size_t shared_mem = 4 * (kBlockSize + 1) * sizeof(float);
 
   void* args[] = {
     &input_buffer_,   // only input — no magnitudes_buf_!
@@ -906,6 +920,126 @@ void StatisticsProcessor::ExecuteMedianSort(size_t beam_count, size_t n_point) {
     throw std::runtime_error("ExecuteMedianSort: GPU segmented sort failed: " +
                               std::string(hipGetErrorString(err)));
   }
+}
+
+// =========================================================================
+// PART 5: Float-input API (magnitudes already computed)
+// =========================================================================
+
+void StatisticsProcessor::CopyFloatGpuData(void* src, size_t count) {
+  size_t data_size = count * sizeof(float);
+  hipError_t err = hipMemcpyDtoDAsync(magnitudes_buf_, src, data_size, stream_);
+  if (err != hipSuccess) {
+    throw std::runtime_error("CopyFloatGpuData: hipMemcpyDtoDAsync failed: " +
+                              std::string(hipGetErrorString(err)));
+  }
+}
+
+void StatisticsProcessor::ExecuteWelfordFloatKernel(size_t beam_count, size_t n_point) {
+  unsigned int bc = static_cast<unsigned int>(beam_count);
+  unsigned int np = static_cast<unsigned int>(n_point);
+
+  // P3-B: 2 arrays of (kBlockSize+1) floats in shared mem (sum_mag + sum_sq)
+  size_t shared_mem = 2 * (kBlockSize + 1) * sizeof(float);
+
+  void* args[] = {
+    &magnitudes_buf_,
+    &result_buf_,
+    &bc,
+    &np
+  };
+
+  hipError_t err = hipModuleLaunchKernel(
+      welford_float_kernel_,
+      bc, 1, 1,
+      kBlockSize, 1, 1,
+      shared_mem, stream_,
+      args, nullptr);
+
+  if (err != hipSuccess) {
+    throw std::runtime_error("ExecuteWelfordFloatKernel: launch failed: " +
+                              std::string(hipGetErrorString(err)));
+  }
+}
+
+std::vector<StatisticsResult> StatisticsProcessor::ComputeStatisticsFloat(
+    void* gpu_float_data,
+    const StatisticsParams& params)
+{
+  if (!gpu_float_data) {
+    throw std::invalid_argument("ComputeStatisticsFloat: gpu_float_data is null");
+  }
+
+  if (!kernels_compiled_) CompileKernels();
+  AllocateBuffers(params.beam_count, params.n_point);
+
+  size_t count = static_cast<size_t>(params.beam_count) * params.n_point;
+  CopyFloatGpuData(gpu_float_data, count);
+
+  ExecuteWelfordFloatKernel(params.beam_count, params.n_point);
+  (void)hipStreamSynchronize(stream_);
+
+  struct WelfordResult {
+    float mean_re, mean_im, mean_mag, variance, std_dev;
+  };
+  std::vector<WelfordResult> raw(params.beam_count);
+  hipError_t err = hipMemcpyDtoH(raw.data(), result_buf_,
+                                   params.beam_count * sizeof(WelfordResult));
+  if (err != hipSuccess) {
+    throw std::runtime_error("ComputeStatisticsFloat: hipMemcpyDtoH failed: " +
+                              std::string(hipGetErrorString(err)));
+  }
+
+  std::vector<StatisticsResult> results;
+  results.reserve(params.beam_count);
+  for (uint32_t i = 0; i < params.beam_count; ++i) {
+    StatisticsResult r;
+    r.beam_id = i;
+    r.mean = std::complex<float>(0.0f, 0.0f);  // No complex mean for float input
+    r.mean_magnitude = raw[i].mean_mag;
+    r.variance = raw[i].variance;
+    r.std_dev = raw[i].std_dev;
+    results.push_back(r);
+  }
+  return results;
+}
+
+std::vector<MedianResult> StatisticsProcessor::ComputeMedianFloat(
+    void* gpu_float_data,
+    const StatisticsParams& params)
+{
+  if (!gpu_float_data) {
+    throw std::invalid_argument("ComputeMedianFloat: gpu_float_data is null");
+  }
+
+  if (!kernels_compiled_) CompileKernels();
+  AllocateBuffers(params.beam_count, params.n_point);
+
+  size_t count = static_cast<size_t>(params.beam_count) * params.n_point;
+  CopyFloatGpuData(gpu_float_data, count);
+
+  // Sort magnitudes + extract medians (skip compute_magnitudes — already float)
+  ExecuteMedianSort(params.beam_count, params.n_point);
+  ExecuteExtractMediansKernel(params.beam_count, params.n_point);
+  (void)hipStreamSynchronize(stream_);
+
+  std::vector<float> medians_host(params.beam_count);
+  hipError_t err = hipMemcpyDtoH(medians_host.data(), medians_compact_buf_,
+                                   params.beam_count * sizeof(float));
+  if (err != hipSuccess) {
+    throw std::runtime_error("ComputeMedianFloat: hipMemcpyDtoH failed: " +
+                              std::string(hipGetErrorString(err)));
+  }
+
+  std::vector<MedianResult> results;
+  results.reserve(params.beam_count);
+  for (uint32_t b = 0; b < params.beam_count; ++b) {
+    MedianResult r;
+    r.beam_id = b;
+    r.median_magnitude = medians_host[b];
+    results.push_back(r);
+  }
+  return results;
 }
 
 }  // namespace statistics

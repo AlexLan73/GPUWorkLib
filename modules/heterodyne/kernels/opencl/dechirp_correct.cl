@@ -26,9 +26,10 @@ __kernel void dechirp_correct(
     // OPT-6: phase = phase_step[ant] * n  (no division by sample_rate in kernel)
     float phase = phase_step[ant] * (float)n;
 
+    // native_cos/native_sin — быстрые приближения SFU (~2x быстрее cos/sin)
     float2 corr;
-    corr.x = cos(phase);
-    corr.y = sin(phase);
+    corr.x = native_cos(phase);
+    corr.y = native_sin(phase);
 
     // Complex multiply
     float2 in = dc_in[gid];

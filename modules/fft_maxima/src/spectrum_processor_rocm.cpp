@@ -35,6 +35,8 @@
 #include "services/batch_manager.hpp"
 #include "interface/i_backend.hpp"
 #include "services/profiling_types.hpp"
+#include "services/kernel_cache_service.hpp"
+#include "backends/rocm/rocm_backend.hpp"
 
 #include <stdexcept>
 #include <cstring>
@@ -934,8 +936,36 @@ void SpectrumProcessorROCm::CreateAllMaximaFFTPlan(size_t batch_count) {
 void SpectrumProcessorROCm::CompileKernels() {
     if (kernels_compiled_) return;
 
+    auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
+    constexpr const char* kCacheName = "spectrum_kernels";
     const char* src = kernels::GetSpectrumHIPKernelSource();
 
+    // ── Try loading from disk cache (HSACO) ──
+    drv_gpu_lib::KernelCacheService cache(
+        "modules/fft_maxima/kernels", drv_gpu_lib::BackendType::ROCm);
+    try {
+        auto entry = cache.Load(kCacheName);
+        if (entry.has_binary()) {
+            hipError_t hip_err = hipModuleLoadData(&module_, entry.binary.data());
+            if (hip_err == hipSuccess) {
+                hip_err = hipModuleGetFunction(&pad_kernel_, module_, "pad_data");
+                if (hip_err == hipSuccess)
+                    hip_err = hipModuleGetFunction(&compute_mag_kernel_, module_, "compute_magnitudes");
+                if (hip_err == hipSuccess) {
+                    kernels_compiled_ = true;
+                    con.Print(0, "SpectrumMaxima[ROCm]",
+                        "HIP kernels loaded from cache (HSACO)");
+                    return;
+                }
+            }
+            // Cache binary invalid — fall through to compile
+            if (module_) { hipModuleUnload(module_); module_ = nullptr; }
+        }
+    } catch (...) {
+        // Cache miss — compile from source
+    }
+
+    // ── Compile from source (hiprtc) ──
     hiprtcProgram prog;
     hiprtcResult rtc_err = hiprtcCreateProgram(&prog, src, "spectrum_kernels.hip",
                                                 0, nullptr, nullptr);
@@ -944,15 +974,27 @@ void SpectrumProcessorROCm::CompileKernels() {
                                   std::string(hiprtcGetErrorString(rtc_err)));
     }
 
-    const char* options[] = { "-O3" };
-    rtc_err = hiprtcCompileProgram(prog, 1, options);
+    // Build compile options: -O3, --offload-arch, -DWARP_SIZE
+    std::string arch_name;
+    try {
+        auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
+        arch_name = rocm_backend->GetCore().GetArchName();
+    } catch (...) {
+        arch_name = "";
+    }
+    std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
+    std::vector<const char*> opts = {"-O3", "-DWARP_SIZE=32"};
+    if (!arch_flag.empty())
+        opts.push_back(arch_flag.c_str());
+
+    rtc_err = hiprtcCompileProgram(prog,
+        static_cast<int>(opts.size()), opts.data());
     if (rtc_err != HIPRTC_SUCCESS) {
         size_t log_size = 0;
         hiprtcGetProgramLogSize(prog, &log_size);
         std::string log(log_size, '\0');
         hiprtcGetProgramLog(prog, log.data());
 
-        auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
         con.PrintError(0, "SpectrumMaxima[ROCm]", "Kernel compile log:\n" + log);
 
         (void)hiprtcDestroyProgram(&prog);
@@ -981,8 +1023,18 @@ void SpectrumProcessorROCm::CompileKernels() {
 
     kernels_compiled_ = true;
 
-    drv_gpu_lib::ConsoleOutput::GetInstance().Print(0, "SpectrumMaxima[ROCm]",
-        "HIP kernels compiled (pad + compute_magnitudes)");
+    // ── Save to cache for next run ──
+    try {
+        std::vector<uint8_t> binary(code.begin(), code.end());
+        cache.Save(kCacheName, std::string(src), binary,
+                   arch_name, "spectrum_kernels: pad_data + compute_magnitudes");
+    } catch (...) {
+        // Non-critical: cache save failure
+    }
+
+    con.Print(0, "SpectrumMaxima[ROCm]",
+        "HIP kernels compiled (pad + compute_magnitudes)" +
+        (arch_name.empty() ? "" : " [" + arch_name + "]"));
 }
 
 /**
@@ -1093,8 +1145,13 @@ void SpectrumProcessorROCm::ExecutePadKernel(size_t beam_count, size_t beam_offs
     unsigned int nfft = params_.nFFT;
     unsigned int bo = static_cast<unsigned int>(beam_offset);
 
-    size_t total = beam_count * params_.nFFT;
-    unsigned int grid_x = static_cast<unsigned int>((total + 255) / 256);
+    // Pre-zero output buffer — kernel only copies valid data, no else-branch
+    size_t total_bytes = beam_count * params_.nFFT * sizeof(float) * 2;  // float2_t = 8 bytes
+    hipMemsetAsync(fft_input_, 0, total_bytes, stream_);
+
+    // 2D grid: X = nFFT positions, Y = beam index (no div/mod in kernel)
+    unsigned int grid_x = static_cast<unsigned int>((params_.nFFT + 255) / 256);
+    unsigned int grid_y = bc;
     unsigned int block_x = 256;
 
     void* args[] = {
@@ -1104,7 +1161,7 @@ void SpectrumProcessorROCm::ExecutePadKernel(size_t beam_count, size_t beam_offs
 
     hipError_t err = hipModuleLaunchKernel(
         pad_kernel_,
-        grid_x, 1, 1,
+        grid_x, grid_y, 1,
         block_x, 1, 1,
         0, stream_,
         args, nullptr);

@@ -14,6 +14,8 @@
 #include "filters/iir_filter_rocm.hpp"
 #include "kernels/iir_kernels_rocm.hpp"
 #include "services/console_output.hpp"
+#include "backends/rocm/rocm_backend.hpp"
+#include "services/kernel_cache_service.hpp"
 
 #include <stdexcept>
 #include <cstring>
@@ -21,7 +23,7 @@
 
 namespace {
 
-/// Helper: hipEvent → elapsed → ROCmProfilingData (уничтожает events)
+/// Helper: hipEvent -> elapsed -> ROCmProfilingData
 drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
     hipEvent_t ev_start, hipEvent_t ev_end,
     uint32_t kind = 0, const char* op = "")
@@ -42,9 +44,9 @@ drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
 
 namespace filters {
 
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 // Constructor / Destructor
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 
 IirFilterROCm::IirFilterROCm(drv_gpu_lib::IBackend* backend)
     : backend_(backend) {
@@ -103,9 +105,9 @@ IirFilterROCm& IirFilterROCm::operator=(IirFilterROCm&& other) noexcept {
   return *this;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 // Configuration
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 
 void IirFilterROCm::LoadConfig(const std::string& json_path) {
   auto cfg = FilterConfig::LoadJson(json_path);
@@ -125,9 +127,9 @@ void IirFilterROCm::SetBiquadSections(const std::vector<BiquadSection>& sections
   UploadSosMatrix();
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 // GPU Processing
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 
 drv_gpu_lib::InputData<void*>
 IirFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points,
@@ -258,7 +260,7 @@ IirFilterROCm::ProcessFromCPU(
     throw std::runtime_error(
         "IirFilterROCm::ProcessFromCPU: hipMemcpyHtoDAsync(input) failed");
   }
-  (void)hipStreamSynchronize(stream_);
+  // No hipStreamSynchronize here: kernel in same stream will wait for H2D
 
   if (prof_events) {
     prof_events->push_back({"Upload",
@@ -271,9 +273,9 @@ IirFilterROCm::ProcessFromCPU(
   return result;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 // CPU Reference Implementation
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 
 std::vector<std::complex<float>>
 IirFilterROCm::ProcessCpu(
@@ -313,13 +315,36 @@ IirFilterROCm::ProcessCpu(
   return output;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 // GPU Internals
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 
 void IirFilterROCm::CompileKernel() {
   if (kernel_compiled_) return;
 
+  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
+  const std::string cache_name = "iir_biquad_cascade_rocm";
+
+  // Try loading from KernelCacheService (HSACO fast path)
+  try {
+    drv_gpu_lib::KernelCacheService cache(
+        FILTERS_KERNELS_DIR, drv_gpu_lib::BackendType::ROCm);
+    auto entry = cache.Load(cache_name);
+    if (entry.has_binary()) {
+      hipError_t hipErr = hipModuleLoadData(&module_, entry.binary.data());
+      if (hipErr == hipSuccess) {
+        hipErr = hipModuleGetFunction(&kernel_, module_, "iir_biquad_cascade_cf32");
+        if (hipErr == hipSuccess) {
+          kernel_compiled_ = true;
+          con.Print(0, "IirFilter[ROCm]",
+              "HIP kernel loaded from cache (iir_biquad_cascade_cf32)");
+          return;
+        }
+      }
+    }
+  } catch (...) {}
+
+  // Compile from source (hiprtc)
   const char* source = kernels::GetIirBiquadCascadeSource_rocm();
 
   hiprtcProgram prog;
@@ -331,15 +356,28 @@ void IirFilterROCm::CompileKernel() {
         std::string(hiprtcGetErrorString(rtcResult)));
   }
 
-  const char* options[] = { "-O3" };
-  rtcResult = hiprtcCompileProgram(prog, 1, options);
+  // -O3, --offload-arch=gfxXXXX, -DBLOCK_SIZE=256
+  std::string arch_name;
+  try {
+    auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
+    arch_name = rocm_backend->GetCore().GetArchName();
+  } catch (...) {
+    arch_name = "";
+  }
+  std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
+  std::string block_size_def = "-DBLOCK_SIZE=" + std::to_string(kBlockSize);
+  std::vector<const char*> opts = {"-O3", block_size_def.c_str()};
+  if (!arch_flag.empty())
+    opts.push_back(arch_flag.c_str());
+
+  rtcResult = hiprtcCompileProgram(prog,
+      static_cast<int>(opts.size()), opts.data());
   if (rtcResult != HIPRTC_SUCCESS) {
     size_t logSize = 0;
     hiprtcGetProgramLogSize(prog, &logSize);
     std::string log(logSize, '\0');
     hiprtcGetProgramLog(prog, &log[0]);
 
-    auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
     con.PrintError(0, "IirFilter[ROCm]", "Kernel compile log:\n" + log);
 
     (void)hiprtcDestroyProgram(&prog);
@@ -369,8 +407,18 @@ void IirFilterROCm::CompileKernel() {
 
   kernel_compiled_ = true;
 
-  drv_gpu_lib::ConsoleOutput::GetInstance().Print(0, "IirFilter[ROCm]",
-      "HIP kernel compiled (iir_biquad_cascade_cf32)");
+  // Save to cache
+  try {
+    drv_gpu_lib::KernelCacheService cache(
+        FILTERS_KERNELS_DIR, drv_gpu_lib::BackendType::ROCm);
+    std::vector<uint8_t> binary(code.begin(), code.end());
+    cache.Save(cache_name, std::string(source), binary,
+               arch_name, "IIR biquad cascade");
+  } catch (...) {}
+
+  con.Print(0, "IirFilter[ROCm]",
+      "HIP kernel compiled (iir_biquad_cascade_cf32)" +
+      (arch_name.empty() ? "" : " [" + arch_name + "]"));
 }
 
 void IirFilterROCm::UploadSosMatrix() {

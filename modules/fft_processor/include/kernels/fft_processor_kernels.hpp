@@ -68,7 +68,10 @@ float2 prepareDataPre(__global void* input,
  */
 inline const char* GetMagPhaseKernelSource_opencl() {
     return R"CL(
-__kernel void complex_to_mag_phase(
+// P4: reqd_work_group_size for better compiler optimization (like __launch_bounds__)
+// P4: native_sqrt/native_atan2 — hardware intrinsics instead of slow double-precision sqrt/atan2
+__kernel __attribute__((reqd_work_group_size(256, 1, 1)))
+void complex_to_mag_phase(
     __global const float2* fft_output,
     __global float* mag_output,
     __global float* phase_output,
@@ -80,8 +83,8 @@ __kernel void complex_to_mag_phase(
     if (gid >= total) return;
 
     float2 z = fft_output[gid];
-    mag_output[gid] = sqrt(z.x * z.x + z.y * z.y);
-    phase_output[gid] = atan2(z.y, z.x);
+    mag_output[gid] = native_sqrt(z.x * z.x + z.y * z.y);
+    phase_output[gid] = native_atan2(z.y, z.x);
 }
 )CL";
 }
