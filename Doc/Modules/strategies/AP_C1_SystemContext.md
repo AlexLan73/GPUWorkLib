@@ -42,7 +42,7 @@
  │         ║                                                       ║             │
  │         ║  GPU Pipeline:                                        ║             │
  │         ║  S[N_ant × N_samples] → DMA → Stats → GEMM           ║             │
- │         ║    → Hamming → FFT → Branch 2/3/4 → Results          ║             │
+ │         ║    → Window + FFT → Step2.1/2.2/2.3 → Results        ║             │
  │         ║                                                       ║             │
  │         ║  Входы:  S (сигнал), W (веса beamforming)            ║             │
  │         ║  Выходы: MinMaxResult / MaxValue / AllMaximaResult    ║             │
@@ -97,9 +97,9 @@
 
 | Результат | Ветка | Размер |
 |-----------|-------|--------|
-| `MinMaxResult[N_ant]` | Branch 2 | 8 КБ |
-| `MaxValue[N_ant]` | Branch 3 | 12 КБ |
-| `AllMaximaBeamResult[N_ant]` | Branch 4 (internal) | ~2 МБ |
+| `MaxValue[N_ant]` | Step2.1 OneMax+Parabola | 12 КБ |
+| `AllMaximaBeamResult[N_ant]` | Step2.2 AllMaxima | ~2 МБ |
+| `MinMaxResult[N_ant]` | Step2.3 GlobalMinMax | 8 КБ |
 | `StatisticsResult[N_ant]` PRE+POST | Все | 28 КБ |
 
 ---
@@ -117,9 +117,9 @@
                │  ✅ Hamming window перед FFT                                   │
                │  ✅ FFT batch (hipFFT, N_ant лучей)                            │
                │  ✅ FFT mirror fold (отрицательные частоты → левая сторона)    │
-               │  ✅ Branch 2: global MIN + MAX per beam                        │
-               │  ✅ Branch 3: one MAX + 3-point parabola (sub-bin frequency)   │
-               │  ✅ Branch 4: ALL peaks CFAR (только внутренние тесты)         │
+               │  ✅ Step2.1: one MAX + 3-point parabola (sub-bin frequency)    │
+               │  ✅ Step2.2: ALL peaks CFAR                                     │
+               │  ✅ Step2.3: global MAX + MIN per beam                          │
                │  ✅ Checkpoint save C1-C4 (опционально, через ICheckpointSave) │
                │  ✅ GPU profiling (через DrvGPU GPUProfiler)                   │
                │                                                                │

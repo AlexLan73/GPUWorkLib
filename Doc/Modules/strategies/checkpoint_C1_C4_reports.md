@@ -7,11 +7,12 @@
 > - W[N_ant × N_ant]     — матрица весов КВАДРАТНАЯ (beamforming коэффициенты, max 256×256)
 > - X = W × S           — результат GEMM hipBLAS Cgemm (beamformed data, размер как S)
 > - После GEMM: Hamming → FFT → **3 ветки**:
->   - **Branch 2**: один Global MIN + один Global MAX на луч (minmax_spectrum)
->   - **Branch 3**: один Global MAX + 3-point parabola (sub-bin частота)
->   - **Branch 4**: ВСЕ локальные пики (CFAR, **только внутреннее тестирование**)
+>   - **Step2.1**: один Global MAX + 3-point parabola (sub-bin частота, без фазы)
+>   - **Step2.2**: ВСЕ локальные пики (CFAR)
+>   - **Step2.3**: глобальные MAX/MIN по спектру
 > - MaxValue: **переиспользуется из fft_maxima** (spectrum_result_types.hpp, 32 байта)
 > - FFT fold: бины k > nFFT/2 → отрицательные частоты (fold_fft_mirror)
+> - В старых примерах ниже legacy-обозначения `Branch 2/3/4` следует читать как `Step2.3 / Step2.1 / Step2.2`
 >
 > **Архитектурные документы**: `Doc/Architecture/AntennaProcessor/` (C1-C4 по C4 Model)
 
@@ -24,7 +25,7 @@
 | **Q1**: C3 и C4 — переключаемые? | ✅ **ДА** — одна ветка за раз (по `branch_mode`) |
 | **Q2**: PRE/POST stats — разные пресеты? | ✅ **ДА** — `pre_gemm_stats` и `post_gemm_stats` независимо |
 | **Q3**: Полный спектр (4.9 ГБ) нужен? | ✅ **ДА, но только при тестировании** (`c3_spectrum=true`). Среднее/медиана — через отдельный kernel-вызов прямо из VRAM |
-| **Q4**: detect_all_maxima — куда? | ✅ **Branch 4** — отдельный режим для редких контрольных вызовов |
+| **Q4**: detect_all_maxima — куда? | ✅ **Step2.2** — обязательный post-FFT сценарий |
 
 ---
 
@@ -763,10 +764,10 @@ class CheckpointReader:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  СТРУКТУРА МОДУЛЯ
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  modules/antenna_processor/
+  modules/strategies/                    ← один модуль, много стратегий (Branch 2/3/4)
   ├── include/
 
-модуль назови стратегии. а этот базовый класс antenna_processor - может с индексом 
+Примечание: модуль = strategies; базовый класс = AntennaProcessor (antenna_processor.hpp) 
 
 # 1
 Сделай 3 ветки!!! ПОДЧЕРКМВАЮ! в разговоре заказчих хотел 3 вариант

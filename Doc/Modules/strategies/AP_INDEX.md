@@ -31,17 +31,16 @@ W[N_ant × N_ant]      ──┘
   ┌─────────────────────────────────────────────────────────┐
   │               AntennaProcessor_v1                     │
   │                                                         │
-  │  1. DMA load (Stream 0)                                 │
-  │  2. Stats PRE-GEMM (Stream 1) ◄── параллельно с GEMM   │
-  │  3. GEMM: X = W × S (hipBLAS Cgemm)                    │
-  │  4. Stats POST-GEMM (Stream 3) ◄── параллельно с FFT   │
-  │  5. Hamming window: X[n] *= w[n]                        │
-  │  6. FFT batch: N_ant × hipFFT(nFFT)                     │
-  │  7. FFT fold: bins k>nFFT/2 → negative frequency        │
-  │  8. Branch Strategy (переключаемая):                    │
-  │     ├─ Branch 2: Global MIN + Global MAX (minmax)       │
-  │     ├─ Branch 3: One MAX + Parabola (precision freq)    │
-  │     └─ Branch 4: ALL peaks (CFAR, internal test only)   │
+  │  1. Input already on GPU: d_S + metadata                │
+  │  2. Debug 2.1: stats/save/python по d_S                 │
+  │  3. GEMM: X = W × S (hipBLAS Cgemm)                     │
+  │  4. Debug 2.2: stats/save/python по d_X                 │
+  │  5. Base block: Window + FFT                            │
+  │  6. Debug 2.3: stats/save/python по |spectrum|          │
+  │  7. Обязательные post-FFT сценарии:                     │
+  │     ├─ Step2.1: One MAX + 3-point Parabola (no phase)   │
+  │     ├─ Step2.2: All Maxima (limit=1000)                 │
+  │     └─ Step2.3: Global MAX/MIN (limit=1000)             │
   └─────────────────────────────────────────────────────────┘
         │
         ▼
@@ -67,14 +66,14 @@ W[N_ant × N_ant]      ──┘
 |---|---------|-------------|
 | 1 | W — квадратная [N_ant × N_ant] | "иначе потеряем лучи"; максимум 256×256 = 512 КБ |
 | 2 | GEMM, не element-wise | "Стандартное умножение матриц!" — гетеродинирование лучей |
-| 3 | 3 ветки (2/3/4) | Заказчик хотел 3 варианта; ветка 4 = внутреннее тестирование |
-| 4 | MaxValue переиспользуется | Уже есть в `fft_maxima` — 32 байта, идеально подходит |
+| 3 | `Window + FFT` — единый базовый блок | FFT считается один раз, затем несколько consumers читают один `d_spectrum` |
+| 4 | 3 обязательных post-FFT сценария | По ТЗ считаются все: `OneMax+Parabola`, `AllMaxima`, `GlobalMinMax` |
 | 5 | FFT fold (mirror) | Пик в бине > nFFT/2 = отрицательная частота, нужно перевести |
 | 6 | Logs/GPU_XX/... | Соответствует стандарту проекта (per-GPU логи) |
 | 7 | NullCheckpointSave | Как в fft_processor: no save by default = zero overhead |
-| 8 | StatisticsSet bitmask | Гибкие пресеты 6.1-6.4; PRE и POST GEMM независимо |
-| 9 | Hamming ПОСЛЕ GEMM | DSP правило: окно перед FFT, но checkpoint C2 ДО окна |
-| 10 | W в L2 cache | 512 КБ << 32 МБ (9070 L2) → GEMM compute-bound, не BW-bound |
+| 8 | Статистика в 3 debug-точках | `2.1` по `d_S`, `2.2` по `d_X`, `2.3` по `|spectrum|` |
+| 9 | Hamming ПОСЛЕ GEMM и ПЕРЕД FFT | DSP правило: окно перед FFT, но после beamforming |
+| 10 | Матрица W — Delay-and-sum | Генерируется автоматически из параметров сигнала/решётки, плюс внешний ввод C++/Python |
 
 ---
 
@@ -89,15 +88,16 @@ W[N_ant × N_ant]      ──┘
 
 ### Фаза 2 — Ядро pipeline (3-4 дня)
 - [ ] Реализовать `GemmWrapper` (hipBLAS Cgemm)
-- [ ] Реализовать `HammingProcessor` (apply_hamming.hip)
-- [ ] Интегрировать `StatisticsProcessor` (PRE-GEMM, POST-GEMM)
+- [ ] Реализовать общий блок `Window + FFT` на ROCm
+- [ ] Интегрировать `StatisticsProcessor` для `2.1 / 2.2 / 2.3`
 - [ ] Интегрировать `hipFFT` batch plan (с кешированием)
 - [ ] Реализовать `fold_fft_mirror()` (Note #2)
 
 ### Фаза 3 — Стратегии (2-3 дня)
-- [ ] `MinMaxBranchStrategy` + `minmax_spectrum.hip` (Branch 2)
-- [ ] `ParabolaBranchStrategy` (адаптация из fft_maxima, Branch 3)
-- [ ] `AllMaximaBranchStrategy` + `all_maxima.hip` (Branch 4, internal)
+- [ ] `Step2.1`: `OneMax + Parabola` без фазы в `modules/fft_maxima/`
+- [ ] `Step2.2`: `AllMaxima` с limit=`1000` в `modules/fft_maxima/`
+- [ ] `Step2.3`: `GlobalMinMax` с limit=`1000` в `modules/fft_maxima/`
+- [ ] `Post-FFT Statistics(|spectrum|)` в `modules/statistics/`
 
 ### Фаза 4 — Checkpoint сохранение (1-2 дня)
 - [ ] `CheckpointSave` с binary format + JSON header option
@@ -106,16 +106,17 @@ W[N_ant × N_ant]      ──┘
 
 ### Фаза 5 — Тесты (2-3 дня)
 - [ ] `test_gemm_correctness.hpp` — X vs NumPy
-- [ ] `test_minmax_branch.hpp` — Branch 2 vs наивный CPU
-- [ ] `test_parabola_branch.hpp` — Branch 3 vs fft_maxima
-- [ ] `test_statistics_pre_post.hpp` — PRE/POST stats vs SciPy
+- [ ] `test_one_max_parabola_no_phase.hpp` — Step2.1 vs CPU reference
+- [ ] `test_all_maxima.hpp` — Step2.2 vs CPU reference
+- [ ] `test_global_minmax.hpp` — Step2.3 vs CPU reference
+- [ ] `test_statistics_pre_post_fft.hpp` — `2.1 / 2.2 / 2.3` stats vs NumPy/SciPy
 - [ ] `test_checkpoint_save.hpp` — запись/чтение C1-C4
 - [ ] `test_fft_mirror_fold.hpp` — fold для отрицательных частот
-- [ ] Python тесты в `Python_test/antenna_processor/`
+- [ ] Python тесты в `Python_test/strategies/`
 
 ### Фаза 6 — Профилирование (1 день)
 - [ ] Встроить `GPUProfiler::SetGPUInfo()` + Start/Stop
-- [ ] Бенчмарк GEMM, FFT, Branch 2/3/4
+- [ ] Бенчмарк GEMM, Window+FFT, Step2.1/2.2/2.3
 - [ ] Экспорт отчётов: `profiler.ExportMarkdown()`, `ExportJSON()`
 
 ---
@@ -131,8 +132,8 @@ W[N_ant × N_ant]      ──┘
 | Stats POST-GEMM | 2.6 мс | BW-bound (параллельно с Hamming+FFT) |
 | Hamming | 2.6 мс | BW-bound (параллельно с Stats POST) |
 | FFT batch | **~20 мс** | TBD (бенчмарк) |
-| Branch 2/3 | < 1 мс | Compute-light |
-| Branch 4 | 2-5 мс | Compute+BW |
+| Step2.1 / Step2.3 | < 1 мс | Compute-light |
+| Step2.2 | 2-5 мс | Compute+BW |
 | **ИТОГО (VRAM input)** | **~35 мс** | GEMM + FFT bottleneck |
 
 > *PCIe 4.0 x16: 32 GB/s теоретически. Для 2.5 ГБ: 78 мс. Если данные приходят стримом (NIC→GPU P2P DMA) — накладные расходы будут другими.

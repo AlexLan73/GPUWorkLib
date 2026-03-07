@@ -32,17 +32,16 @@ W[N_ant × N_ant]      ──┘
   ┌────────────────────────────────────────────────────────────┐
   │                  AntennaProcessor_v1                       │
   │                                                            │
-  │  1. DMA load (Stream 0): S, W → GPU VRAM                  │
-  │  2. Stats PRE-GEMM  (Stream 1) ◄── параллельно с GEMM     │
-  │  3. GEMM: X = W × S (hipBLAS Cgemm, ~13 мс)              │
-  │  4. Stats POST-GEMM (Stream 3) ◄── параллельно с FFT      │
-  │  5. Hamming window: X[n] *= w[n]                           │
-  │  6. FFT batch: N_ant × hipFFT_C2C(nFFT), ~20 мс           │
-  │  7. FFT fold: bin k > nFFT/2 → freq = (k−nFFT)·fs/nFFT    │
-  │  8. Branch Strategy (переключаемая во время работы):       │
-  │     ├─ Branch 2: Global MIN + Global MAX per beam          │
-  │     ├─ Branch 3: One MAX + 3-point Parabola (sub-bin freq) │
-  │     └─ Branch 4: ALL peaks CFAR (INTERNAL TESTING ONLY)   │
+  │  1. Input already on GPU: d_S + metadata                   │
+  │  2. Debug 2.1: stats/save/python по d_S                    │
+  │  3. GEMM: X = W × S (hipBLAS Cgemm, ~13 мс)               │
+  │  4. Debug 2.2: stats/save/python по d_X                    │
+  │  5. Base block: Window + FFT                               │
+  │  6. Debug 2.3: stats/save/python по |spectrum|             │
+  │  7. Post-FFT сценарии (все обязательны по ТЗ):             │
+  │     ├─ Step2.1: One MAX + 3-point Parabola (no phase)      │
+  │     ├─ Step2.2: ALL maxima (limit=1000)                    │
+  │     └─ Step2.3: Global MAX/MIN (limit=1000)                │
   └────────────────────────────────────────────────────────────┘
         │
         ▼
@@ -59,10 +58,10 @@ W[N_ant × N_ant]      ──┘
 AntennaProcessor          ← abstract base (antenna_processor.hpp)
 └── AntennaProcessor_v1   ← concrete impl (antenna_processor_v1.hpp)
 
-IBranchStrategy           ← interface (i_branch_strategy.hpp)
-├── MinMaxBranchStrategy  ← Branch 2: global MIN+MAX
-├── ParabolaBranchStrategy ← Branch 3: one MAX + parabola
-└── AllMaximaBranchStrategy ← Branch 4: ALL peaks, INTERNAL
+IPostFftScenario          ← interface (i_post_fft_scenario.hpp)
+├── OneMaxParabolaScenario ← Step2.1: one MAX + parabola (no phase)
+├── AllMaximaScenario      ← Step2.2: all maxima
+└── GlobalMinMaxScenario   ← Step2.3: global MAX/MIN
 
 ICheckpointSave           ← interface (i_checkpoint_save.hpp)
 ├── NullCheckpointSave    ← production, no-op (zero overhead)
@@ -78,8 +77,10 @@ StrategyFactory           ← создаёт AntennaProcessor_v1 + strategy + ch
 AntennaProcessorConfig cfg;
 cfg.n_ant          = 256;
 cfg.n_samples      = 1'200'000;
-cfg.branch_mode    = BranchMode::PARABOLA;     // Branch 3
-cfg.pre_gemm_stats = StatPreset::P61_ALL;
+cfg.scenario_mode      = PostFftScenarioMode::ALL_REQUIRED;
+cfg.pre_input_stats    = StatPreset::P61_ALL;
+cfg.post_gemm_stats    = StatPreset::P61_ALL;
+cfg.post_fft_stats     = StatPreset::P61_ALL;
 
 auto proc = StrategyFactory::create(ctx, cfg);  // ctx = DrvGPU
 
@@ -89,19 +90,9 @@ AntennaResult r = proc->process(S_data, W_data);
 // W_data: hipFloatComplex[N_ant × N_ant]
 
 // Доступ к результатам
-r.peaks[beam].frequency_hz  // найденная частота (паrabola)
-r.pre_stats[beam].median     // медиана сигнала до GEMM
+r.one_max[beam].refined_frequency_hz  // найденная частота (parabola, no phase)
+r.pre_input_stats[beam].median        // медиана сигнала до GEMM
 r.perf.total_ms              // время выполнения
-
-// Смена ветки без пересоздания (работает между вызовами!)
-proc->set_branch(BranchMode::MINMAX);
-r = proc->process(S_data, W_data);  // теперь Branch 2
-
-// Debug: включить сохранение checkpoint C4
-CheckpointSaveConfig save_cfg;
-save_cfg.c4_result = true;   // сохранять MaxValue (12 КБ, дёшево)
-cfg.save_cfg = &save_cfg;
-auto proc_debug = StrategyFactory::create(ctx, cfg);
 ```
 
 ---
@@ -117,9 +108,9 @@ modules/strategies/
 │   │   ├── i_branch_strategy.hpp          # IBranchStrategy
 │   │   └── i_checkpoint_save.hpp          # ICheckpointSave
 │   ├── branch_strategies/
-│   │   ├── minmax_branch_strategy.hpp     # Branch 2
-│   │   ├── parabola_branch_strategy.hpp   # Branch 3
-│   │   └── all_maxima_branch_strategy.hpp # Branch 4 (INTERNAL ONLY)
+│   │   ├── one_max_parabola_scenario.hpp  # Step2.1
+│   │   ├── all_maxima_scenario.hpp        # Step2.2
+│   │   └── global_minmax_scenario.hpp     # Step2.3
 │   ├── checkpoint/
 │   │   ├── null_checkpoint_save.hpp       # no-op (production)
 │   │   └── checkpoint_save.hpp            # binary saves (debug)
@@ -127,27 +118,25 @@ modules/strategies/
 │   └── config/
 │       ├── antenna_processor_config.hpp   # AntennaProcessorConfig
 │       ├── statistics_set.hpp             # StatisticsSet bitmask
-│       └── branch_mode.hpp               # BranchMode enum
+│       └── post_fft_scenario_mode.hpp     # PostFftScenarioMode enum
 ├── src/
 │   ├── antenna_processor_v1.cpp
 │   ├── branch_strategies/
-│   │   ├── minmax_branch_strategy.cpp
-│   │   ├── parabola_branch_strategy.cpp
-│   │   └── all_maxima_branch_strategy.cpp
+│   │   ├── one_max_parabola_scenario.cpp
+│   │   ├── all_maxima_scenario.cpp
+│   │   └── global_minmax_scenario.cpp
 │   └── strategy_factory.cpp
 ├── kernels/
 │   ├── gemm_wrapper.hpp                   # GemmWrapper (hipBLAS)
-│   ├── hamming_processor.hpp              # HammingProcessor
-│   ├── hamming.hip                        # apply_hamming kernel
-│   ├── minmax_spectrum.hip                # Branch 2 kernel
-│   └── all_maxima.hip                     # Branch 4 kernel
+│   └── window_fft.hpp                     # общий блок Window + FFT
 └── tests/
     ├── all_test.hpp
     ├── README.md
     ├── test_gemm_correctness.hpp
-    ├── test_minmax_branch.hpp
-    ├── test_parabola_branch.hpp
-    ├── test_statistics_pre_post.hpp
+    ├── test_one_max_parabola_no_phase.hpp
+    ├── test_all_maxima.hpp
+    ├── test_global_minmax.hpp
+    ├── test_statistics_pre_post_fft.hpp
     ├── test_checkpoint_save.hpp
     └── test_fft_mirror_fold.hpp
 ```
@@ -161,16 +150,17 @@ struct AntennaProcessorConfig {
     // Размеры
     uint32_t  n_ant          = 256;
     uint32_t  n_samples      = 1'200'000;
-    float     sample_rate    = 1.2e6f;
+    float     sample_rate    = 12.0e6f;
 
     // Алгоритм
-    BranchMode branch_mode          = BranchMode::PARABOLA;
-    bool       full_spectrum_search = false;  // false = [0, fs/2], true = [-fs/2, +fs/2]
-    float      cfar_alpha           = 3.0f;   // Branch 4 only
+    PostFftScenarioMode scenario_mode = PostFftScenarioMode::ALL_REQUIRED;
+    uint32_t  maxima_limit            = 1000;
+    bool      run_all_required_post_fft = true; // по ТЗ считаем все 3 post-FFT сценария
 
     // Статистика (bitmask пресеты, можно = StatPreset::NONE)
-    StatisticsSet pre_gemm_stats  = StatPreset::P61_ALL;      // по S (сырой сигнал)
-    StatisticsSet post_gemm_stats = StatPreset::P62_MEAN_MED; // по X (после GEMM)
+    StatisticsSet pre_input_stats = StatPreset::P61_ALL;      // 2.1 по d_S
+    StatisticsSet post_gemm_stats = StatPreset::P61_ALL;      // 2.2 по d_X
+    StatisticsSet post_fft_stats  = StatPreset::P61_ALL;      // 2.3 по |spectrum|
 
     // Checkpoint (nullptr = NullCheckpointSave, zero overhead)
     const CheckpointSaveConfig* save_cfg = nullptr;
@@ -192,19 +182,20 @@ namespace StatPreset {
 
 ```cpp
 struct AntennaResult {
-    std::vector<StatisticsResult>    pre_stats;   // до GEMM, [N_ant] если включено
-    std::vector<StatisticsResult>    post_stats;  // после GEMM, [N_ant] если включено
-    std::vector<MinMaxResult>        minmax;      // Branch 2: [N_ant]
-    std::vector<MaxValue>            peaks;       // Branch 3: [N_ant] (из fft_maxima!)
-    std::vector<AllMaximaBeamResult> all_maxima;  // Branch 4: [N_ant] (INTERNAL)
-    BranchMode                       branch_used;
+    std::vector<StatisticsResult>    pre_input_stats;   // 2.1: по d_S
+    std::vector<StatisticsResult>    post_gemm_stats;   // 2.2: по d_X
+    std::vector<StatisticsResult>    post_fft_stats;    // 2.3: по |spectrum|
+    std::vector<OneMaxParabolaLite>  one_max;           // Step2.1
+    std::vector<AllMaximaBeamResult> all_maxima;        // Step2.2
+    std::vector<MinMaxResult>        minmax;            // Step2.3
+    PostFftScenarioMode              scenario_mode;
     PerfMetrics                      perf;        // timing per step, ms
 };
 
 // MaxValue — переиспользован из modules/fft_maxima (32 байта):
 // struct MaxValue { frequency_hz, magnitude, bin_index, ... };
 
-// MinMaxResult — Branch 2 (32 байта):
+// MinMaxResult — Step2.3 (32 байта):
 // struct MinMaxResult { beam_id, min_mag, min_bin, min_frequency_hz,
 //                                max_mag, max_bin, max_frequency_hz, dynamic_range_dB };
 ```
@@ -240,8 +231,8 @@ Stream 1 (Stats)   welford(d_S) + sort                Stream 2 (Main)
 | Stats POST-GEMM | ~2.6 мс (параллельно!) | BW-bound |
 | Hamming | ~2.6 мс | BW-bound |
 | **FFT batch** | **~20 мс** (TBD, нужен бенчмарк) | Compute+BW |
-| Branch 2/3 | < 1 мс | Compute-light |
-| Branch 4 | 2–5 мс | Compute+BW |
+| Step2.1 / Step2.3 | < 1 мс | Compute-light |
+| Step2.2 | 2–5 мс | Compute+BW |
 | **ИТОГО (из VRAM)** | **~35 мс** | GEMM + FFT |
 
 ---
@@ -292,9 +283,10 @@ Stream 1 (Stats)   welford(d_S) + sort                Stream 2 (Main)
 - [ ] `fold_fft_mirror()`
 
 ### Фаза 3 — Стратегии (2–3 дня)
-- [ ] `MinMaxBranchStrategy` + `minmax_spectrum.hip` (Branch 2)
-- [ ] `ParabolaBranchStrategy` (адаптация из fft_maxima, Branch 3)
-- [ ] `AllMaximaBranchStrategy` + `all_maxima.hip` (Branch 4, INTERNAL)
+- [ ] `OneMax + Parabola` без фазы в `modules/fft_maxima/`
+- [ ] `AllMaxima` с limit=`1000` в `modules/fft_maxima/`
+- [ ] `GlobalMinMax` с limit=`1000` в `modules/fft_maxima/`
+- [ ] `PostFFTStatistics(|spectrum|)` в `modules/statistics/`
 
 ### Фаза 4 — Checkpoint (1–2 дня)
 - [ ] `CheckpointSave` binary format + JSON header
@@ -302,15 +294,16 @@ Stream 1 (Stats)   welford(d_S) + sort                Stream 2 (Main)
 
 ### Фаза 5 — Тесты (2–3 дня)
 - [ ] `test_gemm_correctness.hpp` vs NumPy
-- [ ] `test_minmax_branch.hpp`, `test_parabola_branch.hpp`
-- [ ] `test_statistics_pre_post.hpp`
+- [ ] `test_one_max_parabola_no_phase.hpp`
+- [ ] `test_all_maxima.hpp`, `test_global_minmax.hpp`
+- [ ] `test_statistics_pre_post_fft.hpp`
 - [ ] `test_checkpoint_save.hpp`
 - [ ] `test_fft_mirror_fold.hpp`
-- [ ] Python тесты в `Python_test/antenna_processor/`
+- [ ] Python тесты в `Python_test/strategies/`
 
 ### Фаза 6 — Профилирование (1 день)
 - [ ] `GPUProfiler::SetGPUInfo()` + Start/Stop
-- [ ] Бенчмарк GEMM, FFT, Branch 2/3/4
+- [ ] Бенчмарк GEMM, Window+FFT, Step2.1/2.2/2.3
 - [ ] `profiler.ExportMarkdown()` + `ExportJSON()`
 
 ---

@@ -5,11 +5,13 @@
 > **Date**: 2026-03-06
 > **Notation**: UML Sequence (ASCII) + GPU Stream Timing
 
+> **Update 2026-03-07**: финальная схема — общий блок `Window + FFT`, затем обязательные `Step2.1 / Step2.2 / Step2.3`. В старых ASCII-именах ниже `Branch 2/3/4` читать как `Step2.3 / Step2.1 / Step2.2`.
+
 ---
 
-## Seq-1: Полный pipeline (Branch 3: Parabola)
+## Seq-1: Полный pipeline (Window + FFT + все 3 post-FFT сценария)
 
-Типичный сценарий: данные с сети → GPU → GEMM → FFT → один пик + парабола
+Типичный сценарий: данные уже на GPU → GEMM → Window + FFT → Step2.1/2.2/2.3 + debug
 
 ```
  UserApp       AntennaProcessor_v1  Stream0(DMA) Stream1(Stats) Stream2(Main)  Stream3(SPost)    Result
@@ -22,22 +24,18 @@
     │  OK            │                │             │               │              │               │
     │◀───────────────┤                │             │               │              │               │
     │                │                │             │               │              │               │
-    │ process(S,W)   │                │             │               │              │               │
+    │ process(d_S,W) │                │             │               │              │               │
     ├───────────────▶│                │             │               │              │               │
-    │                │ hipMemcpyAsync(d_S, S)       │               │              │               │
-    │                ├───────────────▶│             │               │              │               │
-    │                │ hipMemcpyAsync(d_W, W)       │               │              │               │
+    │                │ copy/use d_W only            │               │              │               │
     │                ├───────────────▶│             │               │              │               │
     │                │ hipEventRecord(event_data_ready)             │              │               │
     │                ├───────────────▶│             │               │              │               │
     │                │                │             │               │              │               │
     │                │                │  ◄──────────event_data_ready (запуск Stats1 и Main2)────▶ │
     │                │                │             │               │              │               │
-    │                │     [Stream 1: Statistics PRE-GEMM]          │              │               │
-    │                │                │  welford_fused(d_S, N_ant, N_samples)     │               │
-    │                │                │  ├── mean, std, var, min, max (per row)   │               │
-    │                │                │  └── radix_sort → extract_medians         │               │
-    │                │                │     event_stats_done ────────────────────▶│               │
+    │                │     [Stream 1: Debug point 2.1]              │              │               │
+    │                │                │  stats(d_S) + save(d_S) + python(d_S)     │               │
+    │                │                │     event_c1_done ───────────────────────▶│               │
     │                │                │                                            │               │
     │                │     [Stream 2: Main Pipeline]                               │               │
     │                │                │               hipblasCgemm:               │               │
@@ -46,25 +44,20 @@
     │                │                │               hipEventRecord(event_gemm_done)             │
     │                │                │               ◀─────event_gemm_done start Stream3         │
     │                │                │                                            │               │
-    │                │     [Stream 3: Statistics POST-GEMM] (параллельно с Hamming+FFT)           │
-    │                │                │                            welford_fused(d_X, ...)        │
-    │                │                │                            event_spost_done ─────────────▶│
+    │                │     [Stream 3: Debug point 2.2] (параллельно с Window+FFT)                │
+    │                │                │                            stats(d_X)+save+python         │
+    │                │                │                            event_c2_done ───────────────▶│
     │                │                │                                            │               │
-    │                │                │               apply_hamming(d_X, d_hamm)  │               │
-    │                │                │               (~2.6 мс)     ─────────────▶│               │
-    │                │                │                                            │               │
-    │                │                │               hipfftExecC2C(plan, d_X, d_spectrum)        │
+    │                │                │               window+fft(d_X -> d_spectrum)               │
     │                │                │               (N_ant FFTs × nFFT)         │               │
     │                │                │               hipEventRecord(event_fft_done)              │
     │                │                │                                            │               │
-    │                │ hipEventSynchronize(event_stats_done)        │              │               │
-    │                │ hipEventSynchronize(event_spost_done)        │              │               │
+    │                │ hipEventSynchronize(event_c1_done)           │              │               │
+    │                │ hipEventSynchronize(event_c2_done)           │              │               │
     │                │ hipEventSynchronize(event_fft_done)          │              │               │
     │                │                │                                            │               │
-    │                │                │               strategy_->execute()        │               │
-    │                │                │               (ParabolaBranchStrategy)    │               │
-    │                │                │               post_kernel_one_peak        │               │
-    │                │                │               → MaxValue[N_ant]           │               │
+    │                │                │               run Step2.1 + Step2.2 + Step2.3            │
+    │                │                │               + debug 2.3 stats(|spectrum|)              │
     │                │                │                                            │               │
     │                │ checkpoint_->save_c4_peak(peaks, N_ant)      │              │               │
     │                │                │                                            │               │
@@ -112,9 +105,9 @@ Stream 3 (SPost):               [==stats POST 2.6мс==]►event_spost_done
   FFT batch (N×nFFT) │ ~20 мс** │ Compute+BW   │ **требует бенчмарка
   Stats PRE-GEMM     │ 2.6 мс   │ BW-bound     │ parallel с GEMM
   Stats POST-GEMM    │ 2.6 мс   │ BW-bound     │ parallel с Ham+FFT
-  Branch 2 (minmax)  │ < 1 мс   │ Compute-light│ 256 блоков × 256 потоков
-  Branch 3 (parabola)│ < 1 мс   │ Compute-light│ то же
-  Branch 4 (all max) │ 2-5 мс   │ Compute+BW   │ Blelloch scan
+  Step2.1 one_max    │ < 1 мс   │ Compute-light│ 3-point parabola, no phase
+  Step2.2 all_maxima │ 2-5 мс   │ Compute+BW   │ Blelloch scan
+  Step2.3 min/max    │ < 1 мс   │ Compute-light│ reduction
 
   ИТОГО (без DMA, если данные в VRAM):
     GEMM (13) + Hamming(0, скрыт) + FFT(20) + Branch(1) ≈ 34 мс
@@ -131,26 +124,25 @@ Stream 3 (SPost):               [==stats POST 2.6мс==]►event_spost_done
 
 ---
 
-## Seq-3: Смена Branch (без пересоздания объекта)
+## Seq-3: Управление post-FFT сценариями
 
 ```
  UserApp       AntennaProcessor_v1    StrategyFactory
     │                │                       │
     │ process(S,W)   │                       │
-    │ (mode=PARABOLA)│                       │
+    │ (ALL_REQUIRED) │                       │
     ├───────────────▶│                       │
-    │    result      │ (ParabolaBranchStrategy выполняется)
+    │    result      │ (Step2.1 + Step2.2 + Step2.3 выполняются)
     │◀───────────────┤                       │
     │                │                       │
-    │                │  // Заказчик хочет Branch 2
-    │ set_branch(MINMAX)                     │
+    │                │  // В отладке можно оставить только один сценарий
+    │ set_scenario_mode(ONE_MAX_PARABOLA)    │
     ├───────────────▶│                       │
-    │                │ strategy_.reset()     │
-    │                │ strategy_ = new MinMaxBranchStrategy()
+    │                │ scenario_mode_ = ONE_MAX_PARABOLA
     │                │                       │
     │ process(S,W)   │                       │
     ├───────────────▶│                       │
-    │    result      │ (MinMaxBranchStrategy выполняется)
+    │    result      │ (выполняется только Step2.1)
     │◀───────────────┤                       │
     │                │                       │
     │                │  // Включить сохранение C4

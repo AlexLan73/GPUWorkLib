@@ -6,6 +6,11 @@
 > **Reference**: [c4model.com](https://c4model.com)
 > **Level**: 4 (Code) — классы, интерфейсы, сигнатуры методов
 
+> **Update 2026-03-07**: `Window + FFT` выделен как общий reusable блок. Итоговые post-FFT сценарии:
+> - `Step2.1` → `OneMax + Parabola` (без фазы)
+> - `Step2.2` → `AllMaxima`
+> - `Step2.3` → `GlobalMinMax`
+
 ---
 
 ## 1. Enums и конфигурация
@@ -13,10 +18,11 @@
 ```cpp
 // ── modules/strategies/include/config/branch_mode.hpp ─────────────────
 
-enum class BranchMode : uint8_t {
-    MINMAX        = 2,   // Branch 2: один global MIN + один global MAX на луч
-    PARABOLA      = 3,   // Branch 3: один global MAX + параболическая интерполяция
-    ALL_MAXIMA    = 4,   // Branch 4: все локальные пики (ТОЛЬКО для внутреннего тестирования)
+enum class PostFftScenarioMode : uint8_t {
+    ALL_REQUIRED       = 0,  // считать все 3 post-FFT сценария
+    ONE_MAX_PARABOLA   = 1,  // Step2.1
+    ALL_MAXIMA         = 2,  // Step2.2
+    GLOBAL_MINMAX      = 3   // Step2.3
 };
 
 // ── modules/strategies/include/config/statistics_set.hpp ──────────────
@@ -67,21 +73,19 @@ struct CheckpointSaveConfig {
 
 struct AntennaProcessorConfig {
     // ─── Размеры данных ──────────────────────────────────────────────────
-    uint32_t     n_ant          = 256;          // кол-во антенн (= кол-во лучей после GEMM)
-    uint32_t     n_samples      = 1'200'000;    // кол-во выборок на антенну
-    float        sample_rate    = 1.2e6f;       // частота дискретизации [Гц]
+    uint32_t     n_ant          = 5;
+    uint32_t     n_samples      = 8000;
+    float        sample_rate    = 12.0e6f;
 
     // ─── Алгоритм ────────────────────────────────────────────────────────
-    BranchMode   branch_mode    = BranchMode::PARABOLA;  // выбор POST-FFT ветки
-    bool         full_spectrum_search = false;            // true = ищем в [-fs/2, +fs/2]
-                                                          // false = только [0, fs/2]
-    float        cfar_alpha     = 3.0f;         // порог CFAR: threshold = median * cfar_alpha
-                                                // (используется только в Branch 4)
+    PostFftScenarioMode scenario_mode = PostFftScenarioMode::ALL_REQUIRED;
+    uint32_t    maxima_limit          = 1000;
+    float       signal_frequency_hz   = 2.0e6f;
 
     // ─── Статистика ──────────────────────────────────────────────────────
-    StatisticsSet pre_gemm_stats  = StatPreset::P61_ALL;    // статистика по S до GEMM
-    StatisticsSet post_gemm_stats = StatPreset::P62_MEAN_MED; // статистика по X после GEMM
-    // Если == StatPreset::NONE → соответствующий pass не запускается
+    StatisticsSet pre_input_stats = StatPreset::P61_ALL;    // 2.1 по d_S
+    StatisticsSet post_gemm_stats = StatPreset::P61_ALL;    // 2.2 по d_X
+    StatisticsSet post_fft_stats  = StatPreset::P61_ALL;    // 2.3 по |spectrum|
 
     // ─── Checkpoint сохранение ───────────────────────────────────────────
     const CheckpointSaveConfig* save_cfg = nullptr;  // null = NullCheckpointSave (prod)
@@ -99,7 +103,7 @@ struct AntennaProcessorConfig {
 // #include "modules/fft_maxima/include/types/spectrum_result_types.hpp"
 // struct MaxValue { ... }; // 32 байта, уже готова!
 
-// MinMaxResult — для Branch 2 (один MIN + один MAX по спектру)
+// MinMaxResult — для Step2.3 (один MIN + один MAX по спектру)
 struct MinMaxResult {
     uint32_t beam_id;           // индекс луча [0..N_ant)
     // ── Минимум спектра ───────────────────────────────────────────────────
@@ -117,18 +121,15 @@ struct MinMaxResult {
 
 // Итоговый результат process() — объединяет всё
 struct AntennaResult {
-    // ─── Статистика PRE-GEMM (по S, временная область) ───────────────────
-    std::vector<StatisticsResult>  pre_stats;   // size = N_ant (если pre_gemm_stats != NONE)
+    std::vector<StatisticsResult>  pre_input_stats;   // 2.1
+    std::vector<StatisticsResult>  post_gemm_stats;   // 2.2
+    std::vector<StatisticsResult>  post_fft_stats;    // 2.3 по |spectrum|
 
-    // ─── Статистика POST-GEMM (по X, beamformed, до Hamming/FFT) ─────────
-    std::vector<StatisticsResult>  post_stats;  // size = N_ant (если post_gemm_stats != NONE)
+    std::vector<MinMaxResult>      minmax;       // Step2.3
+    std::vector<MaxValue>          peaks;        // Step2.1 / совместимость API
+    std::vector<AllMaximaBeamResult> all_maxima; // Step2.2
 
-    // ─── POST-FFT результат (ветка 2 или 3, не одновременно) ─────────────
-    std::vector<MinMaxResult>      minmax;      // size = N_ant (только если Branch 2)
-    std::vector<MaxValue>          peaks;       // size = N_ant (только если Branch 3)
-    std::vector<AllMaximaBeamResult> all_maxima; // size = N_ant (только если Branch 4)
-
-    BranchMode branch_used;  // какая ветка была использована
+    PostFftScenarioMode scenario_mode;
 
     // ─── Метрики производительности ───────────────────────────────────────
     struct PerfMetrics {
@@ -149,27 +150,25 @@ struct AntennaResult {
 ## 4. Интерфейсы
 
 ```cpp
-// ── modules/strategies/include/interfaces/i_branch_strategy.hpp ────────
+// ── modules/strategies/include/interfaces/i_post_fft_scenario.hpp ────────
 
-class IBranchStrategy {
+class IPostFftScenario {
 public:
-    virtual ~IBranchStrategy() = default;
+    virtual ~IPostFftScenario() = default;
 
     // Основной метод: обработка спектра
     // d_spectrum: [N_ant × nFFT] cf32, на GPU (HIP)
     // params: параметры из AntennaProcessorConfig
-    // Returns: BranchResult (variant с MinMaxResult[], MaxValue[], AllMaximaBeamResult[])
-    virtual BranchResult execute(
+    virtual ScenarioResult execute(
         const hipFloatComplex* d_spectrum,
         uint32_t n_ant,
         uint32_t nFFT,
         float    sample_rate,
-        float    cfar_alpha,       // используется только в Branch 4
-        uint32_t search_range,     // nFFT/2 для одностороннего, nFFT для полного
+        uint32_t maxima_limit,
         hipStream_t stream
     ) = 0;
 
-    virtual const char* name() const = 0;  // "MinMax", "Parabola", "AllMaxima"
+    virtual const char* name() const = 0;  // "OneMaxParabola", "AllMaxima", "GlobalMinMax"
 };
 
 // ── modules/strategies/include/interfaces/i_checkpoint_save.hpp ─────────
@@ -190,7 +189,7 @@ public:
         uint32_t n_ant, int gpu_id
     ) = 0;
 
-    // C2: после GEMM, до Hamming
+    // C2: после GEMM / debug point 2.2
     virtual void save_c2_data(
         const hipFloatComplex* d_X,       // GPU pointer
         uint32_t n_ant, uint32_t n_samples,
@@ -203,7 +202,7 @@ public:
         uint32_t n_ant, int gpu_id
     ) = 0;
 
-    // C3: после FFT (Branch 2 или сохранение спектра)
+    // C3: после FFT / debug point 2.3
     virtual void save_c3_minmax(
         const MinMaxResult* results,   // CPU
         uint32_t n_ant, int gpu_id
@@ -214,7 +213,7 @@ public:
         uint32_t n_ant, uint32_t nFFT, int gpu_id
     ) = 0;
 
-    // C4: после FFT (Branch 3)
+    // C4: результаты post-FFT scenarios
     virtual void save_c4_peak(
         const MaxValue* results,       // CPU
         uint32_t n_ant, int gpu_id
@@ -239,9 +238,10 @@ public:
     ) = 0;
 
     // ─── Конфигурация (может меняться между вызовами) ─────────────────────
-    virtual void set_branch(BranchMode mode) = 0;
-    virtual void set_pre_stats(StatisticsSet stats) = 0;
-    virtual void set_post_stats(StatisticsSet stats) = 0;
+    virtual void set_scenario_mode(PostFftScenarioMode mode) = 0;
+    virtual void set_pre_input_stats(StatisticsSet stats) = 0;
+    virtual void set_post_gemm_stats(StatisticsSet stats) = 0;
+    virtual void set_post_fft_stats(StatisticsSet stats) = 0;
     virtual void set_checkpoint_save(ICheckpointSave* save) = 0;  // nullptr = Null Object
 
     // ─── Информация ───────────────────────────────────────────────────────
@@ -330,7 +330,7 @@ private:
 
 ---
 
-## 6. Стратегии (Branch 2, 3, 4)
+## 6. Стратегии (Step2.1, Step2.2, Step2.3)
 
 ```cpp
 // ── modules/strategies/include/strategies/minmax_branch_strategy.hpp ───
@@ -463,7 +463,7 @@ public:
 
     // Пример использования:
     //   AntennaProcessorConfig cfg;
-    //   cfg.branch_mode = BranchMode::PARABOLA;
+    //   cfg.scenario_mode = PostFftScenarioMode::ONE_MAX_PARABOLA;
     //   cfg.pre_gemm_stats = StatPreset::P61_ALL;
     //
     //   auto proc = StrategyFactory::create(ctx, cfg);
@@ -574,8 +574,8 @@ class StrategyFactory {
 struct AntennaProcessorConfig {
     n_ant: uint32_t = 256
     n_samples: uint32_t = 1200000
-    sample_rate: float = 1.2e6
-    branch_mode: BranchMode = PARABOLA
+    sample_rate: float = 12.0e6
+    scenario_mode: PostFftScenarioMode = ALL_REQUIRED
     pre_gemm_stats: StatisticsSet = P61_ALL
     post_gemm_stats: StatisticsSet = P62_MEAN_MED
     save_cfg: const CheckpointSaveConfig* = nullptr

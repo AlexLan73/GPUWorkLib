@@ -15,74 +15,49 @@
 ║                              AntennaProcessor — Container View                                    ║
 ╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
 
-  HOST RAM                                  GPU VRAM (AMD 9070: 16 ГБ / MI100: 32 ГБ)
-  ──────────────────────                    ──────────────────────────────────────────────────────
-  ┌─────────────────────┐                   ┌──────────────────────────────────────────────────┐
-  │ S[N_ant × N_samples]│  Stream 0 (DMA)  │ d_S[N_ant × N_samples]    d_W[N_ant × N_ant]    │
-  │ (cf32, 2.5 ГБ)      │──────────────────▶│ (cf32, 2.5 ГБ)            (cf32, 512 КБ)        │
-  │ W[N_ant × N_ant]    │  hipMemcpyAsync  │                                                   │
-  │ (cf32, 512 КБ)      │──────────────────▶│ d_hamming[N_samples]      d_X[N_ant × N_samples]│
-  └─────────────────────┘                   │ (f32, 4.8 МБ, in L2!)    (cf32, 2.5 ГБ)        │
-                                             │                                                   │
-  hipEventRecord(event_data_ready)           │ d_spectrum[N_ant × nFFT]                        │
-                                             │ (cf32, ≈4.9 ГБ)                                 │
-                                             └──────────────────────────────────────────────────┘
-                                                              │
-                          ┌───────────────────────────────────┴────────────────────────────────┐
-                          │                                                                     │
-              ┌───────────▼──────────────────┐                    ┌────────────────────────────▼──────────────┐
-              │   Stream 1: Statistics PRE    │                    │   Stream 2: Main Pipeline                  │
-              │   (параллельно с Stream 2)    │                    │                                            │
-              │   ─────────────────────────── │                    │   ┌──────────────────────────────────────┐ │
-              │                               │                    │   │ GemmWrapper (hipBLAS Cgemm)           │ │
-              │   StatisticsProcessor         │                    │   │ X = W × S                             │ │
-              │   welford_fused(d_S):         │                    │   │ ≈ 13 мс (compute-bound)               │ │
-              │   ┌─────────────────────────┐ │                    │   │ W (512 КБ) → из L2 кеша! ✅           │ │
-              │   │ mean (complex)          │ │                    │   └──────────────────┬───────────────────┘ │
-              │   │ variance of |z|         │ │                    │                      │ event_gemm_done      │
-              │   │ std_dev of |z|          │ │                    │   ┌──────────────────▼───────────────────┐ │
-              │   │ min |z| + idx           │ │                    │   │ HammingProcessor (apply_hamming.hip)  │ │
-              │   │ max |z| + idx           │ │                    │   │ X[n] *= 0.54 - 0.46cos(2πn/N)        │ │
-              │   └─────────────────────────┘ │                    │   │ d_hamming в L2 → overhead ≈ 0         │ │
-              │   radix_sort + extract_medians│                    │   └──────────────────┬───────────────────┘ │
-              │   → median of |z|            │                    │                      │                      │
-              │                               │                    │   ┌──────────────────▼───────────────────┐ │
-              │   Output: StatsResult[N_ant]  │                    │   │ hipFFT Batch (hipFFT)                  │ │
-              │   (если pre_gemm_stats!=NONE) │                    │   │ N_ant × hipFFT_C2C(nFFT)              │ │
-              │                               │                    │   │ nFFT = next_pow2(N_samples) ≈ 2.1M    │ │
-              │   hipEventRecord              │                    │   │ ≈ 20 мс (TBD, бенчмарк нужен)        │ │
-              │   (event_stats_done)          │                    │   └──────────────────┬───────────────────┘ │
-              └───────────────────────────────┘                    │                      │ event_fft_done       │
-                          │                                        │   ┌──────────────────▼───────────────────┐ │
-                          │                                        │   │ fold_fft_mirror()                     │ │
-                          │              ┌─────────────────────────│   │ bins k > nFFT/2 → negative freq        │ │
-                          │              │ event_gemm_done          │   └──────────────────┬───────────────────┘ │
-                          │              ▼                          │                      │                      │
-              ┌───────────▼──────────────────┐                    │   ┌──────────────────▼───────────────────┐ │
-              │   Stream 3: Statistics POST   │                    │   │ IBranchStrategy::execute()            │ │
-              │   (параллельно с Ham+FFT)     │                    │   │   Branch 2: MinMaxBranchStrategy      │ │
-              │                               │                    │   │   Branch 3: ParabolaBranchStrategy    │ │
-              │   StatisticsProcessor         │                    │   │   Branch 4: AllMaximaBranchStrategy   │ │
-              │   welford_fused(d_X):         │                    │   └──────────────────┬───────────────────┘ │
-              │   ┌─────────────────────────┐ │                    │                      │                      │
-              │   │ mean + median + ...     │ │                    │   ICheckpointSave::save_c3/c4()            │
-              │   └─────────────────────────┘ │                    │                      │                      │
-              │   → StatsResult[N_ant]        │                    └──────────────────────┼─────────────────────┘
-              │   (если post_gemm_stats!=NONE)│                                           │
-              │   hipEventRecord              │                                           │
-              │   (event_spost_done)          │                                           │
-              └───────────────────────────────┘                                           │
-                                                                                          ▼
-                                                                          ┌──────────────────────────┐
-                                                                          │   AntennaResult           │
-                                                                          │                            │
-                                                                          │   .pre_stats[N_ant]        │
-                                                                          │   .post_stats[N_ant]       │
-                                                                          │   .minmax[N_ant] (B2)      │
-                                                                          │   .peaks[N_ant]  (B3)      │
-                                                                          │   .all_maxima[]  (B4)      │
-                                                                          │   .perf (timing metrics)   │
-                                                                          └──────────────────────────┘
+  EXTERNAL GPU PRODUCER                       GPU VRAM (AMD 9070: 16 ГБ / MI100: 32 ГБ)
+  ──────────────────────                      ─────────────────────────────────────────────────────
+  ┌─────────────────────┐                     ┌──────────────────────────────────────────────────┐
+  │ d_S already on GPU  │                     │ d_S[N_ant × N_samples]    d_W[N_ant × N_ant]    │
+  │ metadata (fs, N, ..)│────────────────────▶│ input signal               beamforming matrix     │
+  └─────────────────────┘                     │                                                  │
+                                              │ d_X[N_ant × N_samples]    d_spectrum[N_ant×nFFT]│
+                                              │ GEMM output               shared FFT output      │
+                                              └──────────────────────────────────────────────────┘
+                                                               │
+                         ┌─────────────────────────────────────┴──────────────────────────────────┐
+                         │                                                                         │
+             ┌───────────▼──────────────────┐                     ┌────────────────────────────────▼──────────────┐
+             │ Stream 1: Debug/Stats 2.1     │                     │ Stream 2: Main Pipeline                      │
+             │ (параллельно с Stream 2)      │                     │                                              │
+             │ ───────────────────────────── │                     │ 1. GEMM: X = W × S                          │
+             │ stats(d_S)                    │                     │ 2. Base block: Window + FFT -> d_spectrum   │
+             │ save(d_S)                     │                     │ 3. запускает post-FFT consumers             │
+             │ python(d_S or stats)          │                     │                                              │
+             │ -> event_c1_done              │                     │ W кэшируется в L2                           │
+             └───────────────────────────────┘                     └───────────────┬──────────────────────────────┘
+                         │                                                         │
+                         │                                      event_gemm_done    │ event_fft_done
+                         │                                                         │
+             ┌───────────▼──────────────────┐                     ┌────────────────▼──────────────────────────────┐
+             │ Stream 3: Debug/Stats 2.2     │                     │ Stream 4: Post-FFT Consumers                │
+             │ (параллельно с Window+FFT)    │                     │                                              │
+             │ ───────────────────────────── │                     │ Step2.1: OneMax + Parabola (no phase)       │
+             │ stats(d_X)                    │                     │ Step2.2: AllMaxima (limit=1000)             │
+             │ save(d_X)                     │                     │ Step2.3: GlobalMinMax (limit=1000)          │
+             │ python(d_X or stats)          │                     │ PostFFT stats over |spectrum|               │
+             │ -> event_c2_done              │                     │ save/python for 2.3 debug                   │
+             └───────────────────────────────┘                     └────────────────┬──────────────────────────────┘
+                                                                                     │
+                                                                                     ▼
+                                                                       ┌──────────────────────────────┐
+                                                                       │ AntennaResult                 │
+                                                                       │ pre_input_stats               │
+                                                                       │ post_gemm_stats               │
+                                                                       │ post_fft_stats                │
+                                                                       │ one_max / all_maxima / minmax │
+                                                                       │ perf                          │
+                                                                       └──────────────────────────────┘
 ```
 
 ---
@@ -90,22 +65,29 @@
 ## 2. HIP Events Flow
 
 ```
-Stream 0 (DMA) ──────────────► event_data_ready
-                                       │
-                    ┌──────────────────┴──────────────────┐
-                    ▼                                       ▼
-Stream 1 (Stats)   ├── welford_fused(d_S)                Stream 2 (Main)
-                    └── radix_sort                          ├── hipblasCgemm ──► event_gemm_done
-                         ► event_stats_done                │                           │
-                                                           │                           ├──────────► Stream 3 (SPost)
-                                                           ├── apply_hamming           │              └── welford_fused(d_X)
-                                                           ├── hipFFT                  │                   ► event_spost_done
-                                                           │    ► event_fft_done       │
-                                                           └── Branch + Checkpoint     │
+External GPU producer ─────► d_S ready
+                                   │
+                  ┌────────────────┴────────────────┐
+                  ▼                                 ▼
+Stream 1 (2.1)   stats/save/python(d_S)        Stream 2 (Main)
+                  ► event_c1_done               ├── hipblasCgemm ──► event_gemm_done
+                                                ├── Window + FFT ──► event_fft_done
+                                                └── shared d_spectrum
+
+event_gemm_done ───────────────────────────────► Stream 3 (2.2)
+                                                 └── stats/save/python(d_X)
+                                                     ► event_c2_done
+
+event_fft_done ────────────────────────────────► Stream 4 (2.3 + post-FFT)
+                                                 ├── stats(|spectrum|)
+                                                 ├── save/python(spectrum)
+                                                 ├── Step2.1 one_max + parabola
+                                                 ├── Step2.2 all_maxima
+                                                 └── Step2.3 global min/max
 
 Синхронизация (CPU side, перед сборкой AntennaResult):
-  hipEventSynchronize(event_stats_done)
-  hipEventSynchronize(event_spost_done)
+  hipEventSynchronize(event_c1_done)
+  hipEventSynchronize(event_c2_done)
   hipEventSynchronize(event_fft_done)
 ```
 
@@ -117,12 +99,12 @@ Stream 1 (Stats)   ├── welford_fused(d_S)                Stream 2 (Main)
 |-------|---------------------|-----------|
 | `d_S[N_ant × N_samples]` | 2.45 ГБ | Входной сигнал (READ-ONLY) |
 | `d_W[N_ant × N_ant]` | 512 КБ | Матрица весов (READ-ONLY, fit L2!) |
-| `d_X[N_ant × N_samples]` | 2.45 ГБ | GEMM output + Hamming in-place |
+| `d_X[N_ant × N_samples]` | 2.45 ГБ | GEMM output, вход для debug `2.2` и для `Window + FFT` |
 | `d_hamming[N_samples]` | 4.8 МБ | Окно Хемминга (кешируется в L2!) |
-| `d_spectrum[N_ant × nFFT]` | 4.92 ГБ | FFT output |
+| `d_spectrum[N_ant × nFFT]` | 4.92 ГБ | FFT output, общий вход для всех post-FFT consumers |
 | **ИТОГО** | **≈ 10.3 ГБ** | Укладывается в 16 ГБ (9070) ✅ |
 
-> ⚠️ При нехватке VRAM: d_spectrum можно не хранить целиком — branch сразу читает и уничтожает. Для Branch 4 (all maxima) нужен дополнительный буфер флагов.
+> ⚠️ При нехватке VRAM: `d_spectrum` можно переиспользовать батчами, но базовый вариант быстрее при одном вычислении FFT и повторном чтении общего спектра несколькими consumers. Для `AllMaxima` нужен дополнительный буфер флагов.
 
 ---
 
@@ -183,7 +165,7 @@ System_Boundary(ap_module, "strategies module") {
               "welford_fused(d_X)\nParallel with Hamming+FFT")
 
     Container(branch, "IBranchStrategy", "C++ Strategy",
-              "Branch 2: MinMax\nBranch 3: Parabola\nBranch 4: AllMaxima (internal)")
+              "Step2.1: OneMax+Parabola\nStep2.2: AllMaxima\nStep2.3: GlobalMinMax")
 
     Container(chk, "ICheckpointSave", "C++ Null Object",
               "NullCheckpointSave (production)\nCheckpointSave (debug)")

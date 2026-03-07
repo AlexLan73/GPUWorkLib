@@ -6,6 +6,11 @@
 > **Reference**: [c4model.com](https://c4model.com)
 > **Level**: 3 (Component) — компоненты внутри модуля AntennaProcessor
 
+> **Update 2026-03-07**: итоговая семантика модуля — `Window + FFT` как общий блок, затем `Step2.1/2.2/2.3`. В нескольких старых ASCII-фрагментах ниже могут встречаться legacy-имена `Branch 2/3/4`; их следует читать как:
+> - `Branch 3` → `Step2.1 OneMax + Parabola`
+> - `Branch 4` → `Step2.2 AllMaxima`
+> - `Branch 2` → `Step2.3 GlobalMinMax`
+
 ---
 
 ## 1. Общая структура компонентов
@@ -40,7 +45,7 @@
 │  │  │                                                       │  │   └─────────────────────┘  └──────────────────┘   │  │
 │  │  │  + process(S, W, cfg) → AntennaResult                │  │   ┌──────────────────────────────────────────┐    │  │
 │  │  │    1. DMA load (Stream 0)                             │  │   │ AllMaximaStrategy                         │    │  │
-│  │  │    2. C1 checkpoint [optional]                        │  │   │ (Branch 4 — INTERNAL TESTING ONLY)        │    │  │
+│  │  │    2. C1 checkpoint [optional]                        │  │   │ (legacy label, now Step2.2 AllMaxima)     │    │  │
 │  │  │    3. Stats PRE-GEMM (Stream 1, parallel)            │  │   │ ──────────────────────────────────────────  │    │  │
 │  │  │    4. GEMM: X = W × S (Stream 2)                     │  │   │ detect_all_maxima + stream compaction      │    │  │
 │  │  │    5. C2 checkpoint [optional]                        │  │   │ → AllMaximaBeamResult[N]                   │    │  │
@@ -93,12 +98,12 @@
 
 | Класс | Одна ответственность |
 |-------|---------------------|
-| `AntennaProcessor_v1` | Оркестрирует pipeline: DMA→Stats→GEMM→Hamming→FFT→Branch |
+| `AntennaProcessor_v1` | Оркестрирует pipeline: input GPU→debug 2.1→GEMM→debug 2.2→Window+FFT→debug 2.3→post-FFT scenarios |
 | `GemmWrapper` | ТОЛЬКО GEMM: W × S = X (hipBLAS Cgemm) |
-| `HammingProcessor` | ТОЛЬКО вычисление и применение окна Хемминга |
-| `MinMaxBranchStrategy` | ТОЛЬКО поиск глобального min+max по спектру |
-| `ParabolaBranchStrategy` | ТОЛЬКО поиск одного максимума + паrabola interpolation |
-| `AllMaximaBranchStrategy` | ТОЛЬКО поиск всех локальных пиков (CFAR) — внутреннее тестирование |
+| `WindowFFTBlock` | ТОЛЬКО окно + FFT, общий reusable этап |
+| `GlobalMinMaxScenario` | ТОЛЬКО поиск глобального max/min по спектру |
+| `OneMaxParabolaScenario` | ТОЛЬКО поиск одного максимума + parabola interpolation без фазы |
+| `AllMaximaScenario` | ТОЛЬКО поиск всех локальных пиков (CFAR) |
 | `CheckpointSave` | ТОЛЬКО сохранение checkpoint-данных в файлы |
 | `NullCheckpointSave` | ТОЛЬКО no-op заглушка (Null Object GoF) |
 
@@ -126,10 +131,10 @@
 AntennaProcessor* proc = factory.create(ctx, cfg);
 // Работает с любой реализацией: AntennaProcessor_v1, MockAntennaProcessor, ...
 
-proc->set_branch(BranchMode::PARABOLA);     // → ParabolaBranchStrategy
+proc->set_scenario_mode(PostFftScenarioMode::ALL_REQUIRED);
 proc->process(S, W, cfg);                    // гарантированно возвращает AntennaResult
 
-proc->set_branch(BranchMode::MINMAX);        // → MinMaxBranchStrategy
+proc->set_scenario_mode(PostFftScenarioMode::ONE_MAX_PARABOLA);
 proc->process(S, W, cfg);                    // тот же контракт
 ```
 
@@ -185,8 +190,8 @@ StrategyFactory создаёт КОНКРЕТНЫЕ реализации:
 ### 4.1 Strategy (Поведенческий)
 
 ```
-Задача: POST-FFT обработка бывает 3 видов (Branch 2/3/4),
-        выбор во время выполнения без if/switch в main pipeline
+Задача: POST-FFT обработка бывает 3 обязательных видов (Step2.1/2.2/2.3),
+        и все они должны работать от одного общего `d_spectrum`
 
 ┌─────────────────────────────────────────────────────────────┐
 │                     <<interface>>                            │
@@ -199,20 +204,21 @@ StrategyFactory создаёт КОНКРЕТНЫЕ реализации:
           ┌────────────────┼────────────────────────┐
           ▼                ▼                         ▼
   ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐
-  │MinMaxStrategy│  │ParabolaStrat.│  │AllMaximaStrategy         │
-  │ (Branch 2)   │  │ (Branch 3)   │  │ (Branch 4, internal)     │
+  │GlobalMinMax  │  │OneMaxParabola│  │AllMaximaScenario         │
+  │ (Step2.3)    │  │ (Step2.1)    │  │ (Step2.2)                │
   │ ────────────  │  │ ────────────  │  │ ────────────────────────  │
-  │ minmax_       │  │ post_kernel_ │  │ detect_all_maxima        │
+  │ global_minmax │  │ one_peak     │  │ detect_all_maxima        │
   │ spectrum      │  │ one_peak     │  │ + Blelloch prefix scan   │
   │ kernel        │  │ kernel       │  │ + stream compaction      │
   └──────────────┘  └──────────────┘  └──────────────────────────┘
 
 Context:
   AntennaProcessor_v1 {
-    IBranchStrategy* strategy_;  // установлена через set_branch()
+    vector<IPostFftScenario*> scenarios_;  // Step2.1 / 2.2 / 2.3
     ...
     // в process():
-    auto result = strategy_->execute(d_spectrum, ...);
+    run_window_fft_once(d_X, d_spectrum);
+    for (auto* s : scenarios_) { s->execute(d_spectrum, ...); }
   }
 ```
 
