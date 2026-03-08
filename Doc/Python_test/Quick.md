@@ -1,6 +1,7 @@
 # Python_test — Краткий справочник
 
 > Тестовая инфраструктура Python для всех GPU-модулей GPUWorkLib
+> **Рефакторинг**: OOP/SOLID/GRASP/GoF (2026-03-08)
 
 ---
 
@@ -8,19 +9,53 @@
 
 ```
 Python_test/
-├── signal_generators/   # 4 файла — CW, LFM, Delayed, Analytical
-├── filters/             # 5 файлов — FIR, IIR, AI pipeline
-├── heterodyne/          # 4 файла — LFM dechirp
-├── fft_maxima/          # 3 файла — поиск максимумов спектра
-├── lch_farrow/          # 2 файла — Lagrange 48×5 задержка
-├── statistics/          # 1 файл  — mean/median/Welford (ROCm)
-├── vector_algebra/      # 2 файла — Cholesky inversion (ROCm)
-├── integration/         # 1 файл  — full pipeline
-├── hybrid/              # 1 файл  — OpenCL + ROCm context
-└── zero_copy/           # 1 файл  — GPU memory bridge
+├── conftest.py              ← ROOT: session fixtures (gw, gpu_ctx, rng, plot_dir)
+│
+├── common/                  ← НОВЫЙ: общая инфраструктура (GoF + SOLID)
+│   ├── gpu_loader.py        ← GPULoader (Singleton) — находит .so один раз
+│   ├── gpu_context.py       ← GPUContextManager (Singleton)
+│   ├── test_base.py         ← TestBase (Template Method)
+│   ├── configs.py           ← SignalConfig, FilterConfig (dataclasses)
+│   ├── validators.py        ← IValidator + Numeric/Spectral/Energy
+│   ├── reporters.py         ← IReporter + Console/JSON/Multi
+│   ├── result.py            ← TestResult, ValidationResult
+│   └── plotting/
+│       └── plotter_base.py  ← IPlotter (Strategy ABC)
+│
+├── filters/                 # 9 файлов — FIR, IIR, Moving Avg, AI pipeline
+│   ├── conftest.py          ← fixtures: fir_coeffs, iir_coeffs, signals
+│   ├── filter_test_base.py  ← FilterTestBase(TestBase)
+│   └── ai_pipeline/         ← НОВЫЙ: разбивка монолита (964 строки → 4 файла)
+│       ├── llm_parser.py    ← LLMParser + Mock/Groq/OllamaParser (Strategy)
+│       ├── filter_designer.py  ← FilterDesigner (scipy FIR/IIR)
+│       └── test_ai_pipeline.py ← чистые pytest тесты (без matplotlib)
+│
+├── signal_generators/       # 4 файла + инфраструктура
+│   ├── conftest.py          ← fixtures: sig_gen, fft_proc, lfm_params
+│   └── signal_test_base.py  ← SignalTestBase(TestBase)
+│
+├── heterodyne/              # 4 файла + инфраструктура
+│   ├── conftest.py          ← fixtures: DechirpParams, het_proc, lfm_srx
+│   └── heterodyne_test_base.py ← HeterodyneTestBase + validate_beat_frequency()
+│
+├── integration/             # 3 файла (было 1 монолит 903 строки)
+│   ├── conftest.py
+│   ├── test_fft_integration.py       ← тесты 1-3: CW/LFM/Noise → FFT
+│   └── test_signal_gen_integration.py ← тесты 4-7: multichannel, pipeline
+│
+├── strategies/              # 5 файлов + инфраструктура
+│   ├── conftest.py          ← fixtures: scenario_8ant, pipeline_runner
+│   ├── pipeline_runner.py   ← + PipelineBase/PipelineA/PipelineB (рефакторинг)
+│   ├── scenario_builder.py  ← ScenarioBuilder (Builder pattern, без изменений)
+│   └── farrow_delay.py      ← FarrowDelay numpy (без изменений)
+│
+├── fft_maxima/   + conftest.py
+├── lch_farrow/   + conftest.py
+├── statistics/   + conftest.py
+└── vector_algebra/ + conftest.py
 ```
 
-**Итого: 10 модулей, 24 тестовых файла + 1 example**
+**Итого: 10 модулей + common/, 57 файлов (было 36)**
 
 ---
 
@@ -32,44 +67,151 @@ Python_test/
 cmake -B build -DBUILD_PYTHON=ON && cmake --build build --config Release
 ```
 
-### Запуск
+### Запуск (pytest)
 
 ```bash
-# Один тест
-python Python_test/signal_generators/test_form_signal.py
-
-# Без графиков
-python Python_test/signal_generators/test_form_signal.py --no-plot
-
-# Через pytest
+# Все тесты (GPULoader найдёт .so автоматически)
 pytest Python_test/ -v
 
-# Только ROCm тесты (Linux)
+# Модуль целиком
+pytest Python_test/filters/ -v
+pytest Python_test/integration/ -v
+
+# Только тесты без GPU (не принимают gpu_ctx fixture)
+pytest Python_test/filters/ai_pipeline/ -v  # MockParser, FilterDesigner
+
+# Один тест
+pytest Python_test/filters/ai_pipeline/test_ai_pipeline.py::TestMockParser -v
+
+# ROCm тесты (Linux)
 bash Python_test/run_all_rocm_tests.sh
 ```
 
-### PyCharm
+### Запуск (standalone, с графиками)
 
-- Working dir: корень `GPUWorkLib/`
-- PYTHONPATH: `$ProjectFileDir$/build/python`
-- Environment: `GPUWORKLIB_PLOT=1`
+```bash
+# Старые тесты — работают как раньше
+python Python_test/signal_generators/test_form_signal.py
+python Python_test/heterodyne/test_heterodyne_step_by_step.py
+```
+
+---
+
+## GPULoader — решение проблемы путей
+
+**Было** (хардкод в каждом файле):
+```python
+sys.path.insert(0, os.path.join(PROJECT_ROOT, 'build', 'debian-radeon9070', 'python'))
+import gpuworklib
+```
+
+**Стало** (один Singleton для всей сессии):
+```python
+from common.gpu_loader import GPULoader
+gw = GPULoader.get()   # None если не найден
+```
+
+**Или через pytest fixture** (автоматически):
+```python
+def test_something(gpu_ctx):    # fixture из root conftest.py
+    f = gpuworklib.FirFilterROCm(gpu_ctx, coeffs)
+    ...
+```
+
+Поиск в 6 стандартных путях: `build/python/Release`, `build/python/Debug`, `build/debian-radeon9070/python`, ...
+
+---
+
+## Ключевые абстракции common/
+
+### TestBase — Template Method
+
+```python
+class MyFilterTest(FilterTestBase):
+    def get_params(self): return FilterConfig(cutoff_hz=1e3, fs=50e3)
+
+    def process(self, data, ctx):
+        return gpuworklib.FirFilterROCm(ctx, coeffs).process(data)
+
+    def compute_reference(self, data, params):
+        return scipy.signal.lfilter(coeffs, [1.0], data)
+
+    def validate(self, result, params):
+        return self._validate_with_scipy(result, params, tolerance=1e-4)
+
+# Запуск
+result = MyFilterTest("fir_lowpass").run()
+print(result.summary())  # PASS / FAIL + детали
+```
+
+### IValidator — Strategy
+
+```python
+from common.validators import NumericValidator, SpectralValidator, EnergyValidator
+
+v = NumericValidator(tolerance=1e-4)
+vr = v.validate(gpu_output, scipy_reference)
+# vr.passed → True/False
+# vr.actual_value → относительная ошибка
+
+v = SpectralValidator(fs=12e6, freq_tol_hz=500.0)
+vr = v.validate(gpu_signal, reference_signal)
+
+v = EnergyValidator(fs=50e3, band_hz=(200, 1000), min_ratio=0.8)
+vr = v.validate(filtered_signal, _)
+```
+
+### LLMParser — ai_pipeline (Strategy)
+
+```python
+from filters.ai_pipeline.llm_parser import MockParser, GroqParser, create_parser
+from filters.ai_pipeline.filter_designer import FilterDesigner
+
+# В тестах — без сети:
+parser = MockParser()
+spec = parser.parse("FIR lowpass 1kHz", fs=50_000)
+# spec.filter_class = "fir", spec.f_cutoff = 1000.0
+
+design = FilterDesigner().design(spec)
+# design.coeffs_b = [scipy firwin коэффициенты]
+ref_output = design.apply_scipy(signal)
+
+# В production — через AI:
+parser = create_parser("groq")   # читает GROQ_API_KEY / api_keys.json
+```
+
+### PipelineBase — strategies/ (Template Method)
+
+```python
+# Старый API PipelineRunner работает без изменений:
+runner = PipelineRunner(output_dir="Results/strategies/test_01")
+result_a = runner.run_pipeline_a(scenario, steer_theta=30, steer_freq=2e6)
+result_b = runner.run_pipeline_b(scenario, steer_theta=30)
+
+# Новый: напрямую через классы (меньше параметров):
+from pipeline_runner import PipelineA, PipelineB
+result = PipelineA().run(scenario, steer_theta=30, steer_freq=2e6)
+result = PipelineB().run(scenario, steer_theta=30)
+```
 
 ---
 
 ## Покрытие модулей
 
-| Модуль | Файлов | OpenCL | ROCm | Эталон |
-|--------|--------|--------|------|--------|
-| signal_generators | 4 | ✅ | ✅ | NumPy |
-| filters | 5 | ✅ | ✅ | SciPy |
-| heterodyne | 4 | ✅ | ✅ | NumPy FFT |
-| fft_maxima | 3 | ✅ | ✅* | SciPy find_peaks |
-| lch_farrow | 2 | ✅ | ✅ | CPU Lagrange |
-| statistics | 1 | — | ✅ | NumPy |
-| vector_algebra | 2 | — | ✅ | NumPy + CSV |
-| integration | 1 | ✅ | — | Combined |
-| hybrid | 1 | ✅ | ✅ | — |
-| zero_copy | 1 | ✅ | ✅ | — |
+| Модуль | Файлов | OpenCL | ROCm | Эталон | conftest |
+|--------|--------|--------|------|--------|----------|
+| signal_generators | 4+2 | ✅ | ✅ | NumPy getX | ✅ |
+| filters | 5+3+4 | ✅ | ✅ | SciPy lfilter/sosfilt | ✅ |
+| heterodyne | 4+2 | ✅ | ✅ | NumPy FFT | ✅ |
+| fft_maxima | 3+1 | ✅ | ✅* | SciPy find_peaks | ✅ |
+| lch_farrow | 2+1 | ✅ | ✅ | CPU Lagrange | ✅ |
+| statistics | 1+1 | — | ✅ | NumPy mean/median | ✅ |
+| vector_algebra | 2+1 | — | ✅ | NumPy linalg + CSV | ✅ |
+| integration | 3+1 | ✅ | — | Combined | ✅ |
+| strategies | 5+1 | — | — | numpy | ✅ |
+| common/ | 10 | — | — | (инфраструктура) | — |
+
+\* fft_maxima ROCm: indirect через HeterodyneDechirp
 
 ---
 
@@ -85,13 +227,27 @@ bash Python_test/run_all_rocm_tests.sh
 
 ---
 
+## Слои тестирования (разделение matplotlib)
+
+```
+Слой 1: pytest тесты (test_*.py)
+  → только assert, numpy, gpu_ctx fixture
+  → НЕ импортируют matplotlib напрямую
+  → запускаются в CI без дисплея
+
+Слой 2: демо-скрипты (demo_*.py, example_*.py)
+  → запускаются руками: python demo_ai_pipeline.py
+  → рисуют графики, сохраняют в Results/Plots/
+  → используют IPlotter из common/plotting/
+```
+
+---
+
 ## Графики
 
 Все графики → `Results/Plots/{module}/`:
 - `signal_generators/FormSignal/`, `DelayedFormSignal/`, `LfmAnalyticalDelay/`
-- `fft_maxima/`, `filters/`, `heterodyne/`, `lch_farrow/`, `integration/`
-
-Отчёты → `Results/Reports/vector_algebra/`
+- `filters/`, `heterodyne/`, `fft_maxima/`, `lch_farrow/`, `integration/`, `strategies/`
 
 ---
 
@@ -100,16 +256,17 @@ bash Python_test/run_all_rocm_tests.sh
 | Пакет | Обязательный | Назначение |
 |-------|-------------|------------|
 | numpy | ✅ | CPU reference |
-| scipy | ⚠️ рекомендуется | Фильтры, find_peaks |
-| matplotlib | ⚠️ рекомендуется | Графики |
+| scipy | ⚠️ рекомендуется | Фильтры, find_peaks, firwin/butter |
+| matplotlib | ⚠️ опционально | Графики (только в demo-скриптах) |
 | pytest | ⚠️ рекомендуется | Test runner |
+| groq / ollama | ❌ опционально | AI-pipeline (MockParser работает без них) |
 
 ---
 
 ## Python API (pybind11)
 
 ```python
-# Контексты
+# Контексты (создаётся автоматически через GPUContextManager)
 ctx = gpuworklib.GPUContext(0)          # OpenCL
 ctx = gpuworklib.ROCmGPUContext(0)      # ROCm
 
@@ -122,13 +279,13 @@ fft = gpuworklib.FFTProcessor(ctx)
 finder = gpuworklib.SpectrumMaximaFinder(ctx)
 
 # Фильтры
-fir = gpuworklib.FirFilter(ctx)         # OpenCL
-iir = gpuworklib.IirFilterROCm(ctx)     # ROCm
+fir = gpuworklib.FirFilterROCm(ctx, coeffs)
+iir = gpuworklib.IirFilterROCm(ctx, b, a)
 
 # Signal Processing
-farrow = gpuworklib.LchFarrow(ctx)
-het = gpuworklib.HeterodyneDechirp(ctx)
-stats = gpuworklib.StatisticsProcessor(ctx)  # ROCm only
+farrow = gpuworklib.LchFarrowROCm(ctx)
+het = gpuworklib.HeterodyneDechirp(ctx, fs, f_start, f_end, n, n_ant)
+stats = gpuworklib.StatisticsProcessor(ctx)
 ```
 
 Подробнее: `Doc/Python/*.md`
@@ -137,9 +294,10 @@ stats = gpuworklib.StatisticsProcessor(ctx)  # ROCm only
 
 ## Ссылки
 
-- [Full](Full.md) — полное описание, все тесты, архитектура, binding'ы
+- [Full.md](Full.md) — полное описание, все тесты, архитектура, binding'ы
 - [Doc/Python/](../Python/) — Python API документация по модулям
+- [MemoryBank/specs/python_test_refactoring.md](../../MemoryBank/specs/python_test_refactoring.md) — план рефакторинга
 
 ---
 
-*Обновлено: 2026-03-02*
+*Обновлено: 2026-03-08*

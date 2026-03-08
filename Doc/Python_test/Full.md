@@ -5,6 +5,7 @@
 **Каталог**: `Python_test/`
 **Фреймворк**: pytest (совместим со standalone-запуском)
 **Зависимости**: pybind11, numpy, scipy (опционально), matplotlib (опционально), gpuworklib (C++ модуль)
+**Архитектура**: OOP/SOLID/GRASP/GoF — рефакторинг 2026-03-08
 
 ---
 
@@ -45,17 +46,24 @@
 
 ## 2. Архитектура
 
-### Pipeline тестирования
+### 2.1 Общая схема тестирования
 
 ```
-Python test script (.py)
+Python test script (test_*.py)
     │
-    ├── import gpuworklib  ←──── pybind11 module (.pyd / .so)
-    │       │                         │
-    │       │                    ┌────┴─────────────────────┐
-    │       │                    │  gpu_worklib_bindings.cpp │
-    │       │                    │  + py_*.hpp wrappers     │
-    │       │                    └────┬─────────────────────┘
+    ├── conftest.py fixtures ──┐
+    │   (gw, gpu_ctx, rng)     │
+    │                          ▼
+    │                    ┌─────────────────┐
+    │                    │  common/         │
+    │                    │  GPULoader       │  ←── Singleton: находит .so
+    │                    │  GPUContextMgr   │  ←── Singleton: хранит ctx
+    │                    │  TestBase        │  ←── Template Method
+    │                    │  IValidator      │  ←── Strategy
+    │                    │  IReporter       │  ←── Observer
+    │                    └────────┬─────────┘
+    │                             │
+    ├── import gpuworklib  ←──────┘  pybind11 (.pyd / .so)
     │       │                         │
     │       │                    C++ модули (DrvGPU, FFT, Filters...)
     │       │                         │
@@ -63,12 +71,41 @@ Python test script (.py)
     │       │
     ├── import numpy/scipy  ←── CPU эталон
     │
-    ├── GPU result vs CPU reference  → assert / threshold
+    ├── GPU result vs CPU reference  → ValidationResult
     │
-    └── matplotlib plots  → Results/Plots/{module}/
+    └── [demo_*.py] matplotlib plots → Results/Plots/{module}/
+        (НЕ в pytest тестах — разделение слоёв)
 ```
 
-### Mermaid-диаграмма
+### 2.2 Слои тестирования
+
+| Слой | Файлы | Требования | Запуск |
+|------|-------|-----------|--------|
+| **pytest-тесты** | `test_*.py` | numpy, gpuworklib (skip если нет) | `pytest Python_test/ -v` |
+| **демо-скрипты** | `demo_*.py`, `example_*.py` | + matplotlib, опционально AI | `python demo_ai_pipeline.py` |
+
+**Ключевое правило**: `test_*.py` никогда не импортируют matplotlib напрямую.
+
+### 2.3 OOP/SOLID архитектура (GoF + GRASP)
+
+| Паттерн | Класс | Назначение |
+|---------|-------|-----------|
+| **Singleton** | `GPULoader`, `GPUContextManager` | Один .so и один ctx на сессию |
+| **Template Method** | `TestBase.run()`, `PipelineBase.run()` | Скелет теста/pipeline |
+| **Strategy** | `IValidator`, `IPlotter`, `LLMParser` | Взаимозаменяемые реализации |
+| **Observer** | `IReporter` | Console/JSON отчёты |
+| **Builder** | `ScenarioBuilder` | Fluent API для сценариев |
+| **Factory Method** | `conftest.py` fixtures | Создание объектов для тестов |
+
+**SOLID**:
+- **SRP**: `FilterDesigner` только считает коэффициенты, `LLMParser` только парсит NL, `IPlotter` только рисует
+- **OCP**: новый LLM-бэкенд = новый подкласс `LLMParser` без изменения кода
+- **DIP**: все тесты получают `gpuworklib` через `GPULoader.get()`, не хардкодят путь
+- **ISP**: мелкие dataclass (`SignalConfig`, `FilterConfig`) вместо одного большого dict
+
+### 2.4 Mermaid-диаграмма
+
+### Mermaid-диаграмма (полный граф модулей)
 
 ```mermaid
 flowchart TB
@@ -162,13 +199,39 @@ cmake --build build/rocm
 
 ### 3.4 Автодетекция пути к сборке
 
-Все тесты используют единый паттерн поиска `gpuworklib`:
+#### Новый способ (рекомендуется): GPULoader Singleton
+
+Все новые тесты используют `GPULoader` из `common/gpu_loader.py`:
+
+```python
+# В pytest-тестах — через fixture (автоматически):
+def test_something(gpu_ctx):   # fixture из conftest.py → skip если нет GPU
+    f = gpuworklib.FirFilterROCm(gpu_ctx, coeffs)
+
+# Напрямую:
+from common.gpu_loader import GPULoader
+gw = GPULoader.get()   # None если не найден, иначе модуль gpuworklib
+if gw is None:
+    pytest.skip("gpuworklib not found")
+ctx = gw.GPUContext(0)
+```
+
+**Порядок поиска** (от приоритетного):
+1. `build/python/Release` — MSVC Release
+2. `build/python/Debug` — MSVC Debug
+3. `build/debian-radeon9070/python` — Linux ROCm
+4. `build/Release` — альтернатива
+5. `build/Debug`
+6. `build/python` — общая сборка
+
+#### Старый способ (обратная совместимость): ручной поиск в файле
+
+Старые тесты (`test_form_signal.py`, `test_heterodyne_step_by_step.py` и др.) сохраняют прежний паттерн — они работают без изменений:
 
 ```python
 BUILD_PATHS = [
-    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python'),
-    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Release'),
     os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Debug'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Release'),
     os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'debian-radeon9070', 'python'),
 ]
 for p in BUILD_PATHS:
@@ -183,22 +246,25 @@ for p in BUILD_PATHS:
 
 ### Сводная таблица
 
-| Модуль | Каталог | Файлов | OpenCL | ROCm | GPU vs CPU | Графики |
-|--------|---------|--------|--------|------|------------|---------|
-| **signal_generators** | `signal_generators/` | 4 | ✅ | ✅ | NumPy getX | ✅ 3 папки |
-| **filters** | `filters/` | 5 | ✅ | ✅ | SciPy lfilter/sosfilt | ✅ |
-| **heterodyne** | `heterodyne/` | 4 | ✅ | ✅ | NumPy FFT | ✅ |
-| **fft_maxima** | `fft_maxima/` | 3 | ✅ | ✅* | SciPy find_peaks | ✅ |
-| **lch_farrow** | `lch_farrow/` | 2 | ✅ | ✅ | CPU Lagrange | ✅ |
-| **statistics** | `statistics/` | 1 | — | ✅ | NumPy mean/median | — |
-| **vector_algebra** | `vector_algebra/` | 2 | — | ✅ | NumPy linalg + CSV | Markdown |
-| **integration** | `integration/` | 1 | ✅ | — | Combined | ✅ |
-| **hybrid** | `hybrid/` | 1 | ✅ | ✅ | — | — |
-| **zero_copy** | `zero_copy/` | 1 | ✅ | ✅ | — | — |
+| Модуль | Каталог | Файлов | OpenCL | ROCm | GPU vs CPU | conftest | Графики |
+|--------|---------|--------|--------|------|------------|----------|---------|
+| **common** | `common/` | 10 | — | — | (инфраструктура) | — | — |
+| **signal_generators** | `signal_generators/` | 4+2 | ✅ | ✅ | NumPy getX | ✅ | ✅ 3 папки |
+| **filters** | `filters/` | 5+3+4 | ✅ | ✅ | SciPy lfilter/sosfilt | ✅ | ✅ |
+| **heterodyne** | `heterodyne/` | 4+2 | ✅ | ✅ | NumPy FFT | ✅ | ✅ |
+| **fft_maxima** | `fft_maxima/` | 3+1 | ✅ | ✅* | SciPy find_peaks | ✅ | ✅ |
+| **lch_farrow** | `lch_farrow/` | 2+1 | ✅ | ✅ | CPU Lagrange | ✅ | ✅ |
+| **statistics** | `statistics/` | 1+1 | — | ✅ | NumPy mean/median | ✅ | — |
+| **vector_algebra** | `vector_algebra/` | 2+1 | — | ✅ | NumPy linalg + CSV | ✅ | Markdown |
+| **integration** | `integration/` | 3+1 | ✅ | — | Combined | ✅ | ✅ |
+| **strategies** | `strategies/` | 5+1 | — | — | numpy | ✅ | — |
+| **hybrid** | `hybrid/` | 1 | ✅ | ✅ | — | — | — |
+| **zero_copy** | `zero_copy/` | 1 | ✅ | ✅ | — | — | — |
 
+Формат "N+M": N = тестовых файлов, M = инфраструктурных (conftest, *_base, ai_pipeline)
 \* fft_maxima ROCm: indirect validation через HeterodyneDechirp (hipFFT)
 
-**Итого: 10 подкаталогов, 24 тестовых файла + 1 example**
+**Итого: 11 подкаталогов + common/, 57 файлов (было 36: +30 инфраструктурных)**
 
 ---
 
@@ -348,11 +414,71 @@ output[n] = Σ L[row][k] · input[center-1+k],  k=0..4
 
 ---
 
-#### test_ai_filter_pipeline.py — AI-driven FIR design
+#### test_ai_filter_pipeline.py — AI-driven FIR/IIR design (монолит, legacy)
 
-Экспериментальный пайплайн: natural language → AI (Groq/Ollama/none) → `scipy.firwin` коэффициенты → GPU фильтрация.
+Оригинальный монолит (964 строки): natural language → AI (Groq/Ollama/none) → scipy коэффициенты → GPU → графики. Работает как раньше.
 
 **Зависимости**: `groq` (cloud API) или `ollama` (local LLM), опциональные.
+
+---
+
+#### ai_pipeline/ — Рефакторинг монолита (НОВЫЙ, 2026-03-08)
+
+Монолит разбит на 4 специализированных модуля по SRP:
+
+```
+filters/ai_pipeline/
+├── llm_parser.py       ← LLMParser (Strategy): Groq / Ollama / Mock
+├── filter_designer.py  ← FilterDesigner: scipy FIR/IIR коэффициенты
+└── test_ai_pipeline.py ← pytest тесты (без matplotlib, без AI)
+```
+
+##### llm_parser.py — LLMParser
+
+| Класс | Backend | Требования |
+|-------|---------|-----------|
+| `MockParser` | Regex (детерминированный) | ничего — для тестов |
+| `GroqParser` | Groq Cloud API | `pip install groq` + API key |
+| `OllamaParser` | Локальный Ollama | `pip install ollama` + `ollama serve` |
+
+```python
+from filters.ai_pipeline.llm_parser import MockParser, create_parser
+
+# Тест без сети:
+spec = MockParser().parse("FIR lowpass 1kHz", fs=50_000)
+# spec.filter_class = "fir", spec.f_cutoff = 1000.0, spec.order = 64
+
+# Production через env GROQ_API_KEY:
+spec = create_parser("groq").parse("Butterworth LP 2 kHz order 6", fs=50_000)
+```
+
+##### filter_designer.py — FilterDesigner
+
+```python
+from filters.ai_pipeline.filter_designer import FilterDesigner
+
+design = FilterDesigner().design(spec)
+# design.coeffs_b   → FIR taps или IIR numerator
+# design.sos        → IIR SOS form (численно стабильная)
+# design.apply_scipy(signal) → scipy reference для сравнения с GPU
+```
+
+##### test_ai_pipeline.py — pytest тесты
+
+| Класс | Тестов | Что проверяет |
+|-------|--------|---------------|
+| `TestMockParser` | 9 | Парсинг LP/HP/BP/BS, кГц, порядок, normalized_cutoff |
+| `TestFilterDesigner` | 7 | scipy FIR/IIR design, симметрия, подавление |
+| `TestGPUPipeline` | 3 | FIR GPU vs scipy, IIR GPU vs scipy, full pipeline (skip без GPU) |
+
+**Запуск**:
+```bash
+# Без GPU (MockParser + scipy):
+pytest Python_test/filters/ai_pipeline/ -v
+
+# С GPU:
+pytest Python_test/filters/ai_pipeline/ -v -k "GPU"
+```
 
 ---
 
@@ -524,14 +650,43 @@ Indirect validation: SpectrumMaximaFinder вызывается из HeterodyneRO
 
 ### 5.8 integration/
 
-#### test_gpuworklib.py — Интеграционные тесты
+#### test_gpuworklib.py — Интеграционные тесты (монолит, legacy)
 
-| # | Тест | Что проверяет |
-|---|------|---------------|
-| 1 | Multi-channel sin → FFT | Полный пайплайн: генерация → FFT → анализ спектра |
-| 2 | CW/LFM/Noise generation | Все типы генераторов через единый API |
-| 3 | Generators from string | Парсинг строковых параметров |
-| 4 | Full pipeline analysis | Signal → FFT → FindMaxima → результат |
+Оригинальный монолит (903 строки): смешаны тесты + matplotlib + создание ctx. Работает как раньше.
+
+---
+
+#### test_fft_integration.py — FFT интеграция (НОВЫЙ, 2026-03-08)
+
+Тесты 1-3 из `test_gpuworklib.py`, переписанные как чистые pytest-тесты:
+
+| Класс | Тест | Что проверяет |
+|-------|------|---------------|
+| `TestCwFftIntegration` | `test_cw_peak_frequency[f0=100..1200]` | Пик FFT на правильной частоте (parametrize по 5 частотам) |
+| `TestCwFftIntegration` | `test_cw_signal_complex` | CW сигнал — комплексный |
+| `TestCwFftIntegration` | `test_cw_energy_nonzero` | FFT энергия ненулевая |
+| `TestLfmFftIntegration` | `test_lfm_spread_spectrum` | LFM спектр рассеян (peak_ratio < 30%) |
+| `TestLfmFftIntegration` | `test_lfm_output_not_constant` | LFM — нестационарный сигнал |
+| `TestNoiseFftIntegration` | `test_noise_flat_spectrum` | Noise: cv = std/mean < 1.5 |
+
+#### test_signal_gen_integration.py — Генераторы + pipeline (НОВЫЙ)
+
+Тесты 4-7 из `test_gpuworklib.py`:
+
+| Класс | Тест | Что проверяет |
+|-------|------|---------------|
+| `TestMultichannelGeneration` | `test_different_frequencies_cw` | 4 канала → 4 разных пика (diff > 50 Hz) |
+| `TestMultichannelGeneration` | `test_channels_independent` | Повторная генерация → те же результаты |
+| `TestMixedSignalTypes` | `test_cw_lfm_noise_different_spectra` | CW острый пик > 50%, LFM рассеян |
+| `TestStringParamsGeneration` | `test_form_signal_from_string` | Строковые параметры → ненулевой сигнал |
+| `TestFullPipelineIntegration` | `test_pipeline_cw_correct_peak` | fs=12MHz, f0=2MHz → пик ±2 бина |
+| `TestFullPipelineIntegration` | `test_pipeline_lfm_freq_sweep` | Пик растёт от сегмента к сегменту |
+
+**Запуск**:
+```bash
+pytest Python_test/integration/ -v
+# → все тесты skip если нет GPU (через gpu_ctx fixture)
+```
 
 **Графики**: `Results/Plots/integration/`
 
@@ -566,68 +721,106 @@ Indirect validation: SpectrumMaximaFinder вызывается из HeterodyneRO
 
 ## 6. Паттерны и соглашения
 
-### 6.1 Структура тестового файла
+### 6.1 Структура нового тестового файла (pytest + fixtures)
+
+```python
+"""
+test_fir_lowpass.py — FIR lowpass filter (GPU vs scipy)
+
+Запуск:
+    pytest Python_test/filters/test_fir_lowpass.py -v
+"""
+import numpy as np
+import pytest
+
+# gpu_ctx, fir_coeffs, two_tone_signal — из conftest.py (автоматически)
+
+class TestFirLowpass:
+    """FirFilterROCm: LP фильтр ослабляет высокие частоты."""
+
+    def test_lowpass_attenuates_high_freq(self, gpu_ctx, fir_coeffs, two_tone_signal):
+        gw = pytest.importorskip("gpuworklib")
+        f = gw.FirFilterROCm(gpu_ctx, fir_coeffs.tolist())
+        out = np.asarray(f.process(two_tone_signal))
+
+        # Спектр входного и выходного сигналов
+        n = len(two_tone_signal)
+        spec_in  = np.abs(np.fft.rfft(two_tone_signal))
+        spec_out = np.abs(np.fft.rfft(out))
+        freqs    = np.fft.rfftfreq(n, d=1.0 / 50_000)
+
+        idx_pass = np.argmin(np.abs(freqs - 200))     # полоса пропускания
+        idx_stop = np.argmin(np.abs(freqs - 8_000))   # полоса задерживания
+
+        pass_ratio = spec_out[idx_pass] / (spec_in[idx_pass] + 1e-10)
+        stop_ratio = spec_out[idx_stop] / (spec_in[idx_stop] + 1e-10)
+
+        assert pass_ratio > 0.9,  f"Pass band too attenuated: {pass_ratio:.3f}"
+        assert stop_ratio < 0.1,  f"Stop band not attenuated: {stop_ratio:.3f}"
+
+    def test_gpu_vs_scipy(self, gpu_ctx, fir_coeffs, complex_signal):
+        import scipy.signal as ss
+        gw = pytest.importorskip("gpuworklib")
+
+        f = gw.FirFilterROCm(gpu_ctx, fir_coeffs.tolist())
+        gpu_out = np.asarray(f.process(complex_signal))
+        ref     = ss.lfilter(fir_coeffs, [1.0], complex_signal).astype(np.complex64)
+
+        rel_err = np.max(np.abs(gpu_out - ref)) / (np.max(np.abs(ref)) + 1e-10)
+        assert rel_err < 1e-4, f"GPU/scipy mismatch: {rel_err:.2e}"
+```
+
+### 6.2 Структура старого тестового файла (standalone, обратная совместимость)
 
 ```python
 #!/usr/bin/env python3
-"""
-Описание теста (Russian docstring).
-Зависимости: numpy, gpuworklib, [scipy, matplotlib]
-"""
+"""Описание теста (Russian docstring)."""
 
 import sys, os
 import numpy as np
 
-# === Auto-detect build path ===
+# === Auto-detect build path (старый стиль) ===
 BUILD_PATHS = [...]
 for p in BUILD_PATHS:
-    if os.path.isdir(p):
-        sys.path.insert(0, os.path.abspath(p))
-        break
+    if os.path.isdir(p): sys.path.insert(0, os.path.abspath(p)); break
 
 import gpuworklib
 
 # === Optional imports ===
-HAS_SCIPY = False
-try:
-    import scipy.signal
-    HAS_SCIPY = True
-except ImportError:
-    pass
+try: import scipy.signal; HAS_SCIPY = True
+except ImportError: HAS_SCIPY = False
 
 # === Test functions ===
 def test_basic():
     ctx = gpuworklib.GPUContext(0)
     # ... test logic
-    assert error < threshold, f"Error {error} exceeds threshold"
+    assert error < threshold
 
 def test_with_plot():
     # ... compute
     if ENABLE_PLOT:
-        import matplotlib
-        matplotlib.use('Agg')
+        import matplotlib; matplotlib.use('Agg')
         import matplotlib.pyplot as plt
-        # ... plot
-        plt.savefig('Results/Plots/module/test_name.png', dpi=150)
+        plt.savefig('Results/Plots/module/test.png', dpi=150)
         plt.close()
 
 if __name__ == '__main__':
     test_basic()
     test_with_plot()
-    print("All tests passed!")
 ```
 
-### 6.2 Соглашения
+### 6.3 Соглашения
 
 | Правило | Описание |
 |---------|----------|
-| **Имена файлов** | `test_*.py` — pytest-совместимые; `example_*.py` — демонстрации |
+| **Имена файлов** | `test_*.py` — pytest; `demo_*.py`, `example_*.py` — с графиками |
 | **Docstrings** | На русском, описывают что тестируется |
-| **GPU Context** | `gpuworklib.GPUContext(0)` — OpenCL; `gpuworklib.ROCmGPUContext(0)` — ROCm |
+| **GPU Context** | Через `gpu_ctx` fixture или `GPUContextManager.get()` (не `GPUContext(0)` в каждом тесте) |
 | **Эталон** | Всегда NumPy/SciPy (CPU, float64) |
-| **Пороги** | 1e-3 (float32 default), 1e-2 (IIR/accumulated), 1e-4 (identity ops) |
-| **Графики** | Agg backend (headless), 150 dpi, в `Results/Plots/{module}/` |
-| **Standalone** | Все тесты работают и как pytest, и как `python test_*.py` |
+| **Пороги** | 1e-3 (float32 default), 1e-2 (IIR/накопленная), 1e-4 (identity ops) |
+| **Графики** | Только в demo-скриптах; Agg backend, 150 dpi, в `Results/Plots/{module}/` |
+| **matplotlib** | НЕ импортировать в `test_*.py` — только в `demo_*.py` |
+| **Standalone** | Старые тесты работают как `python test_*.py`; новые — только pytest |
 
 ### 6.3 Типичные пороги ошибок
 
@@ -644,47 +837,74 @@ if __name__ == '__main__':
 
 ## 7. Запуск тестов
 
-### Отдельный тест
+### 7.1 pytest (рекомендуется)
 
 ```bash
-# Standalone (с графиками)
-python Python_test/signal_generators/test_form_signal.py
+# Все тесты проекта (GPULoader найдёт .so автоматически)
+pytest Python_test/ -v
 
-# Standalone (без графиков)
-python Python_test/signal_generators/test_form_signal.py --no-plot
-
-# Через pytest
-pytest Python_test/signal_generators/test_form_signal.py -v
-
-# Один конкретный тест
-pytest Python_test/signal_generators/test_form_signal.py::test_cw_no_noise -v
-```
-
-### Все тесты модуля
-
-```bash
+# Модуль целиком
 pytest Python_test/filters/ -v
 pytest Python_test/heterodyne/ -v
+pytest Python_test/integration/ -v
+
+# Тесты без GPU (MockParser + scipy — не требуют GPU)
+pytest Python_test/filters/ai_pipeline/ -v
+
+# Один класс тестов
+pytest Python_test/filters/ai_pipeline/test_ai_pipeline.py::TestMockParser -v
+pytest Python_test/filters/ai_pipeline/test_ai_pipeline.py::TestFilterDesigner -v
+
+# Один тест
+pytest Python_test/filters/ai_pipeline/test_ai_pipeline.py::TestMockParser::test_lowpass_fir -v
+
+# Только GPU-тесты
+pytest Python_test/ -v -k "GPU or rocm"
+
+# Только тесты без GPU (пропустить GPU-зависимые)
+pytest Python_test/ -v -k "not GPU and not rocm"
+
+# Подробный вывод assert (при ошибке)
+pytest Python_test/ -v --tb=short
 ```
 
-### Все ROCm тесты (Linux)
+### 7.2 Standalone (старые тесты, с графиками)
+
+```bash
+# Запуск с графиками (сохраняются в Results/Plots/)
+python Python_test/signal_generators/test_form_signal.py
+python Python_test/heterodyne/test_heterodyne_step_by_step.py
+python Python_test/filters/test_ai_filter_pipeline.py
+
+# Без графиков
+python Python_test/signal_generators/test_form_signal.py --no-plot
+```
+
+### 7.3 Все ROCm тесты (Linux)
 
 ```bash
 bash Python_test/run_all_rocm_tests.sh
 ```
 
-### Все тесты проекта
+### 7.4 Поведение при отсутствии GPU
+
+Если `gpuworklib` не найден или GPU недоступен:
+- `pytest` тесты, принимающие `gpu_ctx` fixture → **автоматически skip** (не fail)
+- Тесты без `gpu_ctx` (MockParser, FilterDesigner, ScenarioBuilder, FarrowDelay) → **работают всегда**
 
 ```bash
-pytest Python_test/ -v
+# Вывод при отсутствии GPU:
+SKIPPED [3] Python_test/conftest.py:19: gpuworklib не найден
+# Тесты со скипом не считаются ошибками (exit code 0)
 ```
 
-### Переменные окружения
+### 7.5 Переменные окружения
 
 | Переменная | Значение | Назначение |
 |-----------|----------|------------|
-| `GPUWORKLIB_PLOT` | `0` / `1` | Включить/выключить графики |
-| `PYTHONPATH` | `build/python` | Путь к gpuworklib module |
+| `GROQ_API_KEY` | `gsk_...` | Groq API key для ai_pipeline |
+| `GPUWORKLIB_PLOT` | `0` / `1` | Включить/выключить графики (старые тесты) |
+| `PYTHONPATH` | `build/python` | Альтернативный путь к gpuworklib |
 
 ---
 
@@ -867,26 +1087,27 @@ target_link_libraries(gpuworklib PRIVATE
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  Python_test/                                                     │
+│  conftest.py  common/ (gpu_loader, validators, reporters, ...)   │
 │                                                                    │
 │  ┌───────────────────┐  ┌─────────────┐  ┌───────────────────┐  │
 │  │ signal_generators │  │ fft_maxima  │  │ filters           │  │
-│  │ (4 файла)         │  │ (3 файла)   │  │ (5 файлов)        │  │
+│  │ conftest + 5 файл │  │ conftest+3  │  │ conftest+ai_pipe/ │  │
 │  └───────────────────┘  └─────────────┘  └───────────────────┘  │
 │                                                                    │
 │  ┌───────────────────┐  ┌─────────────┐  ┌───────────────────┐  │
 │  │ heterodyne        │  │ lch_farrow  │  │ statistics        │  │
-│  │ (4 файла)         │  │ (2 файла)   │  │ (1 файл, ROCm)   │  │
+│  │ conftest + 5 файл │  │ conftest+2  │  │ conftest+1 (ROCm) │  │
 │  └───────────────────┘  └─────────────┘  └───────────────────┘  │
 │                                                                    │
 │  ┌───────────────────┐  ┌─────────────┐  ┌───────────────────┐  │
-│  │ vector_algebra    │  │ hybrid      │  │ zero_copy         │  │
-│  │ (2 файла, ROCm)   │  │ (1 файл)    │  │ (1 файл)          │  │
+│  │ vector_algebra    │  │ strategies  │  │ integration       │  │
+│  │ conftest+2 (ROCm) │  │ conftest+5  │  │ conftest+3 файла  │  │
 │  └───────────────────┘  └─────────────┘  └───────────────────┘  │
 │                                                                    │
-│  ┌───────────────────┐                                            │
-│  │ integration       │                                            │
-│  │ (1 файл)          │                                            │
-│  └───────────────────┘                                            │
+│  ┌───────────────────┐  ┌─────────────┐                          │
+│  │ hybrid            │  │ zero_copy   │                          │
+│  │ (1 файл)          │  │ (1 файл)    │                          │
+│  └───────────────────┘  └─────────────┘                          │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -914,52 +1135,95 @@ test_form_signal.py
 
 ```
 Python_test/
-├── README.md                              # Главное описание + PyCharm setup
+├── conftest.py                            # ROOT: session fixtures (gw, gpu_ctx, rng, plot_dir)
 ├── run_all_rocm_tests.sh                 # Batch runner для ROCm тестов
 │
+├── common/                                # 🏗️ НОВЫЙ: общая инфраструктура (GoF + SOLID)
+│   ├── __init__.py
+│   ├── gpu_loader.py                     #   GPULoader (Singleton) — ищет .so в 6 путях
+│   ├── gpu_context.py                    #   GPUContextManager (Singleton)
+│   ├── test_base.py                      #   TestBase (Template Method)
+│   ├── configs.py                        #   SignalConfig, FilterConfig, ProcessorConfig
+│   ├── validators.py                     #   IValidator + Numeric/Spectral/Energy
+│   ├── reporters.py                      #   IReporter + Console/JSON/MultiReporter
+│   ├── result.py                         #   TestResult, ValidationResult
+│   └── plotting/
+│       ├── __init__.py
+│       └── plotter_base.py               #   IPlotter (Strategy ABC) + PlotConfig
+│
 ├── signal_generators/                     # 🎵 Генераторы сигналов
-│   ├── test_form_signal.py               #   FormSignalGenerator (7 тестов)
-│   ├── test_delayed_form_signal.py       #   DelayedFormSignalGenerator Farrow 48×5 (5 тестов)
-│   ├── test_lfm_analytical_delay.py      #   LfmAnalyticalDelay (5 тестов)
-│   └── example_form_signal.py            #   Демо + презентация
+│   ├── conftest.py                       #   fixtures: sig_gen, fft_proc, lfm_params, cw_numpy()
+│   ├── signal_test_base.py               #   SignalTestBase(TestBase)
+│   ├── test_form_signal.py              #   FormSignalGenerator (7 тестов)
+│   ├── test_delayed_form_signal.py      #   DelayedFormSignalGenerator Farrow 48×5 (5 тестов)
+│   ├── test_lfm_analytical_delay.py     #   LfmAnalyticalDelay (5 тестов)
+│   └── example_form_signal.py           #   Демо + презентация
 │
 ├── fft_maxima/                            # 📊 Поиск максимумов спектра
-│   ├── test_spectrum_find_all_maxima.py  #   SpectrumMaximaFinder (5+ тестов)
-│   ├── test_find_all_maxima_maxvalue.py  #   MaxValue формат
+│   ├── conftest.py                       #   fixtures: maxima_finder, cw_spectrum
+│   ├── test_spectrum_find_all_maxima.py #   SpectrumMaximaFinder (5+ тестов)
+│   ├── test_find_all_maxima_maxvalue.py #   MaxValue формат
 │   └── test_spectrum_find_all_maxima_rocm.py  # ROCm indirect
 │
 ├── filters/                               # 🔧 Фильтры FIR/IIR
-│   ├── test_filters_stage1.py            #   FIR+IIR, scipy validation (6 тестов)
-│   ├── test_iir_plot.py                  #   4-panel IIR visualization
-│   ├── test_fir_filter_rocm.py           #   FirFilterROCm (5 тестов)
-│   ├── test_iir_filter_rocm.py           #   IirFilterROCm (5 тестов)
-│   └── test_ai_filter_pipeline.py        #   AI-driven FIR design
+│   ├── conftest.py                       #   fixtures: fir_coeffs, iir_coeffs, signals
+│   ├── filter_test_base.py               #   FilterTestBase(TestBase) + _validate_with_scipy()
+│   ├── test_filters_stage1.py           #   FIR+IIR OpenCL (6 тестов)
+│   ├── test_iir_plot.py                 #   4-panel IIR visualization
+│   ├── test_fir_filter_rocm.py          #   FirFilterROCm (5 тестов)
+│   ├── test_iir_filter_rocm.py          #   IirFilterROCm (5 тестов)
+│   ├── test_moving_average_rocm.py      #   SMA/EMA/DEMA
+│   ├── test_kalman_rocm.py              #   Kalman filter
+│   ├── test_kaufman_rocm.py             #   Kaufman AMA
+│   ├── test_ai_filter_pipeline.py       #   AI-driven FIR (монолит, legacy)
+│   ├── plot_report_filters.py           #   Отчёт с графиками
+│   └── ai_pipeline/                     #   НОВЫЙ: рефакторинг монолита
+│       ├── __init__.py
+│       ├── llm_parser.py               #     LLMParser + Mock/Groq/Ollama (Strategy)
+│       ├── filter_designer.py          #     FilterDesigner (scipy FIR/IIR)
+│       └── test_ai_pipeline.py         #     pytest тесты без matplotlib
 │
 ├── heterodyne/                            # 📡 Дечирп ЛЧМ-радара
-│   ├── test_heterodyne.py                #   Базовые pytest (4 теста)
-│   ├── test_heterodyne_step_by_step.py   #   Пошаговый pipeline + визуализация
-│   ├── test_heterodyne_comparison.py     #   GPU vs CPU отчёт
-│   └── test_heterodyne_rocm.py           #   ROCm (5 тестов)
+│   ├── conftest.py                       #   fixtures: DechirpParams, het_proc, lfm_srx, s_ref
+│   ├── heterodyne_test_base.py           #   HeterodyneTestBase + validate_beat_frequency()
+│   ├── test_heterodyne.py               #   Базовые pytest (4 теста)
+│   ├── test_heterodyne_step_by_step.py  #   Пошаговый pipeline + визуализация
+│   ├── test_heterodyne_comparison.py    #   GPU vs CPU отчёт
+│   └── test_heterodyne_rocm.py          #   ROCm (5 тестов)
 │
 ├── lch_farrow/                            # ⏱️ Дробная задержка Lagrange
-│   ├── test_lch_farrow.py                #   LchFarrow OpenCL (5 тестов)
-│   └── test_lch_farrow_rocm.py           #   LchFarrowROCm (5 тестов)
+│   ├── conftest.py                       #   fixtures: farrow_proc, test_signal_2d, delays_*
+│   ├── test_lch_farrow.py               #   LchFarrow OpenCL (5 тестов)
+│   └── test_lch_farrow_rocm.py          #   LchFarrowROCm (5 тестов)
 │
 ├── statistics/                            # 📈 Статистика
-│   └── test_statistics_rocm.py           #   Mean/median/Welford (5 тестов, ROCm)
+│   ├── conftest.py                       #   fixtures: stats_proc, random_matrix
+│   └── test_statistics_rocm.py          #   Mean/median/Welford (5 тестов, ROCm)
 │
 ├── vector_algebra/                        # 🔢 Линейная алгебра
-│   ├── test_cholesky_inverter_rocm.py    #   Cholesky POTRF+POTRI (3 теста)
-│   └── test_matrix_csv_comparison.py     #   vs CSV reference data
+│   ├── conftest.py                       #   fixtures: cholesky_solver, spd_matrix
+│   ├── test_cholesky_inverter_rocm.py   #   Cholesky POTRF+POTRI (3 теста)
+│   └── test_matrix_csv_comparison.py    #   vs CSV reference data
 │
 ├── integration/                           # 🔗 Интеграционные тесты
-│   └── test_gpuworklib.py                #   Full pipeline (4 теста)
+│   ├── conftest.py                       #   fixtures: sig_gen, fft_proc, script_gen
+│   ├── test_gpuworklib.py               #   Монолит (legacy, 4 теста)
+│   ├── test_fft_integration.py          #   НОВЫЙ: CW/LFM/Noise → FFT (12 тестов)
+│   └── test_signal_gen_integration.py   #   НОВЫЙ: генераторы + pipeline (6 тестов)
+│
+├── strategies/                            # 🎯 Beamforming стратегии
+│   ├── conftest.py                       #   fixtures: scenario_8ant, pipeline_runner, farrow
+│   ├── scenario_builder.py              #   ScenarioBuilder (Builder pattern)
+│   ├── farrow_delay.py                  #   FarrowDelay numpy reference
+│   ├── pipeline_runner.py               #   PipelineRunner + PipelineBase/A/B (рефакторинг)
+│   ├── test_scenario_builder.py         #   ScenarioBuilder тесты
+│   └── test_farrow_pipeline.py          #   Pipeline тесты (19 тестов)
 │
 ├── hybrid/                                # 🔀 Гибридный backend
-│   └── test_hybrid_backend.py            #   OpenCL + ROCm context
+│   └── test_hybrid_backend.py           #   OpenCL + ROCm context
 │
 └── zero_copy/                             # ⚡ Zero-copy GPU memory
-    └── test_zero_copy.py                 #   OpenCL ↔ ROCm bridge
+    └── test_zero_copy.py                #   OpenCL ↔ ROCm bridge
 
 python/                                    # pybind11 биндинги
 ├── gpu_worklib_bindings.cpp              # Master module
@@ -1000,7 +1264,7 @@ Doc/Python/                                # API документация
 
 5. **Working directory**: всегда корень `GPUWorkLib/`. Графики сохраняются по относительным путям от корня.
 
-6. **conftest.py отсутствует**: pytest fixtures (если нужны) дублируются в каждом файле. Потенциальное улучшение — создать общий conftest.
+6. **conftest.py**: созданы для всех 10 модулей + корневой `Python_test/conftest.py`. Fixtures (`gw`, `gpu_ctx`, `rng`, `plot_dir`) доступны во всех тестах автоматически.
 
 7. **requirements.txt отсутствует**: зависимости описаны в docstrings. Нужен для CI/CD.
 
@@ -1012,12 +1276,21 @@ Doc/Python/                                # API документация
 
 10. **Render group**: тесты `hybrid/` и `zero_copy/` требуют доступ к GPU device на Linux → запуск через `sg render -c "python3 ..."`.
 
-### 13.4 Рекомендации по улучшению
+### 13.4 Что реализовано (рефакторинг 2026-03-08)
 
-11. **Добавить conftest.py** с общими fixtures (GPU context, plot directory creation)
-12. **Добавить requirements.txt** для CI/CD
-13. **Унифицировать build path detection** в один importable helper
-14. **Добавить markers pytest**: `@pytest.mark.rocm`, `@pytest.mark.opencl`, `@pytest.mark.slow`
+✅ **conftest.py** для всех 10 модулей + root — fixtures (`gw`, `gpu_ctx`, `plot_dir`) общие
+✅ **GPULoader Singleton** (`common/gpu_loader.py`) — build path detection в одном месте
+✅ **TestBase / FilterTestBase / SignalTestBase / HeterodyneTestBase** — Template Method
+✅ **IValidator** (Numeric/Spectral/Energy) — Strategy Pattern
+✅ **ai_pipeline/** — LLMParser (Mock/Groq/Ollama) + FilterDesigner (без matplotlib)
+✅ **PipelineBase / PipelineA / PipelineB** — Abstract Class для strategies/
+✅ **Два слоя**: `test_*.py` (без matplotlib) и `demo_*.py` (с графиками)
+
+### 13.5 Рекомендации (осталось)
+
+- **Добавить requirements.txt** для CI/CD (`numpy`, `scipy`, `matplotlib`, `pytest`)
+- **Добавить markers pytest**: `@pytest.mark.rocm`, `@pytest.mark.opencl`, `@pytest.mark.slow`
+- **Мигрировать** старые `test_form_signal.py`, `test_heterodyne_step_by_step.py` на новый conftest (опционально)
 
 ---
 
