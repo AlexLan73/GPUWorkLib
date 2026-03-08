@@ -440,9 +440,406 @@ W[b][a] = 1/√N    (все элементы одинаковые)
 
 ---
 
+---
+
+## 🚀 Дорожная карта (Roadmap)
+
+```
+Фаза 1 (Python Reference)    ████████████████████  100% ✅
+Фаза 2 (Визуализация)        ░░░░░░░░░░░░░░░░░░░░    0%
+Фаза 3 (GPU — Pipeline C)    ░░░░░░░░░░░░░░░░░░░░    0%
+Фаза 4 (Адаптивные — MVDR)   ░░░░░░░░░░░░░░░░░░░░    0%
+```
+
+### Фаза 1: Python Reference ✅ ЗАВЕРШЕНО
+
+| Компонент | Файл | Статус |
+|-----------|------|--------|
+| FarrowDelay (Lagrange 48×5) | `farrow_delay.py` | ✅ |
+| Pipeline A (phase beamforming) | `pipeline_runner.py` | ✅ |
+| Pipeline B (Farrow alignment) | `pipeline_runner.py` | ✅ |
+| PipelineConfig + checkpoint'ы | `pipeline_runner.py` | ✅ |
+| ChannelStats + compute_matrix_stats | `pipeline_runner.py` | ✅ |
+| PeakInfo + find_peaks_per_beam | `pipeline_runner.py` | ✅ |
+| PipelineResult (все поля) | `pipeline_runner.py` | ✅ |
+| compare() + print_comparison() | `pipeline_runner.py` | ✅ |
+| 19 тестов (unit + integration) | `test_farrow_pipeline.py` | ✅ |
+
+### Фаза 2: Визуализация и анализ
+
+**Цель**: Matplotlib графики для наглядного сравнения A vs B
+
+#### TASK-FP-01: `plot_pipeline_comparison.py`
+
+```
+Файл: Python_test/strategies/plot_pipeline_comparison.py
+Выход: Results/Plots/strategies/
+
+Subplot layout (2×2):
+┌─────────────────────┬─────────────────────┐
+│  Спектр Beam 0      │  Диаграмма          │
+│  A (синий)          │  направленности     │
+│  B (оранжевый)      │  A vs B vs реальная │
+│  fdev полоса выделена│                    │
+├─────────────────────┼─────────────────────┤
+│  S_raw[0] и         │  Энергия B/A        │
+│  S_aligned[0]       │  по полосам         │
+│  временны́е данные   │  (bar chart)        │
+└─────────────────────┴─────────────────────┘
+```
+
+**API**:
+```python
+plot_pipeline_comparison(
+    result_a: PipelineResult,
+    result_b: PipelineResult,
+    scenario: dict,
+    title: str = "",
+    save_path: str = None,   # Results/Plots/strategies/
+    show: bool = True,
+)
+```
+
+#### TASK-FP-02: `plot_beam_pattern.py`
+
+```
+Вход: W матрица [n_beams × n_ant], ULAGeometry, freq_hz
+Выход: |W · a(θ)| vs θ от -90° до +90°
+       стрелка на угол цели, угол помехи (если есть)
+
+Формула:
+  a(θ) = exp(-j·2π·freq·τ(θ))   — steering vector [n_ant]
+  pattern(θ) = |W[0] · a(θ)|    — чувствительность beam 0
+```
+
+#### TASK-FP-03: Сводный отчёт (HTML/Markdown)
+
+```python
+runner.export_report(result_a, result_b, output_dir="Results/strategies/report/")
+# → report.md с таблицей метрик + embedded PNG графики
+```
+
+### Фаза 3: Pipeline C — GPU реализация
+
+**Цель**: AntennaProcessorROCm на GPU, верификация против Python reference
+
+#### 3.1 Новый C++ модуль: `modules/strategies/`
+
+```
+modules/strategies/
+├── AntennaProcessorROCm.h          ← публичный API
+├── AntennaProcessorROCm.cpp        ← реализация (hipBLAS + hipFFT)
+├── AntennaProcessorOpenCL.h        ← OpenCL backend (будущее)
+├── tests/
+│   ├── test_antenna_processor.hpp  ← C++ unit тесты
+│   ├── test_antenna_benchmark.hpp  ← GPUProfiler benchmark
+│   └── all_test.hpp
+└── python/
+    └── antenna_processor_bindings.cpp  ← pybind11
+```
+
+#### 3.2 C++ API план
+
+```cpp
+// modules/strategies/AntennaProcessorROCm.h
+
+class AntennaProcessorROCm {
+public:
+    AntennaProcessorROCm(DrvGPU& ctx, int n_ant, int n_samples,
+                         int n_fft_size = -1);  // -1 = auto: next_pow2*2
+
+    // === ЗАГРУЗКА ДАННЫХ ===
+
+    // CPU → GPU: входная матрица S [n_ant × n_samples] complex64
+    void load_input(const std::complex<float>* S_host);
+
+    // CPU → GPU: весовая матрица W [n_beams × n_ant] complex64
+    void load_weights(const std::complex<float>* W_host,
+                      int n_beams = -1);           // -1 = n_ant
+
+    // CPU → GPU: задержки в отсчётах [n_ant] для Farrow
+    void load_delays(const float* delays_samples);
+
+    // === PIPELINE ШАГИ ===
+
+    // Pipeline B: Farrow выравнивание через LchFarrowROCm
+    // delays задаются через load_delays()
+    void step_farrow_compensate();
+
+    // GEMM: X = W @ S  (hipBLAS CGEMM)
+    // Если Farrow был применён — X = W @ S_aligned
+    void step_gemm();
+
+    // Windowing + FFT (hipFFT) → spectrum [n_beams × nFFT]
+    void step_fft();
+
+    // Нахождение топ-N пиков на CPU (после transfer magnitudes)
+    void step_find_peaks(int n_top = 5);
+
+    // === РЕЗУЛЬТАТЫ (GPU → CPU) ===
+
+    std::vector<float> get_magnitudes();      // [n_beams * nFFT]
+    std::vector<float> get_peaks_freq_hz();   // [n_top] частоты пиков
+    std::vector<float> get_peaks_mag();       // [n_top] магнитуды пиков
+    std::vector<float> get_freq_axis();       // [nFFT] ось частот
+
+    // === ПРОФИЛИРОВАНИЕ ===
+    void set_gpu_info(const std::string& device_name,
+                      const std::string& driver_ver);
+    void export_profiling(const std::string& path);  // JSON/Markdown
+
+private:
+    DrvGPU& ctx_;
+    LchFarrowROCm farrow_;
+    GPUProfiler profiler_;
+    // ... GPU буферы ...
+};
+```
+
+#### 3.3 Pipeline C — Python wrapper
+
+```python
+# Python_test/strategies/pipeline_runner_gpu.py
+
+class PipelineRunnerGPU:
+    """GPU версия PipelineRunner через C++ AntennaProcessorTest bidings."""
+
+    def __init__(self, gpu_ctx, output_dir=None):
+        self.proc = AntennaProcessorTest(gpu_ctx, ...)
+        self.output_dir = output_dir
+
+    def run_pipeline_b_gpu(self, scenario, steer_theta) -> PipelineResult:
+        """Выполнить Pipeline B на GPU, вернуть PipelineResult как у CPU."""
+        S = scenario['S']
+        delays = scenario['array'].compute_delays(steer_theta)
+        delays_samples = delays * scenario['fs']
+
+        W_sum = np.full((n_ant, n_ant), 1/np.sqrt(n_ant), dtype=np.complex64)
+
+        self.proc.load_input(S)
+        self.proc.load_weights(W_sum)
+        self.proc.load_delays(delays_samples.astype(np.float32))
+        self.proc.step_farrow_compensate()
+        self.proc.step_gemm()
+        self.proc.step_fft()
+        self.proc.step_find_peaks()
+
+        # Собрать результат в PipelineResult (для compare с CPU)
+        return PipelineResult(
+            pipeline_name="C (GPU)",
+            magnitudes=self.proc.get_magnitudes(),
+            peaks=...,
+            freq_axis=self.proc.get_freq_axis(),
+        )
+```
+
+#### 3.4 Верификационный тест
+
+```python
+# Python_test/strategies/test_gpu_verification.py
+
+def test_pipeline_b_gpu_vs_python():
+    """GPU Pipeline B == Python Pipeline B (в пределах float32 погрешности)."""
+    scenario = make_single_target(n_ant=8, theta_deg=30, fdev_hz=1e6)
+
+    # CPU reference
+    runner_cpu = PipelineRunner()
+    result_cpu = runner_cpu.run_pipeline_b(scenario, steer_theta=30)
+
+    # GPU под тестом
+    gpu_ctx = GPUContext()
+    runner_gpu = PipelineRunnerGPU(gpu_ctx)
+    result_gpu = runner_gpu.run_pipeline_b_gpu(scenario, steer_theta=30)
+
+    # Сравнение пиков
+    peak_cpu = result_cpu.peaks[0][0]
+    peak_gpu = result_gpu.peaks[0][0]
+
+    freq_res = FS / result_cpu.nFFT
+    assert abs(peak_cpu.freq_hz - peak_gpu.freq_hz) < freq_res, \
+        f"Freq mismatch: CPU={peak_cpu.freq_hz:.0f} GPU={peak_gpu.freq_hz:.0f}"
+    assert abs(peak_cpu.magnitude - peak_gpu.magnitude) / peak_cpu.magnitude < 0.01, \
+        f"Magnitude mismatch > 1%"
+```
+
+#### 3.5 GPU Profiling план
+
+```
+GPUProfiler отчёт по Pipeline B GPU:
+
+Шаги профилирования:
+  "Farrow"    ← LchFarrowROCm.Process()
+  "GEMM"      ← hipBLAS CGEMM
+  "Window"    ← кастомный HIP kernel (Hamming)
+  "FFT"       ← hipFFT
+  "Transfer"  ← GPU→CPU magnitudes
+
+Ожидаемые результаты (8 антенн, N=8192):
+  Farrow:   ~0.05 ms
+  GEMM:     ~0.02 ms
+  FFT:      ~0.03 ms
+  Итого:    ~0.1 ms / блок данных
+```
+
+### Фаза 4: Адаптивные алгоритмы (MVDR / LCMV)
+
+**Цель**: Pipeline D — оптимальный beamformer с подавлением помех
+
+#### Теория MVDR
+
+```
+Проблема delay-and-sum (Pipeline A/B):
+  Помеха из бокового лепестка не подавляется!
+
+MVDR решение:
+  R = (1/K) · S · S†              матрица ковариации [n_ant × n_ant]
+  a(θ) = exp(-j·2π·f·τ(θ))        steering vector [n_ant]
+
+  w = R⁻¹ · a / (a† · R⁻¹ · a)   MVDR weights [n_ant]
+
+  Гарантия: w† · a(θ_target) = 1  (distortionless)
+  Минимизация: E[|w† · S|²]       (подавление всего остального)
+
+Выигрыш vs delay-and-sum:
+  Помеха -20 ... -40 dB (зависит от SNR, числа антенн)
+```
+
+#### TASK-FP-10: MVDRBeamformer (Python reference)
+
+```python
+# Python_test/strategies/mvdr_beamformer.py
+
+class MVDRBeamformer:
+    def __init__(self, array: ULAGeometry, freq_hz: float,
+                 diagonal_loading: float = 1e-4):
+        """
+        diagonal_loading: добавляется к R для стабильности инверсии
+        R_loaded = R + diag_load * trace(R)/N * I
+        """
+
+    def fit(self, S: np.ndarray) -> 'MVDRBeamformer':
+        """Оценить матрицу ковариации из данных S [n_ant × n_samples]."""
+        K = S.shape[1]
+        self.R = (S @ S.conj().T) / K + self.diag * np.eye(self.n_ant)
+        self.R_inv = np.linalg.inv(self.R)
+        return self
+
+    def get_weights(self, steer_theta_deg: float) -> np.ndarray:
+        """Вычислить MVDR веса для угла steer_theta_deg → [n_ant]."""
+        a = self._steering_vector(steer_theta_deg)
+        w = self.R_inv @ a
+        return w / (a.conj() @ w)
+
+    def beam_pattern(self, theta_range: np.ndarray) -> np.ndarray:
+        """Диаграмма направленности MVDR vs угол → [len(theta_range)]."""
+```
+
+#### TASK-FP-11: Сравнительные тесты MVDR vs DAS
+
+```python
+def test_mvdr_jammer_suppression():
+    """MVDR подавляет ЛЧМ помеху лучше delay-and-sum на ≥15 dB."""
+
+    scenario = make_target_and_jammer(
+        target_theta=30, jammer_theta=-20,
+        target_f0=2e6, jammer_f0=2e6, jammer_amplitude=2.0
+    )
+    S = scenario['S']
+
+    # Delay-and-sum
+    runner = PipelineRunner()
+    result_das = runner.run_pipeline_b(scenario, steer_theta=30)
+
+    # MVDR
+    mvdr = MVDRBeamformer(scenario['array'], freq_hz=2e6)
+    mvdr.fit(S)
+    w_mvdr = mvdr.get_weights(30)
+    # ... pipeline с w_mvdr ...
+
+    jammer_power_das = ...   # мощность в направлении -20°
+    jammer_power_mvdr = ...
+    suppression_db = 10*np.log10(jammer_power_das / jammer_power_mvdr)
+
+    assert suppression_db > 15.0, f"MVDR suppression only {suppression_db:.1f} dB"
+```
+
+---
+
+## 📋 Задачи (Backlog)
+
+### P0 — Критические (блокируют показ результатов)
+
+| ID | Задача | Оценка |
+|----|--------|--------|
+| TASK-FP-01 | `plot_pipeline_comparison.py` (matplotlib, 4 subplot) | 2-3 ч |
+| TASK-FP-02 | `plot_beam_pattern.py` (A vs B диаграмма направленности) | 1-2 ч |
+
+### P1 — Важные (GPU интеграция)
+
+| ID | Задача | Оценка |
+|----|--------|--------|
+| TASK-FP-03 | `AntennaProcessorROCm` C++ класс (hipBLAS + hipFFT + LchFarrow) | 2-3 дня |
+| TASK-FP-04 | pybind11 биндинг `AntennaProcessorTest` | 0.5 дня |
+| TASK-FP-05 | `PipelineRunnerGPU` Python wrapper | 1 день |
+| TASK-FP-06 | `test_gpu_verification.py` (GPU vs CPU ±1%) | 1 день |
+| TASK-FP-07 | GPUProfiler отчёт по Pipeline B GPU | 0.5 дня |
+
+### P2 — Расширения (адаптивные алгоритмы)
+
+| ID | Задача | Оценка |
+|----|--------|--------|
+| TASK-FP-08 | Scan beamforming: sweep θ, сохранение 2D beam map | 1 день |
+| TASK-FP-09 | Метрики: SINR, ширина луча, уровень боковых лепестков | 1 день |
+| TASK-FP-10 | `MVDRBeamformer` Python reference | 1-2 дня |
+| TASK-FP-11 | Тесты MVDR vs DAS (подавление помех) | 1 день |
+| TASK-FP-12 | MVDR GPU (hipBLAS potrs/getrs для R⁻¹) | 3-5 дней |
+
+---
+
+## ✅ Критерии успеха по фазам
+
+| Фаза | Критерий | Измерение |
+|------|----------|-----------|
+| **1** | 19 тестов `test_farrow_pipeline.py` pass | `pytest -v` — 0 failures |
+| **2** | Графики сохраняются в `Results/Plots/strategies/` | Файлы есть, визуально корректны |
+| **3 (GPU)** | Пики GPU == CPU ±1% по магнитуде | `test_gpu_verification.py` pass |
+| **3 (GPU)** | Пики GPU == CPU ±freq_res по частоте | `test_gpu_verification.py` pass |
+| **3 (GPU)** | Latency Pipeline B GPU < 1 ms (N=8192, 8 ant) | GPUProfiler report |
+| **4 (MVDR)** | MVDR подавляет помеху ≥15 dB vs DAS | `test_mvdr_jammer_suppression` pass |
+| **4 (MVDR)** | SINR(MVDR) > SINR(DAS) при jammer amp ≥ 1.0 | числовой тест |
+
+---
+
+## 📊 Ожидаемые производительные характеристики GPU (Фаза 3)
+
+> Оценка для AMD GPU (RDNA4, gfx1201), 8 антенн, N=8192
+
+| Операция | Ожидание | Библиотека |
+|----------|----------|-----------|
+| Farrow (8 каналов × 8192 samp) | ~0.05 ms | LchFarrowROCm |
+| GEMM (8×8 @ 8×8192) complex | ~0.02 ms | hipBLAS CGEMM |
+| FFT (8 × 16384) | ~0.03 ms | hipFFT |
+| Total Pipeline B | **< 0.2 ms** | — |
+| CPU→GPU transfer (S) | ~0.1 ms | DrvGPU |
+| GPU→CPU transfer (magnitudes) | ~0.05 ms | DrvGPU |
+
+---
+
+## 🔮 Будущие направления (не в ближайших планах)
+
+- **2D сканирование (θ, φ)** — URA, 3D beam pattern
+- **Пространственно-временная обработка (STAP)** — Doppler + beamforming
+- **ML-based beamforming** — нейросетевые веса
+- **Когерентный MIMO** — несколько TX + RX решёток
+- **Real-time визуализация** — Dear PyGui + streaming GPU данные
+- **Интеграция с PyPanelAantenns** — визуализация поля через UDP
+
+---
+
 ## 📝 История изменений
 
 | Дата | Автор | Изменение |
 |------|-------|-----------|
 | 2026-03-08 | Alex + Кодо | Создание спецификации |
 | 2026-03-08 | Кодо | Добавлены пошаговые диаграммы вызовов, диаграмма тестов |
+| 2026-03-08 | Кодо | Добавлены: дорожная карта (4 фазы), backlog (12 задач), C++ план AntennaProcessorROCm, MVDR теория + план, критерии успеха, GPU бенчмарки |
