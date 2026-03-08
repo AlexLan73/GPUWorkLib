@@ -310,9 +310,9 @@ __kernel void post_kernel(
 //   - padding2..padding5 (для выравнивания 32 байта = 256 бит)
 //
 // ОПТИМИЗАЦИИ:
-//   - TASK-3 (P1-A): nFFT гарантированно pow2 → bitwise вместо div/mod:
-//       beam_idx    = inoffset >> nFFT_log2      (вместо inoffset / nFFT)
-//       pos_in_fft  = inoffset & (nFFT - 1)     (вместо inoffset % nFFT)
+//   - TASK-3 BITWISE вариант был откатан: на практике безопаснее обычные div/mod,
+//     т.к. clFFT callback `inoffset` должен интерпретироваться как линейный индекс
+//     exactly так же, как это работало в старой стабильной реализации.
 //
 // ОГРАНИЧЕНИЕ - НЕТ beam_offset:
 //   ⚠️ Callback ВСЕГДА читает с луча 0!
@@ -325,7 +325,7 @@ inline const char* GetPreCallbackSource32_opencl() {
         "    uint beam_count; "
         "    uint count_points; "
         "    uint nFFT; "
-        "    uint nFFT_log2; "      // TASK-3: log2(nFFT) для bitwise ops
+        "    uint nFFT_log2; "      // reserved (legacy field, currently unused)
         "    uint padding2; "
         "    uint padding3; "
         "    uint padding4; "
@@ -337,9 +337,8 @@ inline const char* GetPreCallbackSource32_opencl() {
         "    uint beam_count   = params->beam_count; "
         "    uint count_points = params->count_points; "
         "    uint nFFT         = params->nFFT; "
-        "    uint nFFT_log2    = params->nFFT_log2; "  // TASK-3
-        "    uint beam_idx    = inoffset >> nFFT_log2; "       // TASK-3: было inoffset / nFFT
-        "    uint pos_in_fft  = inoffset & (nFFT - 1); "      // TASK-3: было inoffset % nFFT
+        "    uint beam_idx    = inoffset / nFFT; "
+        "    uint pos_in_fft  = inoffset % nFFT; "
         "    if (beam_idx >= beam_count) { "
         "        return (float2)(0.0f, 0.0f); "
         "    } "

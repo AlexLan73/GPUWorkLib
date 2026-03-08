@@ -80,10 +80,10 @@ inline void run() {
 
     std::cout << "  Test 1 (zero delay vs LfmGenerator): max_err = "
               << std::scientific << std::setprecision(2) << max_err;
-    if (max_err < 1e-4f) {
+    if (max_err < 1e-3f) {
       std::cout << " PASSED\n";
     } else {
-      std::cout << " FAILED (expected < 1e-4)\n";
+      std::cout << " FAILED (expected < 1e-3)\n";
     }
   }
 

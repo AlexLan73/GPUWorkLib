@@ -27,14 +27,14 @@ namespace fft_maxima_all_test {
 
 inline void run() {
     // Process: ONE_PEAK, TWO_PEAKS, batch
-    // test_spectrum_maxima::run();
+    test_spectrum_maxima::run();
     // test_large_batch::run();  // НОВЫЙ API с batch processing
 
     // Интеграция CwGenerator → SpectrumMaximaFinder (GPU→GPU)
-    // test_gpu_generator_integration::run();
+    test_gpu_generator_integration::run();
 
     // FindAllMaxima: полный pipeline, AllMaxima
-    // test_find_all_maxima::run();
+    test_find_all_maxima::run();
 
     // BATCH: тесты для batch-обработки FindAllMaxima (OpenCL = падает на gfx1201)
     // test_batch_all_maxima::run();

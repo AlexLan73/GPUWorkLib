@@ -37,9 +37,14 @@ __kernel void iir_biquad_cascade_cf32(
         float2 w1 = (float2)(0.0f, 0.0f);
         float2 w2 = (float2)(0.0f, 0.0f);
 
+        // Source pointer: first section reads input, subsequent read output (in-place cascade).
+        // Extracted outside points-loop to eliminate per-sample branch.
+        __global const float2* src = (sec == 0u)
+            ? (__global const float2*)input
+            : (__global const float2*)output;
+
         for (uint n = 0; n < points; n++) {
-            // First section reads from input, subsequent from output
-            float2 x = (sec == 0u) ? input[base + n] : output[base + n];
+            float2 x = src[base + n];
 
             // DFII Transposed
             float2 y;

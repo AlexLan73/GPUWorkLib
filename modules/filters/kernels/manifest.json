@@ -2,20 +2,6 @@
   "version": 1,
   "kernels": [
     {
-      "name": "fir_filter_cf32",
-      "comment": "FIR direct-form",
-      "created": "2026-02-24T16:34:21",
-      "params": "",
-      "backend": "opencl"
-    },
-    {
-      "name": "iir_filter_cf32",
-      "comment": "IIR biquad cascade",
-      "created": "2026-02-24T16:34:21",
-      "params": "",
-      "backend": "opencl"
-    },
-    {
       "name": "moving_average_kernels_rocm",
       "comment": "MA filters: SMA/EMA/MMA/DEMA/TEMA",
       "created": "2026-03-05T07:36:07",
@@ -35,6 +21,20 @@
       "created": "2026-03-05T07:36:07",
       "params": "gfx1201",
       "backend": "rocm"
+    },
+    {
+      "name": "fir_filter_cf32",
+      "comment": "FIR direct-form",
+      "created": "2026-03-08T07:49:10",
+      "params": "",
+      "backend": "opencl"
+    },
+    {
+      "name": "iir_filter_cf32",
+      "comment": "IIR biquad cascade",
+      "created": "2026-03-08T07:49:10",
+      "params": "",
+      "backend": "opencl"
     }
   ]
 }

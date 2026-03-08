@@ -21,9 +21,9 @@ import pytest
 
 # -- Path to gpuworklib (Python_test/heterodyne/ -> 2 levels up) --
 BUILD_PATHS = [
-    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python'),
-    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Release'),
     os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Debug'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Release'),
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python'),
 ]
 for p in BUILD_PATHS:
     if os.path.isdir(p):

@@ -63,9 +63,12 @@ target_link_libraries(gpuworklib PRIVATE
     lch_farrow
     filters
     heterodyne
-    statistics
     ${_opencl_lib}
 )
+
+if(ROCM_ENABLED AND TARGET statistics)
+    target_link_libraries(gpuworklib PRIVATE statistics)
+endif()
 
 if(ROCM_ENABLED AND rocblas_FOUND AND rocsolver_FOUND)
     target_link_libraries(gpuworklib PRIVATE vector_algebra)
