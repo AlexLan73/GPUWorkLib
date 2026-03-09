@@ -8,6 +8,7 @@
 
 #include "generators/cw_generator.hpp"
 #include "kernel_loader.hpp"
+#include "prof_utils.hpp"
 #include <stdexcept>
 #include <cmath>
 
@@ -16,17 +17,6 @@
 #endif
 
 namespace signal_gen {
-namespace {
-
-// Сохранить cl_event для профилирования или освободить (production path).
-// Ключевое правило: вызывать ПОСЛЕ того как event использован как wait-dependency.
-void CollectOrRelease(cl_event ev, const char* name, CwGenerator::ProfEvents* prof_events) {
-    if (!ev) return;
-    if (prof_events) prof_events->push_back({name, ev});
-    else clReleaseEvent(ev);
-}
-
-}  // namespace
 
 // ════════════════════════════════════════════════════════════════════════════
 // Конструктор / Деструктор
@@ -56,10 +46,8 @@ CwGenerator::CwGenerator(CwGenerator&& other) noexcept
     , context_(other.context_)
     , queue_(other.queue_)
     , device_(other.device_)
-    , program_(other.program_)
-    , kernel_(other.kernel_) {
+    , program_(other.program_) {
     other.program_ = nullptr;
-    other.kernel_ = nullptr;
 }
 
 CwGenerator& CwGenerator::operator=(CwGenerator&& other) noexcept {
@@ -71,9 +59,7 @@ CwGenerator& CwGenerator::operator=(CwGenerator&& other) noexcept {
         queue_ = other.queue_;
         device_ = other.device_;
         program_ = other.program_;
-        kernel_ = other.kernel_;
         other.program_ = nullptr;
-        other.kernel_ = nullptr;
     }
     return *this;
 }
@@ -210,19 +196,9 @@ void CwGenerator::CompileKernel() {
         throw std::runtime_error("CwGenerator kernel build failed:\n" + std::string(log.data()));
     }
 
-    // Проверяем что оба kernel существуют
-    kernel_ = clCreateKernel(program_, "generate_cw", &err);
-    if (err != CL_SUCCESS) {
-        clReleaseProgram(program_);
-        program_ = nullptr;
-        throw std::runtime_error("CwGenerator::CompileKernel: clCreateKernel failed");
-    }
-    // kernel_ хранится для быстрого доступа, но в GenerateToGpu создаём отдельный
-    // (чтобы не гонять SetKernelArg на shared kernel)
 }
 
 void CwGenerator::ReleaseGpuResources() {
-    if (kernel_) { clReleaseKernel(kernel_); kernel_ = nullptr; }
     if (program_) { clReleaseProgram(program_); program_ = nullptr; }
 }
 

@@ -37,6 +37,12 @@ struct CwParams {
 
     // Для multi-beam: freq_i = f0 + i * freq_step
     double freq_step = 0.0;      ///< Шаг частоты между лучами (Hz), 0 = все одинаковые
+
+    bool operator==(const CwParams& o) const {
+        return f0 == o.f0 && phase == o.phase && amplitude == o.amplitude
+            && complex_iq == o.complex_iq && freq_step == o.freq_step;
+    }
+    bool operator!=(const CwParams& o) const { return !(*this == o); }
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -53,6 +59,12 @@ struct LfmParams {
     double GetChirpRate(double duration) const {
         return (f_end - f_start) / duration;
     }
+
+    bool operator==(const LfmParams& o) const {
+        return f_start == o.f_start && f_end == o.f_end
+            && amplitude == o.amplitude && complex_iq == o.complex_iq;
+    }
+    bool operator!=(const LfmParams& o) const { return !(*this == o); }
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -65,6 +77,11 @@ struct NoiseParams {
     NoiseType type = NoiseType::GAUSSIAN;
     double power = 1.0;          ///< Мощность шума (дисперсия для Gaussian)
     uint64_t seed = 0;           ///< 0 = random seed
+
+    bool operator==(const NoiseParams& o) const {
+        return type == o.type && power == o.power && seed == o.seed;
+    }
+    bool operator!=(const NoiseParams& o) const { return !(*this == o); }
 };
 
 // ════════════════════════════════════════════════════════════════════════════

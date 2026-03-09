@@ -101,6 +101,46 @@ public:
    * @param device_index Индекс GPU устройства
    */
   void Initialize(int device_index) override;
+
+  /**
+   * @brief Инициализация с внешними ресурсами OpenCL + ROCm
+   *
+   * Позволяет интегрировать HybridBackend в среду, где OpenCL context
+   * и HIP stream уже созданы сторонним кодом (OpenCV, clBLAS, hipFFT и т.п.).
+   *
+   * Внутри делегирует:
+   * - OpenCLBackend::InitializeFromExternalContext(ctx, device, queue)
+   * - ROCmBackend::InitializeFromExternalStream(device_index, hip_stream)
+   *
+   * owns_resources_ = false → Cleanup() НЕ освобождает OpenCL context и HIP stream.
+   *
+   * @param device_index   Индекс GPU (одинаков для обоих sub-backends)
+   * @param opencl_context Внешний cl_context
+   * @param opencl_device  Внешний cl_device_id
+   * @param opencl_queue   Внешняя cl_command_queue
+   * @param hip_stream     Внешний hipStream_t
+   *
+   * @throws std::runtime_error если уже инициализирован
+   * @throws std::runtime_error если любой из переданных хэндлов null
+   *
+   * @code
+   * // Интеграция в среду с готовыми OpenCL + HIP ресурсами:
+   * cl_context   cl_ctx = ...; cl_device_id cl_dev = ...; cl_command_queue cl_q = ...;
+   * hipStream_t  hip_s  = ...;
+   *
+   * HybridBackend hybrid;
+   * hybrid.InitializeFromExternalContexts(0, cl_ctx, cl_dev, cl_q, hip_s);
+   * // ZeroCopy работает через общий GPU адресный пространство
+   * // Ресурсы НЕ освобождаются при Cleanup()
+   * @endcode
+   */
+  void InitializeFromExternalContexts(
+      int device_index,
+      cl_context opencl_context,
+      cl_device_id opencl_device,
+      cl_command_queue opencl_queue,
+      hipStream_t hip_stream);
+
   bool IsInitialized() const override { return initialized_; }
   void Cleanup() override;
 

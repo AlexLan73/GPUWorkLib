@@ -82,7 +82,6 @@ private:
     cl_command_queue queue_ = nullptr;
     cl_device_id device_ = nullptr;
     cl_program program_ = nullptr;
-    cl_kernel kernel_ = nullptr;
 };
 
 } // namespace signal_gen

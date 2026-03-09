@@ -14,8 +14,15 @@
 #include "params/signal_request.hpp"
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
+#include "generators/cw_generator.hpp"
+#include "generators/lfm_generator.hpp"
+#include "generators/noise_generator.hpp"
+#include "generators/form_signal_generator.hpp"
+#include "generators/delayed_form_signal_generator.hpp"
 
 #include <CL/cl.h>
+#include <memory>
+#include <optional>
 #include <vector>
 #include <complex>
 
@@ -123,6 +130,20 @@ public:
 
 private:
     drv_gpu_lib::IBackend* backend_;
+
+    // Кешированные генераторы: перекомпиляция ядра только при смене params
+    std::optional<CwGenerator>                  cw_gen_;
+    CwParams                                    cw_params_{};
+    std::optional<LfmGenerator>                 lfm_gen_;
+    LfmParams                                   lfm_params_{};
+    std::optional<NoiseGenerator>               noise_gen_;
+    NoiseParams                                 noise_params_{};
+    std::optional<FormSignalGenerator>          form_gen_;
+    std::optional<DelayedFormSignalGenerator>   delayed_gen_;
+
+    CwGenerator&    GetCw(const CwParams& p);
+    LfmGenerator&   GetLfm(const LfmParams& p);
+    NoiseGenerator& GetNoise(const NoiseParams& p);
 };
 
 } // namespace signal_gen

@@ -89,6 +89,72 @@ void HybridBackend::Initialize(int device_index) {
                   std::to_string(device_index) + ")");
 }
 
+/**
+ * @brief Инициализация с внешними ресурсами OpenCL + ROCm
+ *
+ * Делегирует в OpenCLBackend::InitializeFromExternalContext и
+ * ROCmBackend::InitializeFromExternalStream — оба получают owns_resources_=false.
+ *
+ * Порядок инициализации:
+ * 1. OpenCL sub-backend из внешнего {context, device, queue}
+ * 2. ROCm sub-backend из внешнего {device_index, hip_stream}
+ * 3. ZeroCopy capabilities — логируем
+ *
+ * owns_resources_ = false: Cleanup() вызовет sub-backend Cleanup() (который правильно
+ * не освобождает чужие ресурсы), затем reset() unique_ptr.
+ *
+ * @throws std::runtime_error если уже инициализирован или хэндлы null
+ */
+void HybridBackend::InitializeFromExternalContexts(
+    int device_index,
+    cl_context opencl_context,
+    cl_device_id opencl_device,
+    cl_command_queue opencl_queue,
+    hipStream_t hip_stream) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  if (initialized_) {
+    throw std::runtime_error(
+        "HybridBackend::InitializeFromExternalContexts: already initialized. Call Cleanup() first.");
+  }
+
+  if (!opencl_context || !opencl_device || !opencl_queue) {
+    throw std::runtime_error(
+        "HybridBackend::InitializeFromExternalContexts: OpenCL handles must not be null");
+  }
+
+  if (!hip_stream) {
+    throw std::runtime_error(
+        "HybridBackend::InitializeFromExternalContexts: hip_stream must not be null");
+  }
+
+  device_index_ = device_index;
+  // owns_resources_=false: sub-backends не уничтожают переданные хэндлы при Cleanup().
+  owns_resources_ = false;
+
+  DRVGPU_LOG_INFO("HybridBackend",
+                  "Attaching to external contexts on device " + std::to_string(device_index));
+
+  // 1. OpenCL sub-backend из внешнего контекста
+  opencl_ = std::make_unique<OpenCLBackend>();
+  opencl_->InitializeFromExternalContext(opencl_context, opencl_device, opencl_queue);
+
+  // 2. ROCm sub-backend из внешнего stream
+  rocm_ = std::make_unique<ROCmBackend>();
+  rocm_->InitializeFromExternalStream(device_index, hip_stream);
+
+  // 3. Логируем доступные методы ZeroCopy (ZeroCopy работает и с внешними контекстами
+  //    на AMD GPU — адресное пространство VRAM общее независимо от источника контекста)
+  auto zc_method = GetBestZeroCopyMethod();
+  DRVGPU_LOG_INFO("HybridBackend", "ZeroCopy method: " +
+                  std::string(ZeroCopyMethodToString(zc_method)));
+
+  initialized_ = true;
+  DRVGPU_LOG_INFO("HybridBackend",
+                  "Attached to external contexts on device " + std::to_string(device_index) +
+                  " (" + opencl_->GetDeviceName() + ") [owns_resources=false]");
+}
+
 void HybridBackend::Cleanup() {
   std::lock_guard<std::mutex> lock(mutex_);
 

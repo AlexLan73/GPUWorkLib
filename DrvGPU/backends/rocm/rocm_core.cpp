@@ -22,6 +22,7 @@ namespace drv_gpu_lib {
 ROCmCore::ROCmCore(int device_index)
     : device_index_(device_index),
       initialized_(false),
+      owns_stream_(true),
       device_(0),
       stream_(nullptr),
       device_props_{} {
@@ -56,10 +57,12 @@ ROCmCore::~ROCmCore() {
 ROCmCore::ROCmCore(ROCmCore&& other) noexcept
     : device_index_(other.device_index_),
       initialized_(other.initialized_),
+      owns_stream_(other.owns_stream_),
       device_(other.device_),
       stream_(other.stream_),
       device_props_(other.device_props_) {
   other.initialized_ = false;
+  other.owns_stream_ = false;
   other.device_ = 0;
   other.stream_ = nullptr;
 }
@@ -74,10 +77,12 @@ ROCmCore& ROCmCore::operator=(ROCmCore&& other) noexcept {
     Cleanup();
     device_index_ = other.device_index_;
     initialized_ = other.initialized_;
+    owns_stream_ = other.owns_stream_;
     device_ = other.device_;
     stream_ = other.stream_;
     device_props_ = other.device_props_;
     other.initialized_ = false;
+    other.owns_stream_ = false;
     other.device_ = 0;
     other.stream_ = nullptr;
   }
@@ -110,6 +115,61 @@ void ROCmCore::Initialize() {
 
   DRVGPU_LOG_INFO_GPU(device_index_, "ROCmCore",
                       "Device " + std::to_string(device_index_) + " initialized: " + GetDeviceName());
+}
+
+/**
+ * @brief Инициализация с внешним hipStream_t (External Context Integration)
+ *
+ * Используется когда hipStream_t уже создан внешней библиотекой или приложением.
+ * Получает device handle и device_props_ — но НЕ создаёт собственный stream.
+ * owns_stream_ = false → ReleaseResources() не вызывает hipStreamDestroy.
+ *
+ * Порядок (без hipStreamCreate):
+ * 1. hipSetDevice — выбрать устройство
+ * 2. hipDeviceGet — получить device handle
+ * 3. hipGetDeviceProperties — свойства для GetDeviceInfo()/GetGlobalMemorySize() и пр.
+ * 4. stream_ = external_stream — сохраняем без владения
+ *
+ * @param device_index   Индекс HIP устройства (аргумент hipSetDevice)
+ * @param external_stream Внешний поток команд — НЕ будет уничтожен при Cleanup()
+ * @throws std::runtime_error если device_index невалиден или hipSetDevice/hipDeviceGet упали
+ */
+void ROCmCore::InitializeFromExternalStream(int device_index, hipStream_t external_stream) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  if (initialized_) {
+    DRVGPU_LOG_WARNING_GPU(device_index, "ROCmCore",
+                           "Device " + std::to_string(device_index) +
+                           " already initialized (InitializeFromExternalStream ignored)");
+    return;
+  }
+
+  if (!external_stream) {
+    throw std::runtime_error("ROCmCore::InitializeFromExternalStream: external_stream is null");
+  }
+
+  device_index_ = device_index;
+
+  // Шаг 1: Выбрать устройство (нужно для hipDeviceGet и hipGetDeviceProperties)
+  CheckHIPError(hipSetDevice(device_index), "hipSetDevice");
+
+  // Шаг 2: Получить device handle
+  CheckHIPError(hipDeviceGet(&device_, device_index), "hipDeviceGet");
+
+  // Шаг 3: Получить свойства устройства (для GetDeviceInfo, GetGlobalMemorySize и пр.)
+  CheckHIPError(hipGetDeviceProperties(&device_props_, device_index),
+                "hipGetDeviceProperties");
+
+  // Шаг 4: Сохраняем внешний stream без владения
+  stream_ = external_stream;
+  owns_stream_ = false;
+
+  initialized_ = true;
+
+  DRVGPU_LOG_INFO_GPU(device_index_, "ROCmCore",
+                      "Initialized from external stream on device " +
+                      std::to_string(device_index_) + " (" + GetDeviceName() + ")" +
+                      " [owns_stream=false]");
 }
 
 /**
@@ -191,10 +251,13 @@ void ROCmCore::Cleanup() {
  * device_ — integer handle, не требует явного освобождения через HIP API.
  */
 void ROCmCore::ReleaseResources() {
-  if (stream_) {
+  if (stream_ && owns_stream_) {
+    // Уничтожаем stream только если он наш (created via hipStreamCreate в InitializeHIP).
+    // Если owns_stream_=false — stream принадлежит внешнему коду, не трогаем.
     (void)hipStreamDestroy(stream_);
-    stream_ = nullptr;
   }
+  stream_ = nullptr;
+  owns_stream_ = true;  // сброс в default для переиспользования объекта
   // device_ — integer handle, не требует явного освобождения через HIP API.
   // hipDeviceReset() намеренно НЕ вызывается: он сбросил бы всё состояние GPU
   // для всего процесса, включая другие ROCmBackend / OpenCL контексты на том же устройстве.

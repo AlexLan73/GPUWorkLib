@@ -65,6 +65,16 @@ public:
   ~ROCmCore();
 
   // ═══════════════════════════════════════════════════════════════
+  // Инициализация из внешнего stream (External Context Integration)
+  // ═══════════════════════════════════════════════════════════════
+
+  // Инициализация с внешним hipStream_t (owns_stream_ = false).
+  // Получает device handle и device_props_ — всё кроме stream_.
+  // ReleaseResources() НЕ вызывает hipStreamDestroy (stream чужой).
+  // Бросает std::runtime_error если device_index невалиден.
+  void InitializeFromExternalStream(int device_index, hipStream_t external_stream);
+
+  // ═══════════════════════════════════════════════════════════════
   // Запрет копирования, разрешение перемещения
   // ═══════════════════════════════════════════════════════════════
   ROCmCore(const ROCmCore&) = delete;
@@ -92,6 +102,8 @@ public:
   hipDevice_t GetDevice() const { return device_; }
   hipStream_t GetStream() const { return stream_; }
   int GetDeviceIndex() const { return device_index_; }
+  // true — stream создан нами (hipStreamCreate); false — stream внешний, не уничтожать.
+  bool OwnsStream() const { return owns_stream_; }
 
   // ═══════════════════════════════════════════════════════════════
   // Информация о девайсе
@@ -130,6 +142,10 @@ private:
   hipDeviceProp_t device_props_;  ///< Кеш свойств устройства (от hipGetDeviceProperties); заполняется однократно при инициализации
 
   mutable std::mutex mutex_;  ///< Защита Initialize()/Cleanup() от гонок при одновременном вызове
+
+  // owns_stream_: false если stream_ инициализирован через InitializeFromExternalStream.
+  // В этом случае ReleaseResources() НЕ вызывает hipStreamDestroy — stream принадлежит вызывающему коду.
+  bool owns_stream_;
 
   // Выполняет 6 шагов HIP init: hipInit → hipGetDeviceCount → hipSetDevice →
   // hipDeviceGet → hipGetDeviceProperties → hipStreamCreate.

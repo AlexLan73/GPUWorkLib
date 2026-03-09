@@ -157,6 +157,9 @@ struct FormParams {
       } catch (const std::invalid_argument&) {
         throw std::invalid_argument(
             "FormParams::ParseFromString: cannot parse value for '" + key + "'");
+      } catch (const std::out_of_range&) {
+        throw std::invalid_argument(
+            "FormParams::ParseFromString: value out of range for '" + key + "'");
       }
     }
 

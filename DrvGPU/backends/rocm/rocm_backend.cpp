@@ -137,6 +137,63 @@ void ROCmBackend::Initialize(int device_index) {
                       " (" + core_->GetDeviceName() + ")");
 }
 
+/**
+ * @brief Инициализация с внешним hipStream_t (External Context Integration)
+ *
+ * Используется когда hipStream_t уже создан внешней библиотекой (hipBLAS, hipFFT, MIOpen).
+ * Бэкенд подключается к существующему stream без захвата владения.
+ *
+ * Порядок:
+ * 1. ROCmCore::InitializeFromExternalStream — получает device handle + device_props_
+ *    без создания нового stream (owns_stream=false)
+ * 2. Кешируем device_ и stream_ из core_
+ * 3. MemoryManager(this) — создаём СОБСТВЕННЫЙ пул hipMalloc буферов
+ *    (буферы наши, даже если stream внешний)
+ * 4. owns_resources_ = false — Cleanup() не будет уничтожать stream
+ *
+ * @param device_index     Индекс AMD GPU (0..N-1)
+ * @param external_stream  Внешний stream — НЕ будет уничтожен при Cleanup()
+ * @throws std::runtime_error если уже инициализирован или параметры невалидны
+ */
+void ROCmBackend::InitializeFromExternalStream(int device_index, hipStream_t external_stream) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  if (initialized_) {
+    throw std::runtime_error(
+        "ROCmBackend::InitializeFromExternalStream: already initialized. Call Cleanup() first.");
+  }
+
+  if (!external_stream) {
+    throw std::runtime_error(
+        "ROCmBackend::InitializeFromExternalStream: external_stream is null");
+  }
+
+  device_index_ = device_index;
+  // owns_resources_=false: Cleanup() будет вызывать core_.reset(),
+  // но ROCmCore::owns_stream_=false → hipStreamDestroy НЕ вызывается.
+  owns_resources_ = false;
+
+  DRVGPU_LOG_INFO_GPU(device_index, "ROCmBackend",
+                      "Attaching to external stream on device " + std::to_string(device_index));
+
+  // ROCmCore получает device handle + device_props_, но НЕ создаёт stream
+  core_ = std::make_unique<ROCmCore>(device_index);
+  core_->InitializeFromExternalStream(device_index, external_stream);
+
+  // Кешируем нативные хэндлы — избегаем разыменования unique_ptr в hot path
+  device_ = core_->GetDevice();
+  stream_ = external_stream;
+
+  // MemoryManager — наш собственный (hipMalloc/hipFree буферы независимы от stream)
+  memory_manager_ = std::make_unique<MemoryManager>(this);
+
+  initialized_ = true;
+
+  DRVGPU_LOG_INFO_GPU(device_index_, "ROCmBackend",
+                      "Attached to external stream on device " + std::to_string(device_index) +
+                      " (" + core_->GetDeviceName() + ") [owns_resources=false]");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Очистка
 // ════════════════════════════════════════════════════════════════════════════
@@ -167,15 +224,11 @@ void ROCmBackend::Cleanup() {
   // Освобождаем MemoryManager
   memory_manager_.reset();
 
-  if (owns_resources_) {
-    // owns_resources_=true: уничтожаем ROCmCore — вызовет hipStreamDestroy внутри.
-    core_.reset();
-  } else {
-    // owns_resources_=false: core_ создан снаружи, мы не должны его уничтожать.
-    // reset() всё равно вызывает деструктор ROCmCore — это допустимо, т.к.
-    // non-owning сценарий сейчас не используется в реальных путях кода.
-    core_.reset();
-  }
+  // core_.reset() вызывается в обоих случаях — ROCmCore корректно обрабатывает owns_stream_:
+  // - owns_resources_=true  → ROCmCore::owns_stream_=true  → hipStreamDestroy вызывается
+  // - owns_resources_=false → ROCmCore::owns_stream_=false → hipStreamDestroy НЕ вызывается
+  // Внешний stream уничтожается вызывающим кодом самостоятельно.
+  core_.reset();
 
   device_ = 0;
   stream_ = nullptr;

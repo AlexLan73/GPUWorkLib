@@ -11,6 +11,7 @@
 
 #include "generators/lfm_generator.hpp"
 #include "kernel_loader.hpp"
+#include "prof_utils.hpp"
 #include <stdexcept>
 #include <cmath>
 #include <vector>
@@ -20,17 +21,6 @@
 #endif
 
 namespace signal_gen {
-namespace {
-
-// Сохранить cl_event для профилирования или освободить (production path).
-// Ключевое правило: вызывать ПОСЛЕ того как event использован как wait-dependency.
-void CollectOrRelease(cl_event ev, const char* name, LfmGenerator::ProfEvents* prof_events) {
-    if (!ev) return;
-    if (prof_events) prof_events->push_back({name, ev});
-    else clReleaseEvent(ev);
-}
-
-}  // namespace
 
 // ════════════════════════════════════════════════════════════════════════════
 // Конструктор / Деструктор
@@ -60,10 +50,8 @@ LfmGenerator::LfmGenerator(LfmGenerator&& other) noexcept
     , context_(other.context_)
     , queue_(other.queue_)
     , device_(other.device_)
-    , program_(other.program_)
-    , kernel_(other.kernel_) {
+    , program_(other.program_) {
     other.program_ = nullptr;
-    other.kernel_ = nullptr;
 }
 
 LfmGenerator& LfmGenerator::operator=(LfmGenerator&& other) noexcept {
@@ -75,9 +63,7 @@ LfmGenerator& LfmGenerator::operator=(LfmGenerator&& other) noexcept {
         queue_ = other.queue_;
         device_ = other.device_;
         program_ = other.program_;
-        kernel_ = other.kernel_;
         other.program_ = nullptr;
-        other.kernel_ = nullptr;
     }
     return *this;
 }
@@ -213,16 +199,9 @@ void LfmGenerator::CompileKernel() {
         throw std::runtime_error("LfmGenerator kernel build failed:\n" + std::string(log.data()));
     }
 
-    kernel_ = clCreateKernel(program_, "generate_lfm", &err);
-    if (err != CL_SUCCESS) {
-        clReleaseProgram(program_);
-        program_ = nullptr;
-        throw std::runtime_error("LfmGenerator: clCreateKernel failed");
-    }
 }
 
 void LfmGenerator::ReleaseGpuResources() {
-    if (kernel_) { clReleaseKernel(kernel_); kernel_ = nullptr; }
     if (program_) { clReleaseProgram(program_); program_ = nullptr; }
 }
 

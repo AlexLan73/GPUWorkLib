@@ -76,6 +76,39 @@ public:
   // Thread-safe. При повторном вызове — автоматически вызывает Cleanup() сначала.
   // Бросает std::runtime_error если device_index выходит за пределы или HIP недоступен.
   void Initialize(int device_index) override;
+
+  /**
+   * @brief Инициализация с внешним hipStream_t (External Context Integration)
+   *
+   * Позволяет использовать ROCmBackend с уже существующим HIP stream
+   * (например, из другой библиотеки — hipBLAS, hipFFT, MIOpen).
+   *
+   * Отличия от Initialize():
+   * - НЕ создаёт stream (hipStreamCreate не вызывается)
+   * - owns_resources_ = false → Cleanup() НЕ уничтожает stream
+   * - MemoryManager создаётся собственный (hipMalloc буферы — наши)
+   *
+   * @param device_index     Индекс AMD GPU (0..N-1)
+   * @param external_stream  Внешний поток — вызывающий код управляет его временем жизни
+   *
+   * @throws std::runtime_error если уже инициализирован (вызови Cleanup() сначала)
+   * @throws std::runtime_error если external_stream == nullptr
+   * @throws std::runtime_error если device_index невалиден
+   *
+   * @code
+   * // Пример: интеграция с hipBLAS
+   * hipStream_t my_stream;
+   * hipStreamCreate(&my_stream);
+   * hipblasSetStream(blas_handle, my_stream);
+   *
+   * ROCmBackend backend;
+   * backend.InitializeFromExternalStream(0, my_stream);
+   * // backend НЕ уничтожит my_stream при Cleanup()
+   * // my_stream используется и в hipBLAS, и в нашем backend
+   * @endcode
+   */
+  void InitializeFromExternalStream(int device_index, hipStream_t external_stream);
+
   bool IsInitialized() const override { return initialized_; }
   // Освобождает MemoryManager (hipFree буферов), затем core_ (hipStreamDestroy).
   // Порядок важен: буферы могут ссылаться на stream_ — core_ уничтожается последним.

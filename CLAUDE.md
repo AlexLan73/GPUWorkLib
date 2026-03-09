@@ -9,7 +9,7 @@
 ## 🎯 About the Project
 - **Project Name**: GPUWorkLib
 - **Purpose**: Библиотеки GPU-вычислений для обработки сигналов
-- **Platforms**: OpenCL, ROCm, HIP
+- **Platforms**: OpenCL 3.0, ROCm 7.2+, HIP - установлено
 - **Main Focus**: ЦОС на GPU — FFT, фильтры, статистика, гетеродин, синтезатор
 
 ## 🧠 AI Assistant Information

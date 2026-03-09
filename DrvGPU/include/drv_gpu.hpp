@@ -22,6 +22,10 @@
 #include "common/gpu_device_info.hpp"
 #include "memory/memory_manager.hpp"
 #include "module_registry.hpp"
+#include <CL/cl.h>
+#if ENABLE_ROCM
+#include <hip/hip_runtime.h>
+#endif
 #include <memory>
 #include <string>
 #include <mutex>
@@ -102,6 +106,82 @@ public:
      * @throws std::runtime_error при ошибке инициализации
      */
     void Initialize();
+
+    // ═══════════════════════════════════════════════════════════════
+    // Static factory: External Context Integration
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * @brief Создать DrvGPU из внешнего OpenCL контекста
+     *
+     * OpenCL context/device/queue уже созданы вызывающим кодом.
+     * DrvGPU НЕ освобождает их при уничтожении.
+     *
+     * @param device_index   Индекс GPU (для логирования и GetDeviceIndex())
+     * @param context        Внешний cl_context
+     * @param device         Внешний cl_device_id
+     * @param queue          Внешняя cl_command_queue
+     * @return               Готовый к работе DrvGPU (initialized=true)
+     *
+     * @code
+     * cl_context ctx = ...; cl_device_id dev = ...; cl_command_queue q = ...;
+     * auto gpu = DrvGPU::CreateFromExternalOpenCL(0, ctx, dev, q);
+     * // gpu.Initialize() вызывать НЕ нужно — уже инициализирован
+     * @endcode
+     */
+    static DrvGPU CreateFromExternalOpenCL(
+        int device_index,
+        cl_context context,
+        cl_device_id device,
+        cl_command_queue queue);
+
+#if ENABLE_ROCM
+    /**
+     * @brief Создать DrvGPU из внешнего HIP stream
+     *
+     * hipStream_t уже создан вызывающим кодом (hipBLAS, hipFFT, MIOpen и т.п.).
+     * DrvGPU НЕ вызывает hipStreamDestroy при уничтожении.
+     *
+     * @param device_index    Индекс AMD GPU (0..N-1)
+     * @param stream          Внешний hipStream_t
+     * @return                Готовый к работе DrvGPU (initialized=true)
+     *
+     * @code
+     * hipStream_t s; hipStreamCreate(&s);
+     * auto gpu = DrvGPU::CreateFromExternalROCm(0, s);
+     * // gpu.Initialize() вызывать НЕ нужно — уже инициализирован
+     * @endcode
+     */
+    static DrvGPU CreateFromExternalROCm(
+        int device_index,
+        hipStream_t stream);
+
+    /**
+     * @brief Создать HybridBackend DrvGPU из внешних OpenCL + HIP ресурсов
+     *
+     * Оба контекста уже существуют. DrvGPU НЕ освобождает ни один из них.
+     * Поддерживает ZeroCopy между cl_mem и hipStream_t (общее VRAM AMD).
+     *
+     * @param device_index   Индекс GPU (одинаков для OpenCL и ROCm)
+     * @param context        Внешний cl_context
+     * @param device         Внешний cl_device_id
+     * @param queue          Внешняя cl_command_queue
+     * @param stream         Внешний hipStream_t
+     * @return               Готовый к работе DrvGPU с HybridBackend (initialized=true)
+     *
+     * @code
+     * auto gpu = DrvGPU::CreateFromExternalHybrid(0, cl_ctx, cl_dev, cl_q, hip_s);
+     * auto& hybrid = static_cast<HybridBackend&>(gpu.GetBackend());
+     * auto bridge = hybrid.CreateZeroCopyBridge(cl_buf, size);
+     * @endcode
+     */
+    static DrvGPU CreateFromExternalHybrid(
+        int device_index,
+        cl_context context,
+        cl_device_id device,
+        cl_command_queue queue,
+        hipStream_t stream);
+#endif  // ENABLE_ROCM
     
     /**
      * @brief Проверить, инициализирован ли GPU
@@ -200,9 +280,22 @@ public:
 
 private:
     // ═══════════════════════════════════════════════════════════════
+    // Приватный tagged constructor для static factory methods
+    // ═══════════════════════════════════════════════════════════════
+
+    // Тег для различения приватного конструктора от публичного.
+    // Предотвращает случайный вызов: DrvGPU(ExternalInitTag{}, ...) невозможен снаружи класса.
+    struct ExternalInitTag {};
+
+    // Принимает уже инициализированный backend; не вызывает CreateBackend() / backend_->Initialize().
+    // Вызывается только из static factory methods (CreateFromExternal*).
+    DrvGPU(ExternalInitTag, BackendType type, int device_index,
+           std::unique_ptr<IBackend> backend);
+
+    // ═══════════════════════════════════════════════════════════════
     // Члены класса
     // ═══════════════════════════════════════════════════════════════
-    
+
     BackendType backend_type_;
     int device_index_;
     bool initialized_;

@@ -8,6 +8,7 @@
 
 #include "generators/noise_generator.hpp"
 #include "kernel_loader.hpp"
+#include "prof_utils.hpp"
 #include <stdexcept>
 #include <cmath>
 #include <random>
@@ -19,17 +20,6 @@
 #endif
 
 namespace signal_gen {
-namespace {
-
-// Сохранить cl_event для профилирования или освободить (production path).
-// Ключевое правило: вызывать ПОСЛЕ того как event использован как wait-dependency.
-void CollectOrRelease(cl_event ev, const char* name, NoiseGenerator::ProfEvents* prof_events) {
-    if (!ev) return;
-    if (prof_events) prof_events->push_back({name, ev});
-    else clReleaseEvent(ev);
-}
-
-}  // namespace
 
 // ════════════════════════════════════════════════════════════════════════════
 // Конструктор / Деструктор
