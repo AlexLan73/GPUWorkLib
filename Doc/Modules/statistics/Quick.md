@@ -1,47 +1,49 @@
 # Statistics — Краткий справочник
 
-> GPU-статистика комплексных сигналов по лучам: mean, median, variance, std (ROCm/HIP)
+> GPU-статистика по лучам: среднее (complex), медиана, дисперсия, СКО за один проход
 
 ---
 
 ## Концепция — зачем и что это такое
 
 **Зачем нужен модуль?**
-Иногда нужно не фильтровать или трансформировать сигнал, а измерить его характеристики: насколько он сильный, насколько шумный, какова его типичная амплитуда. Модуль считает эти характеристики для каждого луча (канала) на GPU — всё параллельно.
+Когда антенная решётка даёт данные одновременно по многим лучам, нужно быстро вычислить статистику по каждому. CPU делает это последовательно — медленно. Модуль обрабатывает все лучи параллельно на GPU за один вызов.
+
+**Ключевая идея**: 256 лучей × 1.3M точек — GPU: ~30 мс, CPU: ~2000 мс (rocPRIM segmented sort на RDNA4).
 
 ---
 
-### Три функции — когда что брать
+### Что конкретно делает каждый метод
 
-**`ComputeStatistics`** — вычисляет сразу всё: среднее (комплексное), среднюю амплитуду, дисперсию и среднеквадратичное отклонение. Один проход по данным через алгоритм Велфорда (численно устойчив). Бери когда нужна полная картина — шумовой пол, уровень сигнала, стабильность.
-
-**`ComputeMedian`** — вычисляет медиану амплитуд |z| по каждому лучу. Сначала вычисляет модули, потом сортирует через radix sort на GPU, берёт средний элемент. Медиана устойчивее к выбросам, чем среднее. Бери когда в данных есть редкие импульсные помехи, которые испортят среднее.
-
-**`ComputeMean`** — только комплексное среднее, через иерархическое сложение (два прохода). Бери когда нужно только среднее и ничего лишнего — самый быстрый вариант.
-
----
-
-### Важная деталь про медиану
-
-Медиана здесь — это `sorted[N/2]`, а не среднее двух средних. В NumPy: `np.sort(mags)[N//2]`, **не** `np.median()`. Это важно при сравнении с эталоном.
+| Метод | Что делает | Когда брать |
+|-------|------------|-------------|
+| `ComputeStatistics` | Комплексное среднее + E[|z|] + Var(|z|) + STD(|z|) за **один проход** (Welford) | Основной метод. Всегда, когда нужна статистика |
+| `ComputeMean` | Только комплексное среднее (Re + Im) — иерархическая редукция | Когда нужно только среднее, без дисперсии |
+| `ComputeMedian` | Медиана модулей |z| — GPU radix sort + middle element | Робастная оценка уровня сигнала (шум, выбросы) |
+| `ComputeStatisticsFloat` | Как `ComputeStatistics` но для float input (модули уже посчитаны) | После FFTProcessor: статистика |spectrum| |
+| `ComputeMedianFloat` | Медиана для float input | Медиана |spectrum| после FFT |
 
 ---
 
-### ROCm-only
+### Аналогии и связь с другими модулями
 
-Модуль работает только на AMD GPU с ROCm (Linux). Первый запуск медленный (~1-3 сек) — JIT-компиляция HIP ядер через hiprtc. После сохранения HSACO на диск — загружается мгновенно.
+- **strategies/** использует `ComputeStatisticsFloat(gpu_ptr, params)` для анализа |FFT-спектра|
+- Может применяться после `FFTProcessor` для оценки уровня шума
+- Результаты сравниваются с NumPy: `np.var(np.abs(z), ddof=0)`, `np.sort(np.abs(z))[N//2]`
+
+**Ограничения**:
+- ROCm-only: не работает на Windows, не работает с OpenCL backend
+- `beam_count × n_point` должно делиться без остатка
+- Первый вызов медленнее (~200-500 мс JIT компиляция ядер)
 
 ---
 
 ## Алгоритм
 
 ```
-complex<float>[beams × N]
-    ├─ ComputeStatistics      welford_fused kernel (1 проход)          → mean + variance + std per beam
-    ├─ ComputeMedian          compute_magnitudes + rocPRIM sort         → median(|z|) per beam
-    ├─ ComputeMean            hierarchical reduce (2-phase)             → complex mean per beam
-    ├─ ComputeStatisticsFloat welford_float (float input, mean={0,0})  → variance + std per beam [C++ only]
-    └─ ComputeMedianFloat     rocPRIM sort (float input)                → median per beam [C++ only]
+ComputeStatistics:  welford_fused kernel → E[z], E[|z|], E[|z|²] → Var, STD
+ComputeMedian:      |z| → rocPRIM segmented_radix_sort → sorted[N/2]
+ComputeMean:        2-phase reduction (phase1 block sum + final divide)
 ```
 
 ---
@@ -55,83 +57,74 @@ complex<float>[beams × N]
 #include "statistics_types.hpp"
 #include "backends/rocm/rocm_backend.hpp"
 
+#if ENABLE_ROCM
 drv_gpu_lib::ROCmBackend backend;
 backend.Initialize(0);
-statistics::StatisticsProcessor stats(&backend);
+
+statistics::StatisticsProcessor proc(&backend);
+
+std::vector<std::complex<float>> data(4 * 4096);  // 4 луча × 4096 сэмплов
+// ... заполнить data (beam-major) ...
 
 statistics::StatisticsParams params;
 params.beam_count = 4;
-params.n_point    = 8192;
+params.n_point    = 4096;
 
-std::vector<std::complex<float>> data(4 * 8192, {1.0f, 0.0f});
-
-// Полная статистика (mean + variance + std + mean_mag)
-auto results = stats.ComputeStatistics(data, params);
-for (const auto& r : results) {
-    // r.beam_id, r.mean, r.mean_magnitude, r.variance, r.std_dev
+// Полная статистика (рекомендуется)
+auto stats = proc.ComputeStatistics(data, params);
+for (const auto& r : stats) {
+    // r.beam_id, r.mean (complex), r.mean_magnitude, r.variance, r.std_dev
 }
-
-// Медиана модулей (GPU radix sort)
-auto medians = stats.ComputeMedian(data, params);
-// medians[i].beam_id, medians[i].median_magnitude
-
-// Комплексное среднее
-auto means = stats.ComputeMean(data, params);
-// means[i].beam_id, means[i].mean (complex<float>)
+#endif
 ```
 
 ### Python
 
 ```python
 import sys; sys.path.insert(0, 'build/debian-radeon9070/python')
-import gpuworklib
-import numpy as np
+import gpuworklib, numpy as np
 
-ctx   = gpuworklib.ROCmGPUContext(0)
-stats = gpuworklib.StatisticsProcessor(ctx)
+ctx = gpuworklib.ROCmGPUContext(0)    # НЕ GPUContext!
+proc = gpuworklib.StatisticsProcessor(ctx)
 
-data = (np.random.randn(4 * 8192) +
-        1j * np.random.randn(4 * 8192)).astype(np.complex64)
+# beam-major: beam0[0..N], beam1[0..N], ...
+data = (np.random.randn(4 * 4096) + 1j * np.random.randn(4 * 4096)).astype(np.complex64)
 
-results = stats.compute_statistics(data, beam_count=4)
-# results[i]: {'beam_id', 'mean_real', 'mean_imag',
-#              'mean_magnitude', 'variance', 'std_dev'}
+results = proc.compute_statistics(data, beam_count=4)
+# results[i]: {'beam_id', 'mean_real', 'mean_imag', 'mean_magnitude', 'variance', 'std_dev'}
 
-medians = stats.compute_median(data, beam_count=4)
-# medians[i]: {'beam_id', 'median_magnitude'}
-
-means = stats.compute_mean(data, beam_count=4)
+means   = proc.compute_mean(data, beam_count=4)
 # means[i]: {'beam_id', 'mean_real', 'mean_imag'}
+
+medians = proc.compute_median(data, beam_count=4)
+# medians[i]: {'beam_id', 'median_magnitude'}
 ```
 
 ---
 
-## Параметры
+## Ключевые параметры
 
 | Параметр | Тип | Описание |
 |----------|-----|----------|
-| `beam_count` | `uint32_t` | Число лучей/каналов |
-| `n_point` | `uint32_t` | Точек на луч (complex float) |
+| `beam_count` | `uint32_t` | Число лучей (каналов) |
+| `n_point` | `uint32_t` | Сэмплов на луч |
+| Layout | — | beam-major: `data[b*N + i]` |
 
 ---
 
-## Важно
+## Нюансы (важно)
 
-- ROCm-only: AMD GPU + Linux + `-DENABLE_ROCM=ON`
-- Медиана = `sorted[N/2]`, **не** среднее двух средних.
-  NumPy-сравнение: `np.sort(mags)[N//2]`, **не** `np.median()`
-- Дисперсия population (ddof=0): сравнивать `np.std(mags, ddof=0)`
-- Первый вызов: JIT-компиляция hiprtc (~1-3 с), далее HSACO с диска
-- GPU input: `stats.ComputeStatistics(void* gpu_ptr, params)` — без PCIe HtoD
-- Float-input методы (`ComputeStatisticsFloat`, `ComputeMedianFloat`): только C++ API, `mean={0,0}`
-- Namespace: `statistics::`, не `drv_gpu_lib::`
+- **Дисперсия**: population (ddof=0), NumPy: `np.var(x, ddof=0)`
+- **Медиана**: `sorted[N/2]`, не `np.median()` (для чётного N отличается)
+- **WARP_SIZE**: автоматически 64 для gfx9xx (CDNA), 32 для RDNA
+- **Первый вызов**: ~200-500 мс JIT. После — из disk HSACO cache
 
 ---
 
 ## Ссылки
 
-- [Full.md](Full.md) — математика, pipeline, C4-диаграммы, kernels, все тесты
-- [API.md](API.md) — полный API Reference (все 8 методов, типы, примеры)
+- [Full.md](Full.md) — математика, pipeline, C4, тесты с обоснованием, оптимизации
+- [API.md](API.md) — полный справочник публичного API
 - [Doc/Python/rocm_modules_api.md](../../Python/rocm_modules_api.md) — Python API
 
 ---

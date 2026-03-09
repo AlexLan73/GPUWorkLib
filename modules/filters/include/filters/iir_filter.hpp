@@ -119,6 +119,7 @@ public:
 
 private:
   void CompileKernel();
+  void CreateKernels();          ///< Создать cl_kernel из скомпилированного program_
   void UploadSosMatrix();
   void ReleaseGpuResources();
 
@@ -148,6 +149,7 @@ private:
   cl_device_id     device_    = nullptr;
   cl_program       program_   = nullptr;
   cl_mem           sos_buf_   = nullptr;  ///< [num_sections * 5] float
+  cl_kernel        kernel_    = nullptr;  ///< iir_biquad_cascade_cf32 (кеш)
 };
 
 } // namespace filters

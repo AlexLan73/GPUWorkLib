@@ -78,6 +78,19 @@ FMCorrelatorProcessorROCm::~FMCorrelatorProcessorROCm() {
  * Порядок: compile (lazy) → FreeBuffers → DestroyPlans → AllocateBuffers → CreatePlans.
  */
 void FMCorrelatorProcessorROCm::SetParams(const FMCorrelatorParams& params) {
+  if (params.fft_size == 0 || (params.fft_size & (params.fft_size - 1)) != 0)
+    throw std::invalid_argument(
+        "FMCorrelator: fft_size must be a positive power of 2, got " +
+        std::to_string(params.fft_size));
+  if (params.num_shifts <= 0)
+    throw std::invalid_argument(
+        "FMCorrelator: num_shifts must be > 0, got " +
+        std::to_string(params.num_shifts));
+  if (params.num_signals <= 0)
+    throw std::invalid_argument(
+        "FMCorrelator: num_signals must be > 0, got " +
+        std::to_string(params.num_signals));
+
   params_ = params;
   // Эталон становится невалидным — размер N мог измениться
   ref_prepared_ = false;
@@ -671,8 +684,6 @@ void FMCorrelatorProcessorROCm::AllocateBuffers() {
 }
 
 void FMCorrelatorProcessorROCm::FreeBuffers() {
-  if (!buffers_allocated_) return;
-
   auto safeFree = [](void*& ptr) {
     if (ptr) { (void)hipFree(ptr); ptr = nullptr; }
   };

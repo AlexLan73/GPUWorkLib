@@ -268,17 +268,32 @@ FirFilter и IirFilter используют DrvGPU KernelCacheService:
 | `Python_test/filters/test_filters_stage1.py` | Python: 5 тестов FIR+IIR vs scipy |
 | `Python_test/filters/test_fir_filter_rocm.py` | Python ROCm FIR: 5 тестов |
 | `Python_test/filters/test_iir_filter_rocm.py` | Python ROCm IIR: multi-section, GPU ptr |
-| `Python_test/filters/test_moving_average_rocm.py` | Python ROCm MA: все 5 типов |
-| `Python_test/filters/test_kalman_rocm.py` | Python ROCm Kalman: GPU vs CPU, convergence |
-| `Python_test/filters/test_kaufman_rocm.py` | Python ROCm KAMA: adaptive behavior |
+| `Python_test/filters/test_moving_average_rocm.py` | Python ROCm MA: все 5 типов (bindings не зарег.) |
+| `Python_test/filters/test_kalman_rocm.py` | Python ROCm Kalman: GPU vs CPU, convergence (bindings не зарег.) |
+| `Python_test/filters/test_kaufman_rocm.py` | Python ROCm KAMA: adaptive behavior (bindings не зарег.) |
+
+---
+
+## Важные ловушки
+
+| # | Ловушка |
+|---|---------|
+| ⚠ | `clReleaseMemObject(result.data)` — caller owns (OpenCL) |
+| ⚠ | `hipFree(result.data)` — caller owns (ROCm) |
+| ⚠ | IIR single-channel = медленнее CPU! GPU выгоден только при ≥ 8 каналах |
+| ⚠ | SOS scipy: `a1=row[4], a2=row[5]` (пропускаем `a0=row[3]`, он всегда 1) |
+| ⚠ | SMA max N=128, KAMA er_period max=128 (ring buffer в регистрах) |
+| ⚠ | MA/Kalman/KAMA эффективны при ≥ 64 каналах |
+| ⚠ | **Python bindings для MA/Kalman/KAMA НЕ зарегистрированы** в `gpu_worklib_bindings.cpp` |
 
 ---
 
 ## Ссылки
 
 - [Full.md](Full.md) — математика, pipeline, C4 диаграммы, все тесты с rationale
+- [API.md](API.md) — полный API-справочник: все классы, сигнатуры, цепочки вызовов
 - [gpu_filters_research.md](gpu_filters_research.md) — Overlap-Save/Add, tiled FIR — будущие алгоритмы
 
 ---
 
-*Обновлено: 2026-03-04*
+*Обновлено: 2026-03-09*

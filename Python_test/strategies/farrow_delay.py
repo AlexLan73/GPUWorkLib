@@ -54,12 +54,13 @@ def load_lagrange_matrix(json_path: Optional[str] = None) -> np.ndarray:
         json_path: path to JSON file, None = built-in 48x5
 
     Returns:
-        np.ndarray [48, 5] float64
+        np.ndarray [rows, columns] float32  (matches GPU float precision)
     """
     path = json_path or _DEFAULT_MATRIX_PATH
     with open(path, 'r') as f:
         data = json.load(f)
-    return np.array(data['data'], dtype=np.float64)
+    arr = np.array(data['data'], dtype=np.float32)
+    return arr.reshape(data['rows'], data['columns'])
 
 
 # ============================================================================
@@ -93,6 +94,13 @@ class FarrowDelay:
                      delay_samples: float) -> np.ndarray:
         """Apply fractional delay to single channel.
 
+        Mirrors GPU kernel (lch_farrow.cl) exactly:
+          read_pos = n - delay_samples   (per-sample, float32)
+          center   = floor(read_pos)
+          frac     = read_pos - center   (fractional part of read_pos, NOT of delay!)
+          row      = int(frac * 48) % 48
+          output[n] = sum(L[row][k] * input[center - 1 + k], k=0..4)
+
         Args:
             signal_1d: [n_samples] complex signal
             delay_samples: delay in samples (float, can have fractional part)
@@ -102,21 +110,22 @@ class FarrowDelay:
         """
         n = len(signal_1d)
         output = np.zeros(n, dtype=signal_1d.dtype)
-
-        int_delay = int(np.floor(delay_samples))
-        frac = delay_samples - int_delay
-
-        # Fractional part -> index in Lagrange table
-        frac_idx = int(round(frac * self.n_subdivisions)) % self.n_subdivisions
-        coeffs = self.matrix[frac_idx]
+        # Convert to float32 to match GPU arithmetic precision
+        delay_f32 = np.float32(delay_samples)
 
         for i in range(n):
-            read_base = i - int_delay
+            read_pos = float(np.float32(i)) - float(delay_f32)
+            if read_pos < 0.0:
+                continue
+            center = int(np.floor(read_pos))
+            frac = read_pos - center                          # frac of read_pos (not of delay!)
+            row = int(frac * self.n_subdivisions) % self.n_subdivisions  # int(), not round()
+            coeffs = self.matrix[row]
             val = 0.0 + 0.0j
             for k in range(self.n_points):
-                src_idx = read_base - self._half_points + k
+                src_idx = center - 1 + k                     # centre-1 .. centre+3
                 if 0 <= src_idx < n:
-                    val += coeffs[k] * signal_1d[src_idx]
+                    val += float(coeffs[k]) * complex(signal_1d[src_idx])
             output[i] = val
 
         return output.astype(signal_1d.dtype)

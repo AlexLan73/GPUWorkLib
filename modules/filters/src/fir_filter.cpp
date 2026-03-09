@@ -72,25 +72,33 @@ FirFilter::FirFilter(FirFilter&& other) noexcept
     , queue_(other.queue_)
     , device_(other.device_)
     , program_(other.program_)
-    , coeff_buf_(other.coeff_buf_) {
-  other.program_   = nullptr;
-  other.coeff_buf_ = nullptr;
+    , coeff_buf_(other.coeff_buf_)
+    , kernel_constant_(other.kernel_constant_)
+    , kernel_global_(other.kernel_global_) {
+  other.program_         = nullptr;
+  other.coeff_buf_       = nullptr;
+  other.kernel_constant_ = nullptr;
+  other.kernel_global_   = nullptr;
 }
 
 FirFilter& FirFilter::operator=(FirFilter&& other) noexcept {
   if (this != &other) {
     ReleaseGpuResources();
-    backend_          = other.backend_;
-    coefficients_     = std::move(other.coefficients_);
-    use_global_coeffs_= other.use_global_coeffs_;
-    kernel_cache_     = std::move(other.kernel_cache_);
-    context_          = other.context_;
-    queue_            = other.queue_;
-    device_           = other.device_;
-    program_          = other.program_;
-    coeff_buf_        = other.coeff_buf_;
-    other.program_    = nullptr;
-    other.coeff_buf_  = nullptr;
+    backend_           = other.backend_;
+    coefficients_      = std::move(other.coefficients_);
+    use_global_coeffs_ = other.use_global_coeffs_;
+    kernel_cache_      = std::move(other.kernel_cache_);
+    context_           = other.context_;
+    queue_             = other.queue_;
+    device_            = other.device_;
+    program_           = other.program_;
+    coeff_buf_         = other.coeff_buf_;
+    kernel_constant_   = other.kernel_constant_;
+    kernel_global_     = other.kernel_global_;
+    other.program_         = nullptr;
+    other.coeff_buf_       = nullptr;
+    other.kernel_constant_ = nullptr;
+    other.kernel_global_   = nullptr;
   }
   return *this;
 }
@@ -158,16 +166,11 @@ FirFilter::Process(cl_mem input_buf, uint32_t channels, uint32_t points,
         "FirFilter: clCreateBuffer(output) failed: " + std::to_string(err));
   }
 
-  // Select kernel name
-  const char* kernel_name = use_global_coeffs_
-      ? "fir_filter_cf32_global"
-      : "fir_filter_cf32";
-
-  cl_kernel k = clCreateKernel(program_, kernel_name, &err);
-  if (err != CL_SUCCESS) {
+  // Выбираем закешированный kernel (создан в CompileKernel, не пересоздаём!)
+  cl_kernel k = use_global_coeffs_ ? kernel_global_ : kernel_constant_;
+  if (!k) {
     clReleaseMemObject(output_buf);
-    throw std::runtime_error(
-        "FirFilter: clCreateKernel failed: " + std::to_string(err));
+    throw std::runtime_error("FirFilter: kernel not compiled");
   }
 
   // Set arguments
@@ -181,7 +184,6 @@ FirFilter::Process(cl_mem input_buf, uint32_t channels, uint32_t points,
   err |= clSetKernelArg(k, 4, sizeof(uint32_t), &pts);
 
   if (err != CL_SUCCESS) {
-    clReleaseKernel(k);
     clReleaseMemObject(output_buf);
     throw std::runtime_error("FirFilter: clSetKernelArg failed");
   }
@@ -205,8 +207,6 @@ FirFilter::Process(cl_mem input_buf, uint32_t channels, uint32_t points,
       global_size, local_size,
       0, nullptr, &kernel_event);
 
-  clReleaseKernel(k);
-
   if (err != CL_SUCCESS) {
     if (kernel_event) clReleaseEvent(kernel_event);
     clReleaseMemObject(output_buf);
@@ -214,9 +214,11 @@ FirFilter::Process(cl_mem input_buf, uint32_t channels, uint32_t points,
         "FirFilter: enqueue failed: " + std::to_string(err));
   }
 
-  clFinish(queue_);
-
+  // CollectOrRelease ПЕРЕД clFinish: event должен быть передан профайлеру
+  // пока он ещё не завершён — иначе время выполнения окажется 0.
   CollectOrRelease(kernel_event, "Kernel", prof_events);
+
+  clFinish(queue_);
 
   // Build result
   drv_gpu_lib::InputData<cl_mem> result;
@@ -327,6 +329,28 @@ void FirFilter::CompileKernel() {
   } catch (...) {
     // Non-critical: cache save failed
   }
+
+  CreateKernels();
+}
+
+void FirFilter::CreateKernels() {
+  cl_int err;
+
+  if (!kernel_constant_) {
+    kernel_constant_ = clCreateKernel(program_, "fir_filter_cf32", &err);
+    if (err != CL_SUCCESS) {
+      throw std::runtime_error(
+          "FirFilter::CreateKernels: fir_filter_cf32 failed: " + std::to_string(err));
+    }
+  }
+
+  if (!kernel_global_) {
+    kernel_global_ = clCreateKernel(program_, "fir_filter_cf32_global", &err);
+    if (err != CL_SUCCESS) {
+      // Non-critical: global-coeff kernel may not exist in all builds
+      kernel_global_ = nullptr;
+    }
+  }
 }
 
 std::vector<uint8_t> FirFilter::GetProgramBinary() const {
@@ -334,17 +358,29 @@ std::vector<uint8_t> FirFilter::GetProgramBinary() const {
     throw std::runtime_error("FirFilter::GetProgramBinary: no compiled program");
   }
 
-  size_t binary_size = 0;
-  cl_int err = clGetProgramInfo(program_, CL_PROGRAM_BINARY_SIZES,
-                                 sizeof(size_t), &binary_size, nullptr);
-  if (err != CL_SUCCESS || binary_size == 0) {
+  // Получаем количество устройств, связанных с программой
+  cl_uint num_devices = 0;
+  cl_int err = clGetProgramInfo(program_, CL_PROGRAM_NUM_DEVICES,
+                                 sizeof(cl_uint), &num_devices, nullptr);
+  if (err != CL_SUCCESS || num_devices == 0) {
+    throw std::runtime_error("FirFilter::GetProgramBinary: cannot get num devices");
+  }
+
+  // CL_PROGRAM_BINARY_SIZES возвращает массив size_t[num_devices]
+  std::vector<size_t> binary_sizes(num_devices, 0);
+  err = clGetProgramInfo(program_, CL_PROGRAM_BINARY_SIZES,
+                          num_devices * sizeof(size_t), binary_sizes.data(), nullptr);
+  if (err != CL_SUCCESS || binary_sizes[0] == 0) {
     throw std::runtime_error("FirFilter::GetProgramBinary: cannot get binary size");
   }
 
-  std::vector<uint8_t> binary(binary_size);
-  uint8_t* ptrs[] = { binary.data() };
+  // Возвращаем бинарник первого устройства
+  std::vector<uint8_t> binary(binary_sizes[0]);
+  std::vector<uint8_t*> ptrs(num_devices, nullptr);
+  ptrs[0] = binary.data();
+
   err = clGetProgramInfo(program_, CL_PROGRAM_BINARIES,
-                          sizeof(uint8_t*), ptrs, nullptr);
+                          num_devices * sizeof(uint8_t*), ptrs.data(), nullptr);
   if (err != CL_SUCCESS) {
     throw std::runtime_error("FirFilter::GetProgramBinary: cannot get binary");
   }
@@ -378,6 +414,8 @@ void FirFilter::LoadFromBinary(const std::vector<uint8_t>& binary) {
     program_ = nullptr;
     throw std::runtime_error("FirFilter::LoadFromBinary: clBuildProgram failed");
   }
+
+  CreateKernels();
 }
 
 /**
@@ -408,6 +446,14 @@ void FirFilter::UploadCoefficients() {
 }
 
 void FirFilter::ReleaseGpuResources() {
+  if (kernel_constant_) {
+    clReleaseKernel(kernel_constant_);
+    kernel_constant_ = nullptr;
+  }
+  if (kernel_global_) {
+    clReleaseKernel(kernel_global_);
+    kernel_global_ = nullptr;
+  }
   if (program_) {
     clReleaseProgram(program_);
     program_ = nullptr;

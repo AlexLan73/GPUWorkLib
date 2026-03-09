@@ -585,6 +585,7 @@ test_lch_farrow_benchmark_rocm::run();
 
 | Документ | Описание |
 |----------|----------|
+| [API.md](API.md) | Полный API reference C++ и Python (сигнатуры, цепочки вызовов) |
 | [Doc_Addition/Info_FarrowFractionalDelay.md](../../../Doc_Addition/Info_FarrowFractionalDelay.md) | Подробное описание алгоритма, kernel, верификация |
 | [Doc/Python/lch_farrow_api.md](../../Python/lch_farrow_api.md) | Полный Python API |
 
@@ -644,4 +645,4 @@ flowchart LR
 
 ---
 
-*Обновлено: 2026-03-02*
+*Обновлено: 2026-03-09*

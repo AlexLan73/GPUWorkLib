@@ -135,14 +135,6 @@ def apply_delay_numpy(signal, delay_samples, lagrange_matrix):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# GPU context
-# ════════════════════════════════════════════════════════════════════════════
-
-ctx = gpuworklib.GPUContext(0)
-print(f"GPU: {ctx.device_name}")
-
-
-# ════════════════════════════════════════════════════════════════════════════
 # Test 1: Целая задержка (integer delay)
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -161,6 +153,7 @@ def test_integer_delay():
     delay_samples = delay_us * 1e-6 * fs  # = 5.0
 
     # GPU
+    ctx = gpuworklib.GPUContext(0)
     gen = gpuworklib.DelayedFormSignalGenerator(ctx)
     gen.set_params(fs=fs, antennas=1, points=points, f0=f0,
                    amplitude=amplitude, norm=norm_val)
@@ -199,6 +192,7 @@ def test_fractional_delay():
     delay_us = 2.7
     delay_samples = delay_us * 1e-6 * fs
 
+    ctx = gpuworklib.GPUContext(0)
     gen = gpuworklib.DelayedFormSignalGenerator(ctx)
     gen.set_params(fs=fs, antennas=1, points=points, f0=f0,
                    amplitude=amplitude, norm=norm_val)
@@ -233,6 +227,7 @@ def test_multichannel_delay():
     norm_val = 1.0 / np.sqrt(2)
     delays = [i * 1.5 for i in range(antennas)]  # 0, 1.5, 3.0, ..., 10.5 мкс
 
+    ctx = gpuworklib.GPUContext(0)
     gen = gpuworklib.DelayedFormSignalGenerator(ctx)
     gen.set_params(fs=fs, antennas=antennas, points=points, f0=f0,
                    amplitude=amplitude, norm=norm_val)
@@ -278,6 +273,7 @@ def test_zero_delay():
     amplitude = 1.0
     norm_val = 1.0 / np.sqrt(2)
 
+    ctx = gpuworklib.GPUContext(0)
     # DelayedFormSignalGenerator с delay=0
     dgen = gpuworklib.DelayedFormSignalGenerator(ctx)
     dgen.set_params(fs=fs, antennas=1, points=points, f0=f0,
@@ -313,6 +309,7 @@ def test_delay_with_noise():
     norm_val = 1.0 / np.sqrt(2)
     delay_us = 3.5
 
+    ctx = gpuworklib.GPUContext(0)
     gen = gpuworklib.DelayedFormSignalGenerator(ctx)
     gen.set_params(fs=fs, antennas=1, points=points, f0=f0,
                    amplitude=amplitude, noise_amplitude=noise_amp,
@@ -528,6 +525,7 @@ def plot4_delay_sweep():
     errors = []
 
     clean = getX_numpy(fs, points, f0, amplitude, 0.0, 0.0, norm_val)
+    ctx = gpuworklib.GPUContext(0)
 
     for d_us in delays_us:
         gen = gpuworklib.DelayedFormSignalGenerator(ctx)

@@ -32,7 +32,10 @@
       "Bash(\"./GPUWorkLib.exe\" fft_maxima)",
       "Bash(\"F:/Program Files \\(x86\\)/Python312/python.exe\" Python_test/fft_maxima/test_spectrum_find_all_maxima.py)",
       "Bash(\"F:/Program Files \\(x86\\)/Python312/python.exe\" -c \"import sys; sys.path.insert\\(0, ''e:/C++/GPUWorkLib/build/python''\\); import gpuworklib; print\\(''OK:'', gpuworklib.__file__\\)\")",
-      "Bash(\"F:/Program Files \\(x86\\)/Python312/python.exe\" -c \"import sys; sys.path.insert\\(0, ''e:/C++/GPUWorkLib/build/python/Debug''\\); import gpuworklib; print\\(''OK:'', gpuworklib.__file__\\)\")"
+      "Bash(\"F:/Program Files \\(x86\\)/Python312/python.exe\" -c \"import sys; sys.path.insert\\(0, ''e:/C++/GPUWorkLib/build/python/Debug''\\); import gpuworklib; print\\(''OK:'', gpuworklib.__file__\\)\")",
+      "Bash(\"F:/Program Files \\(x86\\)/Python312/python.exe\" -m pytest Python_test/heterodyne/ -v --tb=short --ignore=Python_test/heterodyne/test_heterodyne_rocm.py)",
+      "Bash(\"F:/Program Files \\(x86\\)/Python312/python.exe\" -m pytest Python_test/heterodyne/test_heterodyne_comparison.py Python_test/heterodyne/test_heterodyne_step_by_step.py -v --tb=short)",
+      "Bash(python -c \"import json,sys; data=json.load\\(sys.stdin\\); print\\(data[0][''text'']\\)\")"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -970,6 +970,7 @@ Doc/Modules/filters/
 | ⚠️ | **Kalman Q/R tuning**: Q/R ≪ 1 → медленная реакция (strong smoothing). Q/R ≫ 1 → быстрая реакция (слабое сглаживание). Стартовое: Q ≈ R/100, R = (noise_sigma)². |
 | ⚠️ | **ROCm MA/Kalman/KAMA hiprtc**: компиляция при первом `SetParams()` (~100–500 мс). На Windows — compile-only stub (throws `runtime_error`). |
 | ⚠️ | **MovingAverage — 1 thread per channel**: нет параллелизма по семплам. При очень большом числе семплов (> 1M) и малом числе каналов (<8) CPU может быть быстрее. GPU выгоден при ≥ 64 каналах. |
+| ⚠️ | **Python bindings для MA/Kalman/KAMA НЕ зарегистрированы**: `MovingAverageFilterROCm`, `KalmanFilterROCm`, `KaufmanFilterROCm` отсутствуют в `python/gpu_worklib_bindings.cpp`. Тесты `test_moving_average_rocm.py`, `test_kalman_rocm.py`, `test_kaufman_rocm.py` ссылаются на `gw.MovingAverageFilterROCm` и т.д. — регистрация через `py_filters_rocm.hpp` запланирована. |
 
 ---
 
@@ -989,6 +990,7 @@ Doc/Modules/filters/
 | Файл | Описание |
 |------|----------|
 | [Quick.md](Quick.md) | Краткий справочник (шпаргалка) |
+| [API.md](API.md) | Полный API-справочник: все классы, сигнатуры, цепочки вызовов |
 | [gpu_filters_research.md](gpu_filters_research.md) | Overlap-Save/Add, tiled FIR, будущие алгоритмы |
 | [Doc/DrvGPU/Services/Full.md](../../DrvGPU/Services/Full.md) | KernelCacheService, FilterConfigService |
 
@@ -1004,4 +1006,4 @@ Doc/Modules/filters/
 
 ---
 
-*Обновлено: 2026-03-04*
+*Обновлено: 2026-03-09*

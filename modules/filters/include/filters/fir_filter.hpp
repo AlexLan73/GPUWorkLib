@@ -118,6 +118,7 @@ public:
 
 private:
   void CompileKernel();
+  void CreateKernels();          ///< Создать cl_kernel из скомпилированного program_
   void UploadCoefficients();
   void ReleaseGpuResources();
 
@@ -143,11 +144,13 @@ private:
   std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
 
   // OpenCL resources
-  cl_context       context_   = nullptr;
-  cl_command_queue queue_     = nullptr;
-  cl_device_id     device_    = nullptr;
-  cl_program       program_   = nullptr;
-  cl_mem           coeff_buf_ = nullptr;
+  cl_context       context_           = nullptr;
+  cl_command_queue queue_             = nullptr;
+  cl_device_id     device_            = nullptr;
+  cl_program       program_           = nullptr;
+  cl_mem           coeff_buf_         = nullptr;
+  cl_kernel        kernel_constant_   = nullptr;  ///< fir_filter_cf32 (кеш)
+  cl_kernel        kernel_global_     = nullptr;  ///< fir_filter_cf32_global (кеш)
 };
 
 } // namespace filters

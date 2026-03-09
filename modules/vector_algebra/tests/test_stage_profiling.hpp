@@ -16,6 +16,7 @@
 
 #include <complex>
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -62,8 +63,12 @@ inline StageTiming RunStageProfiling(
   const size_t bytes =
       static_cast<size_t>(n) * n * sizeof(std::complex<float>);
 
-  hipEvent_t e[8];
+  hipEvent_t e[8] = {};
   for (int i = 0; i < 8; ++i) hipEventCreate(&e[i]);
+  struct EventGuard8 {
+    hipEvent_t (&ev)[8];
+    ~EventGuard8() { for (auto& x : ev) if (x) { hipEventDestroy(x); x = nullptr; } }
+  } eg{e};
 
   hipDeviceSynchronize();
 
@@ -150,9 +155,7 @@ inline StageTiming RunStageProfiling(
   hipEventElapsedTime(&t.free_ms,       e[6], e[7]);
   hipEventElapsedTime(&t.total_ms,      e[0], e[7]);
 
-  for (int i = 0; i < 8; ++i) hipEventDestroy(e[i]);
-
-  return t;
+  return t;  // EventGuard8 destructor destroys e[0..7]
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -172,8 +175,12 @@ inline StageTiming RunStageProfilingClean(
   const size_t bytes =
       static_cast<size_t>(n) * n * sizeof(std::complex<float>);
 
-  hipEvent_t e[8];
+  hipEvent_t e[8] = {};
   for (int i = 0; i < 8; ++i) hipEventCreate(&e[i]);
+  struct EventGuard8C {
+    hipEvent_t (&ev)[8];
+    ~EventGuard8C() { for (auto& x : ev) if (x) { hipEventDestroy(x); x = nullptr; } }
+  } egc{e};
 
   hipDeviceSynchronize();
 
@@ -225,9 +232,7 @@ inline StageTiming RunStageProfilingClean(
   hipEventElapsedTime(&t.free_ms,       e[6], e[7]);
   hipEventElapsedTime(&t.total_ms,      e[0], e[7]);
 
-  for (int i = 0; i < 8; ++i) hipEventDestroy(e[i]);
-
-  return t;
+  return t;  // EventGuard8C destructor destroys e[0..7]
 }
 
 // ════════════════════════════════════════════════════════════════════════════

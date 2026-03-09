@@ -239,6 +239,7 @@ print(inv.get_symmetrize_mode())  # SymmetrizeMode.Roundtrip
 ```
 
 **Полная документация Python API**: [`Doc/Python/vector_algebra_api.md`](../../Python/vector_algebra_api.md)
+**API Reference (C++ + Python)**: [`API.md`](API.md)
 
 ---
 
@@ -459,4 +460,13 @@ Doc/Python/
 
 ---
 
-*Обновлено: 2026-03-01*
+## См. также
+
+- [API.md](API.md) — полный справочник сигнатур C++ и Python
+- [Quick.md](Quick.md) — шпаргалка, быстрый старт
+- [Doc/Python/vector_algebra_api.md](../../Python/vector_algebra_api.md) — Python API
+- [rocSOLVER docs](https://rocm.docs.amd.com/projects/rocSOLVER/en/latest/) — POTRF/POTRI документация AMD
+
+---
+
+*Обновлено: 2026-03-09*

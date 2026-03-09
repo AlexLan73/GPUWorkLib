@@ -127,9 +127,10 @@ inv.set_symmetrize_mode(gpuworklib.SymmetrizeMode.GpuKernel)
 
 ## Ссылки
 
+- [API.md](API.md) — полный справочник сигнатур C++ и Python
 - [Full.md](Full.md) — математика, pipeline, C4 диаграммы, все тесты
 - [Doc/Python/vector_algebra_api.md](../../Python/vector_algebra_api.md) — Python API
 
 ---
 
-*Обновлено: 2026-03-01*
+*Обновлено: 2026-03-09*

@@ -458,6 +458,12 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::DechirpFromGPU(
   if (!rx_gpu_ptr) {
     throw std::runtime_error("DechirpFromGPU: rx_gpu_ptr is null");
   }
+  if (static_cast<int>(ref_data.size()) != params.num_samples) {
+    throw std::runtime_error(
+        "DechirpFromGPU: ref_data size mismatch: expected "
+        + std::to_string(params.num_samples) + ", got "
+        + std::to_string(ref_data.size()));
+  }
 
   int total = params.num_antennas * params.num_samples;
   size_t rx_bytes  = static_cast<size_t>(total) * sizeof(std::complex<float>);

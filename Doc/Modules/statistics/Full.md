@@ -1,599 +1,572 @@
 # Statistics — Полная документация
 
-> GPU-статистика комплексных сигналов по лучам: среднее, медиана, дисперсия, СКО (ROCm/HIP)
+> Статистические вычисления на GPU: среднее, медиана, дисперсия, СКО для комплексных многолучевых сигналов
 
 **Namespace**: `statistics`
 **Каталог**: `modules/statistics/`
-**Зависимости**: DrvGPU (`IBackend*`, ROCmBackend), rocPRIM, hiprtc, `KernelCacheService`
-**Платформа**: ROCm only (AMD GPU, Linux). Недоступно на Windows/NVIDIA.
+**Зависимости**: DrvGPU (`IBackend*`, ROCm backend), rocPRIM (`segmented_radix_sort_keys`), hiprtc (JIT-компиляция ядер), `KernelCacheService` (disk HSACO cache)
+**Платформа**: ROCm-only — `#if ENABLE_ROCM`. На Windows модуль полностью пропускается препроцессором.
 
 ---
 
 ## Содержание
 
 1. [Обзор и назначение](#1-обзор-и-назначение)
-2. [Зачем нужен модуль](#2-зачем-нужен-модуль)
-3. [Математика алгоритмов](#3-математика-алгоритмов)
+2. [Зачем нужен / Алгоритм](#2-зачем-нужен)
+3. [Математика алгоритма](#3-математика-алгоритма)
 4. [Пошаговый pipeline](#4-пошаговый-pipeline)
 5. [Kernels](#5-kernels)
-6. [API (C++ и Python)](#6-api)
-7. [Тесты](#7-тесты)
-8. [Ссылки и файловое дерево](#8-ссылки-и-файловое-дерево)
-9. [Важные нюансы](#9-важные-нюансы)
+6. [C4 Диаграммы](#6-c4-диаграммы)
+7. [API (C++ и Python)](#7-api)
+8. [Тесты](#8-тесты)
+9. [Оптимизации](#9-оптимизации)
+10. [Ссылки и файловое дерево](#10-ссылки)
+
+**[Важные нюансы](#важные-нюансы)**
 
 ---
 
 ## 1. Обзор и назначение
 
-`StatisticsProcessor` — модуль ROCm/HIP для вычисления статистических характеристик массивов
-комплексных сигналов, разбитых по **лучам (beams)**.
+`StatisticsProcessor` — ROCm-модуль для параллельных статистических вычислений над многолучевыми комплексными сигналами. Обрабатывает `beam_count` лучей по `n_point` сэмплов каждый за один GPU-вызов.
 
-**Что вычисляет**:
+**Вход**: плоский вектор `complex<float>[beam_count × n_point]` (beam-major layout).
 
-| Операция | Метод | Kernel |
-|----------|-------|--------|
-| Комплексное среднее Re+Im | Иерархическая редукция | `mean_reduce_phase1` + `mean_reduce_final` |
-| Медиана модулей `\|z\|` | Radix sort (rocPRIM) + извлечение | `extract_medians` |
-| Дисперсия `\|z\|` | Одно-проходный Уэлфорд | `welford_fused` |
-| СКО `\|z\|` | sqrt(дисперсии) | `welford_fused` |
-| Среднее модулей `mean(\|z\|)` | Одно-проходный Уэлфорд | `welford_fused` |
+**Выход** — три типа результатов, каждый в виде вектора (по одному элементу на луч):
 
-**Вход**: плоский вектор `complex<float>[beam_count × n_point]` — по одному сегменту на луч.
-**Выход**: по одному результату на луч (`MeanResult`, `MedianResult`, `StatisticsResult`).
+| Метод | Результат | Описание |
+|-------|-----------|----------|
+| `ComputeMean` | `MeanResult` | Комплексное среднее: Re + Im |
+| `ComputeMedian` | `MedianResult` | Медиана модулей (radix sort + middle) |
+| `ComputeStatistics` | `StatisticsResult` | mean(complex) + mean_mag + variance + std (one-pass Welford) |
 
-### Как работает иерархическая редукция (ComputeMean)
+Каждый метод доступен в двух перегрузках: CPU data (`vector<complex<float>>`) и GPU data (`void*` — уже на устройстве).
 
-Суммировать N=8192 чисел на GPU наивно нельзя — один поток медленно, атомарные операции
-в очереди. Решение — **параллельное дерево суммирования** за `log₂(N)` шагов:
+Дополнительно: `ComputeStatisticsFloat` / `ComputeMedianFloat` — работа с уже вычисленными модулями (`float*` input).
 
-```
-N=8 элементов, 4 потока:
-
-Данные:   z0   z1   z2   z3   z4   z5   z6   z7
-
-Шаг 1:  (z0+z4) (z1+z5) (z2+z6) (z3+z7)   ← каждый поток берёт пару
-Шаг 2:  (z0+z4+z2+z6) (z1+z5+z3+z7)       ← stride вдвое меньше
-Шаг 3:  (z0+z1+z2+z3+z4+z5+z6+z7)         ← готово!
-```
-
-Если луч длиннее одного блока (N > 512), нужны **два прохода**:
-
-```
-Луч N=8192, блок=256 потоков:
-
-mean_reduce_phase1  →  16 блоков параллельно
-  Блок 0 : суммирует точки [0..511]    → partial_sum_0
-  Блок 1 : суммирует точки [512..1023] → partial_sum_1
-  ...
-  Блок 15: суммирует [7680..8191]      → partial_sum_15
-                    │
-                    ▼
-mean_reduce_final   →  1 блок
-  суммирует 16 partial_sums → делит на N → complex mean
-```
-
-**Три оптимизации поверх базового дерева**:
-
-| Оптимизация | Что делает | Эффект |
-|-------------|------------|--------|
-| **Double-load** | Каждый поток читает 2 элемента и складывает их до входа в дерево | Блок из 256 потоков покрывает 512 точек → вдвое меньше блоков |
-| **LDS padding `[257]`** | Shared memory с лишним элементом ломает паттерн bank conflicts | Устраняет сериализацию доступа к общей памяти |
-| **Warp shuffle финал** | Последние 32 элемента суммируются без `__syncthreads` через аппаратный shuffle | Нет барьеров внутри warp-а |
-
-```c
-// Warp shuffle финал (без __syncthreads):
-val += __shfl_down(val, 16);
-val += __shfl_down(val, 8);
-val += __shfl_down(val, 4);
-val += __shfl_down(val, 2);
-val += __shfl_down(val, 1);
-// tid==0 содержит сумму warp-а
-```
-
-**Ключевые особенности**:
-- ROCm-only (HIP + rocPRIM). На OpenCL/NVIDIA недоступен.
-- Kernels компилируются через **hiprtc** (JIT) при первом вызове.
-- Скомпилированный HSACO кешируется на диск через `KernelCacheService`.
-- `ComputeStatistics` — единственный проход по данным (fused kernel), без отдельного буфера модулей.
-- `ComputeMedian` — GPU segmented radix sort (rocPRIM): все лучи в **одном вызове** параллельно.
+**Компиляция**:
+- `statistics_processor.cpp` — g++ (хост, hiprtc JIT для welford/mean ядер)
+- `statistics_sort_gpu.hip` — HIP/clang++ (rocPRIM `segmented_radix_sort_keys`)
 
 ---
 
-## 2. Зачем нужен модуль
+## 2. Зачем нужен
 
-### Проблема: статистика больших многолучевых массивов
+### Проблема: статистика по множеству каналов
 
-В задачах ЦОС (радары, антенные решётки, связь) обрабатывается одновременно N лучей по M точек.
-Для 256 лучей × 1.3M точек CPU-сортировка занимает ~2000 мс. GPU-radix sort (rocPRIM) — ~30 мс (ускорение ~60×).
+В задачах ЦОС на ФАР данные поступают сразу по нескольким лучам. Последовательное вычисление статистики на CPU для `beam_count` лучей — O(beam_count × n_point).
 
-### Решение: GPU parallel statistics per beam
+Для 256 лучей × 1.3M точек (из CMakeLists):
+- CPU sort: ~2000 мс (последовательный `std::sort` per beam)
+- GPU sort: ~30 мс (все лучи параллельно на RDNA4, 700 GB/s пропускная способность)
 
-- **Среднее**: параллельная древовидная редукция (log₂ шагов) + warp shuffle на финальном этапе.
-- **Медиана**: `rocprim::segmented_radix_sort_keys` — сортировка всех лучей одним GPU-вызовом,
-  затем GPU kernel `extract_medians` читает средний элемент каждого луча.
-- **Дисперсия/СКО**: `welford_fused` читает данные один раз, вычисляет `|z|` на лету —
-  нет отдельного прохода для буфера модулей.
+### Решение: GPU параллелизм по лучам
+
+Один вызов `rocprim::segmented_radix_sort_keys` сортирует все лучи параллельно. `welford_fused` kernel вычисляет статистику всех лучей одновременно (один блок на луч).
+
+### Связь с другими модулями
+
+- **strategies/** использует `ComputeStatisticsFloat(gpu_float_ptr, params)` для пост-FFT статистики `|spectrum|` — float данные уже на GPU после FFTProcessor
+- Результаты статистики могут использоваться для адаптивной обработки перед `HeterodyneDechirp`
 
 ---
 
-## 3. Математика алгоритмов
+## 3. Математика алгоритма
 
-### 3.1 Комплексное среднее (ComputeMean)
-
-$$
-\bar{z}_b = \frac{1}{N} \sum_{k=0}^{N-1} z_{b,k},\quad z_{b,k} = \text{Re}(z_{b,k}) + j\cdot\text{Im}(z_{b,k})
-$$
-
-Иерархическая редукция в два прохода:
-1. `mean_reduce_phase1` — блочная сумма с **double-load** (каждый поток читает 2 элемента) →
-   `reduce_buf_` (partial sums).
-2. `mean_reduce_final` — суммирует partial sums, делит на N → `result_buf_`.
-
-### 3.2 Медиана модулей (ComputeMedian)
+### ComputeMean — комплексное среднее
 
 $$
-\text{median}_b = \text{sorted}\bigl(|z_{b,0}|,\ldots,|z_{b,N-1}|\bigr)\!\left[\frac{N}{2}\right]
+\bar{z}_b = \frac{1}{N} \sum_{n=0}^{N-1} z_{b,n}, \quad z_{b,n} = x_{b,n} + j y_{b,n}
 $$
 
-Это **не** стандартная медиана (для чётного N — не среднее двух средних), а элемент с индексом
-`N/2`. CPU-эталон `CpuMedianMagnitude` использует ту же логику.
+Реализация: двухфазная иерархическая редукция с LDS + warp shuffle.
 
-### 3.3 Дисперсия и СКО — алгоритм Уэлфорда (ComputeStatistics)
+### ComputeStatistics — one-pass Welford (варинат E[X²] − E[X]²)
 
-Одно-проходный алгоритм (численно стабильный):
+За один проход по данным луча `b`:
 
 $$
-S_{\text{re}} = \sum_{k} \text{Re}(z_k),\quad
-S_{\text{im}} = \sum_{k} \text{Im}(z_k),\quad
-S_{m} = \sum_{k} |z_k|,\quad
-S_{sq} = \sum_{k} |z_k|^2
+S_1 = \sum_{n=0}^{N-1}|z_{b,n}|, \quad S_2 = \sum_{n=0}^{N-1}|z_{b,n}|^2
 $$
 
 $$
-\bar{z}_b = \frac{S_{\text{re}}}{N} + j\frac{S_{\text{im}}}{N},\qquad
-\overline{|z|}_b = \frac{S_m}{N}
+M_b = \frac{S_1}{N}, \quad M^{(2)}_b = \frac{S_2}{N}
 $$
 
 $$
-\sigma^2_b = \frac{S_{sq}}{N} - \Bigl(\overline{|z|}_b\Bigr)^2,\qquad
-\sigma_b = \sqrt{\max(\sigma^2_b,\;0)}
+\text{Var}_b = M^{(2)}_b - M_b^2 \quad (\text{clamp} \ge 0), \quad \text{STD}_b = \sqrt{\text{Var}_b}
 $$
 
-Защита от потери точности float32: `if (variance < 0.0f) variance = 0.0f;`
+**Population variance** (ddof=0): делитель N, не N-1.
 
-### 3.4 Оптимизации ядер
+Одновременно накапливаются `sum_re`, `sum_im` для комплексного среднего.
 
-| ID | Описание | Эффект |
-|----|----------|--------|
-| TASK-1 | `welford_fused` — 1 проход, нет magnitudes buffer | −40−50% времени ComputeStatistics |
-| TASK-2 | `extract_medians` GPU kernel — 1 DtoH вместо beam_count | устраняет N отдельных DtoH |
-| TASK-3 | hiprtc + HSACO disk cache (`KernelCacheService`) | повторный запуск — instant |
-| TASK-4 | double-load, warp shuffle, `__launch_bounds__`, blocks_per_beam | меньше divergence |
-| TASK-5 | `hipMemcpyAsync` в AllocateBuffers | асинхронная загрузка offsets |
-| P1-A | Warp shuffle финал (без `__syncthreads`) | меньше барьеров |
-| P1-B | Double-load (2 элемента/поток) | вдвое меньше блоков |
-| P1-C | `__launch_bounds__(256)` | компилятор резервирует регистры правильно |
-| P2-A | `__fsqrt_rn` — HW intrinsic | быстрее `sqrtf()` на RDNA4 |
-| P2-B | LDS padding `[256+1]` | устранение bank conflicts |
+**Ядро** `welford_fused` (TASK-1): вычисляет `|z|` на лету через `__fsqrt_rn(z.x*z.x + z.y*z.y)`, без отдельного промежуточного буфера модулей.
+
+### ComputeMedian — radix sort + middle element
+
+1. `compute_magnitudes`: `magnitudes[i] = |z[i]|` (float)
+2. `rocprim::segmented_radix_sort_keys`: все лучи параллельно, ascending order
+3. `extract_medians`: `median[b] = sorted[b*N + N/2]`
+
+**Определение**: элемент с индексом `N/2` — **не** среднее двух средних для чётного N. NumPy эквивалент: `sorted_arr[len(sorted_arr) // 2]`, не `np.median()`.
 
 ---
 
 ## 4. Пошаговый pipeline
 
-### 4.1 ComputeStatistics (welford_fused)
+### ComputeStatistics (оптимальный путь — welford_fused)
 
 ```
-INPUT: CPU complex<float>[beam_count × n_point]
+INPUT: flat complex<float>[beam_count × n_point]
+    │
+    ▼ CPU path: UploadData → hipMemcpyHtoDAsync → input_buffer_
+    │ GPU path: CopyGpuData → hipMemcpyDtoDAsync → input_buffer_
     │
     ▼
-┌───────────────────────────────────────────┐
-│ 1. AllocateBuffers (lazy, кеш по размеру) │  hipMalloc 8 буферов (один раз)
-└───────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│ welford_fused kernel (TASK-1)                          │
+│ Grid: (beam_count, 1, 1)   Block: (256, 1, 1)          │
+│ Shared mem: 4 × (256+1) × sizeof(float) = P3-B padding │
+│                                                         │
+│ Per thread: for i in [tid..n_point) step 256 (#unroll4)│
+│   z = input[beam*N + i]                                │
+│   mag = __fsqrt_rn(z.x²+z.y²)                         │
+│   sum_re += z.x,  sum_im += z.y                        │
+│   sum_mag += mag, sum_sq += mag²                       │
+│                                                         │
+│ LDS tree reduce (256 → WARP_SIZE)                      │
+│ Warp shuffle (WARP_SIZE → 1, no __syncthreads)         │
+│ → WelfordResult{mean_re, mean_im, mean_mag, var, std}  │
+└─────────────────────────────────────────────────────────┘
     │
-    ▼
-┌───────────────────────────────────────────┐
-│ 2. CompileKernels (lazy, hiprtc JIT)      │  → HSACO → disk cache
-└───────────────────────────────────────────┘
+    ▼ hipStreamSynchronize + hipMemcpyDtoH (5×float per beam)
     │
-    ▼
-┌───────────────────────────────────────────┐
-│ 3. UploadData (hipMemcpyHtoDAsync)        │  CPU → GPU: input_buffer_
-└───────────────────────────────────────────┘
-    │
-    ▼
-┌───────────────────────────────────────────┐
-│ 4. welford_fused kernel                   │  grid=(beam_count,1,1), block=(256,1,1)
-│    reads: input_buffer_ ТОЛЬКО            │  shared = 4×256×4 = 4096 байт
-│    |z| вычисляется inline                 │  нет обращения к magnitudes_buf_
-│    writes: result_buf_ (WelfordResult)    │  mean + variance + std per beam
-└───────────────────────────────────────────┘
-    │
-    ▼
-┌───────────────────────────────────────────┐
-│ 5. hipStreamSynchronize                   │
-│    hipMemcpyDtoH (beam_count × 20 байт)  │  1 вызов для всех лучей
-└───────────────────────────────────────────┘
-    │
-    ▼
-OUTPUT: vector<StatisticsResult>[beam_count]
-  {beam_id, mean (complex), mean_magnitude, variance, std_dev}
+OUTPUT: StatisticsResult[beam_count]
 ```
 
-### 4.2 ComputeMedian (radix sort pipeline)
+### ComputeMedian (radix sort путь)
 
 ```
-INPUT: CPU complex<float>[beam_count × n_point]
+INPUT: flat complex<float>[beam_count × n_point]
     │
-    ▼ AllocateBuffers + CompileKernels (lazy)
-    │
-    ▼
-┌───────────────────────────────────────────┐
-│ 1. UploadData → input_buffer_             │
-└───────────────────────────────────────────┘
+    ▼ UploadData / CopyGpuData → input_buffer_
     │
     ▼
-┌───────────────────────────────────────────┐
-│ 2. compute_magnitudes kernel              │  input_ → magnitudes_buf_ (float)
-│    grid=ceil(total/256), block=256        │  |z| = __fsqrt_rn(re²+im²)
-└───────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│ compute_magnitudes kernel (P3-D double-load)           │
+│ Grid: ceil(total/(256×2))   Block: 256                  │
+│ Каждый поток обрабатывает 2 элемента:                   │
+│   magnitudes[gid] = __fsqrt_rn(x²+y²)                  │
+└─────────────────────────────────────────────────────────┘
     │
     ▼
-┌───────────────────────────────────────────┐
-│ 3. rocprim::segmented_radix_sort_keys     │  magnitudes_buf_ → sort_buf_
-│    (gpu_sort::ExecuteSort)                │  все beam_count лучей параллельно
-│    offsets: [0, N, 2N, ..., beams×N]     │  temp storage: sort_temp_buf_
-└───────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│ rocprim::segmented_radix_sort_keys                      │
+│ Все beam_count сегментов ПАРАЛЛЕЛЬНО                    │
+│ offsets_buf: [0, N, 2N, ..., beam_count×N]             │
+│ magnitudes → sort_buf (ascending float)                 │
+└─────────────────────────────────────────────────────────┘
     │
     ▼
-┌───────────────────────────────────────────┐
-│ 4. extract_medians kernel                 │  sort_buf_[b×N + N/2] → medians_compact_
-│    grid=ceil(beams/256), block=256        │  1 поток на луч
-└───────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│ extract_medians kernel (TASK-2)                         │
+│ Grid: ceil(beam_count/256)   Block: 256                 │
+│ 1 поток на луч:                                         │
+│   medians[b] = sort_buf[b*N + N/2]                      │
+│ → medians_compact_buf[beam_count] floats               │
+└─────────────────────────────────────────────────────────┘
     │
-    ▼
-┌───────────────────────────────────────────┐
-│ 5. hipStreamSynchronize                   │
-│    hipMemcpyDtoH (beam_count × 4 байт)   │  1 вызов для всех лучей
-└───────────────────────────────────────────┘
+    ▼ hipMemcpyDtoH: 1 вызов (beam_count × 4 байта)
     │
-    ▼
-OUTPUT: vector<MedianResult>[beam_count]
-  {beam_id, median_magnitude}
+OUTPUT: MedianResult[beam_count]
 ```
 
-### 4.3 ComputeMean (иерархическая редукция)
+### ComputeMean (двухфазная редукция)
 
 ```
-INPUT → UploadData → input_buffer_
+INPUT → UploadData/CopyGpuData → input_buffer_
     │
     ▼
-┌───────────────────────────────────────────┐
-│ mean_reduce_phase1                        │  grid=(beams × blocks_per_beam)
-│ double-load + LDS[257] tree               │  blocks_per_beam = ceil(N / 512)
-│ + warp shuffle финал                      │  → reduce_buf_ (partial sums)
-└───────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│ mean_reduce_phase1 (P3-A: 2D grid)                     │
+│ Grid: (blocks_per_beam, beam_count, 1)                  │
+│ blockIdx.y = beam_id (нет div/mod!)                    │
+│ Double-load: каждый поток читает 2 элемента             │
+│ LDS +1 padding → tree reduce → warp shuffle            │
+│ → partial_sums[beam_count × blocks_per_beam]           │
+└─────────────────────────────────────────────────────────┘
     │
     ▼
-┌───────────────────────────────────────────┐
-│ mean_reduce_final                         │  grid=(beam_count)
-│ суммирует partial sums → / N             │  → result_buf_ (float2 per beam)
-└───────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│ mean_reduce_final                                       │
+│ Grid: (beam_count, 1, 1)   Block: ≤256                  │
+│ Суммирует partial_sums каждого луча                     │
+│ Делит на n_point → float2_t[beam_count] (re, im)       │
+└─────────────────────────────────────────────────────────┘
     │
-    ▼ hipStreamSynchronize + hipMemcpyDtoH
-    │
-    ▼
-OUTPUT: vector<MeanResult>[beam_count]
-  {beam_id, mean (complex<float>)}
+    ▼ hipMemcpyDtoH
+OUTPUT: MeanResult[beam_count]
 ```
 
-### Mermaid
+### Mermaid диаграмма
 
 ```mermaid
-flowchart TD
-  A["CPU complex64\nbeam_count x n_point"] --> B{Операция}
-
-  B -->|ComputeStatistics| C1[UploadData HtoD]
-  C1 --> C2["welford_fused\n1 проход, нет magnitudes buf"]
-  C2 --> C3[hipMemcpyDtoH ×1]
-  C3 --> C4["StatisticsResult\nmean, variance, std, mean_mag"]
-
-  B -->|ComputeMedian| D1[UploadData HtoD]
-  D1 --> D2[compute_magnitudes]
-  D2 --> D3["rocprim segmented\nradix sort all beams"]
-  D3 --> D4["extract_medians\n1 thread per beam"]
-  D4 --> D5[hipMemcpyDtoH ×1]
-  D5 --> D6[MedianResult per beam]
-
-  B -->|ComputeMean| E1[UploadData HtoD]
-  E1 --> E2["mean_reduce_phase1\ndouble-load, LDS, warp shuffle"]
-  E2 --> E3["mean_reduce_final\nsum / N"]
-  E3 --> E4[hipMemcpyDtoH ×1]
-  E4 --> E5[MeanResult per beam]
+flowchart LR
+  A[Input\ncpx float\nB×N] --> B{Метод?}
+  B -->|ComputeStatistics| C[welford_fused\n1 pass — нет magnitudes buf\nTASK-1]
+  B -->|ComputeMedian| D[compute_magnitudes\n→ rocPRIM sort\n→ extract_medians\nTASK-2]
+  B -->|ComputeMean| E[mean_reduce_phase1\n→ mean_reduce_final\nP3-A 2D grid]
+  B -->|Float input| F[welford_float\nor sort only]
+  C --> G[1 DtoH\n5×float/beam]
+  D --> G
+  E --> G
+  F --> G
+  G --> H[Results\nbeam_count]
 ```
 
 ---
 
 ## 5. Kernels
 
-Все ядра компилируются через **hiprtc** (JIT при первом вызове).
-Исходник — `statistics_kernels_rocm.hpp`, функция `GetStatisticsKernelSource()`.
-Флаги компиляции: `-O3 -DWARP_SIZE=32 --offload-arch=<gfx_arch>`.
+Все ядра (кроме rocPRIM) компилируются через **hiprtc** (JIT) из строки `statistics::kernels::GetStatisticsKernelSource()`.
+
+**Параметры компиляции**: `-O3 -std=c++17 -DWARP_SIZE=N -DBLOCK_SIZE=256 [--offload-arch=gfxXXXX]`
+
+**WARP_SIZE**: gfx9xx (CDNA/Vega) → 64; все прочие (RDNA) → 32. Определяется через `ROCmBackend::GetCore().GetArchName()`.
+
+**Disk HSACO cache**: `KernelCacheService("modules/statistics/kernels", ROCm)`. Кеш описывается в `kernels/manifest.json`.
+
+---
 
 ### Kernel 1: `compute_magnitudes`
 
-Назначение: complex → float magnitude. Используется только в `ComputeMedian`.
+**Назначение**: `magnitudes[i] = sqrt(z.x² + z.y²)` для каждого элемента.
 
 | Параметр | Тип | Описание |
 |----------|-----|----------|
-| `input` | `const float2_t*` | complex<float> входные данные |
-| `magnitudes` | `float*` | выходные модули |
-| `total_elements` | `unsigned int` | beam_count × n_point |
+| `input` | `const float2_t*` | Комплексные данные [total_elements] |
+| `magnitudes` | `float*` | Модули [total_elements] |
+| `total_elements` | `uint` | beam_count × n_point |
 
-Grid: `(ceil(total/256), 1, 1)`, Block: `(256, 1, 1)`.
-
-```c
-float2_t z = input[gid];
-magnitudes[gid] = __fsqrt_rn(z.x * z.x + z.y * z.y);
-```
-
-### Kernel 2: `mean_reduce_phase1`
-
-Назначение: блочная редукция комплексной суммы (Phase 1/2).
-
-| Параметр | Тип | Описание |
-|----------|-----|----------|
-| `input` | `const float2_t*` | входные данные |
-| `partial_sums` | `float2_t*` | частичные суммы |
-| `beam_count` | `unsigned int` | число лучей |
-| `n_point` | `unsigned int` | точек на луч |
-| `blocks_per_beam` | `unsigned int` | `ceil(N/512)` |
-
-Grid: `(beam_count × blocks_per_beam, 1, 1)`, Block: `(256, 1, 1)`.
-LDS: `float sdata_x[257], sdata_y[257]` — padding +1 устраняет bank conflicts.
-Double-load: поток читает элементы `local1` и `local2 = local1 + block_size`.
-
-### Kernel 3: `mean_reduce_final`
-
-Назначение: финальная редукция partial sums → complex mean per beam.
-Grid: `(beam_count, 1, 1)`. Суммирует все partial sums луча, делит на N.
-Warp shuffle финал без `__syncthreads`.
-
-### Kernel 4: `welford_stats` (legacy)
-
-Назначение: Уэлфорд по input + предвычисленным magnitudes.
-Оставлен для совместимости. В `ComputeStatistics` **не используется** (заменён `welford_fused`).
-
-### Kernel 5: `welford_fused` — основной для ComputeStatistics
-
-Назначение: одно-проходный Уэлфорд, читает только `input[]`, вычисляет `|z|` inline.
-
-| Параметр | Тип | Описание |
-|----------|-----|----------|
-| `input` | `const float2_t*` | complex<float> (только этот буфер!) |
-| `results` | `WelfordResult*` | выходные статистики (5 float × beam_count) |
-| `beam_count` | `unsigned int` | число лучей |
-| `n_point` | `unsigned int` | точек на луч |
-
-Grid: `(beam_count, 1, 1)`, Block: `(256, 1, 1)`.
-Shared: `4 × 256 × 4 = 4096 байт` (4 массива: sum_re, sum_im, sum_mag, sum_sq).
+**Grid**: `(ceil(total / (blockDim.x * 2)), 1, 1)` — P3-D double-load.
+**Используется только в**: ComputeMedian path. `ComputeStatistics` использует `welford_fused` напрямую.
 
 ```c
-// Grid-stride loop — 1 проход по данным
-for (unsigned int i = tid; i < n_point; i += block_size) {
-    float2_t z  = input[base + i];
-    float mag   = __fsqrt_rn(z.x * z.x + z.y * z.y);  // нет отдельного буфера
-    sum_re  += z.x;    sum_im  += z.y;
-    sum_mag += mag;    sum_sq  += mag * mag;
-}
-// LDS tree reduction → warp shuffle → tid==0:
-float inv_n   = 1.0f / (float)n_point;
-r.mean_re     = sum_re  * inv_n;
-r.mean_im     = sum_im  * inv_n;
-r.mean_mag    = sum_mag * inv_n;
-float mean_sq = sum_sq  * inv_n;
-r.variance    = mean_sq - r.mean_mag * r.mean_mag;
-if (r.variance < 0.0f) r.variance = 0.0f;
-r.std_dev     = __fsqrt_rn(r.variance);
-```
-
-`WelfordResult` (20 байт на луч):
-```c
-struct WelfordResult {
-    float mean_re, mean_im;   // комплексное среднее
-    float mean_mag;           // mean(|z|)
-    float variance, std_dev;  // дисперсия и СКО
-};
-```
-
-### Kernel 6: `extract_medians`
-
-Назначение: GPU kernel — читает средний элемент каждого отсортированного луча.
-Заменяет `beam_count` отдельных `hipMemcpyDtoH` одним вызовом.
-
-| Параметр | Тип | Описание |
-|----------|-----|----------|
-| `sorted` | `const float*` | sort_buf_ после rocPRIM |
-| `medians` | `float*` | compact output: beam_count floats |
-| `n_point` | `unsigned int` | точек на луч |
-| `beam_count` | `unsigned int` | число лучей |
-
-```c
-unsigned int b = blockIdx.x * blockDim.x + threadIdx.x;
-if (b >= beam_count) return;
-medians[b] = sorted[b * n_point + n_point / 2];
-```
-
-### GPU файл: `statistics_sort_gpu.hip`
-
-Компилируется HIP-компилятором (clang++). Использует `rocprim::segmented_radix_sort_keys`.
-
-```cpp
-// Запрос temp storage size (nullptr → только size query)
-rocprim::segmented_radix_sort_keys(
-    nullptr, temp_size, keys_in, keys_out,
-    total_elements, num_segments,
-    d_begin_offsets, d_end_offsets,
-    0, 32, stream       // begin_bit=0, end_bit=32 (все биты float)
-);
-// Сортировка
-rocprim::segmented_radix_sort_keys(
-    temp_storage, temp_size, keys_in, keys_out,
-    total_elements, num_segments,
-    d_begin_offsets, d_end_offsets,
-    0, 32, stream
-);
+// P3-D: double-load — 2 элемента на поток
+gid1 = blockIdx.x * blockDim.x * 2 + threadIdx.x
+gid2 = gid1 + blockDim.x
+magnitudes[gid1] = __fsqrt_rn(z1.x*z1.x + z1.y*z1.y)
+magnitudes[gid2] = __fsqrt_rn(z2.x*z2.x + z2.y*z2.y)
 ```
 
 ---
 
-## 6. API
+### Kernel 2: `mean_reduce_phase1`
 
-### C4-диаграммы
+**Назначение**: блочная редукция Re и Im частей для каждого луча.
 
-**C1 — System Context**:
-```
-[Приложение / Pipeline (CPU)]
-    │ complex<float>[beams × N]
-    ▼
-[StatisticsProcessor — statistics module]
-    │ hiprtc JIT kernels + rocPRIM sort
-    ▼
-[AMD GPU — ROCm/HIP, RDNA4/CDNA]
-```
+| Параметр | Тип | Описание |
+|----------|-----|----------|
+| `input` | `const float2_t*` | Комплексные данные |
+| `partial_sums` | `float2_t*` | Частичные суммы [beam_count × blocks_per_beam] |
+| `beam_count`, `n_point` | `uint` | Размеры |
 
-**C2 — Containers**:
-```
-[StatisticsProcessor]
-    → [DrvGPU ROCmBackend]        hipStream_t, Allocate, MemcpyH2D
-    → [GPU Memory (hipMalloc)]    8 буферов: input, magnitudes, sort,
-                                  sort_temp, offsets, reduce, result, medians_compact
-    → [rocPRIM]                   segmented_radix_sort_keys (sort_gpu.hip)
-    → [KernelCacheService]        disk HSACO cache (manifest.json)
-    → [hiprtc]                    JIT компиляция 6 ядер из строки
-```
+**Grid**: `(blocks_per_beam, beam_count, 1)` — P3-A 2D grid (blockIdx.y = beam_id, eliminates div/mod).
+**blocks_per_beam**: `ceil(n_point / (blockDim.x * 2))` — double-load!
+**LDS**: `sdata_x[256+1]`, `sdata_y[256+1]` — P2-B +1 padding vs bank conflicts.
 
-**C3 — Components**:
-```
-StatisticsProcessor           (statistics_processor.cpp, g++)
-  GPU Operations:
-    ExecuteMagnitudesKernel   compute_magnitudes (hiprtc)
-    ExecuteMeanReduction      phase1 + final (hiprtc)
-    ExecuteWelfordFusedKernel welford_fused (hiprtc)
-    ExecuteMedianSort         rocprim segmented sort (.hip)
-    ExecuteExtractMedians     extract_medians (hiprtc)
-  Resource Management:
-    CompileKernels()          lazy hiprtc → HSACO → cache
-    AllocateBuffers()         lazy, re-use при том же размере
-  statistics_sort_gpu.hip     (clang++ / HIP compiler)
-```
+---
 
-**C4 — Code**:
-```
-StatisticsProcessor                        namespace statistics
-  + StatisticsProcessor(IBackend*)         throws if not ROCm backend
-  + ComputeMean(vector<complex>, params)   → vector<MeanResult>
-  + ComputeMean(void* gpu, params)         → vector<MeanResult>
-  + ComputeMedian(vector<complex>, params) → vector<MedianResult>
-  + ComputeMedian(void* gpu, params)       → vector<MedianResult>
-  + ComputeStatistics(vector, params)      → vector<StatisticsResult>
-  + ComputeStatistics(void* gpu, params)   → vector<StatisticsResult>
-  - CompileKernels()      lazy hiprtc JIT
-  - AllocateBuffers()     lazy, size-cache
-  - input_buffer_         void* GPU (complex<float>)
-  - magnitudes_buf_       void* GPU (float)
-  - sort_buf_             void* GPU (rocPRIM output)
-  - sort_temp_buf_        void* GPU (rocPRIM temp)
-  - offsets_buf_          void* GPU (unsigned int[beams+1])
-  - reduce_buf_           void* GPU (float2 partial sums)
-  - result_buf_           void* GPU (WelfordResult/MeanResult)
-  - medians_compact_buf_  void* GPU (float[beam_count])
-  - module_               hipModule_t
-  - kernels_compiled_     bool
-  - current_beams_        size_t
-  - current_n_point_      size_t
+### Kernel 3: `mean_reduce_final`
+
+**Назначение**: финальная редукция partial_sums → mean per beam.
+
+| Параметр | Описание |
+|----------|----------|
+| `partial_sums` | вход от phase1 |
+| `means` | выход: float2_t[beam_count] |
+| `blocks_per_beam` | передаётся явно (P1-D — нет div в ядре) |
+
+**Grid**: `(beam_count, 1, 1)`, один блок на луч. Делит на n_point → mean.
+
+---
+
+### Kernel 4: `welford_stats`
+
+**Назначение**: compat-версия, читает `input + magnitudes`. Оставлена для обратной совместимости. В текущем `ComputeStatistics` не используется (заменена `welford_fused`).
+
+---
+
+### Kernel 5: `welford_fused` (TASK-1, основной)
+
+**Назначение**: one-pass статистика без промежуточного magnitudes buffer.
+
+| Параметр | Тип | Описание |
+|----------|-----|----------|
+| `input` | `const float2_t*` | Только комплексный вход |
+| `results` | `WelfordResult*` | Результаты: 5 float per beam |
+| `beam_count`, `n_point` | `uint` | Размеры |
+
+**Grid**: `(beam_count, 1, 1)`, один блок на луч.
+**Shared mem**: `4 × (kBlockSize + 1) × sizeof(float)` = P3-B LDS padding.
+
+```c
+// Структура WelfordResult (5 float):
+struct WelfordResult {
+    float mean_re, mean_im;   // комплексное среднее
+    float mean_mag;            // среднее |z|
+    float variance;            // Var(|z|) = E[|z|²] - E[|z|]²
+    float std_dev;             // sqrt(variance)
+};
 ```
 
-### 6.1 C++ API
+**Финальная формула** (tid==0):
+```c
+inv_n = 1.0f / n_point
+r.mean_re  = sum_re  * inv_n
+r.mean_im  = sum_im  * inv_n
+r.mean_mag = sum_mag * inv_n
+mean_sq    = sum_sq  * inv_n
+r.variance = max(mean_sq - r.mean_mag², 0)   // clamp ≥ 0
+r.std_dev  = __fsqrt_rn(r.variance)
+```
+
+---
+
+### Kernel 6: `extract_medians` (TASK-2)
+
+**Назначение**: GPU-компактное извлечение медианы каждого луча.
+
+| Параметр | Тип | Описание |
+|----------|-----|----------|
+| `sorted` | `const float*` | sort_buf после rocPRIM [beam_count × n_point] |
+| `medians` | `float*` | Compact output [beam_count] |
+| `n_point`, `beam_count` | `uint` | Размеры |
+
+**Логика**: `medians[b] = sorted[b * n_point + n_point / 2]`
+**Grid**: `(ceil(beam_count/256), 1, 1)`.
+**Ключевое преимущество**: 1 DtoH вместо beam_count DtoH.
+
+---
+
+### Kernel 7: `welford_float`
+
+**Назначение**: статистика для float input (модули уже вычислены).
+
+Используется `strategies/` для пост-FFT анализа. `mean_re = mean_im = 0.0` в результате.
+**Shared mem**: `2 × (kBlockSize + 1) × sizeof(float)` (только sum_mag + sum_sq).
+
+---
+
+### rocPRIM: segmented radix sort (`statistics_sort_gpu.hip`)
+
+Компилируется HIP-компилятором (clang++), отдельный `.hip` файл.
+
+```cpp
+// Query temp size (вызывается при AllocateBuffers):
+gpu_sort::QuerySortTempSize(temp_size, d_begin, d_end, total, num_segments, stream)
+
+// Execute sort:
+gpu_sort::ExecuteSort(temp_storage, temp_size, keys_in, keys_out,
+                      d_begin, d_end, total_elements, num_segments, stream)
+```
+
+`rocprim::segmented_radix_sort_keys` — full 32-bit radix (0..31), ascending.
+Offsets заполняются в `AllocateBuffers`: `offsets[b] = b * n_point`.
+
+---
+
+## 6. C4 Диаграммы
+
+### C1 — Контекст системы
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  GPUWorkLib — ЦОС-конвейер                               │
+│                                                           │
+│  ┌────────────────┐   complex[B×N]  ┌────────────────┐   │
+│  │ Антенные       │ ──────────────► │ Statistics-    │   │
+│  │ данные (CPU)   │                 │ Processor      │   │
+│  └────────────────┘                 └───────┬────────┘   │
+│                                             │             │
+│  ┌────────────────┐   float[B×N]           │             │
+│  │ FFTProcessor   │ ──────────────► StatisticsResult      │
+│  │ (|spectrum|)   │                {mean,var,std,median}  │
+│  └────────────────┘                                      │
+└──────────────────────────────────────────────────────────┘
+```
+
+### C2 — Контейнеры
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  modules/statistics/                                         │
+│                                                               │
+│  ┌──────────────────────────┐                               │
+│  │  StatisticsProcessor     │ ← единственный публичный класс │
+│  │  Namespace: statistics   │   нет фасада, нет интерфейса  │
+│  └────────────┬─────────────┘                               │
+│               │                                              │
+│    ┌──────────┴──────────┐                                  │
+│    │                     │                                  │
+│  [hiprtc JIT kernels]  [rocPRIM segmented sort]             │
+│  statistics_kernels_    statistics_sort_gpu.hip             │
+│  rocm.hpp               (HIP compiler)                     │
+│  (7 ядер)                                                   │
+│                                                              │
+│  Зависимости:                                               │
+│  ├── DrvGPU: IBackend*, ROCmBackend (GetNativeQueue)        │
+│  ├── DrvGPU: KernelCacheService (disk HSACO cache)          │
+│  ├── DrvGPU: ConsoleOutput                                  │
+│  └── rocPRIM: roc::rocprim (header-only)                   │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### C3 — Компоненты
+
+```
+StatisticsProcessor
+  ├── [Публичный API]
+  │   ├── ComputeMean(data/gpu_data, params) → vector<MeanResult>
+  │   ├── ComputeMedian(data/gpu_data, params) → vector<MedianResult>
+  │   ├── ComputeStatistics(data/gpu_data, params) → vector<StatisticsResult>
+  │   ├── ComputeStatisticsFloat(gpu_float_data, params) → vector<StatisticsResult>
+  │   └── ComputeMedianFloat(gpu_float_data, params) → vector<MedianResult>
+  │
+  ├── [Ресурсы GPU — lazy init]
+  │   ├── CompileKernels()       [TASK-3: hiprtc + HSACO disk cache]
+  │   ├── AllocateBuffers()      [lazy resize при изменении beam/n_point]
+  │   └── ReleaseResources()     [деструктор]
+  │
+  └── [GPU операции]
+      ├── UploadData / CopyGpuData   [H2D / D2D async]
+      ├── ExecuteMagnitudesKernel    [|z|, P3-D double-load]
+      ├── ExecuteMeanReduction       [phase1 P3-A 2D grid + final]
+      ├── ExecuteWelfordFusedKernel  [TASK-1: нет magnitudes buf]
+      ├── ExecuteMedianSort          [rocPRIM segmented sort]
+      ├── ExecuteExtractMediansKernel [TASK-2: GPU compact extract]
+      └── ExecuteWelfordFloatKernel  [float input]
+```
+
+### C4 — Kernel welford_fused (уровень кода)
+
+```
+Thread block: beam_id = blockIdx.x ∈ [0, beam_count)
+  tid = threadIdx.x ∈ [0, 255]
+  base = beam_id × n_point
+  │
+  Shared memory (P3-B: +1 padding per array):
+  s_sum_re[257], s_sum_im[257], s_sum_mag[257], s_sum_sq[257]
+  │
+  Grid-stride loop (P3-C: #pragma unroll 4):
+  for i = tid; i < n_point; i += 256:
+    z = input[base + i]
+    mag = __fsqrt_rn(z.x*z.x + z.y*z.y)  [P2-A fast intrinsic]
+    sum_re += z.x,  sum_im += z.y
+    sum_mag += mag, sum_sq += mag*mag
+  │
+  LDS tree reduction (256 → WARP_SIZE через __syncthreads)
+  │
+  Warp shuffle (WARP_SIZE → 1, без __syncthreads, P1-A):
+  for off = WARP_SIZE/2; off > 0; off >>= 1:
+    vr += __shfl_down(vr, off)  ...
+  │
+  if tid == 0:
+    results[beam_id] = {mean_re, mean_im, mean_mag, variance, std_dev}
+```
+
+---
+
+## 7. API
+
+### Структуры данных
+
+```cpp
+// Входные параметры
+struct StatisticsParams {
+    uint32_t beam_count = 1;    // число лучей
+    uint32_t n_point    = 0;    // сэмплов на луч (complex float)
+    size_t   memory_limit = 0;  // 0 = auto
+};
+
+// Результат ComputeMean
+struct MeanResult {
+    uint32_t beam_id = 0;
+    std::complex<float> mean{0.0f, 0.0f};
+};
+
+// Результат ComputeStatistics
+struct StatisticsResult {
+    uint32_t beam_id = 0;
+    std::complex<float> mean{0.0f, 0.0f};  // комплексное среднее
+    float variance       = 0.0f;            // Var(|z|)
+    float std_dev        = 0.0f;            // sqrt(Var(|z|))
+    float mean_magnitude = 0.0f;            // E[|z|]
+};
+
+// Результат ComputeMedian
+struct MedianResult {
+    uint32_t beam_id = 0;
+    float median_magnitude = 0.0f;  // sorted[N/2]
+};
+```
+
+### C++ — полный пример
 
 ```cpp
 #include "statistics_processor.hpp"
 #include "statistics_types.hpp"
 #include "backends/rocm/rocm_backend.hpp"
 
-// 1. Создать backend (требует ROCm)
+#if ENABLE_ROCM
+
+// 1. Backend и процессор
 drv_gpu_lib::ROCmBackend backend;
-backend.Initialize(0);  // device_index=0
+backend.Initialize(0);
+statistics::StatisticsProcessor proc(&backend);
 
-// 2. Создать процессор
-statistics::StatisticsProcessor stats(&backend);
-
-// 3. Параметры
+// 2. Параметры
+const uint32_t beam_count = 4;
+const uint32_t n_point = 4096;
 statistics::StatisticsParams params;
-params.beam_count = 4;      // число лучей
-params.n_point    = 8192;   // точек на луч
+params.beam_count = beam_count;
+params.n_point    = n_point;
 
-// Данные: плоский вектор beam_count * n_point
-std::vector<std::complex<float>> data(params.beam_count * params.n_point);
-// ... заполнение data ...
+// 3. Данные (beam-major: сначала все сэмплы beam[0], потом beam[1] ...)
+std::vector<std::complex<float>> data(beam_count * n_point);
+// ... заполнить data ...
 
-// 4a. ComputeStatistics — полная статистика (одно-проходный Уэлфорд)
-auto stat_results = stats.ComputeStatistics(data, params);
-for (const auto& r : stat_results) {
-    printf("Beam %u: mean=(%.4f, %.4f) mean_mag=%.4f std=%.6f var=%.6f\n",
-           r.beam_id, r.mean.real(), r.mean.imag(),
-           r.mean_magnitude, r.std_dev, r.variance);
+// 4a. Полная статистика (рекомендуется — welford_fused, 1 pass)
+auto stats = proc.ComputeStatistics(data, params);
+for (const auto& r : stats) {
+    // r.beam_id, r.mean (complex), r.mean_magnitude, r.variance, r.std_dev
 }
 
-// 4b. ComputeMean — только комплексное среднее
-auto mean_results = stats.ComputeMean(data, params);
-for (const auto& r : mean_results) {
-    printf("Beam %u: mean=(%.4f, %.4f)\n",
-           r.beam_id, r.mean.real(), r.mean.imag());
-}
+// 4b. Только среднее (двухфазная редукция)
+auto means = proc.ComputeMean(data, params);
+// means[i].beam_id, means[i].mean (complex<float>)
 
-// 4c. ComputeMedian — медиана модулей (GPU radix sort)
-auto median_results = stats.ComputeMedian(data, params);
-for (const auto& r : median_results) {
-    printf("Beam %u: median_mag=%.4f\n", r.beam_id, r.median_magnitude);
-}
+// 4c. Медиана модулей (rocPRIM radix sort)
+auto medians = proc.ComputeMedian(data, params);
+// medians[i].beam_id, medians[i].median_magnitude
 
-// 5. Данные уже на GPU (void* / hipDeviceptr_t)
-size_t bytes = data.size() * sizeof(std::complex<float>);
-void* gpu_ptr = backend.Allocate(bytes);
-backend.MemcpyHostToDevice(gpu_ptr, data.data(), bytes);
-auto gpu_stat = stats.ComputeStatistics(gpu_ptr, params);  // без PCIe HtoD
+// 5. GPU input — данные уже на устройстве (без лишнего PCIe round-trip)
+size_t sz = data.size() * sizeof(std::complex<float>);
+void* gpu_ptr = backend.Allocate(sz);
+backend.MemcpyHostToDevice(gpu_ptr, data.data(), sz);
+auto stats_gpu = proc.ComputeStatistics(gpu_ptr, params);
 backend.Free(gpu_ptr);
+
+// 6. Float input — модули уже вычислены (напр. |FFT| после FFTProcessor)
+// void* gpu_float_ptr: float[beam_count × n_point] на GPU
+auto float_stats = proc.ComputeStatisticsFloat(gpu_float_ptr, params);
+auto float_meds  = proc.ComputeMedianFloat(gpu_float_ptr, params);
+
+#endif
 ```
 
-**Структуры**:
-
-```cpp
-struct StatisticsParams {
-    uint32_t beam_count = 1;    // число лучей
-    uint32_t n_point    = 0;    // точек на луч
-    size_t   memory_limit = 0;  // 0 = авто
-};
-
-struct MeanResult {
-    uint32_t beam_id;
-    std::complex<float> mean;   // Re + j*Im
-};
-
-struct MedianResult {
-    uint32_t beam_id;
-    float median_magnitude;     // median(|z|)
-};
-
-struct StatisticsResult {
-    uint32_t beam_id;
-    std::complex<float> mean;   // комплексное среднее
-    float variance;             // дисперсия |z| (population, ddof=0)
-    float std_dev;              // СКО = sqrt(variance)
-    float mean_magnitude;       // mean(|z|)
-};
-```
-
-### 6.2 Python API
+### Python API
 
 ```python
 import sys
@@ -601,314 +574,198 @@ sys.path.insert(0, 'build/debian-radeon9070/python')
 import gpuworklib
 import numpy as np
 
-# 1. Контекст и процессор
-ctx   = gpuworklib.ROCmGPUContext(0)
-stats = gpuworklib.StatisticsProcessor(ctx)
+# 1. Контекст и процессор (ROCmGPUContext — не GPUContext!)
+ctx = gpuworklib.ROCmGPUContext(0)   # device_index=0
+proc = gpuworklib.StatisticsProcessor(ctx)
 
-# 2. Данные: numpy complex64 (плоский вектор beam_count * n_point)
+# 2. Данные: (beam_count × n_point,) complex64, beam-major layout
 beam_count = 4
-n_point    = 8192
+n_point = 4096
 data = (np.random.randn(beam_count * n_point) +
         1j * np.random.randn(beam_count * n_point)).astype(np.complex64)
 
 # 3a. Полная статистика
-results = stats.compute_statistics(data, beam_count=beam_count)
+results = proc.compute_statistics(data, beam_count=beam_count)
 for r in results:
     print(f"Beam {r['beam_id']}: "
-          f"mean=({r['mean_real']:.4f}+{r['mean_imag']:.4f}j) "
-          f"mean_mag={r['mean_magnitude']:.4f} "
-          f"std={r['std_dev']:.4f} var={r['variance']:.4f}")
+          f"mean=({r['mean_real']:.4f}+{r['mean_imag']:.4f}j), "
+          f"|mean|={r['mean_magnitude']:.4f}, "
+          f"std={r['std_dev']:.4f}")
 
 # 3b. Только среднее
-means = stats.compute_mean(data, beam_count=beam_count)
-for r in means:
-    print(f"Beam {r['beam_id']}: mean=({r['mean_real']:.6f}+{r['mean_imag']:.6f}j)")
+means = proc.compute_mean(data, beam_count=beam_count)
+# [{'beam_id': 0, 'mean_real': ..., 'mean_imag': ...}, ...]
 
 # 3c. Медиана модулей
-medians = stats.compute_median(data, beam_count=beam_count)
-for r in medians:
-    print(f"Beam {r['beam_id']}: median_mag={r['median_magnitude']:.4f}")
+medians = proc.compute_median(data, beam_count=beam_count)
+# [{'beam_id': 0, 'median_magnitude': ...}, ...]
 
-# 4. NumPy reference (для сравнения)
-beam0 = data[:n_point]
-print(f"NumPy mean:     {np.mean(beam0)}")
-print(f"NumPy mean_mag: {np.mean(np.abs(beam0)):.6f}")
-print(f"NumPy std:      {np.std(np.abs(beam0), ddof=0):.6f}")    # ddof=0 !
-print(f"NumPy median:   {np.sort(np.abs(beam0))[n_point // 2]:.6f}")  # НЕ np.median()!
+# 4. 2D input (beam_count, n_point) — тоже работает (C-contiguous)
+data_2d = data.reshape(beam_count, n_point)
+results_2d = proc.compute_statistics(data_2d, beam_count=beam_count)
+
+# 5. Запуск с GPU (Linux, группа render):
+# sg render -c "python3 my_script.py"
 ```
 
-Формат результата `compute_statistics`:
+**Формат результата `compute_statistics`**:
 
-```python
-{
-    'beam_id':        int,    # индекс луча (0-based)
-    'mean_real':      float,  # Re(mean(z))
-    'mean_imag':      float,  # Im(mean(z))
-    'variance':       float,  # var(|z|), population ddof=0
-    'std_dev':        float,  # sqrt(variance)
-    'mean_magnitude': float,  # mean(|z|)
-}
-```
+| Ключ | Тип | Описание |
+|------|-----|----------|
+| `beam_id` | `int` | Индекс луча (0-based) |
+| `mean_real` | `float` | Re(комплексного среднего) |
+| `mean_imag` | `float` | Im(комплексного среднего) |
+| `mean_magnitude` | `float` | E[|z|] — среднее модулей |
+| `variance` | `float` | Var(|z|), ddof=0 |
+| `std_dev` | `float` | sqrt(variance) |
 
-Методы Python:
+---
 
-| Метод | Аргументы | Возврат | Описание |
-|-------|-----------|---------|----------|
-| `compute_mean(data, beam_count=1)` | `np.complex64`, `int` | `list[dict]` | Комплексное среднее |
-| `compute_median(data, beam_count=1)` | `np.complex64`, `int` | `list[dict]` | Медиана `|z|` (radix sort) |
-| `compute_statistics(data, beam_count=1)` | `np.complex64`, `int` | `list[dict]` | Полная статистика |
+## 8. Тесты
 
-Запуск тестов:
+### C++ тесты — `tests/test_statistics_rocm.hpp`
+
+**Namespace**: `test_statistics_rocm`
+**Вызов**: `statistics_all_test::run()` из `tests/all_test.hpp`
+**Итог**: 7 тестов (7/7 expected)
+
+| # | Функция | Входные данные | Почему эти данные | Ожидаемый результат | Что ловит | Порог |
+|---|---------|----------------|---------------------|---------------------|-----------|-------|
+| 1 | `test_mean_single_beam` | Синусоида: freq=100 Гц, fs=1000 Гц, N=4096, amp=1.0 | Целое число периодов → Re(mean) ≈ 0 и Im(mean) ≈ 0 аналитически. Простейший случай для проверки редукции | CPU ref: `sum(z)/N`. GPU vs CPU err < 1e-3 | Базовую работу phase1 + final reduction. Минимальный случай: 1 луч | err_re < 1e-3, err_im < 1e-3 |
+| 2 | `test_mean_multi_beam` | 4 луча, синусоиды amp={1.0, 1.5, 2.0, 2.5}, freq=50 Гц, N=2048 | Разные амплитуды — разные |z|, но среднее по синусоиде всегда 0. Проверяет изоляцию лучей в одном GPU-вызове | max_err < 1e-3 для каждого луча | Cross-beam pollution — ошибки в broadcast смещений, overlap буферов | max_err < 1e-3 |
+| 3 | `test_welford_statistics` | Синусоида: freq=100 Гц, N=4096, amp=2.0 | Постоянная амплитуда: |z[n]| = 2.0 = const → mean_mag = 2.0, variance = 0 аналитически. Прямая проверка формулы E[X²]-E[X]² | mean_mag ≈ 2.0, variance ≈ 0, std ≈ 0 vs CPU ref | welford_fused kernel: one-pass формула, знак и правильный порядок sum_sq, mean_sq | err < 1e-2 |
+| 4 | `test_median` | data[i] = complex(i+1, 0), i=0..1023 (N=1024) | Линейная последовательность магнитуд [1..1024] — аналитически: sorted[512] = 513.0. Идеальный контроль правильности radix sort + extract_medians | median = 513.0 (CPU: sorted[N/2]) | rocPRIM segmented sort корректность + extract_medians индексирование sorted[b×N + N/2] | err < 1.0 |
+| 5 | `test_gpu_input` | Синусоида N=2048, данные загружены вручную через backend.Allocate + MemcpyHostToDevice | Данные уже на GPU — проверяет overload с `void* gpu_data`. Путь CopyGpuData (D2D copy вместо H2D) | mean_mag совпадает с CPU ref, err < 1e-2 | GPU-input overload: правильный D2D copy в input_buffer_, не лишний round-trip PCIe | err < 1e-2 |
+| 6 | `test_mean_constant` | z[n] = (3.14 - 2.71j), N=4096, все элементы одинаковы | Аналитический ответ точно известен: mean = 3.14 - 2.71j. Более жёсткий порог возможен — нет накопления погрешностей | err_re < 1e-4, err_im < 1e-4 | Числовую точность финальной редукции при константном входе (жёстче 1e-4, vs 1e-3 в тесте 1) | err < 1e-4 |
+| 7 | `test_benchmark_median` | Random float, seed=42, 4 луча × 500,000 точек | Большой объём — реальная нагрузка. Warm-up 1024 точек (исключает JIT компиляцию). Сравнение GPU vs CPU std::sort | GPU speedup > 1.0 (практически > 5×) | Производительность GPU sort vs CPU sort. Прогрев ядра учтён. Не тест корректности | speedup > 1.0 |
+
+**Примечание к Test 3**: порог 1e-2 (не 1e-3) объясняется накоплением ошибок float32 при вычислении `sum_sq` для N=4096 точек. Теоретически variance=0, но float32 даёт ~1e-4 — хорошо укладывается в 1e-2.
+
+**Примечание к Test 6**: порог 1e-4 достижим только для константного сигнала (идеальное суммирование одинаковых значений). Для произвольного сигнала — 1e-3.
+
+---
+
+### Python тесты — `Python_test/statistics/test_statistics_rocm.py`
+
+| # | Функция pytest | Группа | Что проверяет | Порог |
+|---|----------------|--------|---------------|-------|
+| 1 | `test_numpy_mean_single_beam` | NumPy | Re/Im среднее синусоиды ≈ 0 (без GPU) | abs < 0.01 |
+| 2 | `test_numpy_mean_multi_beam` | NumPy | 4 луча, |mean| < 0.01 | abs < 0.01 |
+| 3 | `test_numpy_welford_statistics` | NumPy | mean_mag ≈ amp=2.0, variance < 1e-4 | mean_mag err < 1e-3 |
+| 4 | `test_numpy_median_linear` | NumPy | sorted[N//2]=513 для [1..1024] | abs < 1.0 |
+| 5 | `test_numpy_mean_constant` | NumPy | mean(const) = const | abs < 1e-3 |
+| 6 | `test_gpu_all_pass` | GPU | Бинарный 7/7 C++ тестов прошли | 7/7 |
+| 7 | `test_gpu_benchmark_speedup` | GPU | GPU speedup ≥ 2.0× (4×500k) | ≥ 2.0 |
+| 8 | `test_gpu_vs_numpy_welford` | GPU+NumPy | GPU mean_mag vs NumPy < 0.01 | err < 0.01 |
+| 9 | `test_gpu_vs_numpy_median` | GPU+NumPy | GPU median vs NumPy < 1.0 | err < 1.0 |
+
+**Тесты 1-5** работают без GPU (только NumPy). **Тесты 6-9** требуют бинарного файла `build/debian-radeon9070/GPUWorkLib`.
+
+**Запуск**:
 ```bash
-sg render -c "pytest Python_test/statistics/test_statistics_rocm.py -v"
+# Только NumPy (без GPU):
+pytest Python_test/statistics/ -k "numpy" -v
+
+# Все тесты с GPU:
+sg render -c "pytest Python_test/statistics/ -v"
+
+# Генерация визуализации (4-panel plot):
+python Python_test/statistics/test_statistics_rocm.py
+# → Results/Plots/statistics/test_statistics_rocm_reference.png
 ```
 
 ---
 
-## 7. Тесты
+## 9. Оптимизации
 
-### 7.1 C++ тесты
+| Метка | Описание | Эффект |
+|-------|----------|--------|
+| **TASK-1** | `welford_fused` — один проход по данным, |z| on the fly | Нет отдельного `compute_magnitudes` + нет второго прохода по magnitudes_buf_ |
+| **TASK-2** | `extract_medians` GPU kernel | 1 DtoH вместо beam_count DtoH |
+| **TASK-3** | Disk HSACO cache (KernelCacheService) | Повторные запуски не перекомпилируют ~200мс JIT |
+| **TASK-4** | Double-load + warp shuffle + `__launch_bounds__` + blocks_per_beam param | Меньше блоков, нет div/mod в ядре |
+| **TASK-5** | `hipMemcpyAsync` для offsets upload | Перекрытие загрузки с вычислениями |
+| **P1-A** | Warp shuffle финальная стадия | Нет `__syncthreads` на последних WARP_SIZE элементах |
+| **P1-B** | Double-load | Вдвое меньше блоков → меньше запусков phase1 |
+| **P1-C** | `__launch_bounds__(256)` | Правильный резерв регистров компилятором |
+| **P1-D** | blocks_per_beam передаётся явно | Нет div в ядре (~40 cycles/thread saved) |
+| **P2-A** | `__fsqrt_rn` | Быстрый квадратный корень без IEEE round |
+| **P2-B** | LDS +1 padding | Устранение bank conflicts |
+| **P3-A** | 2D grid (blockIdx.y = beam_id) | Нет div/mod для определения луча |
+| **P3-B** | LDS +1 padding в welford ядрах | Bank conflicts устранены |
+| **P3-C** | `#pragma unroll 4` в grid-stride loop | ILP — перекрытие sqrt с memory latency |
+| **P3-D** | Double-load в compute_magnitudes | Больше ILP, меньше блоков |
 
-**Файл**: `modules/statistics/tests/test_statistics_rocm.hpp`
-**Точка входа**: `modules/statistics/tests/all_test.hpp`
-**Условие компиляции**: `#if ENABLE_ROCM`
+**WARP_SIZE по архитектуре**:
+- `gfx9xx` (CDNA/Vega: gfx908, gfx90a, gfx940, gfx942) → `WARP_SIZE=64`
+- все прочие (RDNA: gfx1010..gfx1201) → `WARP_SIZE=32` (default)
 
-CPU-эталоны в `test_statistics_rocm.hpp`: `CpuMean`, `CpuMeanMagnitude`, `CpuVarianceMagnitude`, `CpuMedianMagnitude`.
-
----
-
-**Тест 1 — Mean SingleBeam (sinusoid)**
-
-*Параметры*: 1 луч, N=4096, f=100 Гц, fs=1000, amp=1.0. *Порог*: `err_re, err_im < 1e-3`
-
-*Почему синусоид?*
-Синусоида `A·e^(j2πft)` — стандартный сигнал ЦОС с известным аналитическим средним.
-За достаточно большое число периодов среднее комплексного тона стремится к 0 (Re и Im взаимно
-компенсируются). 409.6 периодов при N=4096 достаточно, чтобы `|mean| < 0.01`.
-
-Сравнение не с "0", а с CPU-результатом `CpuMean()` — это проверяет именно **точность GPU
-reduction**: потери точности float32 при суммировании 4096 комплексных чисел в параллельном дереве
-не должны превышать 1e-3. Если reduction реализована неверно (например, неправильно
-аккумулируются partial sums между блоками), ошибка будет выше порога.
-
----
-
-**Тест 2 — Mean MultiBeam (4 beams)**
-
-*Параметры*: 4 луча, N=2048, f=50 Гц, amp=[1.0, 1.5, 2.0, 2.5]. *Порог*: `max_err < 1e-3`
-
-*Смысл*: Тот же синусоид, но у каждого луча своя амплитуда. Амплитуда не влияет на то, что
-среднее ≈ 0. Важно другое: тест проверяет **изоляцию лучей** — данные из буфера `input[b*N ... b*N+N-1]`
-каждого луча не должны перемешиваться. Если kernel неверно вычисляет `beam_id` или `base`,
-данные лучей "смешаются" и результаты будут неверными.
-
-Разные амплитуды дают разные float-значения в буфере — легче заметить ошибку смешивания.
+Подробнее: [Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md](../../../Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md)
 
 ---
 
-**Тест 3 — Welford Statistics (mean_mag + variance + std)**
+## 10. Ссылки
 
-*Параметры*: 1 луч, N=4096, f=100 Гц, amp=2.0. *Порог*: все три ошибки `< 1e-2`
+| Ресурс | Описание |
+|--------|----------|
+| [API.md](API.md) | Справочник публичного C++ и Python API |
+| [Doc/Python/rocm_modules_api.md](../../Python/rocm_modules_api.md) | Python API всех ROCm-классов |
+| [Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md](../../../Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md) | Оптимизация HIP/ROCm ядер |
+| [rocPRIM GitHub](https://github.com/ROCm/rocPRIM) | segmented_radix_sort_keys |
+| [hipRTC docs](https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/hip_rtc.html) | JIT компиляция HIP ядер |
 
-*Почему синусоид с amp=2.0?*
-У синусоиды `A·e^(jθ)` модуль каждой точки равен ровно `A`: `|z_k| = 2.0` для всех k.
-Это даёт **аналитически известные** значения:
-- `mean_magnitude = 2.0` (среднее константного набора)
-- `variance = 0.0` (нет разброса — все модули одинаковы)
-- `std_dev = 0.0`
-
-Тест проверяет два свойства `welford_fused` одновременно:
-1. Точность вычисления `|z|` inline через `__fsqrt_rn` (если неверно — mean_mag ≠ 2.0)
-2. Устойчивость алгоритма: `variance = E[|z|²] - (E[|z|])²` при одинаковых значениях
-   должна дать 0. Ошибки float-арифметики могут дать отрицательную variance — отсюда защита
-   `if (variance < 0) variance = 0`.
-
----
-
-**Тест 4 — Median (linear magnitudes)**
-
-*Параметры*: 1 луч, N=1024, `data[i] = complex(i+1, 0)`. *Порог*: `|err| < 1.0`
-
-*Почему линейные данные?*
-`data[i] = (i+1, 0)` → magnitudes = `[1.0, 2.0, ..., 1024.0]`.
-Эти данные **уже отсортированы по возрастанию** → CPU и GPU после sort дадут одинаковый порядок.
-Медиана = `sorted[1024/2]` = `sorted[512]` = 513.
-
-Трюк: зная точный ответ без дополнительных вычислений, мы проверяем весь pipeline:
-`compute_magnitudes → rocprim::segmented_radix_sort_keys → extract_medians`.
-Порог 1.0 (не 0.0) потому что float-представление `513.0f` абсолютно точно, но небольшие
-отличия возможны из-за float-сортировки вблизи границ.
-
----
-
-**Тест 5 — GPU Input (void\*)**
-
-*Параметры*: 1 луч, N=2048, f=200 Гц. *Порог*: `err_mean_mag < 1e-2`
-
-*Смысл*: В реальном пайплайне данные уже находятся на GPU (после FFT, гетеродина и т.д.).
-Если бы API принимал только CPU-вектор, пришлось бы делать DtoH + HtoD — бессмысленная пересылка.
-
-Тест проверяет перегрузку `ComputeStatistics(void* gpu_data, params)`:
-данные загружаются на GPU вручную через `backend.MemcpyHostToDevice()`, затем передаются
-указателем. Внутри выполняется `hipMemcpyDtoDAsync` вместо `HtoD`. Результат должен совпасть
-с CPU-эталоном — это проверяет, что GPU-путь не ломает вычисления.
-
----
-
-**Тест 6 — Mean Constant Signal**
-
-*Параметры*: 1 луч, N=4096, `z = (3.14, -2.71)` для всех точек. *Порог*: `err_re, err_im < 1e-4`
-
-*Смысл*: `mean(константа) = константа` — математически тривиально. Зачем тест?
-
-Это **edge case для reduction**: когда все элементы одинаковы, алгоритм суммирования
-накапливает N одинаковых float32. При наивной сумме ошибка растёт с N (catastrophic cancellation
-не грозит, но float-накопление всё равно имеет погрешность ~N·ε). Порог строже (1e-4 vs 1e-3
-в тесте 1) — проверяем, что GPU reduction корректна и для монотонных данных.
-
-Значения (3.14, -2.71) выбраны не кратными степеням 2 — хуже представимы в float32, выше
-шанс поймать ошибку округления.
-
----
-
-**Тест 7 — Benchmark Median GPU vs CPU**
-
-*Параметры*: 4 луча × 500 000 точек, равномерное распределение [0, 1000], seed=42. *Порог*: `speedup > 1.0`
-
-*Смысл*: Единственный тест производительности. CPU выполняет `std::sort` последовательно для каждого
-луча. GPU использует `rocprim::segmented_radix_sort_keys` — все лучи сортируются **параллельно**
-в одном вызове.
-
-При N=500 000 × 4 лучей CPU занимает ~100-200 мс (N·log(N) ≈ 10M операций × 4).
-GPU на RDNA4 — ~5-30 мс.
-
-*Почему warm-up?* Первый вызов `ComputeMedian` запускает hiprtc JIT (~1-3 с) и rocPRIM
-temp-storage query. Warm-up делается на маленьком буфере (1024 точек), чтобы не засорять
-измерение. Benchmark запускается на "горячем" состоянии.
-
-seed=42 — для воспроизводимости: одни и те же данные на каждом запуске → одинаковые числа.
-
----
-
-### 7.2 Python тесты
-
-**Файл**: `Python_test/statistics/test_statistics_rocm.py`
-
-NumPy reference тесты (без GPU, всегда проходят):
-
-| # | Функция | Что проверяет | Порог |
-|---|---------|---------------|-------|
-| 1 | `test_numpy_mean_single_beam` | `|mean(sinusoid)| ≈ 0` | `|Re|, |Im| < 0.01` |
-| 2 | `test_numpy_mean_multi_beam` | 4 луча, mean ≈ 0 | `|mean| < 0.01` |
-| 3 | `test_numpy_welford_statistics` | `mean_mag ≈ 2.0`, `var < 1e-4` | `|mean_mag - 2.0| < 1e-3` |
-| 4 | `test_numpy_median_linear` | `sorted([1..1024])[512] = 513` | `|median - 513| < 1.0` |
-| 5 | `test_numpy_mean_constant` | `mean(const) = const` | `|err| < 1e-3` |
-
-GPU тесты (требуют AMD GPU + сборки):
-
-| # | Функция | Что проверяет | Порог |
-|---|---------|---------------|-------|
-| 6 | `test_gpu_all_pass` | Все 7/7 C++ тестов PASSED | 7/7 |
-| 7 | `test_gpu_benchmark_speedup` | GPU sort > CPU | `speedup >= 2.0×` |
-| 8 | `test_gpu_vs_numpy_welford` | GPU Welford vs NumPy | `err_mean_mag < 0.01` |
-| 9 | `test_gpu_vs_numpy_median` | GPU median vs NumPy `sorted[N//2]` | `|err| < 1.0` |
-
-Визуализация: `Results/Plots/statistics/test_statistics_rocm_reference.png`
-
----
-
-## 8. Ссылки и файловое дерево
+## Файловое дерево модуля
 
 ```
 modules/statistics/
-├── CMakeLists.txt                          # ROCm-only, requires rocprim
+├── CMakeLists.txt                          # ROCm-only; rocprim REQUIRED
 ├── include/
-│   ├── statistics_processor.hpp           # StatisticsProcessor — публичный API
-│   ├── statistics_types.hpp               # StatisticsParams, MeanResult,
-│   │                                      # MedianResult, StatisticsResult
-│   ├── statistics_sort_gpu.hpp            # C++ декларации GPU segmented sort
+│   ├── statistics_processor.hpp            # StatisticsProcessor (весь публичный API)
+│   ├── statistics_types.hpp                # StatisticsParams, MeanResult, MedianResult, StatisticsResult
+│   ├── statistics_sort_gpu.hpp             # gpu_sort::QuerySortTempSize, ExecuteSort
 │   └── kernels/
-│       └── statistics_kernels_rocm.hpp    # HIP kernel sources (inline string, hiprtc)
+│       └── statistics_kernels_rocm.hpp     # GetStatisticsKernelSource() — hiprtc JIT string
 ├── src/
-│   ├── statistics_processor.cpp           # Реализация (g++ host-side)
-│   └── statistics_sort_gpu.hip            # rocPRIM sort (HIP compiler, clang++)
+│   ├── statistics_processor.cpp            # g++: host logic, hiprtc compile, buffer management
+│   └── statistics_sort_gpu.hip             # HIP compiler: rocPRIM segmented_radix_sort_keys
 ├── kernels/
-│   ├── statistics_kernels.cl              # Копия ядер (справочный файл)
-│   ├── manifest.json                      # KernelCacheService метаданные
-│   └── bin/
-│       └── statistics_kernels_rocm.hsaco  # Скомпилированный HSACO (disk cache)
+│   ├── statistics_kernels.cl               # Копия kernel source (legacy/reference)
+│   └── manifest.json                       # HSACO disk cache manifest
 └── tests/
-    ├── all_test.hpp                        # Точка входа тестов
-    └── test_statistics_rocm.hpp           # 7 тестов + benchmark
+    ├── all_test.hpp                         # statistics_all_test::run() — вызов из main.cpp
+    └── test_statistics_rocm.hpp             # 7 тестов (ROCm only, namespace test_statistics_rocm)
 
 python/
-└── py_statistics.hpp                      # pybind11 binding (PyStatisticsProcessor)
+└── py_statistics.hpp                       # PyStatisticsProcessor — pybind11 binding
 
 Python_test/statistics/
-└── test_statistics_rocm.py               # Python тесты (NumPy + GPU)
+├── conftest.py                              # fixtures: stats_proc, random_matrix, real_matrix
+└── test_statistics_rocm.py                 # 9 тестов (5 NumPy + 4 GPU binary)
 ```
 
-Внутренние ссылки:
-
-| Файл | Описание |
-|------|----------|
-| [Doc/Python/rocm_modules_api.md](../../Python/rocm_modules_api.md) | Python API (StatisticsProcessor + ROCmGPUContext) |
-| [Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md](../../../Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md) | Гид по оптимизации HIP ядер |
-
-Внешние ссылки:
-
-| Источник | Описание |
-|----------|----------|
-| https://github.com/ROCm/rocPRIM | rocPRIM — GPU primitives, radix sort |
-| https://rocm.docs.amd.com/projects/HIP/en/latest/how-to/performance_guidelines.html | HIP оптимизации |
-| https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance | Алгоритм Уэлфорда |
-
 ---
 
-## 9. Важные нюансы
+## Важные нюансы
 
-1. **ROCm-only**: защищён `#if ENABLE_ROCM`. Не компилируется без AMD GPU.
-   Сборка: `cmake .. -DENABLE_ROCM=ON -DCMAKE_PREFIX_PATH=/opt/rocm`.
+1. **ROCm-only**: весь модуль обёрнут в `#if ENABLE_ROCM`. На Windows компиляция не выполняется. Сборка только с `-DENABLE_ROCM=ON` (Linux + AMD GPU + ROCm SDK).
 
-2. **Медиана ≠ стандартная**: `ComputeMedian` возвращает `sorted[N/2]` (целочисленное
-   деление). Для чётного N это **не** среднее двух средних. При сравнении с NumPy:
-   `np.sort(mags)[N//2]`, **не** `np.median(mags)`.
+2. **Population variance (ddof=0)**: делитель N, не N-1. NumPy эквивалент: `np.var(x, ddof=0)`. Для несмещённой оценки: `var_unbiased = var * N / (N-1)`.
 
-3. **Дисперсия population (ddof=0)**: алгоритм использует $E[X^2] - (E[X])^2$.
-   При сравнении с NumPy: `np.std(mags, ddof=0)`, `np.var(mags, ddof=0)`.
+3. **Медиана ≠ np.median**: берётся `sorted[N/2]`, не среднее двух средних для чётного N. NumPy эквивалент: `np.sort(np.abs(data))[len(data)//2]`.
 
-4. **Lazy JIT-компиляция**: первый вызов любого метода запускает hiprtc (~1-3 с).
-   После компиляции HSACO сохраняется в `modules/statistics/kernels/bin/`.
-   При изменении кода ядер — удалить `statistics_kernels_rocm.hsaco`.
+4. **Beam-major layout**: данные: `[beam0_s0, beam0_s1, ..., beam1_s0, ...]`. 2D numpy `(beam_count, n_point)` C-contiguous — автоматически правильный порядок. Transposed (`(n_point, beam_count)`) — неправильный, получим мусор.
 
-5. **Lazy аллокация буферов**: при изменении `beam_count` или `n_point` все 8 GPU-буферов
-   пересоздаются (hipFree + hipMalloc). Оптимально: один экземпляр с фиксированными параметрами.
+5. **Первый вызов медленнее** (~200-500 мс JIT компиляция). После компиляции HSACO кешируется на диске. Warm-up: `stats.ComputeMedian(small_data, params)` перед бенчмарком.
 
-6. **GPU input**: перегрузки `ComputeXxx(void* gpu_data, params)` принимают raw HIP device
-   pointer. Выполняется `hipMemcpyDtoDAsync` вместо `HtoD` — нет PCIe overhead.
+6. **AllocateBuffers при изменении размеров**: при изменении `beam_count` или `n_point` все GPU буферы пересоздаются. Повторные вызовы с теми же параметрами — без аллокации (кеш `current_beams_`, `current_n_point_`).
 
-7. **Два компилятора**: `statistics_processor.cpp` (g++) и `statistics_sort_gpu.hip` (clang++/HIP).
-   rocPRIM требует device compiler. В CMakeLists.txt:
-   `set_source_files_properties(... PROPERTIES LANGUAGE HIP)`.
+7. **rocprim-dev обязателен**: при отсутствии пакета CMake выдаёт `FATAL_ERROR`. Установка: `sudo apt install rocm-dev rocprim-dev`.
 
-8. **WARP_SIZE=32**: флаг `-DWARP_SIZE=32` — для RDNA4 (gfx1201). При иных архитектурах
-   проверить размер wavefront.
+8. **WARP_SIZE и архитектура**: при сбое `GetArchName()` WARP_SIZE=32. На CDNA-GPU (gfx9xx) с WARP_SIZE=32 warp shuffle будет работать неверно — результаты некорректны. Проверить, что `ROCmBackend::GetCore().GetArchName()` возвращает правильное значение.
 
-9. **Namespace**: `statistics::StatisticsProcessor`, **не** `drv_gpu_lib`.
-   Python: `gpuworklib.StatisticsProcessor`, регистрируется через `register_statistics(m)`
-   в `gpu_worklib_bindings.cpp` под `#if ENABLE_ROCM`.
+9. **ComputeStatisticsFloat / ComputeMedianFloat**: принимают `void* gpu_float_data` — float (не complex). `mean_re = mean_im = 0.0` всегда. Предназначены для `strategies/` (пост-FFT `|spectrum|`).
 
-10. **welford_stats vs welford_fused**: в коде есть legacy kernel `welford_stats`
-    (читает input + magnitudes). `ComputeStatistics` использует `welford_fused`.
-    `welford_stats` скомпилирован, но `ExecuteWelfordKernel()` не вызывается в публичном API.
-
----
-
-## См. также
-
-- [API.md](API.md) — краткий API Reference (все 8 методов, типы, цепочки вызовов, примеры)
-- [Quick.md](Quick.md) — шпаргалка
-- [Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md](../../../Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md) — оптимизация HIP-ядер
+10. **Python binding**: требует `ROCmGPUContext`, не `GPUContext`. Конструктор: `gpuworklib.StatisticsProcessor(ctx)`, где `ctx = gpuworklib.ROCmGPUContext(0)`.
 
 ---
 

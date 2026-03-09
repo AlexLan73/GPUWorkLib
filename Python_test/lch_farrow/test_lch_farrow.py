@@ -53,7 +53,8 @@ def load_lagrange_matrix():
     """Загрузить матрицу 48×5 из JSON."""
     with open(MATRIX_PATH, 'r') as f:
         data = json.load(f)
-    return np.array(data['data'], dtype=np.float32)
+    arr = np.array(data['data'], dtype=np.float32)
+    return arr.reshape(data['rows'], data['columns'])
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -99,14 +100,6 @@ def generate_cw_signal(fs, points, f0, amplitude=1.0):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# GPU context
-# ════════════════════════════════════════════════════════════════════════════
-
-ctx = gpuworklib.GPUContext(0)
-print(f"GPU: {ctx.device_name}")
-
-
-# ════════════════════════════════════════════════════════════════════════════
 # Test 1: Нулевая задержка — output ≈ input
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -120,6 +113,7 @@ def test_zero_delay():
 
     signal = generate_cw_signal(fs, points, f0)
 
+    ctx = gpuworklib.GPUContext(0)
     proc = gpuworklib.LchFarrow(ctx)
     proc.set_sample_rate(fs)
     proc.set_delays([0.0])
@@ -146,6 +140,7 @@ def test_integer_delay():
 
     signal = generate_cw_signal(fs, points, f0)
 
+    ctx = gpuworklib.GPUContext(0)
     proc = gpuworklib.LchFarrow(ctx)
     proc.set_sample_rate(fs)
     proc.set_delays([delay_us])
@@ -183,6 +178,7 @@ def test_fractional_delay():
 
     signal = generate_cw_signal(fs, points, f0)
 
+    ctx = gpuworklib.GPUContext(0)
     proc = gpuworklib.LchFarrow(ctx)
     proc.set_sample_rate(fs)
     proc.set_delays([delay_us])
@@ -218,6 +214,7 @@ def test_multi_antenna():
     single = generate_cw_signal(fs, points, f0)
     signal = np.tile(single, (antennas, 1))  # (4, 4096)
 
+    ctx = gpuworklib.GPUContext(0)
     proc = gpuworklib.LchFarrow(ctx)
     proc.set_sample_rate(fs)
     proc.set_delays(delays)
@@ -256,6 +253,7 @@ def test_lch_farrow_vs_analytical():
     f_end = 2e6
     delay_us = 0.5  # 0.5 мкс
 
+    ctx = gpuworklib.GPUContext(0)
     # Вариант 1: Аналитическая задержка (идеальная)
     gen_analytical = gpuworklib.LfmAnalyticalDelay(
         ctx, f_start=f_start, f_end=f_end)

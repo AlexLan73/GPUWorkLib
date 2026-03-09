@@ -58,10 +58,11 @@ def scenario_multi():
     from scenario_builder import make_multi_target
     return make_multi_target(
         n_ant=8,
-        thetas_deg=[15.0, 30.0, 45.0],
+        thetas=[15.0, 30.0, 45.0],
+        f0s=[2e6, 3e6, 4e6],
+        fdevs=[1e6, 1e6, 1e6],
         fs=12e6,
         n_samples=4096,
-        fdev_hz=1e6,
     )
 
 

@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <functional>
 #include <map>
 #include <numeric>
 #include <string>
@@ -85,9 +86,18 @@ inline void run_avg_summary() {
   profiler.Start();
 
   // ── hipEvent ──────────────────────────────────────────────────────────────
-  hipEvent_t ev_start, ev_stop;
+  hipEvent_t ev_start = nullptr, ev_stop = nullptr;
   (void)hipEventCreate(&ev_start);
   (void)hipEventCreate(&ev_stop);
+  auto destroyEvents = [&]() noexcept {
+    if (ev_start) { (void)hipEventDestroy(ev_start); ev_start = nullptr; }
+    if (ev_stop)  { (void)hipEventDestroy(ev_stop);  ev_stop  = nullptr; }
+  };
+  // Гарантируем уничтожение events при любом выходе из функции (в т.ч. через исключение)
+  struct EventGuard {
+    std::function<void()> fn;
+    ~EventGuard() { fn(); }
+  } evt_guard{destroyEvents};
 
   using SClock = std::chrono::steady_clock;
   using NS     = std::chrono::nanoseconds;
@@ -155,8 +165,7 @@ inline void run_avg_summary() {
   const double avg_step2_ms  = avg2_exec / 1.0e6;
 
   // ── Cleanup hipEvents ─────────────────────────────────────────────────────
-  (void)hipEventDestroy(ev_start);
-  (void)hipEventDestroy(ev_stop);
+  destroyEvents();
 
   // ── Записываем 1 усреднённое событие на шаг (все 5 полей времени) ─────────
   {

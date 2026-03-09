@@ -183,7 +183,7 @@ inline void run_test_process_external() {
     for (int ant = 0; ant < ANTENNAS; ++ant) {
       float expected_f = MU * DELAYS_LINEAR_US[ant] * 1e-6f;
       float f_error = std::abs(result.antennas[ant].f_beat_hz - expected_f);
-      if (f_error >= 10000.f) all_passed = false;
+      if (f_error >= F_BEAT_TOL_HZ) all_passed = false;
     }
 
     con.Print(gpu_id, "Heterodyne", "    External buffer read: "

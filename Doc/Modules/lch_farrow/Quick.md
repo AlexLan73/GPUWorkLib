@@ -117,10 +117,25 @@ delayed = proc.process(signal)
 
 ---
 
-## Ссылки
+## Важные ловушки
 
-- [Full](Full.md) | [Python API](../../Python/lch_farrow_api.md) | [tests/README.md](../../../modules/lch_farrow/tests/README.md)
+| # | Ловушка |
+|---|---------|
+| 1 | `clReleaseMemObject(result.data)` — caller owns, не забыть |
+| 2 | `hipFree(result.data)` — то же для ROCm |
+| 3 | `SetDelays` размер должен == `antennas` — иначе exception |
+| 4 | Задержки в **мкс**, не сэмплах и не секундах |
+| 5 | ROCm первый запуск ~100-200 мс (hiprtc compile) |
+| 6 | `row` считается по `frac` позиции чтения, **не** по дробной части задержки μ |
 
 ---
 
-*Обновлено: 2026-03-02*
+## Ссылки
+
+- [Full.md](Full.md) — математика, C4, детальный разбор тестов
+- [API.md](API.md) — полный API reference C++ и Python
+- [Python API](../../Python/lch_farrow_api.md) | [tests/README.md](../../../modules/lch_farrow/tests/README.md)
+
+---
+
+*Обновлено: 2026-03-09*

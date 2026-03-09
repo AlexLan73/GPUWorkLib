@@ -12,7 +12,6 @@
 
 #include "cholesky_inverter_rocm.hpp"
 
-#include <cassert>
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
@@ -180,8 +179,10 @@ int CholeskyInverterROCm::ResolveMatrixSize(uint32_t n_point,
   if (n_hint > 0) return n_hint;
   int n = static_cast<int>(
       std::round(std::sqrt(static_cast<double>(n_point))));
-  assert(n > 0 && static_cast<uint32_t>(n * n) == n_point &&
-         "ResolveMatrixSize: n_point не является полным квадратом");
+  if (n <= 0 || static_cast<uint32_t>(n * n) != n_point)
+    throw std::invalid_argument(
+        "ResolveMatrixSize: n_point=" + std::to_string(n_point) +
+        " is not a perfect square");
   return n;
 }
 
@@ -445,7 +446,9 @@ CholeskyResult CholeskyInverterROCm::Invert(
 CholeskyResult CholeskyInverterROCm::InvertBatch(
     const drv_gpu_lib::InputData<std::vector<std::complex<float>>>& input,
     int n) {
-  assert(n > 0 && "InvertBatch: n должен быть явно задан (> 0)");
+  if (n <= 0)
+    throw std::invalid_argument(
+        "InvertBatch: n must be > 0 (got " + std::to_string(n) + ")");
   const int batch = static_cast<int>(input.antenna_count);
   const size_t total_bytes = static_cast<size_t>(batch) * n * n *
                              sizeof(std::complex<float>);
@@ -475,7 +478,9 @@ CholeskyResult CholeskyInverterROCm::InvertBatch(
 
 CholeskyResult CholeskyInverterROCm::InvertBatch(
     const drv_gpu_lib::InputData<void*>& input, int n) {
-  assert(n > 0 && "InvertBatch(void*): n должен быть явно задан (> 0)");
+  if (n <= 0)
+    throw std::invalid_argument(
+        "InvertBatch(void*): n must be > 0 (got " + std::to_string(n) + ")");
   const int batch = static_cast<int>(input.antenna_count);
   const size_t total_bytes = static_cast<size_t>(batch) * n * n *
                              sizeof(std::complex<float>);
@@ -506,7 +511,9 @@ CholeskyResult CholeskyInverterROCm::InvertBatch(
 #ifdef CL_VERSION_1_0
 CholeskyResult CholeskyInverterROCm::InvertBatch(
     const drv_gpu_lib::InputData<cl_mem>& input, int n) {
-  assert(n > 0 && "InvertBatch(cl_mem): n должен быть явно задан (> 0)");
+  if (n <= 0)
+    throw std::invalid_argument(
+        "InvertBatch(cl_mem): n must be > 0 (got " + std::to_string(n) + ")");
   const int batch = static_cast<int>(input.antenna_count);
   const size_t total_bytes = static_cast<size_t>(batch) * n * n *
                              sizeof(std::complex<float>);

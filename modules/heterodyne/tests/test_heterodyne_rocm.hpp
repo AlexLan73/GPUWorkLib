@@ -22,7 +22,6 @@
  * @date 2026-02-23
  */
 
-#include <iostream>
 #include <vector>
 #include <complex>
 #include <cmath>
@@ -31,13 +30,14 @@
 #include <random>
 #include <memory>
 
+#include "DrvGPU/services/console_output.hpp"
+
 #if ENABLE_ROCM
 #include "processors/heterodyne_processor_rocm.hpp"
 #include "heterodyne_dechirp.hpp"
 #include "heterodyne_params.hpp"
 
 #include "backends/rocm/rocm_backend.hpp"
-#include "services/console_output.hpp"
 #endif
 
 namespace test_heterodyne_rocm {
@@ -593,7 +593,9 @@ inline void run() {
 #else  // !ENABLE_ROCM
 
 inline void run() {
-  std::cout << "\n[test_heterodyne_rocm] SKIPPED: ENABLE_ROCM not defined\n";
+  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
+  if (!con.IsRunning()) con.Start();
+  con.Print(0, "Heterodyne[ROCm]", "SKIPPED: ENABLE_ROCM not defined");
 }
 
 #endif  // ENABLE_ROCM

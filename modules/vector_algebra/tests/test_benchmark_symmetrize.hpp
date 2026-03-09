@@ -101,9 +101,16 @@ inline BenchStats MeasureGpuTime(drv_gpu_lib::IBackend* backend,
   }
 
   // hipEvent создаём один раз
-  hipEvent_t ev_start, ev_stop;
+  hipEvent_t ev_start = nullptr, ev_stop = nullptr;
   hipEventCreate(&ev_start);
   hipEventCreate(&ev_stop);
+  struct EvGuard {
+    hipEvent_t& s; hipEvent_t& e;
+    ~EvGuard() {
+      if (s) { hipEventDestroy(s); s = nullptr; }
+      if (e) { hipEventDestroy(e); e = nullptr; }
+    }
+  } ev_guard{ev_start, ev_stop};
 
   // Measurement — один inverter на все замеры
   CholeskyInverterROCm inverter(backend, mode);
@@ -137,10 +144,7 @@ inline BenchStats MeasureGpuTime(drv_gpu_lib::IBackend* backend,
     times[r] = static_cast<double>(ms_f);
   }
 
-  hipEventDestroy(ev_start);
-  hipEventDestroy(ev_stop);
-
-  BenchStats stats;
+  BenchStats stats;  // ev_guard destructor destroys ev_start/ev_stop
   stats.avg_ms = std::accumulate(times.begin(), times.end(), 0.0) / runs;
   stats.min_ms = *std::min_element(times.begin(), times.end());
   stats.max_ms = *std::max_element(times.begin(), times.end());

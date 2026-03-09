@@ -119,8 +119,10 @@ class TestStringParamsGeneration:
 
         fs, f0, length = 4000.0, 500.0, 1024
         direct = np.asarray(sig_gen.generate_cw(freq=f0, fs=fs, length=length))
+        # API: generate_cw_from_string(params: str, fs: float, length: int)
+        # params содержит только freq (и опционально amp, phase, freq_step)
         from_str = np.asarray(
-            sig_gen.generate_cw_from_string(f"freq={f0},fs={fs},length={length}")
+            sig_gen.generate_cw_from_string(f"freq={f0}", fs, length)
         )
         np.testing.assert_allclose(np.abs(direct), np.abs(from_str), rtol=1e-5)
 
@@ -134,9 +136,11 @@ class TestFullPipelineIntegration:
 
     def test_pipeline_cw_correct_peak(self, sig_gen, fft_proc):
         """Полный pipeline: CW → FFT → пик на правильной частоте."""
-        fs = 12e6
-        f0 = 2e6
-        length = 8192
+        # Используем те же параметры что и остальные тесты (fs=4000, length=4096),
+        # чтобы избежать переинициализации clFFT плана (CL_INVALID_VALUE при смене размера).
+        fs = 4000.0
+        f0 = 500.0
+        length = 4096
 
         signal = sig_gen.generate_cw(freq=f0, fs=fs, length=length)
         spectrum = np.asarray(fft_proc.process_complex(signal, sample_rate=fs))

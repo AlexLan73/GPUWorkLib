@@ -1,481 +1,228 @@
-# API Reference — StatisticsProcessor
+# Statistics — API Reference
 
-> GPU-статистика комплексных сигналов по лучам: mean, median, variance, std (ROCm/HIP).
-> Один класс, восемь методов, три группы.
-
-**Namespace**: `statistics`
-**Платформа**: ROCm only (AMD GPU, Linux). Требует `ENABLE_ROCM=1`.
+> Полный справочник публичного C++ и Python API модуля statistics
 
 ---
 
-## Подключение
-
-```cpp
-// C++ — только при ENABLE_ROCM=1
-#include "modules/statistics/include/statistics_processor.hpp"
-#include "modules/statistics/include/statistics_types.hpp"
-```
-
-```python
-# Python
-import gpuworklib
-stats = gpuworklib.StatisticsProcessor(ctx)  # ctx — ROCmGPUContext
-```
+## C++ Namespace: `statistics`
 
 ---
 
-## Backend — откуда берётся и как получить
-
-`StatisticsProcessor` принимает `IBackend*` — указатель на ROCm-бэкенд из DrvGPU.
-**Не владеет указателем** — backend должен жить дольше StatisticsProcessor.
-
-Если передать не-ROCm бэкенд — конструктор бросает `std::runtime_error`.
-
-### Через ROCmBackend напрямую (тесты, бенчмарки)
+### `StatisticsParams`
 
 ```cpp
-#if ENABLE_ROCM
-#include "backends/rocm/rocm_backend.hpp"
-#include "modules/statistics/include/statistics_processor.hpp"
-
-drv_gpu_lib::ROCmBackend backend;
-backend.Initialize(/*device_index=*/0);
-
-statistics::StatisticsProcessor stats(&backend);
-// backend должен жить дольше stats
-#endif
-```
-
-### Через DrvGPU (production pipeline)
-
-```cpp
-#include "DrvGPU/include/drv_gpu.hpp"
-#include "modules/statistics/include/statistics_processor.hpp"
-
-drv_gpu_lib::DrvGPU gpu(drv_gpu_lib::BackendType::ROCM, 0);
-gpu.Initialize();
-
-statistics::StatisticsProcessor stats(&gpu.GetBackend());
-```
-
-### Python — через ROCmGPUContext
-
-```python
-import gpuworklib
-
-ctx   = gpuworklib.ROCmGPUContext(0)          # device_index=0
-stats = gpuworklib.StatisticsProcessor(ctx)
-```
-
----
-
-## Типы данных
-
-### StatisticsParams
-
-```cpp
+// modules/statistics/include/statistics_types.hpp
 struct StatisticsParams {
-    uint32_t beam_count   = 1;  // Число лучей (каналов)
-    uint32_t n_point      = 0;  // Точек на луч (complex<float> или float)
-    size_t   memory_limit = 0;  // GPU memory limit, байт (0 = авто)
+    uint32_t beam_count  = 1;  // число лучей
+    uint32_t n_point     = 0;  // сэмплов на луч (complex float)
+    size_t   memory_limit = 0; // GPU memory limit (0 = auto)
 };
 ```
 
-| Параметр | Тип | Диапазон | Описание |
-|----------|-----|----------|----------|
-| `beam_count` | `uint32_t` | ≥ 1 | Число лучей; каждый луч обрабатывается независимо |
-| `n_point` | `uint32_t` | ≥ 1 | Точек на луч; входной массив = `beam_count × n_point` элементов |
-| `memory_limit` | `size_t` | 0 = авто | Ограничение GPU-памяти для буферов |
+---
 
-### MeanResult
+### `MeanResult`
 
 ```cpp
 struct MeanResult {
     uint32_t beam_id = 0;
-    std::complex<float> mean{0.0f, 0.0f};  // Re + j·Im среднее
+    std::complex<float> mean{0.0f, 0.0f};  // комплексное среднее
 };
 ```
 
-### MedianResult
+---
 
-```cpp
-struct MedianResult {
-    uint32_t beam_id          = 0;
-    float    median_magnitude = 0.0f;  // median(|z|) = sorted[N/2]
-};
-```
-
-> ⚠️ **Медиана** = `sorted[N/2]`, не среднее двух средних элементов.
-> При сравнении с NumPy: `np.sort(mags)[N//2]`, **не** `np.median(mags)`.
-
-### StatisticsResult
+### `StatisticsResult`
 
 ```cpp
 struct StatisticsResult {
-    uint32_t            beam_id        = 0;
-    std::complex<float> mean{0.0f, 0.0f};  // Комплексное среднее Re + j·Im
-    float               variance       = 0.0f;  // Дисперсия |z| (population, ddof=0)
-    float               std_dev        = 0.0f;  // СКО = sqrt(variance)
-    float               mean_magnitude = 0.0f;  // Среднее модулей mean(|z|)
+    uint32_t beam_id = 0;
+    std::complex<float> mean{0.0f, 0.0f};  // комплексное среднее
+    float variance       = 0.0f;            // Var(|z|), ddof=0
+    float std_dev        = 0.0f;            // sqrt(Var(|z|))
+    float mean_magnitude = 0.0f;            // E[|z|]
 };
 ```
 
-> ⚠️ Для `ComputeStatisticsFloat` / `ComputeMedianFloat` поле `mean` всегда `{0, 0}` —
-> входные данные уже являются модулями (float), а не комплексным сигналом.
+---
+
+### `MedianResult`
+
+```cpp
+struct MedianResult {
+    uint32_t beam_id = 0;
+    float median_magnitude = 0.0f;  // sorted_magnitudes[N/2]
+};
+```
 
 ---
 
-## StatisticsProcessor
-
-**Файл**: `modules/statistics/include/statistics_processor.hpp`
-**Платформа**: AMD GPU с ROCm. Требует `ENABLE_ROCM=1`. На Windows полностью пропускается.
-**Kernel-компилятор**: hiprtc (JIT при первом вызове, затем HSACO-кеш на диске).
-
-### Конструктор / Деструктор
+### `StatisticsProcessor`
 
 ```cpp
-explicit StatisticsProcessor(drv_gpu_lib::IBackend* backend);
-~StatisticsProcessor();
+// modules/statistics/include/statistics_processor.hpp
+// Требует: #if ENABLE_ROCM
 
-// Запрет копирования
-StatisticsProcessor(const StatisticsProcessor&) = delete;
-StatisticsProcessor& operator=(const StatisticsProcessor&) = delete;
+namespace statistics {
 
-// Перемещение
-StatisticsProcessor(StatisticsProcessor&& other) noexcept;
-StatisticsProcessor& operator=(StatisticsProcessor&& other) noexcept;
+class StatisticsProcessor {
+public:
+    // Конструктор (non-owning backend)
+    explicit StatisticsProcessor(drv_gpu_lib::IBackend* backend);
+
+    ~StatisticsProcessor();
+
+    // Запрещено копирование, разрешено перемещение
+    StatisticsProcessor(const StatisticsProcessor&) = delete;
+    StatisticsProcessor& operator=(const StatisticsProcessor&) = delete;
+    StatisticsProcessor(StatisticsProcessor&&) noexcept;
+    StatisticsProcessor& operator=(StatisticsProcessor&&) noexcept;
+
+    // ──────────────────────────────────────────────────────────
+    // CPU data overloads (upload → compute → download)
+    // ──────────────────────────────────────────────────────────
+
+    std::vector<MeanResult> ComputeMean(
+        const std::vector<std::complex<float>>& data,
+        const StatisticsParams& params);
+
+    std::vector<MedianResult> ComputeMedian(
+        const std::vector<std::complex<float>>& data,
+        const StatisticsParams& params);
+
+    std::vector<StatisticsResult> ComputeStatistics(
+        const std::vector<std::complex<float>>& data,
+        const StatisticsParams& params);
+
+    // ──────────────────────────────────────────────────────────
+    // GPU data overloads (данные уже на устройстве)
+    // ──────────────────────────────────────────────────────────
+
+    std::vector<MeanResult> ComputeMean(
+        void* gpu_data,
+        const StatisticsParams& params);
+
+    std::vector<MedianResult> ComputeMedian(
+        void* gpu_data,
+        const StatisticsParams& params);
+
+    std::vector<StatisticsResult> ComputeStatistics(
+        void* gpu_data,
+        const StatisticsParams& params);
+
+    // ──────────────────────────────────────────────────────────
+    // Float input (модули уже вычислены, GPU data)
+    // ──────────────────────────────────────────────────────────
+
+    std::vector<StatisticsResult> ComputeStatisticsFloat(
+        void* gpu_float_data,
+        const StatisticsParams& params);
+
+    std::vector<MedianResult> ComputeMedianFloat(
+        void* gpu_float_data,
+        const StatisticsParams& params);
+};
+
+}  // namespace statistics
 ```
-
-| Параметр | Тип | Описание |
-|----------|-----|----------|
-| `backend` | `IBackend*` | Указатель на ROCm-бэкенд (не владеет; должен жить дольше объекта). Не-ROCm бэкенд → `std::runtime_error`. |
 
 ---
 
-### Группа 1 — ComputeStatistics (одно-проходный Уэлфорд)
+### Исключения
 
-Вычисляет за один проход: комплексное среднее, `mean(|z|)`, `variance(|z|)`, `std_dev(|z|)`.
-Ядро `welford_fused` — нет отдельного буфера модулей, всё inline.
-
-#### ComputeStatistics() — CPU данные
-
-```cpp
-std::vector<StatisticsResult> ComputeStatistics(
-    const std::vector<std::complex<float>>& data,
-    const StatisticsParams& params);
-```
-
-| Параметр | Тип | Описание |
-|----------|-----|----------|
-| `data` | `vector<complex<float>>` | Входные данные: `beam_count × n_point` элементов, beam-major layout |
-| `params` | `StatisticsParams` | beam_count, n_point |
-
-**Возвращает**: `vector<StatisticsResult>` — один результат на луч.
-
-#### ComputeStatistics() — GPU данные
-
-```cpp
-std::vector<StatisticsResult> ComputeStatistics(
-    void* gpu_data,
-    const StatisticsParams& params);
-```
-
-| Параметр | Тип | Описание |
-|----------|-----|----------|
-| `gpu_data` | `void*` | HIP device pointer на `complex<float>[beam_count × n_point]` (не владеет) |
-| `params` | `StatisticsParams` | beam_count, n_point |
-
-Выполняет `hipMemcpyDtoDAsync` вместо HtoD — без PCIe-пересылки.
-
-#### ComputeStatisticsFloat() — GPU float данные *(только C++)*
-
-```cpp
-std::vector<StatisticsResult> ComputeStatisticsFloat(
-    void* gpu_float_data,
-    const StatisticsParams& params);
-```
-
-| Параметр | Тип | Описание |
-|----------|-----|----------|
-| `gpu_float_data` | `void*` | HIP device pointer на `float[beam_count × n_point]` — уже вычисленные модули |
-| `params` | `StatisticsParams` | beam_count, n_point |
-
-Для интеграции с FFT-пайплайном: спектр уже как `float magnitude[beams × nFFT]`.
-Использует ядро `welford_float`. Поле `mean` в результате всегда `{0, 0}`.
-**Нет Python-биндинга.**
+| Метод | Условие | Исключение |
+|-------|---------|------------|
+| Конструктор | backend == nullptr или не инициализирован | `std::runtime_error` |
+| Конструктор | backend не ROCm type | `std::runtime_error` |
+| `ComputeMean(data, ...)` | data.size() != beam_count * n_point | `std::invalid_argument` |
+| `ComputeMedian(data, ...)` | data.size() != beam_count * n_point | `std::invalid_argument` |
+| `ComputeStatistics(data, ...)` | data.size() != beam_count * n_point | `std::invalid_argument` |
+| GPU overloads | gpu_data == nullptr | `std::invalid_argument` |
+| `CompileKernels()` | hiprtc ошибка компиляции | `std::runtime_error` (с логом) |
+| `AllocateBuffers()` | hipMalloc failed | `std::runtime_error` |
 
 ---
 
-### Группа 2 — ComputeMedian (rocPRIM radix sort)
-
-Вычисляет медиану `|z|` по каждому лучу:
-`compute_magnitudes` → `rocprim::segmented_radix_sort_keys` → `extract_medians`.
-
-#### ComputeMedian() — CPU данные
+### Цепочка вызовов
 
 ```cpp
-std::vector<MedianResult> ComputeMedian(
-    const std::vector<std::complex<float>>& data,
-    const StatisticsParams& params);
-```
+// Типичный сценарий:
+StatisticsProcessor proc(&backend);                   // lazy: ничего не выделяется
 
-#### ComputeMedian() — GPU данные
-
-```cpp
-std::vector<MedianResult> ComputeMedian(
-    void* gpu_data,
-    const StatisticsParams& params);
-```
-
-#### ComputeMedianFloat() — GPU float данные *(только C++)*
-
-```cpp
-std::vector<MedianResult> ComputeMedianFloat(
-    void* gpu_float_data,
-    const StatisticsParams& params);
-```
-
-| Параметр | Тип | Описание |
-|----------|-----|----------|
-| `gpu_float_data` | `void*` | HIP device pointer на `float` — уже вычисленные модули |
-| `params` | `StatisticsParams` | beam_count, n_point |
-
-Пропускает шаг `compute_magnitudes` — данные сразу идут в radix sort.
-**Нет Python-биндинга.**
-
----
-
-### Группа 3 — ComputeMean (иерархическая редукция)
-
-Только комплексное среднее. Два прохода: `mean_reduce_phase1` (блочная сумма + double-load) → `mean_reduce_final` (финальная редукция, деление на N).
-
-#### ComputeMean() — CPU данные
-
-```cpp
-std::vector<MeanResult> ComputeMean(
-    const std::vector<std::complex<float>>& data,
-    const StatisticsParams& params);
-```
-
-#### ComputeMean() — GPU данные
-
-```cpp
-std::vector<MeanResult> ComputeMean(
-    void* gpu_data,
-    const StatisticsParams& params);
+auto r = proc.ComputeStatistics(data, params);
+//   → CompileKernels()   [lazy, 1 раз; HSACO cache]
+//   → AllocateBuffers()  [lazy resize]
+//   → UploadData()       [H2D async]
+//   → ExecuteWelfordFusedKernel()
+//   → hipStreamSynchronize()
+//   → hipMemcpyDtoH()
+//   ← vector<StatisticsResult>
 ```
 
 ---
 
 ## Python API
 
-**Модуль**: `gpuworklib.StatisticsProcessor`
-**Биндинг**: `python/py_statistics.hpp`
-**Доступно только при ENABLE_ROCM=1.**
+```python
+import gpuworklib
 
-Python-биндинг предоставляет **3 метода** (нет биндинга для `ComputeStatisticsFloat` / `ComputeMedianFloat`).
+# Конструктор
+proc = gpuworklib.StatisticsProcessor(ctx)
+# ctx: ROCmGPUContext (НЕ GPUContext!)
 
-### Конструктор
+# Методы
+proc.compute_mean(data, beam_count=1)
+proc.compute_median(data, beam_count=1)
+proc.compute_statistics(data, beam_count=1)
+```
+
+### compute_mean
 
 ```python
-stats = gpuworklib.StatisticsProcessor(ctx)
-# ctx — gpuworklib.ROCmGPUContext(device_index=0)
+def compute_mean(
+    data: np.ndarray,    # complex64, shape (B*N,) или (B,N)
+    beam_count: int = 1
+) -> list[dict]:
+    ...
+
+# Возврат: list[{'beam_id': int, 'mean_real': float, 'mean_imag': float}]
 ```
 
-### compute_mean()
+### compute_median
 
 ```python
-results = stats.compute_mean(data, beam_count=1)
-# data: np.complex64, shape (beam_count * n_point,) или (beam_count, n_point)
+def compute_median(
+    data: np.ndarray,    # complex64, shape (B*N,) или (B,N)
+    beam_count: int = 1
+) -> list[dict]:
+    ...
+
+# Возврат: list[{'beam_id': int, 'median_magnitude': float}]
 ```
 
-**Возвращает** `list[dict]`:
-```python
-{'beam_id': int, 'mean_real': float, 'mean_imag': float}
-```
-
-### compute_median()
-
-```python
-results = stats.compute_median(data, beam_count=1)
-# data: np.complex64
-```
-
-**Возвращает** `list[dict]`:
-```python
-{'beam_id': int, 'median_magnitude': float}
-```
-
-### compute_statistics()
+### compute_statistics
 
 ```python
-results = stats.compute_statistics(data, beam_count=1)
-# data: np.complex64
-```
+def compute_statistics(
+    data: np.ndarray,    # complex64, shape (B*N,) или (B,N)
+    beam_count: int = 1
+) -> list[dict]:
+    ...
 
-**Возвращает** `list[dict]`:
-```python
-{
-    'beam_id':        int,
-    'mean_real':      float,   # Re(mean(z))
-    'mean_imag':      float,   # Im(mean(z))
-    'variance':       float,   # var(|z|), ddof=0
-    'std_dev':        float,   # sqrt(variance)
-    'mean_magnitude': float,   # mean(|z|)
-}
-```
-
-### Сводная таблица
-
-| Метод Python | Входные данные | Ключи словаря |
-|-------------|----------------|---------------|
-| `compute_mean(data, beam_count)` | `np.complex64` | `beam_id`, `mean_real`, `mean_imag` |
-| `compute_median(data, beam_count)` | `np.complex64` | `beam_id`, `median_magnitude` |
-| `compute_statistics(data, beam_count)` | `np.complex64` | `beam_id`, `mean_real`, `mean_imag`, `variance`, `std_dev`, `mean_magnitude` |
-
----
-
-## Цепочки вызовов
-
-### ComputeStatistics (CPU data)
-
-```
-ComputeStatistics(vector, params)
-  → AllocateBuffers(beam_count, n_point)   [lazy, skip если размер не изменился]
-  → CompileKernels()                        [lazy, hiprtc JIT → HSACO кеш]
-  → UploadData(data, count)                hipMemcpyHtoDAsync
-  → ExecuteWelfordFusedKernel(beams, N)    welford_fused: 1 проход, |z| inline
-  → hipStreamSynchronize
-  → hipMemcpyDtoH(results, beams × 20 байт)
-```
-
-### ComputeMedian (CPU data)
-
-```
-ComputeMedian(vector, params)
-  → AllocateBuffers + CompileKernels
-  → UploadData
-  → ExecuteMagnitudesKernel                compute_magnitudes: complex → |z|
-  → ExecuteMedianSort(beams, N)            rocprim::segmented_radix_sort_keys
-  → ExecuteExtractMediansKernel            extract_medians: 1 thread per beam
-  → hipStreamSynchronize
-  → hipMemcpyDtoH(medians_compact, beams × 4 байта)
-```
-
-### ComputeStatisticsFloat (GPU float data)
-
-```
-ComputeStatisticsFloat(gpu_float, params)
-  → AllocateBuffers + CompileKernels
-  → CopyFloatGpuData(src, count)           hipMemcpyDtoDAsync → magnitudes_buf_
-  → ExecuteWelfordFloatKernel(beams, N)    welford_float: float input, mean={0,0}
-  → hipStreamSynchronize
-  → hipMemcpyDtoH(results, beams × 20 байт)
-```
-
-### ComputeMedianFloat (GPU float data)
-
-```
-ComputeMedianFloat(gpu_float, params)
-  → AllocateBuffers + CompileKernels
-  → CopyFloatGpuData → magnitudes_buf_
-  → ExecuteMedianSort                      sort magnitudes_buf_ → sort_buf_
-  → ExecuteExtractMediansKernel
-  → hipStreamSynchronize + hipMemcpyDtoH
-```
-
-### Python pipeline
-
-```
-ROCmGPUContext(0)
-  └─→ StatisticsProcessor(ctx)
-      ├─→ compute_statistics(data, beam_count)  → list[dict] (mean + variance + std)
-      ├─→ compute_median(data, beam_count)       → list[dict] (median_magnitude)
-      └─→ compute_mean(data, beam_count)         → list[dict] (mean_real + mean_imag)
+# Возврат:
+# list[{
+#   'beam_id':        int,
+#   'mean_real':      float,   # Re(комплексного среднего)
+#   'mean_imag':      float,   # Im(комплексного среднего)
+#   'mean_magnitude': float,   # E[|z|]
+#   'variance':       float,   # Var(|z|), ddof=0
+#   'std_dev':        float,   # sqrt(variance)
+# }]
 ```
 
 ---
 
-## Примеры
-
-### C++ — полный минимум
-
-```cpp
-#include "backends/rocm/rocm_backend.hpp"
-#include "modules/statistics/include/statistics_processor.hpp"
-#include "modules/statistics/include/statistics_types.hpp"
-
-drv_gpu_lib::ROCmBackend backend;
-backend.Initialize(0);
-
-statistics::StatisticsProcessor stats(&backend);
-
-statistics::StatisticsParams params;
-params.beam_count = 4;
-params.n_point    = 8192;
-
-std::vector<std::complex<float>> data(params.beam_count * params.n_point);
-// ... заполнение data ...
-
-// Полная статистика (mean + variance + std + mean_mag)
-auto results = stats.ComputeStatistics(data, params);
-for (const auto& r : results) {
-    printf("beam %u: mean=(%.4f,%.4f) mean_mag=%.4f std=%.6f\n",
-           r.beam_id, r.mean.real(), r.mean.imag(),
-           r.mean_magnitude, r.std_dev);
-}
-
-// Медиана модулей (GPU radix sort)
-auto medians = stats.ComputeMedian(data, params);
-for (const auto& r : medians)
-    printf("beam %u: median_mag=%.4f\n", r.beam_id, r.median_magnitude);
-
-// Только комплексное среднее
-auto means = stats.ComputeMean(data, params);
-for (const auto& r : means)
-    printf("beam %u: mean=(%.6f+%.6fj)\n",
-           r.beam_id, r.mean.real(), r.mean.imag());
-```
-
-### C++ — GPU данные (без PCIe HtoD)
-
-```cpp
-// Данные уже на GPU — прямая обработка без PCIe-пересылки
-void* gpu_ptr = nullptr;
-hipMalloc(&gpu_ptr, data.size() * sizeof(std::complex<float>));
-hipMemcpy(gpu_ptr, data.data(), data.size() * sizeof(std::complex<float>),
-          hipMemcpyHostToDevice);
-
-auto gpu_results = stats.ComputeStatistics(gpu_ptr, params);
-// Внутри: hipMemcpyDtoDAsync вместо HtoD
-
-hipFree(gpu_ptr);
-```
-
-### C++ — float-input (после FFT)
-
-```cpp
-// gpu_spectrum — float magnitudes на GPU: beam_count * nFFT элементов
-// Типичный сценарий: результат FFTProcessorROCm в режиме MAGNITUDE_PHASE
-void* gpu_spectrum = /* hipDeviceptr к float[beam_count * nFFT] */;
-
-statistics::StatisticsParams params;
-params.beam_count = 4;
-params.n_point    = 1024;  // nFFT
-
-// Статистика спектра: mean={0,0}, остальные поля — корректны
-auto spec_stats = stats.ComputeStatisticsFloat(gpu_spectrum, params);
-for (const auto& r : spec_stats)
-    printf("beam %u: mean_mag=%.4f std=%.4f\n",
-           r.beam_id, r.mean_magnitude, r.std_dev);
-
-// Медиана спектра (float input)
-auto spec_medians = stats.ComputeMedianFloat(gpu_spectrum, params);
-for (const auto& r : spec_medians)
-    printf("beam %u: median_spec=%.4f\n", r.beam_id, r.median_magnitude);
-```
-
-### Python — полный минимум
+### Полный Python пример
 
 ```python
 import sys
@@ -483,62 +230,74 @@ sys.path.insert(0, 'build/debian-radeon9070/python')
 import gpuworklib
 import numpy as np
 
-ctx   = gpuworklib.ROCmGPUContext(0)
-stats = gpuworklib.StatisticsProcessor(ctx)
+# Context
+ctx = gpuworklib.ROCmGPUContext(0)
 
-beam_count = 4
-n_point    = 8192
-data = (np.random.randn(beam_count * n_point) +
-        1j * np.random.randn(beam_count * n_point)).astype(np.complex64)
+# Processor
+proc = gpuworklib.StatisticsProcessor(ctx)
 
-# Полная статистика
-results = stats.compute_statistics(data, beam_count=beam_count)
-for r in results:
-    print(f"beam {r['beam_id']}: "
-          f"mean=({r['mean_real']:.4f}+{r['mean_imag']:.4f}j) "
-          f"mean_mag={r['mean_magnitude']:.4f} "
-          f"std={r['std_dev']:.4f}")
+# Data: beam-major layout
+beam_count, n_point = 4, 4096
+t = np.arange(n_point, dtype=np.float32) / 1000.0
+freq = 100.0
+data = np.tile(
+    (np.cos(2 * np.pi * freq * t) + 1j * np.sin(2 * np.pi * freq * t))
+    .astype(np.complex64),
+    beam_count
+)
 
-# Медиана
-medians = stats.compute_median(data, beam_count=beam_count)
-for r in medians:
-    print(f"beam {r['beam_id']}: median_mag={r['median_magnitude']:.4f}")
+params = {'beam_count': beam_count}
 
-# Только среднее
-means = stats.compute_mean(data, beam_count=beam_count)
-for r in means:
-    print(f"beam {r['beam_id']}: mean=({r['mean_real']:.6f}+{r['mean_imag']:.6f}j)")
+# Full statistics
+stats = proc.compute_statistics(data, beam_count=beam_count)
+for r in stats:
+    print(f"Beam {r['beam_id']}: |mean|={r['mean_magnitude']:.4f}, std={r['std_dev']:.4f}")
 
-# NumPy-эталон (важно: ddof=0 и sorted[N//2]!)
-beam0 = data[:n_point]
-mags0 = np.abs(beam0)
-print(f"NumPy mean_mag:  {np.mean(mags0):.6f}")
-print(f"NumPy std:       {np.std(mags0, ddof=0):.6f}")        # ddof=0!
-print(f"NumPy median:    {np.sort(mags0)[n_point // 2]:.6f}") # НЕ np.median()!
+# NumPy verification
+for b in range(beam_count):
+    beam = data[b*n_point:(b+1)*n_point]
+    mags = np.abs(beam)
+    np_mean_mag = np.mean(mags)
+    np_std = np.std(mags, ddof=0)
+    err_mag = abs(stats[b]['mean_magnitude'] - np_mean_mag)
+    err_std = abs(stats[b]['std_dev'] - np_std)
+    print(f"  Beam {b}: err_mean_mag={err_mag:.2e}, err_std={err_std:.2e}")
+
+# Median
+medians = proc.compute_median(data, beam_count=beam_count)
+for m in medians:
+    beam = data[m['beam_id']*n_point:(m['beam_id']+1)*n_point]
+    np_median = float(np.sort(np.abs(beam))[n_point // 2])
+    err = abs(m['median_magnitude'] - np_median)
+    print(f"  Beam {m['beam_id']} median: GPU={m['median_magnitude']:.4f}, "
+          f"NumPy={np_median:.4f}, err={err:.4f}")
 ```
 
 ---
 
-## Ограничения и нюансы
+### Сборка Python модуля
 
-| Ограничение | Описание |
-|-------------|----------|
-| ROCm only | AMD GPU, Linux, `cmake -DENABLE_ROCM=ON`. На Windows файл пропускается. |
-| Нет Python для float-input | `ComputeStatisticsFloat` и `ComputeMedianFloat` — только C++ |
-| Медиана не стандартная | `sorted[N/2]`, не среднее двух средних. Сравнение: `np.sort(mags)[N//2]` |
-| Дисперсия population | `ddof=0`. Сравнение: `np.std(mags, ddof=0)`, `np.var(mags, ddof=0)` |
-| Первый вызов медленный | hiprtc JIT ~1-3 с. После HSACO-кеша — мгновенно |
-| Re-allocation при смене размера | При изменении `beam_count` / `n_point` все GPU-буферы пересоздаются |
-| Namespace | `statistics::`, не `drv_gpu_lib::`. Python: `gpuworklib.StatisticsProcessor` |
-| float-input mean={0,0} | `ComputeStatisticsFloat` не вычисляет комплексное среднее (нет Im/Re данных) |
+```bash
+cmake -B build/debian-radeon9070 \
+      -DBUILD_PYTHON=ON \
+      -DENABLE_ROCM=ON \
+      -DCMAKE_BUILD_TYPE=Release
+cmake --build build/debian-radeon9070 -j4
+
+# .so файл:
+# build/debian-radeon9070/python/gpuworklib.cpython-313-x86_64-linux-gnu.so
+
+# Запуск с GPU (render group):
+sg render -c "python3 my_script.py"
+```
 
 ---
 
-## См. также
+## Ссылки
 
-- [Full.md](Full.md) — математика, pipeline, C4-диаграммы, все ядра, тесты
-- [Quick.md](Quick.md) — шпаргалка
-- [Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md](../../../Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md) — оптимизация HIP-ядер
+- [Full.md](Full.md) — полная документация с математикой и pipeline
+- [Quick.md](Quick.md) — краткий справочник
+- [Doc/Python/rocm_modules_api.md](../../Python/rocm_modules_api.md) — все ROCm Python классы
 
 ---
 
