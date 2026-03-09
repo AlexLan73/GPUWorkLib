@@ -904,4 +904,12 @@ Python_test/statistics/
 
 ---
 
-*Обновлено: 2026-03-02*
+## См. также
+
+- [API.md](API.md) — краткий API Reference (все 8 методов, типы, цепочки вызовов, примеры)
+- [Quick.md](Quick.md) — шпаргалка
+- [Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md](../../../Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md) — оптимизация HIP-ядер
+
+---
+
+*Обновлено: 2026-03-09*

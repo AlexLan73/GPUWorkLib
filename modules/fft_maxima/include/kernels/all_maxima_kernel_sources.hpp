@@ -11,12 +11,6 @@
 // 2. prefix_sum_* — Blelloch work-efficient exclusive scan
 // 3. compact_maxima — stream compaction (читает float*)
 //
-// ОПТИМИЗАЦИИ (fft_maxima_optimization_plan.md):
-//   TASK-2 (P1-C): native_sqrt() в compute_magnitudes, length() в post_callback — OK
-//   TASK-6 (P2-B): detect_all_maxima → 2D NDRange (устраняет div/mod)
-//   TASK-7 (P2-C): reqd_work_group_size(256,1,1) — компилятор убирает dead-branches
-//   TASK-8 (P2-D): __restrict на все pointer params
-//   TASK-9 (P3-A): LDS +1 padding в prefix_sum (block_scan)
 //
 // @author Kodo (AI Assistant)
 // @date 2026-02-26
@@ -59,10 +53,6 @@ inline const char* GetPostCallbackMagnitudeSource_opencl() {
 //   Для случая когда FFT данные уже на GPU (FindAllMaxima(cl_mem) — старый API).
 //   FFT не выполняется → post-callback не вызывается → нужен отдельный кернел.
 //
-// ОПТИМИЗАЦИИ:
-//   - TASK-2 (P1-C): native_sqrt() вместо sqrt() — 2-4× быстрее
-//   - TASK-8 (P2-D): __restrict на pointer params
-//
 // ════════════════════════════════════════════════════════════════════════════
 inline const char* GetComputeMagnitudesKernelSource_opencl() {
     return R"CL(
@@ -75,7 +65,6 @@ __kernel void compute_magnitudes(
     if (gid >= total_size) return;
 
     float2 val = fft_output[gid];
-    // TASK-2: native_sqrt — 2-4× быстрее sqrt(), достаточная точность
     magnitudes[gid] = native_sqrt(val.x * val.x + val.y * val.y);
 }
 )CL";
@@ -90,18 +79,7 @@ __kernel void compute_magnitudes(
 //   по pre-computed амплитуде (mag[i] > mag[i-1] && mag[i] > mag[i+1]).
 //   Записывает 1 в flags[i] если максимум, 0 иначе.
 //
-// ОПТИМИЗАЦИИ:
-//   - TASK-6 (P2-B): 2D NDRange устраняет дорогие gid/nFFT и gid%nFFT
-//       Dispatch: global=(nFFT, beam_count), local=(256, 1)
-//       beam_idx = get_global_id(1), pos = get_global_id(0)
-//   - TASK-7 (P2-C): reqd_work_group_size(256,1,1) для 2D dispatch
-//   - TASK-8 (P2-D): __restrict на pointer params
-//
-// C++ DISPATCH (после TASK-6):
-//   size_t global[2] = { nFFT, beam_count };   // nFFT кратно 256
-//   size_t local[2]  = { 256, 1 };
-//   clEnqueueNDRangeKernel(queue, detect_kernel, 2, nullptr, global, local, ...);
-//
+// C++ dispatch: global=(nFFT, beam_count), local=(256, 1). nFFT кратно 256.
 // ════════════════════════════════════════════════════════════════════════════
 inline const char* GetDetectAllMaximaKernelSource_opencl() {
   return R"CL(
@@ -114,15 +92,10 @@ __kernel void detect_all_maxima(
     const uint search_start,                     // Начало поиска (обычно 1)
     const uint search_end                        // Конец поиска (обычно nFFT/2)
 ) {
-    // TASK-6: 2D NDRange — нет дорогих div/mod
+    // 2D NDRange — нет дорогих div/mod
     const uint pos      = get_global_id(0);      // [0, nFFT)
     const uint beam_idx = get_global_id(1);      // [0, beam_count)
     const uint gid = beam_idx * nFFT + pos;
-
-    // Проверка границ
-    if (beam_idx >= beam_count) {
-        return;
-    }
 
     // Вне диапазона поиска — не максимум
     if (pos < search_start || pos >= search_end) {
@@ -145,11 +118,6 @@ __kernel void detect_all_maxima(
 // 2. Prefix Sum (Blelloch Work-Efficient Exclusive Scan)
 // ════════════════════════════════════════════════════════════════════════════
 //
-// ОПТИМИЗАЦИИ:
-//   - TASK-8 (P2-D): __restrict на pointer params
-//   - TASK-9 (P3-A): +1 padding в LDS (temp передаётся через C++ clSetKernelArg)
-//       C++ должен выделять (BLOCK_SIZE + 1) * sizeof(uint32_t) вместо BLOCK_SIZE
-//
 // ════════════════════════════════════════════════════════════════════════════
 inline const char* GetPrefixSumKernelSource_opencl() {
   return R"CL(
@@ -161,8 +129,7 @@ inline const char* GetPrefixSumKernelSource_opencl() {
 // Layout: [beam0: nFFT элементов][beam1: nFFT элементов][...]
 // group_id = beam_idx * blocks_per_beam + block_idx
 //
-// TASK-9: Алloкация temp через C++ должна быть (BLOCK_SIZE+1)*sizeof(uint32_t)
-//         для устранения LDS bank conflicts
+// temp аллоцируется через C++ как (BLOCK_SIZE+1)*sizeof(uint32_t) — LDS padding против bank conflicts
 // ═══════════════════════════════════════════════
 __kernel void block_scan(
     __global const uint* restrict input,       // Входные данные [beam_count * n_per_beam]
@@ -171,7 +138,7 @@ __kernel void block_scan(
     const uint n_per_beam,                     // Элементов на луч (nFFT)
     const uint beam_count,                     // Количество лучей
     const uint blocks_per_beam,                // Блоков на луч
-    __local uint* temp                         // Локальная память: (BLOCK_SIZE+1) uint (TASK-9)
+    __local uint* temp                         // Локальная память: (BLOCK_SIZE+1) uint (LDS padding)
 ) {
     const uint lid = get_local_id(0);
     const uint group_id = get_group_id(0);
@@ -261,9 +228,6 @@ __kernel void block_add(
 // ════════════════════════════════════════════════════════════════════════════
 // 3. compact_maxima — Stream Compaction (вывод MaxValue[])
 // ════════════════════════════════════════════════════════════════════════════
-//
-// ОПТИМИЗАЦИИ:
-//   - TASK-8 (P2-D): __restrict на все pointer params
 //
 // ════════════════════════════════════════════════════════════════════════════
 inline const char* GetCompactMaximaKernelSource_opencl() {

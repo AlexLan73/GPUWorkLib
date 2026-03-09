@@ -76,7 +76,8 @@ SpectrumProcessorOpenCL::SpectrumProcessorOpenCL(drv_gpu_lib::IBackend* backend)
         throw std::runtime_error("SpectrumProcessorOpenCL: failed to get OpenCL resources from backend");
     }
 
-    pipeline_ = std::make_unique<AllMaximaPipelineOpenCL>(context_, queue_, device_);
+    pipeline_ = std::make_unique<AllMaximaPipelineOpenCL>(context_, queue_, device_,
+        backend_ ? backend_->GetDeviceIndex() : 0);
 }
 
 /**

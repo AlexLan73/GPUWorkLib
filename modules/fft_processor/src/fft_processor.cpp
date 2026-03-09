@@ -152,6 +152,8 @@ std::vector<FFTComplexResult> FFTProcessor::ProcessComplex(
                                      " != expected " + std::to_string(expected));
     }
 
+    last_timing_ = FFTProfilingData{};
+
     // Вычислить nFFT
     CalculateNFFT(params);
 
@@ -166,6 +168,9 @@ std::vector<FFTComplexResult> FFTProcessor::ProcessComplex(
     std::vector<FFTComplexResult> all_results;
     all_results.reserve(params.beam_count);
 
+    std::vector<std::pair<const char*, cl_event>> internal_events;
+    auto* evs = prof_events ? prof_events : &internal_events;
+
     for (const auto& batch : batches) {
         // Подготовить буферы
         AllocateBuffers(batch.count, FFTOutputMode::COMPLEX);
@@ -174,17 +179,21 @@ std::vector<FFTComplexResult> FFTProcessor::ProcessComplex(
         // Upload batch
         const auto* batch_data = data.data() + batch.start * params.n_point;
         cl_event upload_event = UploadData(batch_data, batch.count * params.n_point);
-        clFinish(queue_);
+        // clFinish(queue_);  // [REVIEW-2026-03-09] Redundant: ExecuteFFT ждёт через wait_event.
+        //                    // Откат: раскомментировать если тест упадёт.
 
         // FFT
         cl_event fft_event = ExecuteFFT(upload_event);
-        CollectOrRelease(upload_event, "Upload", prof_events);
-        clFinish(queue_);
+        CollectOrRelease(upload_event, "Upload", evs);
+        // clFinish(queue_);  // [REVIEW-2026-03-09] Redundant: ReadComplexResults ждёт через fft_event.
+        //                    // Откат: раскомментировать если тест упадёт.
 
-        // Read complex results
+        // Read complex results (внутри clFinish — события завершены, timing доступен)
         auto batch_results = ReadComplexResults(fft_event, batch.count, batch.start,
-                                                 params.sample_rate, prof_events);
-        CollectOrRelease(fft_event, "FFT", prof_events);
+                                                 params.sample_rate, evs);
+        CollectOrRelease(fft_event, "FFT", evs);
+
+        if (!prof_events) AccumulateTiming(internal_events);
 
         for (auto& r : batch_results) {
             all_results.push_back(std::move(r));
@@ -204,6 +213,8 @@ std::vector<FFTComplexResult> FFTProcessor::ProcessComplex(
         throw std::invalid_argument("ProcessComplex: gpu_data is null");
     }
 
+    last_timing_ = FFTProfilingData{};
+
     CalculateNFFT(params);
 
     size_t bytes_per_beam = CalculateBytesPerBeam(FFTOutputMode::COMPLEX);
@@ -220,21 +231,28 @@ std::vector<FFTComplexResult> FFTProcessor::ProcessComplex(
     std::vector<FFTComplexResult> all_results;
     all_results.reserve(params.beam_count);
 
+    std::vector<std::pair<const char*, cl_event>> internal_events;
+    auto* evs = prof_events ? prof_events : &internal_events;
+
     for (const auto& batch : batches) {
         AllocateBuffers(batch.count, FFTOutputMode::COMPLEX);
         CreateFFTPlan(batch.count);
 
         size_t src_offset = batch.start * params.n_point * sizeof(std::complex<float>);
         cl_event copy_event = CopyGpuData(gpu_data, src_offset, batch.count * params.n_point);
-        clFinish(queue_);
+        // clFinish(queue_);  // [REVIEW-2026-03-09] Redundant: ExecuteFFT ждёт через wait_event.
+        //                    // Откат: раскомментировать если тест упадёт.
 
         cl_event fft_event = ExecuteFFT(copy_event);
-        CollectOrRelease(copy_event, "GPU_Copy", prof_events);
-        clFinish(queue_);
+        CollectOrRelease(copy_event, "GPU_Copy", evs);
+        // clFinish(queue_);  // [REVIEW-2026-03-09] Redundant: ReadComplexResults ждёт через fft_event.
+        //                    // Откат: раскомментировать если тест упадёт.
 
         auto batch_results = ReadComplexResults(fft_event, batch.count, batch.start,
-                                                 params.sample_rate, prof_events);
-        CollectOrRelease(fft_event, "FFT", prof_events);
+                                                 params.sample_rate, evs);
+        CollectOrRelease(fft_event, "FFT", evs);
+
+        if (!prof_events) AccumulateTiming(internal_events);
 
         for (auto& r : batch_results) {
             all_results.push_back(std::move(r));
@@ -260,6 +278,8 @@ std::vector<FFTMagPhaseResult> FFTProcessor::ProcessMagPhase(
         CompileMagPhaseKernel();
     }
 
+    last_timing_ = FFTProfilingData{};
+
     size_t bytes_per_beam = CalculateBytesPerBeam(params.output_mode);
     size_t optimal_batch = drv_gpu_lib::BatchManager::CalculateOptimalBatchSize(
         backend_, params.beam_count, bytes_per_beam, params.memory_limit);
@@ -272,25 +292,33 @@ std::vector<FFTMagPhaseResult> FFTProcessor::ProcessMagPhase(
     std::vector<FFTMagPhaseResult> all_results;
     all_results.reserve(params.beam_count);
 
+    std::vector<std::pair<const char*, cl_event>> internal_events;
+    auto* evs = prof_events ? prof_events : &internal_events;
+
     for (const auto& batch : batches) {
         AllocateBuffers(batch.count, params.output_mode);
         CreateFFTPlan(batch.count);
 
         const auto* batch_data = data.data() + batch.start * params.n_point;
         cl_event upload_event = UploadData(batch_data, batch.count * params.n_point);
-        clFinish(queue_);
+        // clFinish(queue_);  // [REVIEW-2026-03-09] Redundant: ExecuteFFT ждёт через wait_event.
+        //                    // Откат: раскомментировать если тест упадёт.
 
         cl_event fft_event = ExecuteFFT(upload_event);
-        CollectOrRelease(upload_event, "Upload", prof_events);
-        clFinish(queue_);
+        CollectOrRelease(upload_event, "Upload", evs);
+        // clFinish(queue_);  // [REVIEW-2026-03-09] Redundant: ExecuteMagPhaseKernel ждёт через wait_event.
+        //                    // Откат: раскомментировать если тест упадёт.
 
         cl_event post_event = ExecuteMagPhaseKernel(fft_event, batch.count);
-        CollectOrRelease(fft_event, "FFT", prof_events);
-        clFinish(queue_);
+        CollectOrRelease(fft_event, "FFT", evs);
+        // clFinish(queue_);  // [REVIEW-2026-03-09] Redundant: ReadMagPhaseResults ждёт через post_event.
+        //                    // Откат: раскомментировать если тест упадёт.
 
         auto batch_results = ReadMagPhaseResults(post_event, batch.count, batch.start,
-                                                  params.sample_rate, include_freq, prof_events);
-        CollectOrRelease(post_event, "PostProcessing", prof_events);
+                                                  params.sample_rate, include_freq, evs);
+        CollectOrRelease(post_event, "PostProcessing", evs);
+
+        if (!prof_events) AccumulateTiming(internal_events);
 
         for (auto& r : batch_results) {
             all_results.push_back(std::move(r));
@@ -316,6 +344,8 @@ std::vector<FFTMagPhaseResult> FFTProcessor::ProcessMagPhase(
         CompileMagPhaseKernel();
     }
 
+    last_timing_ = FFTProfilingData{};
+
     size_t bytes_per_beam = CalculateBytesPerBeam(params.output_mode);
     size_t external_memory = (gpu_memory_bytes > 0)
         ? gpu_memory_bytes
@@ -332,25 +362,33 @@ std::vector<FFTMagPhaseResult> FFTProcessor::ProcessMagPhase(
     std::vector<FFTMagPhaseResult> all_results;
     all_results.reserve(params.beam_count);
 
+    std::vector<std::pair<const char*, cl_event>> internal_events;
+    auto* evs = prof_events ? prof_events : &internal_events;
+
     for (const auto& batch : batches) {
         AllocateBuffers(batch.count, params.output_mode);
         CreateFFTPlan(batch.count);
 
         size_t src_offset = batch.start * params.n_point * sizeof(std::complex<float>);
         cl_event copy_event = CopyGpuData(gpu_data, src_offset, batch.count * params.n_point);
-        clFinish(queue_);
+        // clFinish(queue_);  // [REVIEW-2026-03-09] Redundant: ExecuteFFT ждёт через wait_event.
+        //                    // Откат: раскомментировать если тест упадёт.
 
         cl_event fft_event = ExecuteFFT(copy_event);
-        CollectOrRelease(copy_event, "GPU_Copy", prof_events);
-        clFinish(queue_);
+        CollectOrRelease(copy_event, "GPU_Copy", evs);
+        // clFinish(queue_);  // [REVIEW-2026-03-09] Redundant: ExecuteMagPhaseKernel ждёт через wait_event.
+        //                    // Откат: раскомментировать если тест упадёт.
 
         cl_event post_event = ExecuteMagPhaseKernel(fft_event, batch.count);
-        CollectOrRelease(fft_event, "FFT", prof_events);
-        clFinish(queue_);
+        CollectOrRelease(fft_event, "FFT", evs);
+        // clFinish(queue_);  // [REVIEW-2026-03-09] Redundant: ReadMagPhaseResults ждёт через post_event.
+        //                    // Откат: раскомментировать если тест упадёт.
 
         auto batch_results = ReadMagPhaseResults(post_event, batch.count, batch.start,
-                                                  params.sample_rate, include_freq, prof_events);
-        CollectOrRelease(post_event, "PostProcessing", prof_events);
+                                                  params.sample_rate, include_freq, evs);
+        CollectOrRelease(post_event, "PostProcessing", evs);
+
+        if (!prof_events) AccumulateTiming(internal_events);
 
         for (auto& r : batch_results) {
             all_results.push_back(std::move(r));
@@ -374,12 +412,10 @@ void FFTProcessor::AllocateBuffers(size_t batch_beam_count, FFTOutputMode mode) 
         WritePreCallbackHeader(batch_beam_count);
 
         bool need_mag_phase = (mode != FFTOutputMode::COMPLEX);
-        if (need_mag_phase && !has_mag_phase_buffers_) {
-            // mag/phase буферы нужны, но не выделены (первый вызов ProcessMagPhase после ProcessComplex).
-            // Пустой if-блок — намеренно! Падаем ниже на полный realloc, который
-            // пересоздаст ВСЕ буферы включая mag/phase. Это проще и надёжнее, чем
-            // частичный realloc только mag/phase при уже живых fft_input_/fft_output_.
-        } else {
+        // Если mag/phase буферы не нужны или уже выделены — готово.
+        // Иначе — полный realloc: пересоздаём ВСЕ буферы включая mag/phase.
+        // (проще и надёжнее, чем частичный realloc при уже живых fft_input_/fft_output_)
+        if (!need_mag_phase || has_mag_phase_buffers_) {
             return;
         }
     }
@@ -518,7 +554,17 @@ void FFTProcessor::CompileMagPhaseKernel() {
         throw std::runtime_error("CompileMagPhaseKernel: clCreateProgramWithSource failed: " + std::to_string(err));
     }
 
-    err = clBuildProgram(mag_phase_program_, 1, &device_, "-cl-fast-relaxed-math -cl-std=CL2.0", nullptr, nullptr);
+    // Detect AMD GPU to enable native_atan2 (AMD-specific intrinsic, not in NVIDIA OpenCL)
+    char vendor[256] = {};
+    clGetDeviceInfo(device_, CL_DEVICE_VENDOR, sizeof(vendor), vendor, nullptr);
+    std::string vendor_str(vendor);
+    bool is_amd = (vendor_str.find("AMD") != std::string::npos ||
+                   vendor_str.find("Advanced Micro") != std::string::npos);
+    const char* build_opts = is_amd
+        ? "-cl-fast-relaxed-math -cl-std=CL2.0 -DAMD_GPU=1"
+        : "-cl-fast-relaxed-math -cl-std=CL2.0";
+
+    err = clBuildProgram(mag_phase_program_, 1, &device_, build_opts, nullptr, nullptr);
     if (err != CL_SUCCESS) {
         size_t log_size;
         clGetProgramBuildInfo(mag_phase_program_, device_, CL_PROGRAM_BUILD_LOG, 0, nullptr, &log_size);
@@ -526,7 +572,8 @@ void FFTProcessor::CompileMagPhaseKernel() {
         clGetProgramBuildInfo(mag_phase_program_, device_, CL_PROGRAM_BUILD_LOG, log_size, log.data(), nullptr);
         clReleaseProgram(mag_phase_program_);
         mag_phase_program_ = nullptr;
-        throw std::runtime_error("CompileMagPhaseKernel: build failed: " + std::to_string(err));
+        throw std::runtime_error("CompileMagPhaseKernel: build failed:\n" +
+                                  std::string(log.data(), log_size));
     }
 
     mag_phase_kernel_ = clCreateKernel(mag_phase_program_, "complex_to_mag_phase", &err);
@@ -815,24 +862,30 @@ size_t FFTProcessor::CalculateBytesPerBeam(FFTOutputMode mode) const {
     return input_bytes + fft_bytes + post_bytes;
 }
 
-FFTProfilingData FFTProcessor::GetProfilingData() const {
-    FFTProfilingData out{};
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-    auto stats = drv_gpu_lib::GPUProfiler::GetInstance().GetStats(gpu_id);
-    auto it = stats.find("FFTProcessor");
-    if (it == stats.end()) return out;
+double FFTProcessor::EventDurationMs(cl_event ev) {
+    if (!ev) return 0.0;
+    cl_ulong start = 0, end = 0;
+    clGetEventProfilingInfo(ev, CL_PROFILING_COMMAND_START, sizeof(start), &start, nullptr);
+    clGetEventProfilingInfo(ev, CL_PROFILING_COMMAND_END,   sizeof(end),   &end,   nullptr);
+    return (end > start) ? static_cast<double>(end - start) * 1e-6 : 0.0;
+}
 
-    const auto& mod = it->second;
-    auto ev = [&mod](const char* name) -> double {
-        auto e = mod.events.find(name);
-        return (e != mod.events.end()) ? e->second.GetAvgTimeMs() : 0.0;
-    };
-    out.upload_time_ms = ev("Upload") + ev("GPU_Copy");
-    out.fft_time_ms = ev("FFT");
-    out.post_processing_time_ms = ev("PostProcessing");
-    out.download_time_ms = ev("Download");
-    out.total_time_ms = mod.GetTotalTimeMs();
-    return out;
+void FFTProcessor::AccumulateTiming(std::vector<std::pair<const char*, cl_event>>& events) {
+    for (auto& [name, ev] : events) {
+        double ms = EventDurationMs(ev);
+        std::string n(name);
+        if      (n == "Upload" || n == "GPU_Copy") last_timing_.upload_time_ms += ms;
+        else if (n == "FFT")                       last_timing_.fft_time_ms += ms;
+        else if (n == "PostProcessing")            last_timing_.post_processing_time_ms += ms;
+        else if (n == "Download")                  last_timing_.download_time_ms += ms;
+        last_timing_.total_time_ms += ms;
+        clReleaseEvent(ev);
+    }
+    events.clear();
+}
+
+FFTProfilingData FFTProcessor::GetProfilingData() const {
+    return last_timing_;
 }
 
 } // namespace fft_processor

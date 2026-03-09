@@ -24,10 +24,10 @@
 namespace fft_processor_all_test {
 
 inline void run() {
-    // FFTProcessor (OpenCL/clFFT) — отложено, clFFT не компилируется на gfx1201
-//    test_fft_processor::run();
-//    test_fft_vs_cpu::run();
-//    test_fft_benchmark::run();
+    // FFTProcessor (OpenCL/clFFT)
+    test_fft_processor::run();
+    test_fft_vs_cpu::run();
+//    test_fft_benchmark::run();  // benchmark — долго, запускать отдельно
 
     // FFTProcessorROCm: hipFFT-based FFT (ROCm only)
 #if ENABLE_ROCM

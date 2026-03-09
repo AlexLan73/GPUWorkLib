@@ -16,7 +16,6 @@
 
 #include "spectrum_maxima_finder.h"
 #include "services/console_output.hpp"
-#include <iostream>
 #include <stdexcept>
 #include <cstring>
 

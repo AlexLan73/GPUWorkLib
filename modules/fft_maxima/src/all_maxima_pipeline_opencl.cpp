@@ -32,8 +32,9 @@ namespace antenna_fft {
  */
 AllMaximaPipelineOpenCL::AllMaximaPipelineOpenCL(cl_context context,
                                                  cl_command_queue queue,
-                                                 cl_device_id device)
-    : context_(context), queue_(queue), device_(device)
+                                                 cl_device_id device,
+                                                 int gpu_id)
+    : context_(context), queue_(queue), device_(device), gpu_id_(gpu_id)
 {
     if (!context_ || !queue_ || !device_) {
         throw std::invalid_argument("AllMaximaPipelineOpenCL: context, queue, device required");
@@ -373,14 +374,16 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
     if (search_end == 0) search_end = nFFT / 2;
     if (search_end >= nFFT) search_end = nFFT - 1;
 
+    if (nFFT < 256)
+        throw std::invalid_argument("AllMaximaPipeline: nFFT must be >= 256 (detect kernel reqd_work_group_size)");
+
     CompileKernels();
 
     cl_int err;
     const size_t total_elements = static_cast<size_t>(beam_count) * nFFT;
 
-    const int gpu_id = 0;
     auto& profiler = drv_gpu_lib::GPUProfiler::GetInstance();
-    const bool do_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(gpu_id);
+    const bool do_prof = profiler.IsEnabled() && profiler.IsGPUEnabled(gpu_id_);
     auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
 
     cl_mem flags_buf = clCreateBuffer(context_, CL_MEM_READ_WRITE,
@@ -453,7 +456,7 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
     if (do_prof) {
         drv_gpu_lib::OpenCLProfilingData data{};
         if (drv_gpu_lib::FillOpenCLProfilingData(detect_event, data))
-            profiler.Record(gpu_id, "AllMaxima", "Detect", data);
+            profiler.Record(gpu_id_, "AllMaxima", "Detect", data);
     }
     clReleaseEvent(detect_event);
 
@@ -461,7 +464,7 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
     if (do_prof) {
         drv_gpu_lib::OpenCLProfilingData data{};
         if (drv_gpu_lib::FillOpenCLProfilingData(scan_all_event, data))
-            profiler.Record(gpu_id, "AllMaxima", "Scan", data);
+            profiler.Record(gpu_id_, "AllMaxima", "Scan", data);
     }
 
     uint32_t beam_offset = 0;  // Для single-batch режима offset = 0
@@ -502,7 +505,7 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
     if (do_prof) {
         drv_gpu_lib::OpenCLProfilingData data{};
         if (drv_gpu_lib::FillOpenCLProfilingData(compact_event, data))
-            profiler.Record(gpu_id, "AllMaxima", "Compact", data);
+            profiler.Record(gpu_id_, "AllMaxima", "Compact", data);
     }
 
     std::vector<uint32_t> beam_counts(beam_count);
@@ -524,7 +527,7 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
         for (uint32_t b = 0; b < beam_count; ++b) {
             uint32_t count = beam_counts[b];
             if (count > max_output_per_beam) {
-                con.PrintWarning(gpu_id, "AllMaxima",
+                con.PrintWarning(gpu_id_, "AllMaxima",
                     "WARNING: Beam " + std::to_string(b) +
                     " reached max_maxima limit (" + std::to_string(count) +
                     "/" + std::to_string(max_output_per_beam) + "), results truncated");
@@ -560,11 +563,6 @@ AllMaximaResult AllMaximaPipelineOpenCL::Execute(
         out_maxima = nullptr;
         out_beam_counts = nullptr;
     }
-
-    con.Print(0, "AllMaxima", "Found " + std::to_string(result.total_maxima) + " maxima"
-        + " | detect=" + std::to_string(detect_ms) + "ms"
-        + " scan=" + std::to_string(scan_ms) + "ms"
-        + " compact=" + std::to_string(compact_ms) + "ms");
 
     clReleaseMemObject(flags_buf);
     clReleaseMemObject(scan_buf);

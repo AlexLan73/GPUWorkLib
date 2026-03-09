@@ -228,6 +228,13 @@ private:
         }
     }
 
+    /// Длительность cl_event в мс (CL_PROFILING_COMMAND_START → END). 0 если профилирование недоступно.
+    static double EventDurationMs(cl_event ev);
+
+    /// Заполнить last_timing_ из списка events по именам ("Upload"/"FFT"/"PostProcessing"/"Download")
+    /// и освободить все события. events очищается после вызова.
+    void AccumulateTiming(std::vector<std::pair<const char*, cl_event>>& events);
+
     // ═══════════════════════════════════════════════════════════════════════
     // Поля
     // ═══════════════════════════════════════════════════════════════════════
@@ -271,6 +278,9 @@ private:
     size_t plan_batch_size_ = 0;       ///< Batch size, под который создан текущий FFT-план; может отличаться от current_buffer_beams_
     size_t fft_temp_buffer_size_ = 0;  ///< Текущий размер fft_temp_buffer_; растёт при необходимости, не уменьшается
     bool has_mag_phase_buffers_ = false;
+
+    // Последнее измеренное время (заполняется в Process* если prof_events == nullptr)
+    FFTProfilingData last_timing_;
 
     // Константы
     static constexpr size_t PRE_CALLBACK_HEADER_SIZE = 32;  ///< Размер заголовка в pre_callback_userdata_: 8 × uint32_t = 32 байта

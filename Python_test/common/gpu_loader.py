@@ -7,12 +7,14 @@ Singleton (GoF) + Protected Variations (GRASP):
   Все тесты получают модуль через GPULoader.get() вместо хардкода путей.
 
 Порядок поиска (от приоритетного к резервному):
+  0. GPUWORKLIB_BUILD_DIR (переменная окружения)  ← высший приоритет
   1. build/python/Release          ← MSVC Release
   2. build/python/Debug            ← MSVC Debug
   3. build/debian-radeon9070/python ← Linux ROCm (Alex's workstation)
   4. build/Release                 ← альтернатива
   5. build/Debug
   6. build/python                  ← общая сборка
+  7. build/**/gpuworklib.*         ← авто-поиск по всему build/
 
 Usage:
     gw = GPULoader.get()           # модуль gpuworklib или None
@@ -20,8 +22,17 @@ Usage:
         pytest.skip("gpuworklib not found")
 
     ctx = gw.GPUContext()
+
+Cross-platform:
+    Windows: gpuworklib.cpXXX-win_amd64.pyd
+    Linux:   gpuworklib.cpython-XXX-x86_64-linux-gnu.so
+    Python import system resolves the extension automatically.
+
+    Override build path:
+        GPUWORKLIB_BUILD_DIR=/path/to/build/python pytest Python_test/
 """
 
+import glob
 import os
 import sys
 from pathlib import Path
@@ -73,7 +84,29 @@ class GPULoader:
     @classmethod
     def _try_load(cls) -> None:
         """Найти и загрузить gpuworklib."""
-        # Попробовать уже добавленные пути (вдруг уже доступен)
+
+        def _try_path(path: Path, label: str) -> bool:
+            """Добавить path в sys.path и попробовать import. True если успешно."""
+            sys.path.insert(0, str(path))
+            try:
+                import gpuworklib as gw
+                cls._gpuworklib = gw
+                cls._loaded_from = label
+                return True
+            except ImportError:
+                sys.path.pop(0)
+                return False
+
+        # 0. Переменная окружения GPUWORKLIB_BUILD_DIR (высший приоритет)
+        env_dir = os.environ.get("GPUWORKLIB_BUILD_DIR")
+        if env_dir:
+            candidate = Path(env_dir)
+            if not candidate.is_absolute():
+                candidate = _PROJECT_ROOT / candidate
+            if candidate.exists() and _try_path(candidate, f"env: {candidate}"):
+                return
+
+        # 1. Попробовать уже добавленные пути (вдруг уже доступен)
         try:
             import gpuworklib as gw
             cls._gpuworklib = gw
@@ -82,19 +115,23 @@ class GPULoader:
         except ImportError:
             pass
 
-        # Перебрать пути поиска
+        # 2. Перебрать статические пути поиска
         for rel_path in _SEARCH_PATHS:
             candidate = _PROJECT_ROOT / rel_path
-            if candidate.exists():
-                sys.path.insert(0, str(candidate))
-                try:
-                    import gpuworklib as gw
-                    cls._gpuworklib = gw
-                    cls._loaded_from = str(candidate)
-                    return
-                except ImportError:
-                    # Этот путь не подошёл — убрать его из sys.path
-                    sys.path.pop(0)
+            if candidate.exists() and _try_path(candidate, str(candidate)):
+                return
+
+        # 3. Авто-поиск: найти gpuworklib.* где угодно внутри build/
+        build_dir = _PROJECT_ROOT / "build"
+        if build_dir.exists():
+            pattern = str(build_dir / "**" / "gpuworklib*")
+            for found in sorted(glob.glob(pattern, recursive=True)):
+                fp = Path(found)
+                # Только .pyd (Windows) или .so (Linux), пропустить .so.debug и т.п.
+                if fp.suffix in (".pyd",) or (fp.suffix == ".so" or ".cpython" in fp.name):
+                    parent = fp.parent
+                    if _try_path(parent, f"auto: {parent}"):
+                        return
 
         # Ничего не нашли
         cls._gpuworklib = None

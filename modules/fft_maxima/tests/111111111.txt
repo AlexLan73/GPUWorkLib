@@ -1,9 +1,0 @@
-l_event SpectrumMaximaFinder::ExecuteFFT(cl_event wait_event) {
-    cl_event event = nullptr;
-
-    // Выполнить FFT с pre-callback
-    clfftStatus status = clfftEnqueueTransform( 
-
-строка 438      
-
-GetPostKernelSource_TwoPeaks()

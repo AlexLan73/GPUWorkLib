@@ -30,7 +30,6 @@
 #include <stdexcept>
 #include <cstring>
 #include <cmath>
-#include <iostream>
 #include <chrono>
 
 namespace fft_processor {
@@ -311,8 +310,6 @@ std::vector<FFTComplexResult> FFTProcessorROCm::ProcessComplex(
     const FFTProcessorParams& params,
     size_t gpu_memory_bytes)
 {
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-
     if (!gpu_data) {
         throw std::invalid_argument("ProcessComplex: gpu_data is null");
     }
@@ -364,8 +361,6 @@ std::vector<FFTMagPhaseResult> FFTProcessorROCm::ProcessMagPhase(
     const FFTProcessorParams& params,
     ROCmProfEvents* prof_events)
 {
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-
     size_t expected = static_cast<size_t>(params.beam_count) * params.n_point;
     if (data.size() != expected) {
         throw std::invalid_argument("ProcessMagPhase: input size mismatch");
@@ -462,8 +457,6 @@ std::vector<FFTMagPhaseResult> FFTProcessorROCm::ProcessMagPhase(
     const FFTProcessorParams& params,
     size_t gpu_memory_bytes)
 {
-    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
-
     if (!gpu_data) {
         throw std::invalid_argument("ProcessMagPhase: gpu_data is null");
     }
@@ -521,9 +514,9 @@ void FFTProcessorROCm::AllocateBuffers(size_t batch_beam_count, FFTOutputMode mo
 
     if (!need_realloc) {
         bool need_mag_phase = (mode != FFTOutputMode::COMPLEX);
-        if (need_mag_phase && !has_mag_phase_buffers_) {
-            // Need to allocate mag/phase buffers
-        } else {
+        // Если mag/phase буферы не нужны или уже выделены — готово.
+        // Иначе — полный realloc: пересоздаём ВСЕ буферы включая mag/phase.
+        if (!need_mag_phase || has_mag_phase_buffers_) {
             return;
         }
     }

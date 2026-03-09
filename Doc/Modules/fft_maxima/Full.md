@@ -816,4 +816,12 @@ Python_test/fft_maxima/
 
 ---
 
-*Обновлено: 2026-03-02*
+## См. также
+
+- [API.md](API.md) — краткий API Reference (сигнатуры, параметры, примеры)
+- [Quick.md](Quick.md) — шпаргалка
+- [FindAllMaxima_MaxValue_Guide.md](FindAllMaxima_MaxValue_Guide.md) — подробный гайд по AllMaxima
+
+---
+
+*Обновлено: 2026-03-09*

@@ -37,9 +37,11 @@
 
 ```
 complex<float>[beams × N]
-    ├─ ComputeStatistics  welford_fused kernel (1 проход)     → mean + variance + std per beam
-    ├─ ComputeMedian      compute_magnitudes + rocPRIM sort   → median(|z|) per beam
-    └─ ComputeMean        hierarchical reduce (2-phase)       → complex mean per beam
+    ├─ ComputeStatistics      welford_fused kernel (1 проход)          → mean + variance + std per beam
+    ├─ ComputeMedian          compute_magnitudes + rocPRIM sort         → median(|z|) per beam
+    ├─ ComputeMean            hierarchical reduce (2-phase)             → complex mean per beam
+    ├─ ComputeStatisticsFloat welford_float (float input, mean={0,0})  → variance + std per beam [C++ only]
+    └─ ComputeMedianFloat     rocPRIM sort (float input)                → median per beam [C++ only]
 ```
 
 ---
@@ -121,6 +123,7 @@ means = stats.compute_mean(data, beam_count=4)
 - Дисперсия population (ddof=0): сравнивать `np.std(mags, ddof=0)`
 - Первый вызов: JIT-компиляция hiprtc (~1-3 с), далее HSACO с диска
 - GPU input: `stats.ComputeStatistics(void* gpu_ptr, params)` — без PCIe HtoD
+- Float-input методы (`ComputeStatisticsFloat`, `ComputeMedianFloat`): только C++ API, `mean={0,0}`
 - Namespace: `statistics::`, не `drv_gpu_lib::`
 
 ---
@@ -128,8 +131,9 @@ means = stats.compute_mean(data, beam_count=4)
 ## Ссылки
 
 - [Full.md](Full.md) — математика, pipeline, C4-диаграммы, kernels, все тесты
+- [API.md](API.md) — полный API Reference (все 8 методов, типы, примеры)
 - [Doc/Python/rocm_modules_api.md](../../Python/rocm_modules_api.md) — Python API
 
 ---
 
-*Обновлено: 2026-03-02*
+*Обновлено: 2026-03-09*

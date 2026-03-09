@@ -32,7 +32,7 @@ public:
      * @param queue OpenCL command queue
      * @param device OpenCL device
      */
-    AllMaximaPipelineOpenCL(cl_context context, cl_command_queue queue, cl_device_id device);
+    AllMaximaPipelineOpenCL(cl_context context, cl_command_queue queue, cl_device_id device, int gpu_id = 0);
     ~AllMaximaPipelineOpenCL() override;
 
     AllMaximaPipelineOpenCL(const AllMaximaPipelineOpenCL&) = delete;
@@ -58,6 +58,7 @@ private:
     cl_context context_ = nullptr;
     cl_command_queue queue_ = nullptr;
     cl_device_id device_ = nullptr;
+    int gpu_id_ = 0;
 
     cl_program all_maxima_program_ = nullptr;
     cl_kernel detect_kernel_ = nullptr;
