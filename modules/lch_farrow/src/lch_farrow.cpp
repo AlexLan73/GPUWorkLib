@@ -472,7 +472,7 @@ LchFarrow::ProcessCpu(
 
 void LchFarrow::CompileKernel() {
   cl_int err;
-  std::string kernel_source = LoadKernelFile("lch_farrow_delay.cl");
+  std::string kernel_source = LoadKernelFile("lch_farrow_delay_00.cl");
   const char* source_ptr = kernel_source.c_str();
   size_t source_len = kernel_source.size();
 

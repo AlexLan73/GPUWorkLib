@@ -62,6 +62,8 @@ target_link_libraries(${MODULE_NAME}
     PUBLIC
         drvgpu
         OpenCL::OpenCL
+    PRIVATE
+        lch_farrow
 )
 
 if(ROCM_ENABLED)

@@ -4,14 +4,12 @@
  * @file delayed_form_signal_generator.hpp
  * @brief DelayedFormSignalGenerator — генератор с дробной задержкой (Farrow 48×5)
  *
- * Алгоритм:
+ * Обёртка над FormSignalGenerator + LchFarrow:
  *   1. Генерация чистого сигнала (getX, noise=0) через FormSignalGenerator
- *   2. Применение дробной задержки (Lagrange 48×5) per-antenna на GPU
- *   3. Добавление шума (Philox + Box-Muller) если noise_amplitude > 0
+ *   2. Применение дробной задержки (Lagrange 48×5) per-antenna через LchFarrow
+ *   3. Шум (Philox + Box-Muller) добавляется через LchFarrow::SetNoise()
  *
  * Задержка задаётся в микросекундах (float) на каждую антенну.
- * Матрица 48×5 — предвычисленные Lagrange-коэффициенты (встроена в код
- * или загружается из JSON).
  *
  * @author Кодо (AI Assistant)
  * @date 2026-02-17
@@ -21,6 +19,7 @@
 #include "form_signal_generator.hpp"
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
+#include "lch_farrow.hpp"
 
 #include <CL/cl.h>
 #include <vector>
@@ -33,6 +32,8 @@ namespace signal_gen {
 /**
  * @class DelayedFormSignalGenerator
  * @brief GPU-генератор с дробной задержкой Farrow (Lagrange 48×5)
+ *
+ * Использует LchFarrow для применения дробной задержки.
  *
  * @code
  * DelayedFormSignalGenerator gen(backend);
@@ -60,18 +61,18 @@ namespace signal_gen {
 class DelayedFormSignalGenerator {
 public:
   /// Тип для сбора OpenCL событий профилирования (имя → cl_event)
-  using ProfEvents = std::vector<std::pair<const char*, cl_event>>;
+  using ProfEvents = lch_farrow::ProfEvents;
 
   explicit DelayedFormSignalGenerator(drv_gpu_lib::IBackend* backend);
-  ~DelayedFormSignalGenerator();
+  ~DelayedFormSignalGenerator() = default;
 
   // No copy
   DelayedFormSignalGenerator(const DelayedFormSignalGenerator&) = delete;
   DelayedFormSignalGenerator& operator=(const DelayedFormSignalGenerator&) = delete;
 
   // Move
-  DelayedFormSignalGenerator(DelayedFormSignalGenerator&& other) noexcept;
-  DelayedFormSignalGenerator& operator=(DelayedFormSignalGenerator&& other) noexcept;
+  DelayedFormSignalGenerator(DelayedFormSignalGenerator&&) = default;
+  DelayedFormSignalGenerator& operator=(DelayedFormSignalGenerator&&) = default;
 
   /// Установить параметры сигнала (FormParams)
   void SetParams(const FormParams& params);
@@ -82,7 +83,6 @@ public:
   /**
    * @brief Установить задержки per-antenna в микросекундах
    * @param delay_us Вектор задержек (float), delay_us.size() == antennas
-   * @throws std::invalid_argument если размер не совпадает с antennas
    */
   void SetDelays(const std::vector<float>& delay_us);
 
@@ -90,7 +90,7 @@ public:
    * @brief Загрузить матрицу Lagrange из JSON-файла
    * @param json_path Путь к файлу (формат: { "data": [[...], ...] })
    *
-   * Если не вызвано — используется встроенная матрица 48×5.
+   * Если не вызвано — используется встроенная матрица 48×5 из LchFarrow.
    */
   void LoadMatrix(const std::string& json_path);
 
@@ -105,7 +105,7 @@ public:
    * @brief Генерация на GPU с опциональным сбором событий профилирования
    * @param prof_events nullptr → production (zero overhead); &vec → benchmark
    *
-   * Собирает события: "FormSignal" (form_signal.cl), "FarrowDelay" (delayed_form_signal.cl)
+   * Собирает события: "Kernel" (FormSignal), "Upload_delay", "Kernel" (FarrowDelay)
    */
   drv_gpu_lib::InputData<cl_mem> GenerateInputData(ProfEvents* prof_events);
 
@@ -125,30 +125,14 @@ public:
   size_t GetTotalSamples() const {
     return static_cast<size_t>(params_.antennas) * params_.points;
   }
-  const std::vector<float>& GetDelays() const { return delay_us_; }
+  const std::vector<float>& GetDelays() const { return lch_farrow_.GetDelays(); }
 
 private:
-  void CompileDelayKernel();
-  void UploadMatrix();
-  void ReleaseGpuResources();
-
   drv_gpu_lib::IBackend* backend_ = nullptr;
   FormParams params_;
-  std::vector<float> delay_us_;
 
-  // Lagrange matrix 48×5 (240 floats)
-  std::vector<float> lagrange_matrix_;
-  bool matrix_loaded_ = false;
-
-  // OpenCL resources
-  cl_context context_ = nullptr;
-  cl_command_queue queue_ = nullptr;
-  cl_device_id device_ = nullptr;
-  cl_program delay_program_ = nullptr;
-  cl_mem matrix_buf_ = nullptr;    // __constant: 48×5 floats
-
-  // FormSignalGenerator for clean signal generation
   FormSignalGenerator signal_gen_;
+  lch_farrow::LchFarrow lch_farrow_;
 };
 
 } // namespace signal_gen
