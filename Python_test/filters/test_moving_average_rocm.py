@@ -41,7 +41,11 @@ import os
 import numpy as np
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(PROJECT_ROOT, 'build', 'debian-radeon9070', 'python'))
+for _subdir in ["build/python", "build/python/Release", "build/python/Debug", "build/debian-radeon9070/python"]:
+    _p = os.path.join(PROJECT_ROOT, _subdir)
+    if os.path.exists(_p):
+        sys.path.insert(0, _p)
+        break
 
 try:
     import gpuworklib
@@ -329,13 +333,16 @@ def test_tema_basic():
     assert np.allclose(gpu_out, ref, atol=ATOL), f"TEMA max_diff={max_diff:.4e} > {ATOL}"
 
     # TEMA is fastest: verify TEMA leads DEMA leads EMA on a step
+    # Check 3 samples after step onset (t=53): all still rising, TEMA highest
     step = np.zeros(200, dtype=np.complex64)
     step[50:] = np.complex64(1.0 + 0j)
     ema_s  = ema_ref(step,  N_WIN)
     dema_s = dema_ref(step, N_WIN)
     tema_s = tema_ref(step, N_WIN)
-    assert float(tema_s[60].real) > float(dema_s[60].real) > float(ema_s[60].real), \
-        "Response speed order: TEMA > DEMA > EMA"
+    t_check = 53  # 3 samples after step: TEMA > DEMA > EMA (before peak overshoot reordering)
+    assert float(tema_s[t_check].real) > float(dema_s[t_check].real) > float(ema_s[t_check].real), \
+        f"Response speed order at t={t_check}: TEMA={tema_s[t_check].real:.4f} " \
+        f"DEMA={dema_s[t_check].real:.4f} EMA={ema_s[t_check].real:.4f} — expected TEMA > DEMA > EMA"
     print("  PASSED")
 
 

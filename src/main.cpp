@@ -16,6 +16,7 @@
 #include "modules/statistics/tests/all_test.hpp"
 #include "modules/vector_algebra/tests/all_test.hpp"
 #include "modules/fm_correlator/tests/all_test.hpp"
+#include "modules/strategies/tests/all_test.hpp"
 
 namespace {
 
@@ -23,7 +24,7 @@ namespace {
 const char* kDefaultOrder[] = {
     "drvgpu", "fft_processor", "statistics", "vector_algebra",
     "fft_maxima", "filters", "signal_generators", "lch_farrow", "heterodyne",
-    "fm_correlator"
+    "fm_correlator", "strategies"
 };
 const size_t kDefaultOrderSize = sizeof(kDefaultOrder) / sizeof(kDefaultOrder[0]);
 
@@ -71,6 +72,7 @@ bool run_module(const std::string& name) {
     if (n == "lch_farrow")       { lch_farrow_all_test::run(); return true; }
     if (n == "heterodyne")       { heterodyne_all_test::run(); return true; }
     if (n == "fm_correlator")    { fm_correlator_all_test::run(); return true; }
+    if (n == "strategies")       { strategies_all_test::run(); return true; }
 
     return false;
 }
@@ -84,7 +86,7 @@ void print_usage(const char* prog) {
               << "  --file path  - run modules from specified file\n"
               << "Modules: drvgpu, fft_processor, statistics, vector_algebra,\n"
               << "         fft_maxima, filters, signal_generators, lch_farrow, heterodyne,\n"
-              << "         fm_correlator\n";
+              << "         fm_correlator, strategies\n";
 }
 
 }  // namespace

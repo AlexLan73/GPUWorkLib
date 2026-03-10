@@ -115,10 +115,12 @@ inline void run_step_profiling(drv_gpu_lib::IBackend* backend) {
   auto& profiler  = drv_gpu_lib::GPUProfiler::GetInstance();
   const int gpu_id = 0;
 
+  char prof_buf[256];
   con.Print(gpu_id, "Strat_Prof", "════════════════════════════════════════════════");
   con.Print(gpu_id, "Strat_Prof", "  AntennaProcessor Step Profiling");
-  con.Print(gpu_id, "Strat_Prof", "  n_ant=%u  n_samples=%u  warmup=%d  runs=%d",
-            kProfNAnt, kProfNSamples, kProfWarmup, kProfRuns);
+  std::snprintf(prof_buf, sizeof(prof_buf), "  n_ant=%u  n_samples=%u  warmup=%d  runs=%d",
+                kProfNAnt, kProfNSamples, kProfWarmup, kProfRuns);
+  con.Print(gpu_id, "Strat_Prof", prof_buf);
   con.Print(gpu_id, "Strat_Prof", "════════════════════════════════════════════════");
 
   // ── 1. Generate test signal ──────────────────────────────────────────────
@@ -136,7 +138,8 @@ inline void run_step_profiling(drv_gpu_lib::IBackend* backend) {
   gen.SetParams(fp);
   auto input = gen.GenerateInputData();
 
-  con.Print(gpu_id, "Strat_Prof", "  Signal: %u ant x %u pts", fp.antennas, fp.points);
+  std::snprintf(prof_buf, sizeof(prof_buf), "  Signal: %u ant x %u pts", fp.antennas, fp.points);
+  con.Print(gpu_id, "Strat_Prof", prof_buf);
 
   // ── 2. Generate W matrix ─────────────────────────────────────────────────
   strategies::WeightParams wp;

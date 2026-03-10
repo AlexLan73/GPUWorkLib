@@ -71,6 +71,18 @@ public:
   // Checkpoint setter
   void set_checkpoint_save(std::unique_ptr<ICheckpointSave> save);
 
+  /**
+   * @brief Upload external weight matrix to GPU (managed by this class)
+   * @param W Flat row-major [n_ant x n_ant] complex<float> matrix
+   *
+   * After this call, use get_managed_weights_ptr() to obtain the GPU pointer.
+   * The buffer is freed in the destructor (not by the caller).
+   */
+  void set_external_weights(const std::vector<std::complex<float>>& W);
+
+  /// GPU pointer to the last uploaded external weights (nullptr if not set)
+  void* get_managed_weights_ptr() const { return d_W_managed_; }
+
 protected:
   // Step methods for AntennaProcessorTest to call individually
   void do_debug_point_21(const void* d_S, AntennaResult& result);
@@ -136,6 +148,9 @@ private:
   hipFunction_t one_max_kernel_      = nullptr;  ///< moved from hot path (P12)
   bool kernels_compiled_ = false;
 #endif
+
+  // Externally supplied weight matrix (managed GPU buffer — freed by release_buffers)
+  void* d_W_managed_ = nullptr;
 
   // Sizes
   uint32_t nFFT_ = 0;

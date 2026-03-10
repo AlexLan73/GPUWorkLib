@@ -146,6 +146,27 @@ public:
     return process(d_S_, d_W_);
   }
 
+  /**
+   * @brief Full pipeline using external weights loaded via set_external_weights()
+   *
+   * Requires prior call to set_external_weights().
+   * d_S must be set via step_0_prepare_input or step_0_signal_only.
+   */
+  AntennaResult process_full_managed_w() {
+    return process(d_S_, get_managed_weights_ptr());
+  }
+
+  /**
+   * @brief Step 0 signal-only variant — uses pre-loaded managed weights
+   *
+   * Call after set_external_weights() to avoid re-uploading W on every frame.
+   * Only updates d_S_; d_W_ is set to the internally managed GPU pointer.
+   */
+  void step_0_signal_only(const void* d_S) {
+    d_S_ = d_S;
+    d_W_ = get_managed_weights_ptr();
+  }
+
   // Getters for test access
   uint32_t test_get_nFFT() const { return get_nFFT(); }
 

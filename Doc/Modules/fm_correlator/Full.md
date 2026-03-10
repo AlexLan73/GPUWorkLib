@@ -8,6 +8,8 @@
 **Зависимости**: DrvGPU, hip::host, hip::hipfft
 **Основа**: ROCm 7.2, amdclang++
 
+📖 **Справочник API**: [API.md](API.md) | [Quick.md](Quick.md)
+
 ---
 
 ## 1. Назначение

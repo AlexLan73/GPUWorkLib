@@ -1,24 +1,31 @@
-// ============================================================================
-// lch_farrow_delay.cl — Fractional delay kernel (Lagrange 48x5) + optional noise
-//
-// 2D NDRange: dim0=sample_id, dim1=antenna_id
-// Algorithm:
-//   read_pos = sample_id - delay_us[antenna] * 1e-6 * sample_rate
-//   center = floor(read_pos), frac = read_pos - center
-//   row = (uint)(frac * 48) % 48
-//   output[n] = sum(L[row][k] * input[center-1+k], k=0..4)
-// ============================================================================
 
+
+struct float2_t {
+    float x;
+    float y;
+};
+
+// ═══════════════════════════════════════════════════════════════════════
 // Philox-2x32-10: counter-based PRNG
-uint2 philox2x32_round(uint2 ctr, uint key) {
-    const uint PHILOX_M = 0xD2511F53u;
-    uint hi = mul_hi(ctr.x, PHILOX_M);
-    uint lo = ctr.x * PHILOX_M;
-    return (uint2)(hi ^ key ^ ctr.y, lo);
+// ═══════════════════════════════════════════════════════════════════════
+
+struct uint2_t {
+    unsigned int x;
+    unsigned int y;
+};
+
+__device__ uint2_t philox2x32_round(uint2_t ctr, unsigned int key) {
+    const unsigned int PHILOX_M = 0xD2511F53u;
+    unsigned int lo = ctr.x * PHILOX_M;
+    unsigned int hi = __umulhi(ctr.x, PHILOX_M);
+    uint2_t result;
+    result.x = hi ^ key ^ ctr.y;
+    result.y = lo;
+    return result;
 }
 
-uint2 philox2x32_10(uint2 ctr, uint key) {
-    const uint PHILOX_BUMP = 0x9E3779B9u;
+__device__ uint2_t philox2x32_10(uint2_t ctr, unsigned int key) {
+    const unsigned int PHILOX_BUMP = 0x9E3779B9u;
     ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
     ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
     ctr = philox2x32_round(ctr, key); key += PHILOX_BUMP;
@@ -32,42 +39,46 @@ uint2 philox2x32_10(uint2 ctr, uint key) {
     return ctr;
 }
 
-// ============================================================================
-// LCH Farrow: fractional delay (Lagrange 48x5)
-// ============================================================================
+// ═══════════════════════════════════════════════════════════════════════
+// LCH Farrow: fractional delay kernel (Lagrange 48x5)
+// ═══════════════════════════════════════════════════════════════════════
 
-__kernel void lch_farrow_delay(
-    __global const float2* input,
-    __global float2* output,
-    __constant float* lagrange_matrix,
-    __global const float* delay_us,
-    const uint antennas,
-    const uint points,
-    const float sample_rate,
-    const float noise_amplitude,
-    const float norm_val,
-    const uint noise_seed)
+extern "C" __launch_bounds__(256)
+__global__ void lch_farrow_delay(
+    const float2_t* __restrict__ input,
+    float2_t* __restrict__ output,
+    const float* __restrict__ lagrange_matrix,
+    const float* __restrict__ delay_us,
+    unsigned int antennas,
+    unsigned int points,
+    float sample_rate,
+    float noise_amplitude,
+    float norm_val,
+    unsigned int noise_seed)
 {
-    // 2D NDRange: dim0=sample, dim1=antenna (eliminates div/mod ~40 cycles/thread)
-    const uint antenna_id = get_global_id(1);
-    const uint sample_id  = get_global_id(0);
+    // 2D grid: Y=antenna, X=sample (eliminates div/mod ~40 cycles/thread)
+    unsigned int antenna_id = blockIdx.y;
+    unsigned int sample_id  = blockIdx.x * blockDim.x + threadIdx.x;
     if (sample_id >= points) return;
-    const uint gid = antenna_id * points + sample_id;
+    unsigned int gid = antenna_id * points + sample_id;
 
-    // delay in samples
+    // Delay in samples
     float delay_samples = delay_us[antenna_id] * 1e-6f * sample_rate;
     float read_pos = (float)sample_id - delay_samples;
 
     // Before signal start -> zero
     if (read_pos < 0.0f) {
-        output[gid] = (float2)(0.0f, 0.0f);
+        float2_t zero;
+        zero.x = 0.0f;
+        zero.y = 0.0f;
+        output[gid] = zero;
         return;
     }
 
     // center = floor(read_pos), frac = read_pos - center
-    int center = (int)floor(read_pos);
+    int center = (int)floorf(read_pos);
     float frac = read_pos - (float)center;
-    uint row = ((uint)(frac * 48.0f)) % 48u;
+    unsigned int row = ((unsigned int)(frac * 48.0f)) % 48u;
 
     // 5 Lagrange coefficients
     float L0 = lagrange_matrix[row * 5u + 0u];
@@ -77,39 +88,52 @@ __kernel void lch_farrow_delay(
     float L4 = lagrange_matrix[row * 5u + 4u];
 
     // Read 5 input samples around center (center-1 .. center+3)
-    uint base = antenna_id * points;
+    unsigned int base = antenna_id * points;
 
-    #define READ_SAMPLE(idx) \
-        (((idx) >= 0 && (idx) < (int)points) ? \
-         input[base + (uint)(idx)] : (float2)(0.0f, 0.0f))
+    float2_t s0, s1, s2, s3, s4;
+    float2_t zero_val;
+    zero_val.x = 0.0f;
+    zero_val.y = 0.0f;
 
-    float2 s0 = READ_SAMPLE(center - 1);
-    float2 s1 = READ_SAMPLE(center);
-    float2 s2 = READ_SAMPLE(center + 1);
-    float2 s3 = READ_SAMPLE(center + 2);
-    float2 s4 = READ_SAMPLE(center + 3);
+    int idx0 = center - 1;
+    int idx1 = center;
+    int idx2 = center + 1;
+    int idx3 = center + 2;
+    int idx4 = center + 3;
 
-    #undef READ_SAMPLE
+    s0 = (idx0 >= 0 && idx0 < (int)points) ? input[base + (unsigned int)idx0] : zero_val;
+    s1 = (idx1 >= 0 && idx1 < (int)points) ? input[base + (unsigned int)idx1] : zero_val;
+    s2 = (idx2 >= 0 && idx2 < (int)points) ? input[base + (unsigned int)idx2] : zero_val;
+    s3 = (idx3 >= 0 && idx3 < (int)points) ? input[base + (unsigned int)idx3] : zero_val;
+    s4 = (idx4 >= 0 && idx4 < (int)points) ? input[base + (unsigned int)idx4] : zero_val;
 
     // 5-point Lagrange interpolation
-    float2 result = L0 * s0 + L1 * s1 + L2 * s2 + L3 * s3 + L4 * s4;
+    float2_t result;
+    result.x = L0 * s0.x + L1 * s1.x + L2 * s2.x + L3 * s3.x + L4 * s4.x;
+    result.y = L0 * s0.y + L1 * s1.y + L2 * s2.y + L3 * s3.y + L4 * s4.y;
 
     // Optional noise (Philox + Box-Muller)
     if (noise_amplitude > 0.0f) {
-        uint2 n_ctr = (uint2)(gid, noise_seed);
-        uint2 n_rnd = philox2x32_10(n_ctr, 0xCD9E8D57u);
+        uint2_t n_ctr;
+        n_ctr.x = gid;
+        n_ctr.y = noise_seed;
+        uint2_t n_rnd = philox2x32_10(n_ctr, 0xCD9E8D57u);
 
         float u1 = (float)(n_rnd.x) / 4294967296.0f + 1e-10f;
         float u2 = (float)(n_rnd.y) / 4294967296.0f;
 
-        float r = sqrt(-2.0f * log(u1));
-        float theta = 2.0f * M_PI_F * u2;
+        float r = __fsqrt_rn(-2.0f * __logf(u1));
+        float theta = 2.0f * 3.14159265358979323846f * u2;
+        float sin_t, cos_t;
+        __sincosf(theta, &sin_t, &cos_t);
 
-        float noise_re = noise_amplitude * norm_val * r * cos(theta);
-        float noise_im = noise_amplitude * norm_val * r * sin(theta);
+        float noise_re = noise_amplitude * norm_val * r * cos_t;
+        float noise_im = noise_amplitude * norm_val * r * sin_t;
 
-        result += (float2)(noise_re, noise_im);
+        result.x += noise_re;
+        result.y += noise_im;
     }
 
     output[gid] = result;
 }
+

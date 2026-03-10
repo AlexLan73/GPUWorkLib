@@ -23,6 +23,8 @@
 #include <memory>
 #include <vector>
 
+namespace drv_gpu_lib {
+
 // Фасад FM-коррелятора: публичный API поверх FMCorrelatorProcessorROCm.
 // Зачем фасад: изолирует пользователя от hipFFT/hiprtc деталей, предоставляет
 // удобные хелперы (GenerateMSequence, auto-batching).

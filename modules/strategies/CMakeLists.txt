@@ -68,7 +68,7 @@ target_link_libraries(${MODULE_NAME}
     PUBLIC
         drvgpu
         statistics
-        fft_maxima
+        spectrum_maxima
         hip::host
         roc::hipblas
         hip::hipfft

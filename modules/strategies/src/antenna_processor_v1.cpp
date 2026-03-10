@@ -177,6 +177,27 @@ void AntennaProcessor_v1::release_buffers() {
   if (d_hamming_window_) { backend_->Free(d_hamming_window_);  d_hamming_window_ = nullptr; }
   if (d_one_max_results_) { backend_->Free(d_one_max_results_); d_one_max_results_ = nullptr; }
   if (d_minmax_results_)  { backend_->Free(d_minmax_results_);  d_minmax_results_ = nullptr; }
+  if (d_W_managed_)       { backend_->Free(d_W_managed_);       d_W_managed_ = nullptr; }
+}
+
+// ============================================================================
+// SetExternalWeights — upload user-provided W matrix to GPU
+// ============================================================================
+
+void AntennaProcessor_v1::set_external_weights(
+    const std::vector<std::complex<float>>& W)
+{
+  // Free old managed buffer if any
+  if (d_W_managed_) {
+    backend_->Free(d_W_managed_);
+    d_W_managed_ = nullptr;
+  }
+
+  if (W.empty()) return;
+
+  const size_t bytes = W.size() * sizeof(std::complex<float>);
+  d_W_managed_ = backend_->Allocate(bytes);
+  HIP_CHECK(hipMemcpy(d_W_managed_, W.data(), bytes, hipMemcpyHostToDevice));
 }
 
 // ============================================================================
@@ -388,18 +409,18 @@ void AntennaProcessor_v1::do_gemm(const void* d_S, const void* d_W) {
   const int N = static_cast<int>(cfg_.n_ant);
   const int K = static_cast<int>(cfg_.n_ant);
 
-  hipblasComplex alpha = {1.0f, 0.0f};
-  hipblasComplex beta  = {0.0f, 0.0f};
+  hipComplex alpha = {1.0f, 0.0f};
+  hipComplex beta  = {0.0f, 0.0f};
 
   HIPBLAS_CHECK(hipblasCgemm(
       hipblas_handle_,
       HIPBLAS_OP_N, HIPBLAS_OP_N,
       M, N, K,
       &alpha,
-      static_cast<const hipblasComplex*>(d_S), M,
-      static_cast<const hipblasComplex*>(d_W), K,
+      static_cast<const hipComplex*>(d_S), M,
+      static_cast<const hipComplex*>(d_W), K,
       &beta,
-      static_cast<hipblasComplex*>(d_X_), M));
+      static_cast<hipComplex*>(d_X_), M));
 }
 
 void AntennaProcessor_v1::do_debug_point_22(AntennaResult& result) {
@@ -420,8 +441,8 @@ void AntennaProcessor_v1::do_debug_point_22(AntennaResult& result) {
 }
 
 void AntennaProcessor_v1::do_window_fft() {
-  const uint32_t n_ant = cfg_.n_ant;
-  const uint32_t n_samples = cfg_.n_samples;
+  uint32_t n_ant = cfg_.n_ant;
+  uint32_t n_samples = cfg_.n_samples;
   const uint32_t total_fft = n_ant * nFFT_;
 
   // 1. Zero entire FFT input buffer asynchronously (P11)
@@ -483,8 +504,8 @@ void AntennaProcessor_v1::do_debug_point_23(AntennaResult& result) {
 }
 
 void AntennaProcessor_v1::do_run_post_fft_scenarios(AntennaResult& result) {
-  const uint32_t n_ant = cfg_.n_ant;
-  const float sr = cfg_.sample_rate;
+  uint32_t n_ant = cfg_.n_ant;
+  float sr = cfg_.sample_rate;
   const auto mode = cfg_.scenario_mode;
 
   // Step2.1: OneMax + Parabola (no phase)

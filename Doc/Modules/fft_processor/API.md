@@ -18,7 +18,11 @@
 ```
 
 ```python
-# Python (пока биндинг не реализован — используй FFTProcessor через C++)
+# Python — OpenCL backend
+proc = gpuworklib.FFTProcessor(ctx)          # ctx = GPUContext
+
+# Python — ROCm backend (только AMD GPU, требует ENABLE_ROCM=1)
+proc = gpuworklib.FFTProcessorROCm(ctx)      # ctx = ROCmGPUContext
 ```
 
 ---
@@ -352,6 +356,102 @@ uint32_t GetNFFT() const;
 
 ---
 
+## Python API — FFTProcessorROCm
+
+**Файл**: `python/py_fft_processor_rocm.hpp`
+**Регистрация**: `register_fft_processor_rocm(m)` в `gpu_worklib_bindings.cpp`
+**Требует**: `ENABLE_ROCM=1`, `ROCmGPUContext`
+
+### Конструктор
+
+```python
+proc = gpuworklib.FFTProcessorROCm(ctx)
+# ctx: ROCmGPUContext
+```
+
+### process_complex()
+
+```python
+spec = proc.process_complex(
+    data,                  # numpy complex64: (n_point,) или (beam_count, n_point)
+    sample_rate: float,    # Гц
+    beam_count: int = 0,   # 0 = auto-detect из shape
+    n_point: int = 0,      # 0 = auto-detect из shape
+) -> np.ndarray            # complex64: (nFFT,) или (beam_count, nFFT)
+```
+
+### process_mag_phase()
+
+```python
+result = proc.process_mag_phase(
+    data,                    # numpy complex64: (n_point,) или (beam_count, n_point)
+    sample_rate: float,      # Гц
+    beam_count: int = 0,
+    n_point: int = 0,
+    include_freq: bool = True,
+) -> dict                    # ключи: magnitude, phase, frequency (если include_freq),
+                             #        nFFT, sample_rate
+```
+
+Типы массивов в словаре:
+- `magnitude`, `phase`, `frequency` — `numpy.float32` shape `(nFFT,)` или `(beam_count, nFFT)`
+- `nFFT` — `int`
+- `sample_rate` — `float`
+
+### get_profiling()
+
+```python
+p = proc.get_profiling()
+# dict: upload_ms, fft_ms, post_processing_ms, download_ms, total_ms
+```
+
+### Свойства
+
+```python
+proc.nfft  # int — текущий nFFT (nextPow2(n_point))
+```
+
+### Python API — Пример
+
+```python
+import numpy as np
+import gpuworklib
+
+ctx  = gpuworklib.ROCmGPUContext(0)
+proc = gpuworklib.FFTProcessorROCm(ctx)
+
+N = 1024
+fs = 1e6
+k  = 50
+t  = np.arange(N)
+sig = np.exp(1j * 2 * np.pi * k / N * t).astype(np.complex64)
+
+# Complex output
+spec = proc.process_complex(sig, sample_rate=fs)
+peak_bin = int(np.argmax(np.abs(spec)))
+print(f"peak_bin={peak_bin}, expected={k}")  # peak_bin=50
+
+# Magnitude + Phase
+mp = proc.process_mag_phase(sig, sample_rate=fs)
+peak_hz = mp["frequency"][peak_bin]
+print(f"peak_hz={peak_hz:.0f} Hz")           # peak_hz=48828 Hz (~k × fs/N)
+
+# Multi-beam (4 лучей, 512 точек каждый)
+data = np.random.randn(4, 512).astype(np.complex64)
+spec2d = proc.process_complex(data, sample_rate=fs)  # shape (4, 512)
+```
+
+### Тесты Python
+
+**Файл**: `Python_test/fft_processor/test_fft_processor_rocm.py`
+
+| Класс | Тестов | Описание |
+|-------|--------|----------|
+| `TestNumPyReference` | 8 | NumPy-референс, всегда запускаются |
+| `TestFFTProcessorROCm` | 7 | GPU тесты, skip если нет `FFTProcessorROCm` |
+
+---
+
 ## Цепочки вызовов
 
 ### OpenCL — CPU данные → Complex FFT
@@ -579,4 +679,4 @@ FFT **ненормализован** (как `np.fft.fft()`):
 
 ---
 
-*Обновлено: 2026-03-09*
+*Обновлено: 2026-03-10*

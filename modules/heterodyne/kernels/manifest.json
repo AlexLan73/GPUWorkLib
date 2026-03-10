@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "kernels": [
+    {
+      "name": "heterodyne_kernels",
+      "comment": "heterodyne",
+      "created": "2026-03-10T11:12:40",
+      "params": "gfx1201",
+      "backend": "rocm"
+    }
+  ]
+}

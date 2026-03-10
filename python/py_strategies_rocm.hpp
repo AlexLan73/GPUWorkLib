@@ -204,6 +204,45 @@ public:
     return out;
   }
 
+  // Upload external weight matrix to GPU (managed by AntennaProcessor_v1)
+  // After this call, step_0_signal_only() uses the uploaded W automatically.
+  void set_external_weights(
+      py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> W)
+  {
+    auto info = W.request();
+    const std::complex<float>* ptr = static_cast<const std::complex<float>*>(info.ptr);
+    size_t count = static_cast<size_t>(info.size);
+
+    proc_->set_external_weights(std::vector<std::complex<float>>(ptr, ptr + count));
+  }
+
+  // Step 0 signal-only: uploads only signal, uses pre-loaded managed W.
+  // Must call set_external_weights() before this.
+  void step_0_signal_only(
+      py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> signal)
+  {
+    auto sig_info = signal.request();
+    size_t sig_count = static_cast<size_t>(sig_info.size);
+
+    if (d_S_) ctx_.backend()->Free(d_S_);
+    d_S_ = ctx_.backend()->Allocate(sig_count * sizeof(std::complex<float>));
+    hipMemcpy(d_S_, sig_info.ptr, sig_count * sizeof(std::complex<float>),
+              hipMemcpyHostToDevice);
+
+    proc_->step_0_signal_only(d_S_);
+    // Note: d_W_ Python member is NOT updated — managed weight lifetime belongs to proc_
+  }
+
+  // Full pipeline using managed weights (after set_external_weights)
+  py::dict process_full_managed_w() {
+    strategies::AntennaResult r;
+    {
+      py::gil_scoped_release release;
+      r = proc_->process_full_managed_w();
+    }
+    return build_full_result(r);
+  }
+
   // Full pipeline
   py::dict process_full() {
     strategies::AntennaResult r;
@@ -211,36 +250,7 @@ public:
       py::gil_scoped_release release;
       r = proc_->process_full();
     }
-
-    py::dict result;
-    result["total_ms"] = r.perf.total_ms;
-    result["scenario_mode"] = static_cast<int>(r.scenario_mode);
-
-    // OneMax
-    py::list one_max_list;
-    for (const auto& om : r.one_max) {
-      py::dict d;
-      d["beam_id"]         = om.beam_id;
-      d["bin_index"]       = om.bin_index;
-      d["magnitude"]       = om.magnitude;
-      d["refined_freq_hz"] = om.refined_freq_hz;
-      one_max_list.append(d);
-    }
-    result["one_max"] = one_max_list;
-
-    // MinMax
-    py::list minmax_list;
-    for (const auto& mm : r.minmax) {
-      py::dict d;
-      d["beam_id"]          = mm.beam_id;
-      d["min_magnitude"]    = mm.min_magnitude;
-      d["max_magnitude"]    = mm.max_magnitude;
-      d["dynamic_range_dB"] = mm.dynamic_range_dB;
-      minmax_list.append(d);
-    }
-    result["minmax"] = minmax_list;
-
-    return result;
+    return build_full_result(r);
   }
 
   // Properties
@@ -259,6 +269,35 @@ private:
   std::unique_ptr<strategies::AntennaProcessorTest> proc_;
   void* d_S_ = nullptr;
   void* d_W_ = nullptr;
+
+  py::dict build_full_result(const strategies::AntennaResult& r) {
+    py::dict result;
+    result["total_ms"] = r.perf.total_ms;
+    result["scenario_mode"] = static_cast<int>(r.scenario_mode);
+
+    py::list one_max_list;
+    for (const auto& om : r.one_max) {
+      py::dict d;
+      d["beam_id"]         = om.beam_id;
+      d["bin_index"]       = om.bin_index;
+      d["magnitude"]       = om.magnitude;
+      d["refined_freq_hz"] = om.refined_freq_hz;
+      one_max_list.append(d);
+    }
+    result["one_max"] = one_max_list;
+
+    py::list minmax_list;
+    for (const auto& mm : r.minmax) {
+      py::dict d;
+      d["beam_id"]          = mm.beam_id;
+      d["min_magnitude"]    = mm.min_magnitude;
+      d["max_magnitude"]    = mm.max_magnitude;
+      d["dynamic_range_dB"] = mm.dynamic_range_dB;
+      minmax_list.append(d);
+    }
+    result["minmax"] = minmax_list;
+    return result;
+  }
 
   py::dict stats_to_dict(const std::vector<statistics::StatisticsResult>& stats) {
     py::list beams;
@@ -364,6 +403,26 @@ inline void register_strategies_rocm(py::module_& m) {
 
       .def("process_full", &PyAntennaProcessorTest::process_full,
            "Run full pipeline (all steps + all scenarios).\n"
+           "Returns dict with total_ms, one_max, minmax")
+
+      .def("set_external_weights", &PyAntennaProcessorTest::set_external_weights,
+           py::arg("W"),
+           "Upload external weight matrix to GPU.\n\n"
+           "Args:\n"
+           "  W: numpy array (n_ant, n_ant) complex64\n\n"
+           "After this call, use step_0_signal_only() to update only the signal\n"
+           "without re-uploading W on every frame.")
+
+      .def("step_0_signal_only", &PyAntennaProcessorTest::step_0_signal_only,
+           py::arg("signal"),
+           "Upload signal to GPU and use pre-loaded managed W.\n\n"
+           "Must call set_external_weights() first.\n"
+           "Args:\n"
+           "  signal: numpy array (n_ant, n_samples) complex64")
+
+      .def("process_full_managed_w", &PyAntennaProcessorTest::process_full_managed_w,
+           "Run full pipeline using pre-loaded managed weights.\n\n"
+           "Requires prior set_external_weights() call.\n"
            "Returns dict with total_ms, one_max, minmax")
 
       .def_property_readonly("nFFT", &PyAntennaProcessorTest::nFFT)

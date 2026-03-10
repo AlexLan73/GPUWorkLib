@@ -35,6 +35,20 @@
       "created": "2026-03-08T07:49:10",
       "params": "",
       "backend": "opencl"
+    },
+    {
+      "name": "fir_filter_cf32_rocm",
+      "comment": "FIR direct-form convolution",
+      "created": "2026-03-10T11:12:26",
+      "params": "gfx1201",
+      "backend": "rocm"
+    },
+    {
+      "name": "iir_biquad_cascade_rocm",
+      "comment": "IIR biquad cascade",
+      "created": "2026-03-10T11:12:26",
+      "params": "gfx1201",
+      "backend": "rocm"
     }
   ]
 }

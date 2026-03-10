@@ -473,7 +473,7 @@ LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points,
     if (ev_up_start) { hipEventDestroy(ev_up_start); hipEventDestroy(ev_up_end); }
     if (ev_k_start)  { hipEventDestroy(ev_k_start);  hipEventDestroy(ev_k_end);  }
     (void)hipFree(output_ptr);
-    (void)hipFree(delay_buf);
+    // delay_buf_ — persistent буфер, не освобождаем здесь (живёт между вызовами Process)
     throw std::runtime_error(
         "LchFarrowROCm::Process: hipModuleLaunchKernel failed: " +
         std::string(hipGetErrorString(err)));

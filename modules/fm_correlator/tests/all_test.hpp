@@ -35,11 +35,11 @@ inline void run() {
   con.Print(gpu_id, "FM_Corr", " FM Correlator Tests (ROCm)");
   con.Print(gpu_id, "FM_Corr", "════════════════════════════════════════════════════════════");
 
-  // fm_correlator::tests::run_test_msequence();
-  // fm_correlator::tests::run_test_autocorrelation();
-  // fm_correlator::tests::run_test_basic_pipeline();
-  // fm_correlator::tests::run_test_full_pipeline();
-  // fm_correlator::tests::run_test_shift_pattern();
+  fm_correlator::tests::run_test_msequence();
+  fm_correlator::tests::run_test_autocorrelation();
+  fm_correlator::tests::run_test_basic_pipeline();
+  fm_correlator::tests::run_test_shift_pattern();
+  // fm_correlator::tests::run_test_full_pipeline();  // тяжёлый: N=32768, K=32, S=5
 
   // Benchmarks:
   // fm_correlator::tests::run_benchmark();

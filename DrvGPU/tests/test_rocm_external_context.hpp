@@ -243,8 +243,11 @@ inline bool test_native_handles(ConsoleOutput& con, int gpu_id) {
     bool queue_match = (native_queue == static_cast<void*>(ext_stream));
     // Context — всегда nullptr для ROCm (HIP не имеет явного контекста)
     bool context_null = (backend.GetNativeContext() == nullptr);
-    // Device — не nullptr (integer handle через reinterpret_cast)
-    bool device_valid = (native_device != nullptr);
+    // Device — GetNativeDevice() кодирует hipDevice_t (int) через reinterpret_cast.
+    // Для device 0 результат == nullptr, что корректно (0 — валидный индекс).
+    // Проверяем через GetDeviceIndex() вместо указателя.
+    bool device_valid = (backend.GetDeviceIndex() == gpu_id);
+    (void)native_device;  // не используем для проверки — см. выше
 
     bool ok = queue_match && context_null && device_valid;
     print_result(con, gpu_id, "Native Handles Match", ok);

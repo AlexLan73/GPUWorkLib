@@ -200,7 +200,11 @@ private:
 };
 
 // ROCm Python wrappers (include AFTER ROCmGPUContext is defined)
+#include "py_fft_processor_rocm.hpp"
+#include "py_spectrum_maxima_finder_rocm.hpp"
+#include "py_form_signal_rocm.hpp"
 #include "py_filters_rocm.hpp"
+#include "py_filters_adaptive_rocm.hpp"
 #include "py_lch_farrow_rocm.hpp"
 #include "py_heterodyne_rocm.hpp"
 #include "py_statistics.hpp"
@@ -1847,11 +1851,23 @@ PYBIND11_MODULE(gpuworklib, m) {
             return false;
         });
 
+    // FFTProcessorROCm (see py_fft_processor_rocm.hpp)
+    register_fft_processor_rocm(m);
+
+    // SpectrumMaximaFinderROCm (see py_spectrum_maxima_finder_rocm.hpp)
+    register_spectrum_maxima_finder_rocm(m);
+
+    // FormSignalGeneratorROCm (see py_form_signal_rocm.hpp)
+    register_form_signal_rocm(m);
+
     // FirFilterROCm (see py_filters_rocm.hpp)
     register_fir_filter_rocm(m);
 
     // IirFilterROCm (see py_filters_rocm.hpp)
     register_iir_filter_rocm(m);
+
+    // MovingAverageFilterROCm, KalmanFilterROCm, KaufmanFilterROCm
+    register_filters_adaptive_rocm(m);
 
     // LchFarrowROCm (see py_lch_farrow_rocm.hpp)
     register_lch_farrow_rocm(m);

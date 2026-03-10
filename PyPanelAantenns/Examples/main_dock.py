@@ -37,7 +37,7 @@ CFG = dict(
     field_cx    = 400.0,
     field_cy    = 300.0,
     cmap        = "heat",
-    lerp_speed  = 0.08,
+    lerp_speed  = 2.16,       # ×2 быстрее анимация
     vmin        = 0.0,
     vmax        = 100.0,
     thr_red     = 30.0,       # ниже — красный (плохо)
@@ -911,7 +911,7 @@ def main():
 
     dpg.create_viewport(
         title="GPUWorkLib — Field Viewer  [Docking]",
-        width=1640, height=800,
+        width=1800, height=850,    # шире — чтобы все окна (включая Controls) помещались
     )
     dpg.setup_dearpygui()
     dpg.show_viewport()

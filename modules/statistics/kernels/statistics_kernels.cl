@@ -351,3 +351,72 @@ extern "C" __global__ void extract_medians(
     medians[b] = sorted[b * n_point + n_point / 2];
 }
 
+// =========================================================================
+// Kernel 7: welford_float   [P3-B, P3-C]
+// Welford stats for float input (magnitudes already computed).
+// Used by strategies module for post-FFT stats on |spectrum|.
+// Grid: (beam_count, 1, 1), Block: (256, 1, 1)
+// P3-B: LDS +1 padding to avoid bank conflicts in tree reduction.
+// P3-C: #pragma unroll 4 on grid-stride loop for ILP.
+// =========================================================================
+__launch_bounds__(256)
+extern "C" __global__ void welford_float(
+    const float* __restrict__ input,     // float magnitudes [beam_count x n_point]
+    WelfordResult* __restrict__ results,
+    unsigned int beam_count,
+    unsigned int n_point)
+{
+    unsigned int beam_id   = blockIdx.x;
+    if (beam_id >= beam_count) return;
+
+    unsigned int tid        = threadIdx.x;
+    unsigned int block_size = blockDim.x;
+
+    // P3-B: +1 padding per array to avoid LDS bank conflicts
+    extern __shared__ char shared_mem[];
+    float* s_sum_mag = (float*)shared_mem;
+    float* s_sum_sq  = s_sum_mag + block_size + 1;
+
+    float sum_mag = 0.0f, sum_sq = 0.0f;
+    unsigned int base = beam_id * n_point;
+
+    #pragma unroll 4
+    for (unsigned int i = tid; i < n_point; i += block_size) {
+        float val = input[base + i];
+        sum_mag += val;
+        sum_sq  += val * val;
+    }
+
+    s_sum_mag[tid] = sum_mag;
+    s_sum_sq[tid]  = sum_sq;
+    __syncthreads();
+
+    for (unsigned int s = block_size / 2; s >= WARP_SIZE; s >>= 1) {
+        if (tid < s) {
+            s_sum_mag[tid] += s_sum_mag[tid + s];
+            s_sum_sq[tid]  += s_sum_sq[tid + s];
+        }
+        __syncthreads();
+    }
+
+    if (tid < WARP_SIZE) {
+        float vm = s_sum_mag[tid], vs = s_sum_sq[tid];
+        for (int off = WARP_SIZE / 2; off > 0; off >>= 1) {
+            vm += __shfl_down(vm, off);
+            vs += __shfl_down(vs, off);
+        }
+        if (tid == 0) {
+            float inv_n = 1.0f / (float)n_point;
+            WelfordResult r;
+            r.mean_re  = 0.0f;
+            r.mean_im  = 0.0f;
+            r.mean_mag = vm * inv_n;
+            float mean_sq = vs * inv_n;
+            r.variance = mean_sq - r.mean_mag * r.mean_mag;
+            if (r.variance < 0.0f) r.variance = 0.0f;
+            r.std_dev  = __fsqrt_rn(r.variance);
+            results[beam_id] = r;
+        }
+    }
+}
+

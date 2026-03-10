@@ -14,13 +14,25 @@
 
 ## Быстрый старт
 
+**Через скрипт (из корня PyPanelAantenns):**
+```bash
+./run_example.sh         # все окна (main_dock): Cell List, Field, Detail, Table, Controls, Log
+./run_example.sh simple  # упрощённый (main.py): Field + Color scale
+```
+
+Скрипт сам запускает UDP-сервер и viewer.
+
+**Вручную (два терминала):**
 ```bash
 # Терминал 1 — тестовый UDP генератор
 python udp_server_test.py
 
 # Терминал 2 — визуализатор
-python main.py
+python main.py          # или main_dock.py (все окна)
 ```
+
+**Окна main_dock:** Cell List | Field View | Antenna Detail | Antenna Table | Controls | Log.  
+Если окно скрыто → меню **View** → включить нужную панель.
 
 ## Аргументы
 

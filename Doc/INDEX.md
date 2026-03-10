@@ -179,6 +179,7 @@ python/
 |----------|----------|
 | [Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md](../Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md) | Оптимизация HIP/ROCm ядер: теория + паттерны + чеклист |
 | [Examples/GPUProfiler_SetGPUInfo.md](../Examples/GPUProfiler_SetGPUInfo.md) | Как передать GPU info в профайлер |
+| [PyPanelAantenns.md](PyPanelAantenns.md) | Field Viewer: запуск, окна, UDP |
 | [Debian_Radeon9070_Setup.md](Debian_Radeon9070_Setup.md) | Настройка ROCm на Debian |
 | [../ROCm_Setup_Instructions.md](../ROCm_Setup_Instructions.md) | Полная инструкция установки ROCm |
 | [../configGPU.json](../configGPU.json) | Конфигурация GPU устройств |
@@ -216,6 +217,7 @@ GPUWorkLib/
 │   ├── JSON/                    #   JSON результаты
 │   └── Profiler/                #   Данные GPUProfiler
 ├── MemoryBank/                  # Управление проектом (задачи, спеки)
+├── PyPanelAantenns/              # Field Viewer (Dear PyGui + UDP) — [Doc](PyPanelAantenns.md)
 └── Examples/                    # Паттерны и примеры для разработки
 ```
 

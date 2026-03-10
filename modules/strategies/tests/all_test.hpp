@@ -6,21 +6,55 @@
  *
  * Include this from src/main.cpp to run strategies tests.
  *
+ * Usage in main.cpp:
+ *   #include "modules/strategies/tests/all_test.hpp"
+ *   strategies_all_test::run();
+ *
  * @date 2026-03-07
  */
 
 #include "test_strategies_pipeline.hpp"
 #include "test_strategies_step_profiling.hpp"
 
-namespace test_strategies_all {
-
-inline void run_all(drv_gpu_lib::IBackend* backend) {
 #if ENABLE_ROCM
+#include "backends/rocm/rocm_backend.hpp"
+#include "services/console_output.hpp"
+#endif
+
+namespace strategies_all_test {
+
+#if ENABLE_ROCM
+
+inline drv_gpu_lib::IBackend* GetTestBackend() {
+  static drv_gpu_lib::ROCmBackend backend;
+  if (!backend.IsInitialized()) {
+    backend.Initialize(0);
+  }
+  return &backend;
+}
+
+#endif  // ENABLE_ROCM
+
+inline void run() {
+#if ENABLE_ROCM
+  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
+  if (!con.IsRunning()) con.Start();
+  int gpu_id = 0;
+
+  con.Print(gpu_id, "Strategies", "");
+  con.Print(gpu_id, "Strategies", "════════════════════════════════════════════════════════════");
+  con.Print(gpu_id, "Strategies", " Strategies Tests (ROCm)");
+  con.Print(gpu_id, "Strategies", "════════════════════════════════════════════════════════════");
+
+  auto* backend = GetTestBackend();
   test_strategies::test_full_pipeline(backend);
+  test_strategies::test_external_weights(backend);
   // test_strategies_profiling::run_step_profiling(backend);
-#else
-  (void)backend;
+
+  con.Print(gpu_id, "Strategies", "════════════════════════════════════════════════════════════");
+  con.Print(gpu_id, "Strategies", " All Strategies tests PASSED ✅");
+  con.Print(gpu_id, "Strategies", "════════════════════════════════════════════════════════════");
 #endif
 }
 
-}  // namespace test_strategies_all
+}  // namespace strategies_all_test

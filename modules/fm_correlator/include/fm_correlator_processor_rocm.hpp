@@ -25,6 +25,8 @@
 #include <hipfft/hipfft.h>
 #include <memory>
 
+namespace drv_gpu_lib {
+
 // ROCm-бэкенд FM-коррелятора: hipFFT + hiprtc-кернелы.
 // Владеет GPU-буферами, hipFFT-планами и HIP-потоками.
 // Порядок вызовов: SetParams() → PrepareReference() → Process()/RunTestPattern().
