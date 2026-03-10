@@ -53,6 +53,14 @@
       "command": "npx",
       "args": ["-y", "@uhd_kr/mcp-debug-tools@latest"],
       "env": {}
+    },
+    "github": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "ТОКЕН_ИЗ_ФАЙЛА_github_token.txt"
+      }
     }
   }
 }
