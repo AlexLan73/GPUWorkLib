@@ -7,6 +7,34 @@
 
 ## Приоритет 🔴 Высокий
 
+### TASK-REF01 — Выделить clFFT в тупиковую ветку + ROCm-only в main
+**Дата планирования**: 2026-03-10
+**Выполнять на**: AMD машина (Linux, ROCm)
+**Оценка**: ~3-4 часа
+
+**Шаги:**
+1. `git checkout -b legacy/opencl-clfft && git push` — заморозить clFFT код
+2. Вернуться на main, начать с `modules/fft_processor` (паттерн для остальных)
+3. Убрать OpenCL вычислительные классы из модулей (по таблице):
+   - `modules/fft_processor/` → убрать `FFTProcessor` (clFFT), оставить `FFTProcessorROCm`
+   - `modules/fft_maxima/` → убрать `SpectrumProcessorOpenCL`
+   - `modules/signal_generators/` → убрать OpenCL kernels + `*_opencl.cpp`
+   - `modules/filters/` → убрать OpenCL kernels + OpenCL классы (без ROCm)
+   - `modules/lch_farrow/` → убрать OpenCL kernels + `LchFarrow` (OpenCL)
+   - `modules/heterodyne/` → убрать `HeterodyneProcessorOpenCL` + OpenCL kernels
+4. CMake: убрать `clFFT` линковку из модулей (DrvGPU — НЕ ТРОГАТЬ!)
+5. Закомментировать OpenCL-тесты в `all_test.hpp` каждого модуля
+6. Проверка: `cmake .. -DENABLE_ROCM=ON && make`
+
+**Что НЕ трогаем:**
+- `DrvGPU/backends/opencl/` — обмен данных остаётся
+- `BackendType` enum — не трогаем
+- `DrvGPU/CMakeLists.txt` → OpenCL линковка остаётся
+
+**Полный план**: `.claude/plans/memoized-wiggling-ritchie.md`
+
+
+
 ### TASK-02 — fft_processor: Python Binding
 - Нет `py_fft_processor.hpp` и `py_fft_processor_rocm.hpp`
 - Нет Python тестов
