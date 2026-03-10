@@ -101,3 +101,8 @@ amdgpu-install*
 # MCP server temp data
 !mcp/
 
+# MCP config with tokens — never commit!
+.mcp.json
+setup_github_mcp.zip
+setup_github_mcp.md
+
