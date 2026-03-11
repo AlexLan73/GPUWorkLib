@@ -1,33 +1,27 @@
 {
   "version": 1,
+  "branch": "nvidia",
   "kernels": [
     {
+      "name": "fft_kernels",
+      "comment": "OpenCL FFT kernels (clFFT-based): fft_forward, fft_inverse",
+      "created": "2026-03-11T00:00:00",
+      "params": "",
+      "backend": "opencl"
+    },
+    {
       "name": "spectrum_kernels",
-      "comment": "spectrum_kernels: pad_data + compute_magnitudes",
-      "created": "2026-03-10T10:54:58",
-      "params": "gfx1201",
-      "backend": "rocm"
+      "comment": "OpenCL spectrum kernels: pad_data, compute_magnitudes",
+      "created": "2026-03-11T00:00:00",
+      "params": "",
+      "backend": "opencl"
     },
     {
       "name": "all_maxima_kernels",
-      "comment": "all_maxima: detect + scan + add + compact",
-      "created": "2026-03-10T10:54:58",
-      "params": "gfx1201",
-      "backend": "rocm"
-    },
-    {
-      "name": "fft_processor_kernels",
-      "comment": "fft_processor hiprtc kernels",
-      "created": "2026-03-02T12:34:22",
+      "comment": "OpenCL all_maxima kernels: detect, scan, add, compact",
+      "created": "2026-03-11T00:00:00",
       "params": "",
-      "backend": "rocm"
-    },
-    {
-      "name": "c2mp_kernels",
-      "comment": "complex_to_mag_phase hiprtc kernel",
-      "created": "2026-03-02T12:34:22",
-      "params": "",
-      "backend": "rocm"
+      "backend": "opencl"
     }
   ]
 }
