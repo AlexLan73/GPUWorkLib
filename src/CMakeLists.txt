@@ -137,12 +137,14 @@ if(OPENCL_ENABLED)
     endif()
 endif()
 
-# clFFT (опционально - если не найден, продолжаем без него)
-if(CLFFT_FOUND AND CLFFT_LIB)
+# clFFT — только на ветке nvidia (ENABLE_CLFFT=ON). На main (ROCm) не нужен.
+if(ENABLE_CLFFT AND CLFFT_FOUND AND CLFFT_LIB)
     target_link_libraries(GPUWorkLib PRIVATE "${CLFFT_LIB}")
     message(STATUS "✅ Linked: clFFT")
+elseif(NOT ENABLE_CLFFT)
+    message(STATUS "⏭️  clFFT disabled (main branch — ROCm only)")
 else()
-    message(STATUS "⏭️  clFFT not found - FFT support disabled")
+    message(STATUS "⏭️  clFFT not found")
 endif()
 
 # CUDA (опционально)
@@ -190,8 +192,8 @@ if(OPENCL_ENABLED)
     target_include_directories(GPUWorkLib PRIVATE ${OpenCL_INCLUDE_DIRS})
 endif()
 
-# clFFT includes
-if(CLFFT_FOUND)
+# clFFT includes — только при ENABLE_CLFFT=ON (ветка nvidia)
+if(ENABLE_CLFFT AND CLFFT_FOUND)
     target_include_directories(GPUWorkLib PRIVATE ${CLFFT_INCLUDE_DIR})
 endif()
 
@@ -222,7 +224,7 @@ if(OPENCL_ENABLED)
     )
 endif()
 
-if(CLFFT_FOUND)
+if(ENABLE_CLFFT AND CLFFT_FOUND)
     target_compile_definitions(GPUWorkLib PRIVATE
         CLFFT_VERSION=2
     )
