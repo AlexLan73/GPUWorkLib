@@ -22,9 +22,6 @@
 #include "params/signal_request.hpp"
 #include "params/system_sampling.hpp"
 
-#if ENABLE_CLFFT
-#include "spectrum_maxima_finder.h"
-#endif
 
 #include "DrvGPU/backends/opencl/opencl_backend.hpp"
 #include "DrvGPU/services/console_output.hpp"
@@ -229,98 +226,6 @@ inline void run_test_5_antennas_linear() {
 // ════════════════════════════════════════════════════════════════════════════
 // Test 3: dechirp_correct — verify peak moves to DC (requires ENABLE_CLFFT=1)
 // ════════════════════════════════════════════════════════════════════════════
-#if ENABLE_CLFFT
-inline void run_test_correction() {
-  int gpu_id = 0;
-  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
-
-  con.Print(gpu_id, "Heterodyne", "");
-  con.Print(gpu_id, "Heterodyne", "  Test 3: Dechirp correction (peak -> DC)");
-
-  try {
-    auto backend = std::make_unique<drv_gpu_lib::OpenCLBackend>();
-    backend->Initialize(0);
-
-    auto rx_flat = GenerateRxFlat(backend.get(), DELAYS_LINEAR_US);
-
-    drv_gpu_lib::HeterodyneParams params;
-    params.f_start = F_START;
-    params.f_end = F_END;
-    params.sample_rate = FS;
-    params.num_samples = N;
-    params.num_antennas = ANTENNAS;
-
-    // Step 1: Generate ref
-    signal_gen::LfmParams lfm_p;
-    lfm_p.f_start = F_START;
-    lfm_p.f_end = F_END;
-    lfm_p.amplitude = 1.0;
-    lfm_p.complex_iq = true;
-
-    signal_gen::SystemSampling sys;
-    sys.fs = FS;
-    sys.length = N;
-
-    signal_gen::LfmConjugateGenerator conj_gen(backend.get(), lfm_p);
-    conj_gen.SetSampling(sys);
-    auto ref = conj_gen.GenerateToCpu();
-
-    // Step 2: Dechirp on GPU
-    drv_gpu_lib::HeterodyneProcessorOpenCL proc(backend.get());
-    auto dc_data = proc.Dechirp(rx_flat, ref, params);
-
-    // Step 3: Process to find f_beat
-    drv_gpu_lib::HeterodyneDechirp het(backend.get());
-    het.SetParams(params);
-    auto result = het.Process(rx_flat);
-
-    if (!result.success) {
-      con.Print(gpu_id, "Heterodyne", "    FAIL: " + result.error_message);
-      return;
-    }
-
-    // Step 4: Correct using found f_beat
-    std::vector<float> f_beats(ANTENNAS);
-    for (int i = 0; i < ANTENNAS; ++i) {
-      f_beats[i] = result.antennas[i].f_beat_hz;
-    }
-
-    auto corrected = proc.Correct(dc_data, f_beats, params);
-
-    // Step 5: FFT corrected data via SpectrumMaximaFinder, check peak near DC
-    antenna_fft::SpectrumMaximaFinder finder(backend.get());
-
-    antenna_fft::InputData<std::vector<std::complex<float>>> smf_input;
-    smf_input.antenna_count = ANTENNAS;
-    smf_input.n_point = N;
-    smf_input.data = corrected;
-    smf_input.repeat_count = 1;
-    smf_input.sample_rate = FS;
-
-    auto spec_results = finder.Process(smf_input,
-        antenna_fft::PeakSearchMode::ONE_PEAK,
-        antenna_fft::DriverType::OPENCL);
-
-    bool all_dc = true;
-    for (int ant = 0; ant < ANTENNAS; ++ant) {
-      uint32_t peak_bin = spec_results[ant].interpolated.index;
-
-      con.Print(gpu_id, "Heterodyne",
-          "    Ant " + std::to_string(ant) + ": peak at bin "
-          + std::to_string(peak_bin) + " (expect ~0)");
-
-      if (peak_bin > 3) all_dc = false;
-    }
-
-    con.Print(gpu_id, "Heterodyne",
-        all_dc ? "    RESULT: PASSED (peaks at DC)"
-               : "    RESULT: FAILED (peaks NOT at DC)");
-
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "Heterodyne", "    EXCEPTION: " + std::string(e.what()));
-  }
-}
-#endif  // ENABLE_CLFFT
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test 6: Random delays (seed=42), 5 antennas, delays [10..600] us

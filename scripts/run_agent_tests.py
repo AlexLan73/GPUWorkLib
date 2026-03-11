@@ -120,13 +120,8 @@ def main():
         total += 1
         print(f"  >>> {mod}")
 
-        # fft_func: AMD -> только *_rocm тесты; NVIDIA (opencl-clfft branch) -> только clFFT
+        # fft_func: main branch (AMD/ROCm) — все тесты ROCm; nvidia branch — clFFT тесты
         pytest_args = [py_dir, "-v", "-s"]
-        if mod == "fft_func":
-            if gpu == "amd":
-                pytest_args.extend(["-k", "rocm"])
-            elif gpu == "nvidia":
-                pytest_args.extend(["-k", "not rocm"])
 
         r = subprocess.run(
             [sys.executable, "-m", "pytest"] + pytest_args,

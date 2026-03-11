@@ -1,30 +1,31 @@
 {
   "version": 1,
+  "branch": "main",
   "kernels": [
     {
       "name": "spectrum_kernels",
-      "comment": "spectrum_kernels: pad_data + compute_magnitudes",
+      "comment": "ROCm spectrum kernels: pad_data, compute_magnitudes",
       "created": "2026-03-10T10:54:58",
       "params": "gfx1201",
       "backend": "rocm"
     },
     {
       "name": "all_maxima_kernels",
-      "comment": "all_maxima: detect + scan + add + compact",
+      "comment": "ROCm all_maxima kernels: detect, scan, add, compact",
       "created": "2026-03-10T10:54:58",
       "params": "gfx1201",
       "backend": "rocm"
     },
     {
       "name": "fft_processor_kernels",
-      "comment": "fft_processor hiprtc kernels",
+      "comment": "ROCm fft_processor hiprtc kernels",
       "created": "2026-03-02T12:34:22",
       "params": "",
       "backend": "rocm"
     },
     {
       "name": "c2mp_kernels",
-      "comment": "complex_to_mag_phase hiprtc kernel",
+      "comment": "ROCm complex_to_mag_phase hiprtc kernel",
       "created": "2026-03-02T12:34:22",
       "params": "",
       "backend": "rocm"

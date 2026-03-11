@@ -21,9 +21,6 @@
 #include "params/signal_request.hpp"
 #include "params/system_sampling.hpp"
 
-#if ENABLE_CLFFT
-#include "spectrum_maxima_finder.h"
-#endif
 
 #include "DrvGPU/backends/opencl/opencl_backend.hpp"
 #include "DrvGPU/services/console_output.hpp"
@@ -201,104 +198,5 @@ inline void run_test_process_external() {
 // ════════════════════════════════════════════════════════════════════════════
 // Test 7: AllMaxima mode — requires ENABLE_CLFFT=1
 // ════════════════════════════════════════════════════════════════════════════
-#if ENABLE_CLFFT
-inline void run_test_all_maxima() {
-  int gpu_id = 0;
-  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
-
-  con.Print(gpu_id, "Heterodyne", "");
-  con.Print(gpu_id, "Heterodyne", "  Test 7: AllMaxima mode");
-
-  try {
-    auto backend = std::make_unique<drv_gpu_lib::OpenCLBackend>();
-    backend->Initialize(0);
-
-    std::vector<float> delays_us = DELAYS_LINEAR_US;
-    auto rx_flat = GenerateRxFlat(backend.get(), delays_us);
-
-    drv_gpu_lib::HeterodyneParams params;
-    params.f_start = F_START;
-    params.f_end = F_END;
-    params.sample_rate = FS;
-    params.num_samples = N;
-    params.num_antennas = ANTENNAS;
-
-    // Process() — get reference f_beat values
-    drv_gpu_lib::HeterodyneDechirp het(backend.get());
-    het.SetParams(params);
-    auto result = het.Process(rx_flat);
-
-    if (!result.success) {
-      con.Print(gpu_id, "Heterodyne", "    FAIL (Process): " + result.error_message);
-      return;
-    }
-
-    // Now manually dechirp and run AllMaxima
-    signal_gen::LfmParams lfm_p;
-    lfm_p.f_start = F_START;
-    lfm_p.f_end = F_END;
-    lfm_p.amplitude = 1.0;
-    lfm_p.complex_iq = true;
-
-    signal_gen::SystemSampling sys;
-    sys.fs = FS;
-    sys.length = N;
-
-    signal_gen::LfmConjugateGenerator conj_gen(backend.get(), lfm_p);
-    conj_gen.SetSampling(sys);
-    auto ref = conj_gen.GenerateToCpu();
-
-    drv_gpu_lib::HeterodyneProcessorOpenCL proc(backend.get());
-    auto dc_data = proc.Dechirp(rx_flat, ref, params);
-
-    // AllMaxima via SpectrumMaximaFinder
-    antenna_fft::SpectrumMaximaFinder finder(backend.get());
-
-    antenna_fft::InputData<std::vector<std::complex<float>>> smf_input;
-    smf_input.antenna_count = ANTENNAS;
-    smf_input.n_point = N;
-    smf_input.data = dc_data;
-    smf_input.repeat_count = 1;
-    smf_input.sample_rate = FS;
-
-    auto all_results = finder.FindAllMaxima(smf_input,
-        antenna_fft::OutputDestination::CPU,
-        antenna_fft::DriverType::OPENCL);
-
-    bool all_passed = true;
-    for (int ant = 0; ant < ANTENNAS; ++ant) {
-      float ref_f_beat = result.antennas[ant].f_beat_hz;
-
-      // Find the closest peak in AllMaxima results
-      float min_err = 1e9f;
-      float closest_freq = 0.0f;
-      if (ant < static_cast<int>(all_results.beams.size())) {
-        for (auto& m : all_results.beams[ant].maxima) {
-          float err = std::abs(m.refined_frequency - ref_f_beat);
-          if (err < min_err) {
-            min_err = err;
-            closest_freq = m.refined_frequency;
-          }
-        }
-      }
-
-      char buf[256];
-      snprintf(buf, sizeof(buf),
-          "    Ant %d: OnePeak=%.0f Hz, AllMaxima closest=%.0f Hz, diff=%.0f Hz  %s",
-          ant, ref_f_beat, closest_freq, min_err,
-          (min_err < F_BEAT_TOL_HZ) ? "OK" : "FAIL");
-      con.Print(gpu_id, "Heterodyne", buf);
-
-      if (min_err >= F_BEAT_TOL_HZ) all_passed = false;
-    }
-
-    con.Print(gpu_id, "Heterodyne",
-        all_passed ? "    RESULT: PASSED" : "    RESULT: FAILED");
-
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "Heterodyne", "    EXCEPTION: " + std::string(e.what()));
-  }
-}
-#endif  // ENABLE_CLFFT
 
 }} // namespace heterodyne::tests

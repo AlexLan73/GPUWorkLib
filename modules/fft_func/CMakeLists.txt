@@ -1,12 +1,12 @@
 # ════════════════════════════════════════════════════════════════════════════
-# fft_func Module - CMakeLists.txt
+# fft_func Module - CMakeLists.txt  [BRANCH: main]
 # ════════════════════════════════════════════════════════════════════════════
 #
-# Объединяет: fft_processor + fft_maxima
+# Ветка: main (Linux / AMD GPU / ROCm + hipFFT)
 #
-# Два бэкенда:
-#   ROCm/hipFFT  — активен при ROCM_ENABLED=ON (AMD GPU, основной)
-#   OpenCL/clFFT — активен при ENABLE_CLFFT=ON (NVIDIA, ветка opencl-clfft)
+# Реализации:
+#   ROCm/hipFFT — FFTProcessorROCm, SpectrumMaximaFinderROCm
+#   Без OpenCL/clFFT (только для NVIDIA, который в ветке nvidia)
 #
 # CMake-таргеты:
 #   fft_func                    — основной
@@ -15,68 +15,35 @@
 #   GPUWorkLib::fft_processor   — алиас (backward compat)
 #   GPUWorkLib::fft_maxima      — алиас (backward compat)
 #
+# Сборка: cmake --preset Debian-Radeon9070
 # ════════════════════════════════════════════════════════════════════════════
 
 cmake_minimum_required(VERSION 3.20)
 
 set(MODULE_NAME fft_func)
 
-message(STATUS "Configuring module: ${MODULE_NAME}")
+message(STATUS "Configuring module: ${MODULE_NAME} [main branch - ROCm/hipFFT]")
 
 # ════════════════════════════════════════════════════════════════════════════
-# Options
+# Зависимости
 # ════════════════════════════════════════════════════════════════════════════
 
-option(ENABLE_CLFFT "Enable OpenCL/clFFT backend (disabled on AMD RDNA4+)" OFF)
-
-# ════════════════════════════════════════════════════════════════════════════
-# Sources
-# ════════════════════════════════════════════════════════════════════════════
-
-set(FFT_FUNC_SOURCES "")
-
-# ─── OpenCL / clFFT sources (опциональные) ───────────────────────────────────
-if(ENABLE_CLFFT)
-    if(NOT CLFFT_FOUND)
-        message(FATAL_ERROR "${MODULE_NAME}: ENABLE_CLFFT=ON but clFFT not found!")
-    endif()
-    find_package(OpenCL REQUIRED)
-    list(APPEND FFT_FUNC_SOURCES
-        src/fft_processor.cpp
-        src/spectrum_maxima_finder.cpp
-        src/spectrum_maxima_finder_process.cpp
-        src/spectrum_maxima_finder_all_maxima.cpp
-        src/spectrum_processor_opencl.cpp
-        src/all_maxima_pipeline_opencl.cpp
-        src/spectrum_processor_factory.cpp
-    )
-    message(STATUS "  ${MODULE_NAME}: OpenCL/clFFT ENABLED")
-else()
-    message(STATUS "  ${MODULE_NAME}: OpenCL/clFFT disabled (ENABLE_CLFFT=OFF)")
+if(NOT ROCM_ENABLED OR NOT HIPFFT_FOUND)
+    message(FATAL_ERROR "${MODULE_NAME}: ROCm/hipFFT required but not found! "
+            "ROCM_ENABLED=${ROCM_ENABLED}, HIPFFT_FOUND=${HIPFFT_FOUND}")
 endif()
 
-# ─── ROCm / hipFFT sources (основные) ────────────────────────────────────────
-if(ROCM_ENABLED AND HIPFFT_FOUND)
-    list(APPEND FFT_FUNC_SOURCES
-        src/fft_processor_rocm.cpp
-        src/complex_to_mag_phase_rocm.cpp
-        src/spectrum_processor_rocm.cpp
-        src/all_maxima_pipeline_rocm.cpp
-    )
-    # spectrum_processor_factory нужна для ROCm даже если clFFT выключен
-    if(NOT ENABLE_CLFFT)
-        list(APPEND FFT_FUNC_SOURCES
-            src/spectrum_processor_factory.cpp
-        )
-    endif()
-    message(STATUS "  ${MODULE_NAME}: ROCm/hipFFT ENABLED")
-else()
-    message(STATUS "  ${MODULE_NAME}: ROCm/hipFFT disabled")
-endif()
+# ════════════════════════════════════════════════════════════════════════════
+# Sources — только ROCm/hipFFT
+# ════════════════════════════════════════════════════════════════════════════
 
-if(NOT FFT_FUNC_SOURCES)
-    message(FATAL_ERROR "${MODULE_NAME}: no sources! Enable ENABLE_CLFFT or ROCM_ENABLED.")
-endif()
+set(FFT_FUNC_SOURCES
+    src/fft_processor_rocm.cpp
+    src/complex_to_mag_phase_rocm.cpp
+    src/spectrum_processor_rocm.cpp
+    src/all_maxima_pipeline_rocm.cpp
+    src/spectrum_processor_factory.cpp
+)
 
 # ════════════════════════════════════════════════════════════════════════════
 # Library
@@ -100,27 +67,12 @@ target_link_libraries(${MODULE_NAME}
 
 target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
 
-# ─── clFFT linkage ───────────────────────────────────────────────────────────
-if(ENABLE_CLFFT)
-    target_include_directories(${MODULE_NAME} PRIVATE
-        ${OpenCL_INCLUDE_DIRS}
-        ${CLFFT_INCLUDE_DIR}
-    )
-    target_link_libraries(${MODULE_NAME} PUBLIC
-        OpenCL::OpenCL
-        ${CLFFT_LIB}
-    )
-    target_compile_definitions(${MODULE_NAME} PUBLIC ENABLE_CLFFT=1)
-endif()
-
 # ─── ROCm / hipFFT linkage ───────────────────────────────────────────────────
-if(ROCM_ENABLED AND HIPFFT_FOUND)
-    if(hipfft_FOUND)
-        target_link_libraries(${MODULE_NAME} PUBLIC hip::hipfft)
-    else()
-        target_link_libraries(${MODULE_NAME} PUBLIC ${HIPFFT_LIB})
-        target_include_directories(${MODULE_NAME} PRIVATE ${HIPFFT_INCLUDE_DIR})
-    endif()
+if(hipfft_FOUND)
+    target_link_libraries(${MODULE_NAME} PUBLIC hip::hipfft)
+else()
+    target_link_libraries(${MODULE_NAME} PUBLIC ${HIPFFT_LIB})
+    target_include_directories(${MODULE_NAME} PRIVATE ${HIPFFT_INCLUDE_DIR})
 endif()
 
 set_target_properties(${MODULE_NAME} PROPERTIES
@@ -156,9 +108,8 @@ install(DIRECTORY include/
 # Summary
 # ════════════════════════════════════════════════════════════════════════════
 
-message(STATUS "  ${MODULE_NAME}: configured")
-message(STATUS "    - FFTProcessorROCm, ComplexToMagPhaseROCm, SpectrumProcessorROCm")
-message(STATUS "    - AllMaximaPipelineROCm, SpectrumProcessorFactory")
-if(ENABLE_CLFFT)
-    message(STATUS "    - FFTProcessor (OpenCL/clFFT), SpectrumMaximaFinder (OpenCL)")
-endif()
+message(STATUS "  ${MODULE_NAME}: configured [main branch]")
+message(STATUS "    - FFTProcessorROCm (hipFFT)")
+message(STATUS "    - ComplexToMagPhaseROCm")
+message(STATUS "    - SpectrumProcessorROCm, AllMaximaPipelineROCm")
+message(STATUS "    - SpectrumProcessorFactory (ROCm)")

@@ -20,9 +20,6 @@
 #include "generators/cw_generator.hpp"
 #include "generators/lfm_generator.hpp"
 #include "generators/noise_generator.hpp"
-#if ENABLE_CLFFT
-#include "fft_processor.hpp"
-#endif
 #include "DrvGPU/backends/opencl/opencl_backend.hpp"
 
 #include <CL/cl.h>
@@ -251,52 +248,6 @@ inline bool TestNoiseStatistics(drv_gpu_lib::IBackend* backend) {
  * @brief Test 5: Integration — CW -> FFTProcessor -> check frequency
  * Only available when clFFT is enabled (ENABLE_CLFFT=1).
  */
-#if ENABLE_CLFFT
-inline bool TestCwFftIntegration(drv_gpu_lib::IBackend* backend) {
-    std::cout << "\n  [SigGen 5] Integration: CW -> FFT -> freq check...\n";
-
-    const double f0 = 300.0;
-    const double fs = 4000.0;
-    const size_t n_point = 4096;
-
-    // Generate CW on GPU
-    signal_gen::SignalService service(backend);
-    signal_gen::CwParams cw;
-    cw.f0 = f0;
-
-    cl_mem gpu_data = service.GenerateGpu(cw, {fs, n_point}, 1);
-
-    // Read to CPU for FFTProcessor
-    std::vector<std::complex<float>> cpu_data(n_point);
-    cl_command_queue q = static_cast<cl_command_queue>(backend->GetNativeQueue());
-    clEnqueueReadBuffer(q, gpu_data, CL_TRUE, 0,
-                        n_point * sizeof(std::complex<float>),
-                        cpu_data.data(), 0, nullptr, nullptr);
-    clReleaseMemObject(gpu_data);
-
-    // FFT
-    fft_processor::FFTProcessor fft(backend);
-    fft_processor::FFTProcessorParams params;
-    params.beam_count = 1;
-    params.n_point = static_cast<uint32_t>(n_point);
-    params.sample_rate = static_cast<float>(fs);
-
-    auto results = fft.ProcessComplex(cpu_data, params);
-
-    uint32_t nFFT = results[0].nFFT;
-    size_t peak_bin = FindPeakBin(results[0].spectrum, nFFT / 2);
-    float detected_freq = static_cast<float>(peak_bin) * static_cast<float>(fs) / nFFT;
-    float error = std::abs(detected_freq - static_cast<float>(f0));
-    float tolerance = static_cast<float>(fs) / nFFT;  // 1 bin
-
-    bool pass = error < tolerance;
-
-    std::cout << "    CW f0=" << f0 << " Hz, nFFT=" << nFFT << "\n";
-    std::cout << "    Detected: " << detected_freq << " Hz, error=" << error << " Hz\n";
-    std::cout << "    " << (pass ? "PASS" : "FAIL") << "\n";
-    return pass;
-}
-#endif  // ENABLE_CLFFT
 
 /**
  * @brief Test 6: Factory creates correct types
@@ -373,9 +324,6 @@ inline int run() {
         runTest(TestCwMultiBeam(backend.get()));
         runTest(TestLfmGpuVsCpu(backend.get()));
         runTest(TestNoiseStatistics(backend.get()));
-#if ENABLE_CLFFT
-        runTest(TestCwFftIntegration(backend.get()));
-#endif
         runTest(TestFactory(backend.get()));
 
         std::cout << "\n════════════════════════════════════════════════════════════\n";

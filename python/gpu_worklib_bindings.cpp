@@ -30,10 +30,6 @@
 // GPUWorkLib headers
 #include "backends/opencl/opencl_backend.hpp"
 #include "interface/i_backend.hpp"
-#if ENABLE_CLFFT
-#include "fft_processor.hpp"
-#include "fft_processor_types.hpp"
-#endif
 #include "signal_service.hpp"
 #include "signal_generator_factory.hpp"
 #include "generators/cw_generator.hpp"
@@ -46,9 +42,6 @@
 #include "params/signal_request.hpp"
 #include "params/system_sampling.hpp"
 #include "params/form_params.hpp"
-#if ENABLE_CLFFT
-#include "spectrum_maxima_finder.h"
-#endif
 
 // ============================================================================
 // ROCm headers (Linux + AMD GPU only)
@@ -493,157 +486,6 @@ private:
         return (start == std::string::npos) ? "" : s.substr(start, end - start + 1);
     }
 };
-
-// ============================================================================
-// PyFFTProcessor — pythonic wrapper over fft_processor::FFTProcessor (OpenCL/clFFT)
-// ============================================================================
-#if ENABLE_CLFFT
-
-// Обёртка над FFTProcessor с двумя режимами вывода:
-//   process_complex  → numpy complex64 (спектр как комплексный массив)
-//   process_mag_phase → dict {magnitude, phase, frequency} — для анализа и визуализации
-// Внутри FFTProcessor использует clFFT (OpenCL). Не хранит состояние между вызовами —
-// каждый process_* может иметь другой размер FFT.
-class PyFFTProcessor {
-public:
-    explicit PyFFTProcessor(GPUContext& ctx) : ctx_(ctx), fft_(ctx.backend()) {}
-
-    // ── Complex FFT ──────────────────────────────────────────────────
-    py::array_t<std::complex<float>> process_complex(
-        py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> data,
-        float sample_rate,
-        uint32_t beam_count = 0,
-        uint32_t n_point = 0)
-    {
-        auto buf = data.request();
-        auto* ptr = static_cast<std::complex<float>*>(buf.ptr);
-        size_t total_size = static_cast<size_t>(buf.size);
-
-        // Auto-detect beam_count/n_point from shape
-        if (buf.ndim == 2) {
-            if (beam_count == 0) beam_count = static_cast<uint32_t>(buf.shape[0]);
-            if (n_point == 0) n_point = static_cast<uint32_t>(buf.shape[1]);
-        } else if (buf.ndim == 1) {
-            if (beam_count == 0) beam_count = 1;
-            if (n_point == 0) n_point = static_cast<uint32_t>(total_size / beam_count);
-        }
-
-        std::vector<std::complex<float>> vec(ptr, ptr + total_size);
-
-        fft_processor::FFTProcessorParams params;
-        params.beam_count = beam_count;
-        params.n_point = n_point;
-        params.sample_rate = sample_rate;
-        params.output_mode = fft_processor::FFTOutputMode::COMPLEX;
-
-        std::vector<fft_processor::FFTComplexResult> results;
-        {
-            py::gil_scoped_release release;
-            results = fft_.ProcessComplex(vec, params);
-        }
-
-        if (results.size() == 1) {
-            // Single beam: return 1D array
-            return vector_to_numpy(std::move(results[0].spectrum));
-        } else {
-            // Multi-beam: return 2D array
-            uint32_t nFFT = results[0].nFFT;
-            std::vector<std::complex<float>> flat;
-            flat.reserve(results.size() * nFFT);
-            for (auto& r : results) {
-                flat.insert(flat.end(), r.spectrum.begin(), r.spectrum.end());
-            }
-            return vector_to_numpy_2d(std::move(flat), results.size(), nFFT);
-        }
-    }
-
-    // ── Magnitude + Phase FFT ────────────────────────────────────────
-    py::dict process_mag_phase(
-        py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> data,
-        float sample_rate,
-        uint32_t beam_count = 0,
-        uint32_t n_point = 0,
-        bool include_freq = true)
-    {
-        auto buf = data.request();
-        auto* ptr = static_cast<std::complex<float>*>(buf.ptr);
-        size_t total_size = static_cast<size_t>(buf.size);
-
-        if (buf.ndim == 2) {
-            if (beam_count == 0) beam_count = static_cast<uint32_t>(buf.shape[0]);
-            if (n_point == 0) n_point = static_cast<uint32_t>(buf.shape[1]);
-        } else {
-            if (beam_count == 0) beam_count = 1;
-            if (n_point == 0) n_point = static_cast<uint32_t>(total_size / beam_count);
-        }
-
-        std::vector<std::complex<float>> vec(ptr, ptr + total_size);
-
-        fft_processor::FFTProcessorParams params;
-        params.beam_count = beam_count;
-        params.n_point = n_point;
-        params.sample_rate = sample_rate;
-        params.output_mode = include_freq
-            ? fft_processor::FFTOutputMode::MAGNITUDE_PHASE_FREQ
-            : fft_processor::FFTOutputMode::MAGNITUDE_PHASE;
-
-        std::vector<fft_processor::FFTMagPhaseResult> results;
-        {
-            py::gil_scoped_release release;
-            results = fft_.ProcessMagPhase(vec, params);
-        }
-
-        py::dict out;
-        out["nFFT"] = results[0].nFFT;
-        out["sample_rate"] = results[0].sample_rate;
-
-        if (results.size() == 1) {
-            out["magnitude"] = vector_to_numpy(std::move(results[0].magnitude));
-            out["phase"] = vector_to_numpy(std::move(results[0].phase));
-            if (include_freq && !results[0].frequency.empty())
-                out["frequency"] = vector_to_numpy(std::move(results[0].frequency));
-        } else {
-            uint32_t nFFT = results[0].nFFT;
-            std::vector<float> all_mag, all_phase, all_freq;
-            all_mag.reserve(results.size() * nFFT);
-            all_phase.reserve(results.size() * nFFT);
-            if (include_freq) all_freq.reserve(results.size() * nFFT);
-
-            for (auto& r : results) {
-                all_mag.insert(all_mag.end(), r.magnitude.begin(), r.magnitude.end());
-                all_phase.insert(all_phase.end(), r.phase.begin(), r.phase.end());
-                if (include_freq && !r.frequency.empty())
-                    all_freq.insert(all_freq.end(), r.frequency.begin(), r.frequency.end());
-            }
-
-            out["magnitude"] = vector_to_numpy_2d(std::move(all_mag), results.size(), nFFT);
-            out["phase"] = vector_to_numpy_2d(std::move(all_phase), results.size(), nFFT);
-            if (!all_freq.empty())
-                out["frequency"] = vector_to_numpy_2d(std::move(all_freq), results.size(), nFFT);
-        }
-
-        return out;
-    }
-
-    // ── Profiling info ───────────────────────────────────────────────
-    py::dict get_profiling() const {
-        auto p = fft_.GetProfilingData();
-        py::dict d;
-        d["upload_ms"] = p.upload_time_ms;
-        d["fft_ms"] = p.fft_time_ms;
-        d["post_processing_ms"] = p.post_processing_time_ms;
-        d["download_ms"] = p.download_time_ms;
-        d["total_ms"] = p.total_time_ms;
-        return d;
-    }
-
-    uint32_t get_nfft() const { return fft_.GetNFFT(); }
-
-private:
-    GPUContext& ctx_;
-    fft_processor::FFTProcessor fft_;
-};
-#endif  // ENABLE_CLFFT
 
 // ============================================================================
 // PyScriptGenerator — text DSL -> OpenCL kernel compiler
@@ -1107,121 +949,6 @@ private:
 #include "py_heterodyne.hpp"
 
 // ============================================================================
-// PySpectrumMaximaFinder — find all local maxima in FFT spectrum (OpenCL/clFFT)
-// ============================================================================
-#if ENABLE_CLFFT
-
-// Ищет все локальные максимумы в FFT-спектре (не только глобальный).
-// Принимает комплексный FFT-результат, вычисляет магнитуды внутри на GPU,
-// затем сравнивает соседние точки. search_start/search_end задают диапазон
-// бинов для поиска — нужно при ограниченном интересующем диапазоне частот,
-// например, если известно что сигнал только в [0.1..0.4 * fs].
-// Возвращает для каждого луча: positions (bin indices), magnitudes, frequencies (Hz).
-class PySpectrumMaximaFinder {
-public:
-    explicit PySpectrumMaximaFinder(GPUContext& ctx) : ctx_(ctx), finder_(ctx.backend()) {}
-
-    /**
-     * find_all_maxima(fft_data, sample_rate, ...)
-     *
-     * Input: numpy complex64 array (FFT result) — 1D (nFFT,) or 2D (beams, nFFT)
-     * Returns: dict (1 beam) or list[dict] (multi-beam)
-     *   Each dict: {"positions": np.uint32, "magnitudes": np.float32,
-     *               "frequencies": np.float32, "num_maxima": int}
-     */
-    py::object find_all_maxima(
-        py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> fft_data,
-        float sample_rate,
-        uint32_t beam_count = 0,
-        uint32_t nFFT = 0,
-        uint32_t search_start = 0,
-        uint32_t search_end = 0)
-    {
-        auto buf = fft_data.request();
-        auto* ptr = static_cast<std::complex<float>*>(buf.ptr);
-        size_t total_size = static_cast<size_t>(buf.size);
-
-        // Auto-detect beam_count/nFFT from shape
-        if (buf.ndim == 2) {
-            if (beam_count == 0) beam_count = static_cast<uint32_t>(buf.shape[0]);
-            if (nFFT == 0) nFFT = static_cast<uint32_t>(buf.shape[1]);
-        } else if (buf.ndim == 1) {
-            if (beam_count == 0) beam_count = 1;
-            if (nFFT == 0) nFFT = static_cast<uint32_t>(total_size / beam_count);
-        }
-
-        if (nFFT == 0 || beam_count == 0)
-            throw std::invalid_argument("Cannot determine nFFT/beam_count from input shape");
-
-        // Upload to GPU
-        cl_context cl_ctx = static_cast<cl_context>(ctx_.backend()->GetNativeContext());
-        cl_int err;
-        cl_mem gpu_fft = clCreateBuffer(cl_ctx, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
-            total_size * sizeof(std::complex<float>),
-            const_cast<std::complex<float>*>(ptr), &err);
-        if (err != CL_SUCCESS)
-            throw std::runtime_error("Failed to upload FFT data to GPU (error " +
-                                     std::to_string(err) + ")");
-
-        antenna_fft::AllMaximaResult result;
-        {
-            py::gil_scoped_release release;
-            result = finder_.FindAllMaxima(gpu_fft, beam_count, nFFT, sample_rate,
-                antenna_fft::OutputDestination::CPU, search_start, search_end);
-        }
-
-        clReleaseMemObject(gpu_fft);
-
-        // Single beam → dict (удобнее чем list[dict] с одним элементом в Python).
-        // Multi beam → list[dict], каждый с полем antenna_id.
-        if (beam_count == 1 && result.beams.size() == 1) {
-            // Single beam: return dict
-            auto& b = result.beams[0];
-            py::dict out;
-            std::vector<uint32_t> positions; positions.reserve(b.maxima.size());
-            std::vector<float> magnitudes; magnitudes.reserve(b.maxima.size());
-            std::vector<float> frequencies; frequencies.reserve(b.maxima.size());
-            for (const auto& m : b.maxima) {
-                positions.push_back(m.index);
-                magnitudes.push_back(m.magnitude);
-                frequencies.push_back(m.refined_frequency);
-            }
-            out["positions"] = vector_to_numpy(std::move(positions));
-            out["magnitudes"] = vector_to_numpy(std::move(magnitudes));
-            out["frequencies"] = vector_to_numpy(std::move(frequencies));
-            out["num_maxima"] = b.num_maxima;
-            return out;
-        } else {
-            // Multi-beam: return list of dicts
-            py::list beams;
-            for (auto& b : result.beams) {
-                py::dict out;
-                std::vector<uint32_t> positions; positions.reserve(b.maxima.size());
-                std::vector<float> magnitudes; magnitudes.reserve(b.maxima.size());
-                std::vector<float> frequencies; frequencies.reserve(b.maxima.size());
-                for (const auto& m : b.maxima) {
-                    positions.push_back(m.index);
-                    magnitudes.push_back(m.magnitude);
-                    frequencies.push_back(m.refined_frequency);
-                }
-                out["antenna_id"] = b.antenna_id;
-                out["positions"] = vector_to_numpy(std::move(positions));
-                out["magnitudes"] = vector_to_numpy(std::move(magnitudes));
-                out["frequencies"] = vector_to_numpy(std::move(frequencies));
-                out["num_maxima"] = b.num_maxima;
-                beams.append(out);
-            }
-            return beams;
-        }
-    }
-
-private:
-    GPUContext& ctx_;
-    antenna_fft::SpectrumMaximaFinder finder_;
-};
-#endif  // ENABLE_CLFFT
-
-// ============================================================================
 // PYBIND11_MODULE — the entry point
 // ============================================================================
 
@@ -1235,9 +962,7 @@ PYBIND11_MODULE(gpuworklib, m) {
               "  DelayedFormSignalGenerator - Farrow 48x5 fractional delay on GPU\n"
               "  LfmAnalyticalDelay      - LFM with per-antenna analytical delay\n"
               "  LchFarrow               - Standalone Lagrange fractional delay processor\n"
-              "  FFTProcessor            - FFT with various output modes\n"
-              "  SpectrumMaximaFinder    - Find all local maxima in FFT spectrum\n"
-              "  FirFilter               - GPU FIR convolution filter\n"
+                          "  FirFilter               - GPU FIR convolution filter\n"
               "  IirFilter               - GPU IIR biquad cascade filter\n"
               "  HeterodyneDechirp       - LFM dechirp pipeline\n\n"
               "ROCm classes (Linux + AMD GPU, ENABLE_ROCM=1):\n"
@@ -1386,45 +1111,6 @@ PYBIND11_MODULE(gpuworklib, m) {
              "  beam_count: number of beams\n\n"
              "Returns:\n"
              "  numpy.ndarray complex64");
-
-    // ════════════════════════════════════════════════════════════════
-    // FFTProcessor (OpenCL/clFFT — только при ENABLE_CLFFT=1)
-    // ════════════════════════════════════════════════════════════════
-#if ENABLE_CLFFT
-    py::class_<PyFFTProcessor>(m, "FFTProcessor",
-        "GPU FFT processor (clFFT backend).\n\n"
-        "Usage:\n"
-        "  fft = gpuworklib.FFTProcessor(ctx)\n"
-        "  spectrum = fft.process_complex(signal, sample_rate=4000)")
-        .def(py::init<GPUContext&>(), py::arg("ctx"),
-             "Create FFT processor bound to GPU context")
-
-        .def("process_complex", &PyFFTProcessor::process_complex,
-             py::arg("data"), py::arg("sample_rate"),
-             py::arg("beam_count") = 0, py::arg("n_point") = 0,
-             "Compute FFT, return complex spectrum.\n\n"
-             "Args:\n"
-             "  data: numpy complex64 array, 1D (length,) or 2D (beams, length)\n"
-             "  sample_rate: sampling rate (Hz)\n"
-             "  beam_count: auto-detected from shape if 0\n"
-             "  n_point: auto-detected from shape if 0\n\n"
-             "Returns:\n"
-             "  numpy.ndarray complex64: (nFFT,) or (beams, nFFT)")
-
-        .def("process_mag_phase", &PyFFTProcessor::process_mag_phase,
-             py::arg("data"), py::arg("sample_rate"),
-             py::arg("beam_count") = 0, py::arg("n_point") = 0,
-             py::arg("include_freq") = true,
-             "Compute FFT, return magnitude + phase + frequency.\n\n"
-             "Returns:\n"
-             "  dict with keys: 'magnitude', 'phase', 'frequency', 'nFFT', 'sample_rate'")
-
-        .def("get_profiling", &PyFFTProcessor::get_profiling,
-             "Get GPU profiling data (dict)")
-
-        .def_property_readonly("nfft", &PyFFTProcessor::get_nfft,
-             "Last used nFFT value");
-#endif  // ENABLE_CLFFT
 
     // ════════════════════════════════════════════════════════════════
     // ScriptGenerator
@@ -1770,52 +1456,6 @@ PYBIND11_MODULE(gpuworklib, m) {
                    " points=" + std::to_string(self.points()) +
                    " fs=" + std::to_string(static_cast<int>(self.fs())) + ">";
         });
-
-    // ════════════════════════════════════════════════════════════════
-    // SpectrumMaximaFinder (OpenCL/clFFT — только при ENABLE_CLFFT=1)
-    // ════════════════════════════════════════════════════════════════
-#if ENABLE_CLFFT
-    py::class_<PySpectrumMaximaFinder>(m, "SpectrumMaximaFinder",
-        "Find all local maxima in FFT spectrum (GPU accelerated).\n\n"
-        "Pipeline: Detection -> Prefix Sum (Blelloch Scan) -> Compaction\n\n"
-        "Usage:\n"
-        "  finder = gpuworklib.SpectrumMaximaFinder(ctx)\n"
-        "  result = finder.find_all_maxima(fft_data, sample_rate=1000)\n\n"
-        "For single beam returns dict, for multi-beam returns list[dict].\n"
-        "Each dict: {positions, magnitudes, frequencies, num_maxima}")
-        .def(py::init<GPUContext&>(), py::arg("ctx"),
-             "Create spectrum maxima finder bound to GPU context")
-
-        .def("find_all_maxima", &PySpectrumMaximaFinder::find_all_maxima,
-             py::arg("fft_data"), py::arg("sample_rate"),
-             py::arg("beam_count") = 0, py::arg("nFFT") = 0,
-             py::arg("search_start") = 0, py::arg("search_end") = 0,
-             "Find ALL local maxima in FFT spectrum.\n\n"
-             "Args:\n"
-             "  fft_data: numpy complex64 array with FFT result\n"
-             "    1D (nFFT,) for single beam, 2D (beams, nFFT) for multi-beam\n"
-             "  sample_rate: sampling rate (Hz)\n"
-             "  beam_count: auto-detected from shape if 0\n"
-             "  nFFT: auto-detected from shape if 0\n"
-             "  search_start: start bin (0 = default = 1, skip DC)\n"
-             "  search_end: end bin (0 = default = nFFT/2)\n\n"
-             "Returns:\n"
-             "  Single beam: dict with keys:\n"
-             "    positions (np.uint32), magnitudes (np.float32),\n"
-             "    frequencies (np.float32), num_maxima (int)\n"
-             "  Multi-beam: list[dict] with additional 'antenna_id' key\n\n"
-             "Example:\n"
-             "  import numpy as np\n"
-             "  import gpuworklib\n\n"
-             "  ctx = gpuworklib.GPUContext(0)\n"
-             "  fft = gpuworklib.FFTProcessor(ctx)\n"
-             "  finder = gpuworklib.SpectrumMaximaFinder(ctx)\n\n"
-             "  signal = np.sin(2*np.pi*100*np.arange(1024)/1000).astype(np.complex64)\n"
-             "  spectrum = fft.process_complex(signal, sample_rate=1000)\n"
-             "  peaks = finder.find_all_maxima(spectrum, sample_rate=1000)\n"
-             "  print(f'Found {peaks[\"num_maxima\"]} peaks')\n"
-             "  print(f'Frequencies: {peaks[\"frequencies\"]} Hz')");
-#endif  // ENABLE_CLFFT
 
     // ════════════════════════════════════════════════════════════════
     // LfmAnalyticalDelay (see py_lfm_analytical_delay.hpp)

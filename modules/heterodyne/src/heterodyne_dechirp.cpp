@@ -20,9 +20,6 @@
 #include "processors/heterodyne_processor_rocm.hpp"
 
 // Spectrum peak finding: FFT + OnePeak (parabolic interpolation) on GPU
-#if ENABLE_CLFFT
-#include "spectrum_maxima_finder.h"
-#endif
 #include <stdexcept>
 #if ENABLE_ROCM
 #include "factory/spectrum_processor_factory.hpp"
@@ -231,23 +228,6 @@ HeterodyneResult HeterodyneDechirp::BuildResult(
   } else
 #endif
   {
-#if ENABLE_CLFFT
-    antenna_fft::SpectrumMaximaFinder finder(backend_);
-    antenna_fft::InputData<std::vector<std::complex<float>>> input;
-    input.antenna_count = static_cast<size_t>(params.num_antennas);
-    input.n_point = static_cast<size_t>(params.num_samples);
-    input.data = dc_data;
-    input.repeat_count = 1;
-    input.sample_rate = params.sample_rate;
-    input.search_range = 5000;
-    spec_results = finder.Process(input,
-        antenna_fft::PeakSearchMode::ONE_PEAK,
-        static_cast<antenna_fft::DriverType>(compute_backend_));
-#else
-    (void)dc_data;
-    (void)params;
-    throw std::runtime_error("HeterodyneDechirp::BuildResult: OpenCL/clFFT backend not available. Use ROCm backend.");
-#endif
   }
 
   float bandwidth = params.GetBandwidth();

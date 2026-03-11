@@ -37,9 +37,6 @@ inline void run() {
   // Basic kernel tests
   heterodyne::tests::run_test_single_antenna();      // Test 1
   heterodyne::tests::run_test_5_antennas_linear();   // Test 2
-#if ENABLE_CLFFT
-  heterodyne::tests::run_test_correction();           // Test 3 (требует OpenCL/clFFT)
-#endif
 
   // Pipeline integration tests
   heterodyne::tests::run_test_full_pipeline();        // Test 4
@@ -47,9 +44,6 @@ inline void run() {
 
   // Additional tests
   heterodyne::tests::run_test_random_delays();        // Test 6
-#if ENABLE_CLFFT
-  heterodyne::tests::run_test_all_maxima();           // Test 7 (требует OpenCL/clFFT)
-#endif
 
   con.Print(gpu_id, "Heterodyne", "════════════════════════════════════════════════════════════");
 
