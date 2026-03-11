@@ -64,21 +64,29 @@ ComplexToMagPhaseROCm::ComplexToMagPhaseROCm(ComplexToMagPhaseROCm&& other) noex
     : backend_(other.backend_)
     , stream_(other.stream_)
     , module_(other.module_)
+    , mag_module_(other.mag_module_)
     , kernel_(other.kernel_)
+    , magnitude_kernel_(other.magnitude_kernel_)
     , kernels_compiled_(other.kernels_compiled_)
+    , magnitude_kernel_compiled_(other.magnitude_kernel_compiled_)
     , kernel_cache_(std::move(other.kernel_cache_))
     , input_buffer_(other.input_buffer_)
     , output_buffer_(other.output_buffer_)
+    , mag_only_buffer_(other.mag_only_buffer_)
     , n_point_(other.n_point_)
     , current_buffer_beams_(other.current_buffer_beams_) {
 
     other.backend_ = nullptr;
     other.stream_ = nullptr;
     other.module_ = nullptr;
+    other.mag_module_ = nullptr;
     other.kernel_ = nullptr;
+    other.magnitude_kernel_ = nullptr;
     other.kernels_compiled_ = false;
+    other.magnitude_kernel_compiled_ = false;
     other.input_buffer_ = nullptr;
     other.output_buffer_ = nullptr;
+    other.mag_only_buffer_ = nullptr;
     other.n_point_ = 0;
     other.current_buffer_beams_ = 0;
 }
@@ -90,21 +98,29 @@ ComplexToMagPhaseROCm& ComplexToMagPhaseROCm::operator=(ComplexToMagPhaseROCm&& 
         backend_ = other.backend_;
         stream_ = other.stream_;
         module_ = other.module_;
+        mag_module_ = other.mag_module_;
         kernel_ = other.kernel_;
+        magnitude_kernel_ = other.magnitude_kernel_;
         kernels_compiled_ = other.kernels_compiled_;
+        magnitude_kernel_compiled_ = other.magnitude_kernel_compiled_;
         kernel_cache_ = std::move(other.kernel_cache_);
         input_buffer_ = other.input_buffer_;
         output_buffer_ = other.output_buffer_;
+        mag_only_buffer_ = other.mag_only_buffer_;
         n_point_ = other.n_point_;
         current_buffer_beams_ = other.current_buffer_beams_;
 
         other.backend_ = nullptr;
         other.stream_ = nullptr;
         other.module_ = nullptr;
+        other.mag_module_ = nullptr;
         other.kernel_ = nullptr;
+        other.magnitude_kernel_ = nullptr;
         other.kernels_compiled_ = false;
+        other.magnitude_kernel_compiled_ = false;
         other.input_buffer_ = nullptr;
         other.output_buffer_ = nullptr;
+        other.mag_only_buffer_ = nullptr;
         other.n_point_ = 0;
         other.current_buffer_beams_ = 0;
     }
@@ -313,19 +329,132 @@ void* ComplexToMagPhaseROCm::ProcessToGPU(
     return output_ptr;
 }
 
+std::vector<MagnitudeResult> ComplexToMagPhaseROCm::ProcessMagnitude(
+    void* gpu_data,
+    const MagPhaseParams& params,
+    size_t gpu_memory_bytes)
+{
+    if (!gpu_data) {
+        throw std::invalid_argument("ComplexToMagPhaseROCm::ProcessMagnitude: gpu_data is null");
+    }
+
+    n_point_ = params.n_point;
+
+    if (!magnitude_kernel_compiled_) {
+        CompileMagnitudeKernel();
+    }
+
+    // Compute normalization factor on host (no division in kernel)
+    float inv_n = 1.0f;
+    if (params.norm_coeff < 0.0f) {
+        inv_n = (params.n_point > 0) ? 1.0f / static_cast<float>(params.n_point) : 1.0f;
+    } else if (params.norm_coeff > 0.0f) {
+        inv_n = params.norm_coeff;
+    }
+
+    size_t bytes_per_beam = CalculateBytesPerBeam();
+    size_t external_memory = (gpu_memory_bytes > 0)
+        ? gpu_memory_bytes
+        : static_cast<size_t>(params.beam_count) * params.n_point * sizeof(std::complex<float>);
+
+    size_t optimal_batch = drv_gpu_lib::BatchManager::CalculateOptimalBatchSize(
+        backend_, params.beam_count, bytes_per_beam, params.memory_limit, external_memory);
+
+    auto batches = drv_gpu_lib::BatchManager::CreateBatches(
+        params.beam_count, optimal_batch, 3, true);
+
+    std::vector<MagnitudeResult> all_results;
+    all_results.reserve(params.beam_count);
+
+    for (const auto& batch : batches) {
+        AllocateBuffers(batch.count);
+
+        // D2D copy from external GPU buffer
+        size_t src_offset = batch.start * params.n_point * sizeof(std::complex<float>);
+        CopyGpuData(gpu_data, src_offset, batch.count * params.n_point);
+
+        // Execute magnitude-only kernel
+        size_t total = batch.count * n_point_;
+        ExecuteMagnitudeKernel(input_buffer_, mag_only_buffer_, total, inv_n);
+        hipStreamSynchronize(stream_);
+
+        // Read float results (no interleaving)
+        std::vector<float> raw(total);
+        hipError_t err = hipMemcpyDtoH(raw.data(), mag_only_buffer_, total * sizeof(float));
+        if (err != hipSuccess) {
+            throw std::runtime_error("ProcessMagnitude: hipMemcpyDtoH failed: " +
+                                      std::string(hipGetErrorString(err)));
+        }
+
+        for (size_t i = 0; i < batch.count; ++i) {
+            MagnitudeResult result;
+            result.beam_id = static_cast<uint32_t>(batch.start + i);
+            result.n_point = n_point_;
+            result.magnitude.assign(raw.data() + i * n_point_,
+                                     raw.data() + (i + 1) * n_point_);
+            all_results.push_back(std::move(result));
+        }
+    }
+
+    return all_results;
+}
+
+void* ComplexToMagPhaseROCm::ProcessMagnitudeToGPU(
+    void* gpu_data,
+    const MagPhaseParams& params,
+    size_t /*gpu_memory_bytes*/)
+{
+    if (!gpu_data) {
+        throw std::invalid_argument("ComplexToMagPhaseROCm::ProcessMagnitudeToGPU: gpu_data is null");
+    }
+
+    n_point_ = params.n_point;
+
+    if (!magnitude_kernel_compiled_) {
+        CompileMagnitudeKernel();
+    }
+
+    // Normalization factor (host-side, no division in kernel)
+    float inv_n = 1.0f;
+    if (params.norm_coeff < 0.0f) {
+        inv_n = (params.n_point > 0) ? 1.0f / static_cast<float>(params.n_point) : 1.0f;
+    } else if (params.norm_coeff > 0.0f) {
+        inv_n = params.norm_coeff;
+    }
+
+    size_t total = static_cast<size_t>(params.beam_count) * params.n_point;
+
+    // Allocate output -- CALLER OWNS THIS
+    void* output_ptr = nullptr;
+    size_t output_size = total * sizeof(float);
+    hipError_t err = hipMalloc(&output_ptr, output_size);
+    if (err != hipSuccess) {
+        throw std::runtime_error("ProcessMagnitudeToGPU: hipMalloc output failed: " +
+                                  std::string(hipGetErrorString(err)));
+    }
+
+    // Zero-copy: данные уже на GPU, kernel читает напрямую
+    ExecuteMagnitudeKernel(gpu_data, output_ptr, total, inv_n);
+    hipStreamSynchronize(stream_);
+
+    return output_ptr;  // CALLER OWNS — must hipFree
+}
+
 // =========================================================================
 // PART 3: GPU Resources Management
 // =========================================================================
 
 void ComplexToMagPhaseROCm::AllocateBuffers(size_t batch_beam_count) {
     // Reuse existing buffers if large enough
-    if (batch_beam_count <= current_buffer_beams_ && input_buffer_ && output_buffer_) {
+    if (batch_beam_count <= current_buffer_beams_ &&
+        input_buffer_ && output_buffer_ && mag_only_buffer_) {
         return;
     }
 
     // Free old buffers
-    if (input_buffer_)  { (void)hipFree(input_buffer_);  input_buffer_ = nullptr; }
-    if (output_buffer_) { (void)hipFree(output_buffer_); output_buffer_ = nullptr; }
+    if (input_buffer_)    { (void)hipFree(input_buffer_);    input_buffer_ = nullptr; }
+    if (output_buffer_)   { (void)hipFree(output_buffer_);   output_buffer_ = nullptr; }
+    if (mag_only_buffer_) { (void)hipFree(mag_only_buffer_); mag_only_buffer_ = nullptr; }
 
     hipError_t err;
 
@@ -344,6 +473,18 @@ void ComplexToMagPhaseROCm::AllocateBuffers(size_t batch_beam_count) {
         (void)hipFree(input_buffer_);
         input_buffer_ = nullptr;
         throw std::runtime_error("AllocateBuffers: output hipMalloc failed: " +
+                                  std::string(hipGetErrorString(err)));
+    }
+
+    // 3. Magnitude-only output buffer: plain float[] (for ProcessMagnitude)
+    size_t mag_only_size = batch_beam_count * n_point_ * sizeof(float);
+    err = hipMalloc(&mag_only_buffer_, mag_only_size);
+    if (err != hipSuccess) {
+        (void)hipFree(input_buffer_);
+        (void)hipFree(output_buffer_);
+        input_buffer_ = nullptr;
+        output_buffer_ = nullptr;
+        throw std::runtime_error("AllocateBuffers: mag_only hipMalloc failed: " +
                                   std::string(hipGetErrorString(err)));
     }
 
@@ -464,10 +605,17 @@ void ComplexToMagPhaseROCm::CompileKernels() {
 
 void ComplexToMagPhaseROCm::ReleaseResources() {
     // Free GPU buffers
-    if (input_buffer_)  { (void)hipFree(input_buffer_);  input_buffer_ = nullptr; }
-    if (output_buffer_) { (void)hipFree(output_buffer_); output_buffer_ = nullptr; }
+    if (input_buffer_)    { (void)hipFree(input_buffer_);    input_buffer_ = nullptr; }
+    if (output_buffer_)   { (void)hipFree(output_buffer_);   output_buffer_ = nullptr; }
+    if (mag_only_buffer_) { (void)hipFree(mag_only_buffer_); mag_only_buffer_ = nullptr; }
 
-    // Unload hiprtc module
+    // Unload hiprtc modules
+    if (mag_module_) {
+        (void)hipModuleUnload(mag_module_);
+        mag_module_ = nullptr;
+        magnitude_kernel_ = nullptr;
+        magnitude_kernel_compiled_ = false;
+    }
     if (module_) {
         (void)hipModuleUnload(module_);
         module_ = nullptr;
@@ -574,6 +722,102 @@ std::vector<MagPhaseResult> ComplexToMagPhaseROCm::ReadResults(
     }
 
     return results;
+}
+
+void ComplexToMagPhaseROCm::CompileMagnitudeKernel() {
+    if (magnitude_kernel_compiled_) return;
+
+    auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
+    const int gpu_id = backend_ ? backend_->GetDeviceIndex() : 0;
+
+    // ─── Get target architecture ────────────────────────────────────────────
+    std::string arch_name;
+    try {
+        auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
+        arch_name = rocm_backend->GetCore().GetArchName();
+    } catch (...) {
+        arch_name = "";
+    }
+
+    // ─── Compile via hiprtc ────────────────────────────────────────────────
+    const char* source = kernels::GetComplexToMagnitudeKernelSource();
+
+    hiprtcProgram prog;
+    hiprtcResult rtcResult = hiprtcCreateProgram(&prog, source, "c2mag_kernel.hip",
+                                                  0, nullptr, nullptr);
+    if (rtcResult != HIPRTC_SUCCESS) {
+        throw std::runtime_error("CompileMagnitudeKernel: hiprtcCreateProgram failed");
+    }
+
+    int warp_size = 32;
+    if (arch_name.find("gfx9") == 0) warp_size = 64;
+    std::string warp_define = "-DWARP_SIZE=" + std::to_string(warp_size);
+    std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
+    std::vector<const char*> opts = {"-O3", "-std=c++17", "-DBLOCK_SIZE=256", warp_define.c_str()};
+    if (!arch_flag.empty()) opts.push_back(arch_flag.c_str());
+
+    rtcResult = hiprtcCompileProgram(prog, static_cast<int>(opts.size()), opts.data());
+    if (rtcResult != HIPRTC_SUCCESS) {
+        size_t logSize = 0;
+        hiprtcGetProgramLogSize(prog, &logSize);
+        std::string log(logSize, '\0');
+        hiprtcGetProgramLog(prog, &log[0]);
+        (void)hiprtcDestroyProgram(&prog);
+        throw std::runtime_error("CompileMagnitudeKernel: compilation failed:\n" + log);
+    }
+
+    size_t codeSize = 0;
+    hiprtcGetCodeSize(prog, &codeSize);
+    std::vector<char> code(codeSize);
+    hiprtcGetCode(prog, code.data());
+    (void)hiprtcDestroyProgram(&prog);
+
+    // Загружаем в отдельный модуль mag_module_ (hipFunction_t живёт пока жив модуль)
+    hipError_t hipErr = hipModuleLoadData(&mag_module_, code.data());
+    if (hipErr != hipSuccess) {
+        throw std::runtime_error("CompileMagnitudeKernel: hipModuleLoadData failed: " +
+                                  std::string(hipGetErrorString(hipErr)));
+    }
+
+    hipErr = hipModuleGetFunction(&magnitude_kernel_, mag_module_, "complex_to_magnitude");
+    if (hipErr != hipSuccess) {
+        (void)hipModuleUnload(mag_module_);
+        mag_module_ = nullptr;
+        throw std::runtime_error("CompileMagnitudeKernel: hipModuleGetFunction failed: " +
+                                  std::string(hipGetErrorString(hipErr)));
+    }
+
+    magnitude_kernel_compiled_ = true;
+    con.Print(gpu_id, "C2MP", "magnitude-only kernel compiled");
+}
+
+void ComplexToMagPhaseROCm::ExecuteMagnitudeKernel(
+    void* input_ptr, void* output_ptr, size_t total_elements, float inv_n)
+{
+    unsigned int total_u = static_cast<unsigned int>(total_elements);
+    unsigned int block_size = 256;
+    unsigned int grid_size  = (total_u + block_size - 1) / block_size;
+
+    void* args[] = {
+        &input_ptr,
+        &output_ptr,
+        &inv_n,
+        &total_u
+    };
+
+    hipError_t err = hipModuleLaunchKernel(
+        magnitude_kernel_,
+        grid_size, 1, 1,
+        block_size, 1, 1,
+        0,
+        stream_,
+        args,
+        nullptr);
+
+    if (err != hipSuccess) {
+        throw std::runtime_error("ExecuteMagnitudeKernel: hipModuleLaunchKernel failed: " +
+                                  std::string(hipGetErrorString(err)));
+    }
 }
 
 // =========================================================================

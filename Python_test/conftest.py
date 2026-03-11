@@ -30,7 +30,7 @@ if _PT_DIR not in sys.path:
     sys.path.insert(0, _PT_DIR)
 
 from common.gpu_loader import GPULoader
-from common.gpu_context import GPUContextManager
+from common.gpu_context import GPUContextManager, _find_config_path
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -51,10 +51,19 @@ def gw():
 
 @pytest.fixture(scope="session")
 def gpu_ctx(gw):
-    """GPU-контекст. Skip если GPU недоступен."""
+    """GPU-контекст (OpenCL). Skip если GPU недоступен."""
     ctx = GPUContextManager.get()
     if ctx is None:
         pytest.skip("GPU-контекст не создан (нет GPU или ошибка драйвера)")
+    return ctx
+
+
+@pytest.fixture(scope="session")
+def rocm_ctx(gw):
+    """ROCmGPUContext. GPU-индекс из configGPU.json рядом с .so. Skip если ROCm недоступен."""
+    ctx = GPUContextManager.get_rocm()
+    if ctx is None:
+        pytest.skip("ROCmGPUContext не создан (нет ROCm GPU или ошибка драйвера)")
     return ctx
 
 

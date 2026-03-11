@@ -7,6 +7,20 @@
 
 ## Приоритет 🔴 Высокий
 
+### TASK-process-magnitude-stats — ProcessMagnitude + Statistics pipeline (SVM тесты)
+
+**Документ**: `MemoryBank/tasks/TASK_process_magnitude_statistics_pipeline.md`
+
+**Суть**:
+- `ComplexToMagPhaseROCm`: ProcessMagnitude / ProcessMagnitudeToGPU (magnitude-only, norm_coeff через умножение)
+- `StatisticsProcessor`: vector<float> обёртки для тестов
+- Тесты: малый объём, `hipMallocManaged` (SVM), `InputData<T>` — единообразие
+- C++ и Python тесты обязательны
+
+**Проверка**: другой AI как старший (чеклист в документе).
+
+---
+
 ### TASK-REF01 — Выделить clFFT в тупиковую ветку + ROCm-only в main
 **Дата планирования**: 2026-03-10
 **Выполнять на**: AMD машина (Linux, ROCm)

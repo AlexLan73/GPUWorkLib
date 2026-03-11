@@ -118,6 +118,74 @@ public:
     return out;
   }
 
+  // ── Float magnitude API ──────────────────────────────────────────────────
+
+  py::list compute_statistics_float(
+      py::array_t<float, py::array::c_style | py::array::forcecast> data,
+      uint32_t beam_count)
+  {
+    auto buf = data.request();
+    if (buf.ndim == 2 && beam_count == 0)
+      beam_count = static_cast<uint32_t>(buf.shape[0]);
+    if (beam_count == 0) beam_count = 1;
+
+    auto vec = to_float_vector(data, beam_count);
+    uint32_t n_point = static_cast<uint32_t>(vec.size() / beam_count);
+
+    statistics::StatisticsParams params;
+    params.beam_count = beam_count;
+    params.n_point    = n_point;
+
+    std::vector<statistics::StatisticsResult> results;
+    {
+      py::gil_scoped_release release;
+      results = proc_.ComputeStatisticsFloat(vec, params);
+    }
+
+    py::list out;
+    for (const auto& r : results) {
+      py::dict d;
+      d["beam_id"]        = r.beam_id;
+      d["variance"]       = r.variance;
+      d["std_dev"]        = r.std_dev;
+      d["mean_magnitude"] = r.mean_magnitude;
+      out.append(d);
+    }
+    return out;
+  }
+
+  py::list compute_median_float(
+      py::array_t<float, py::array::c_style | py::array::forcecast> data,
+      uint32_t beam_count)
+  {
+    auto buf = data.request();
+    if (buf.ndim == 2 && beam_count == 0)
+      beam_count = static_cast<uint32_t>(buf.shape[0]);
+    if (beam_count == 0) beam_count = 1;
+
+    auto vec = to_float_vector(data, beam_count);
+    uint32_t n_point = static_cast<uint32_t>(vec.size() / beam_count);
+
+    statistics::StatisticsParams params;
+    params.beam_count = beam_count;
+    params.n_point    = n_point;
+
+    std::vector<statistics::MedianResult> results;
+    {
+      py::gil_scoped_release release;
+      results = proc_.ComputeMedianFloat(vec, params);
+    }
+
+    py::list out;
+    for (const auto& r : results) {
+      py::dict d;
+      d["beam_id"]          = r.beam_id;
+      d["median_magnitude"] = r.median_magnitude;
+      out.append(d);
+    }
+    return out;
+  }
+
 private:
   // Конвертирует numpy (любой формы) в flat vector. StatisticsProcessor ожидает
   // данные в beam-major порядке: сначала все samples beam[0], потом beam[1]...
@@ -139,6 +207,24 @@ private:
 
     auto* ptr = static_cast<std::complex<float>*>(buf.ptr);
     return std::vector<std::complex<float>>(ptr, ptr + total);
+  }
+
+  static std::vector<float> to_float_vector(
+      py::array_t<float, py::array::c_style | py::array::forcecast> data,
+      uint32_t beam_count)
+  {
+    auto buf = data.request();
+    size_t total = 1;
+    for (py::ssize_t d = 0; d < buf.ndim; ++d)
+      total *= static_cast<size_t>(buf.shape[d]);
+
+    if (beam_count == 0 || total % beam_count != 0)
+      throw std::invalid_argument(
+          "Data size " + std::to_string(total) +
+          " is not divisible by beam_count " + std::to_string(beam_count));
+
+    auto* ptr = static_cast<float*>(buf.ptr);
+    return std::vector<float>(ptr, ptr + total);
   }
 
   ROCmGPUContext& ctx_;
@@ -191,6 +277,25 @@ inline void register_statistics(py::module& m) {
            "Returns:\n"
            "  list of dicts per beam:\n"
            "    beam_id, mean_real, mean_imag, variance, std_dev, mean_magnitude")
+
+      .def("compute_statistics_float", &PyStatisticsProcessor::compute_statistics_float,
+           py::arg("data"), py::arg("beam_count") = 1,
+           "Compute statistics on float magnitudes per beam.\n\n"
+           "Args:\n"
+           "  data: numpy float32 (beam_count * n_point,) or (beam_count, n_point)\n"
+           "  beam_count: number of beams (default 1)\n\n"
+           "Returns:\n"
+           "  list of dicts per beam:\n"
+           "    beam_id, variance, std_dev, mean_magnitude")
+
+      .def("compute_median_float", &PyStatisticsProcessor::compute_median_float,
+           py::arg("data"), py::arg("beam_count") = 1,
+           "Compute median of float magnitudes per beam.\n\n"
+           "Args:\n"
+           "  data: numpy float32 (beam_count * n_point,) or (beam_count, n_point)\n"
+           "  beam_count: number of beams (default 1)\n\n"
+           "Returns:\n"
+           "  list of dicts: [{'beam_id':int, 'median_magnitude':float}, ...]")
 
       .def("__repr__", [](const PyStatisticsProcessor&) {
           return "<StatisticsProcessor>";

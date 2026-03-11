@@ -136,6 +136,45 @@ public:
         const MagPhaseParams& params,
         size_t gpu_memory_bytes = 0);
 
+    // =========================================================================
+    // Public API -- Magnitude-only (no phase computed)
+    // =========================================================================
+
+    /**
+     * @brief Convert GPU complex data to magnitude only (GPU in → CPU out)
+     *
+     * norm_coeff in params controls normalization:
+     *   0.0f  → no normalization (inv_n = 1.0)
+     *  -1.0f  → divide by n_point (inv_n = 1/n_point)
+     *  >0.0f  → multiply by norm_coeff (inv_n = norm_coeff)
+     *
+     * @param gpu_data Device pointer to complex<float> data
+     * @param params Conversion parameters (beam_count, n_point, norm_coeff)
+     * @param gpu_memory_bytes Size of input GPU buffer in bytes (0 = auto)
+     * @return Vector of MagnitudeResult (one per beam)
+     */
+    std::vector<MagnitudeResult> ProcessMagnitude(
+        void* gpu_data,
+        const MagPhaseParams& params,
+        size_t gpu_memory_bytes = 0);
+
+    /**
+     * @brief Convert GPU complex data to magnitude only, result stays on GPU
+     *
+     * Zero-copy GPU→GPU path. Output buffer is plain float[beam_count * n_point].
+     * CALLER OWNS the returned pointer — must hipFree when done.
+     *
+     * @param gpu_data Device pointer to complex<float> data
+     * @param params Conversion parameters (beam_count, n_point, norm_coeff)
+     * @param gpu_memory_bytes Size of input GPU buffer in bytes (0 = auto)
+     * @return Device pointer to float[] magnitudes (beam_count * n_point floats)
+     *         CALLER OWNS — must hipFree!
+     */
+    void* ProcessMagnitudeToGPU(
+        void* gpu_data,
+        const MagPhaseParams& params,
+        size_t gpu_memory_bytes = 0);
+
 private:
     // =========================================================================
     // Internal methods
@@ -162,6 +201,13 @@ private:
     /// Execute kernel with custom input/output pointers (for ProcessToGPU)
     void ExecuteKernelDirect(void* input_ptr, void* output_ptr, size_t total_elements);
 
+    /// Launch complex_to_magnitude kernel (magnitude-only, no phase)
+    void ExecuteMagnitudeKernel(void* input_ptr, void* output_ptr,
+                                 size_t total_elements, float inv_n);
+
+    /// Compile magnitude-only kernel (lazy, after mag_phase kernel)
+    void CompileMagnitudeKernel();
+
     /// Read interleaved results from GPU and split into per-beam MagPhaseResult
     std::vector<MagPhaseResult> ReadResults(size_t beam_count, size_t start_beam);
 
@@ -176,10 +222,13 @@ private:
     drv_gpu_lib::IBackend* backend_ = nullptr;
     hipStream_t stream_ = nullptr;
 
-    // hiprtc compiled kernel
-    hipModule_t module_ = nullptr;
-    hipFunction_t kernel_ = nullptr;
+    // hiprtc compiled kernels
+    hipModule_t module_ = nullptr;             ///< module for complex_to_mag_phase
+    hipModule_t mag_module_ = nullptr;         ///< module for complex_to_magnitude
+    hipFunction_t kernel_ = nullptr;          ///< complex_to_mag_phase (interleaved output)
+    hipFunction_t magnitude_kernel_ = nullptr; ///< complex_to_magnitude (float-only output)
     bool kernels_compiled_ = false;
+    bool magnitude_kernel_compiled_ = false;
 
     // HSACO kernel cache (disk)
     std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
@@ -187,6 +236,7 @@ private:
     // GPU buffers (internal, for batched CPU->CPU / GPU->CPU processing)
     void* input_buffer_ = nullptr;    ///< Complex input: batch * n_point * sizeof(complex<float>)
     void* output_buffer_ = nullptr;   ///< Interleaved {mag,phase}: batch * n_point * 2 * sizeof(float)
+    void* mag_only_buffer_ = nullptr; ///< Magnitude-only output: batch * n_point * sizeof(float)
 
     // State
     uint32_t n_point_ = 0;

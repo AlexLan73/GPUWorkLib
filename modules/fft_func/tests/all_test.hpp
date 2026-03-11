@@ -14,6 +14,7 @@
 // ─── ROCm / hipFFT тесты ─────────────────────────────────────────────────────
 #include "test_fft_processor_rocm.hpp"
 #include "test_complex_to_mag_phase_rocm.hpp"
+#include "test_process_magnitude_rocm.hpp"
 #include "test_fft_matrix_rocm.hpp"
 #include "test_spectrum_maxima_rocm.hpp"
 // #include "test_fft_benchmark_rocm.hpp"          // benchmark — долго
@@ -27,6 +28,9 @@ inline void run() {
 
     // ComplexToMagPhaseROCm: complex → mag+phase
     test_complex_to_mag_phase_rocm::run();
+
+    // ProcessMagnitude: magnitude-only, normalization, managed memory
+    test_process_magnitude_rocm::run();
 
     // FFT Matrix: beams × nFFT table
     test_fft_matrix_rocm::run();

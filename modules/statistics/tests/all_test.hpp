@@ -15,6 +15,7 @@
 
 #if ENABLE_ROCM
 #include "test_statistics_rocm.hpp"
+#include "test_statistics_float_rocm.hpp"
 #endif
 
 namespace statistics_all_test {
@@ -23,6 +24,8 @@ inline void run() {
   // StatisticsProcessor: mean, median, variance, std (ROCm only)
 #if ENABLE_ROCM
   test_statistics_rocm::run();
+  // Statistics float API + ProcessMagnitude→Statistics pipeline
+  test_statistics_float_rocm::run();
 #endif
 }
 

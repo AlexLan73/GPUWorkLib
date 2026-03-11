@@ -174,6 +174,7 @@ target_include_directories(GPUWorkLib PRIVATE
     ${CMAKE_SOURCE_DIR}/modules/example/include
     ${CMAKE_SOURCE_DIR}/modules/search_maxim/include
     ${CMAKE_SOURCE_DIR}/modules/fft_func/include
+    ${CMAKE_SOURCE_DIR}/modules/fft_func/tests
     ${CMAKE_SOURCE_DIR}/modules/signal_generators/include
     ${CMAKE_SOURCE_DIR}/modules/lch_farrow/include
     ${CMAKE_SOURCE_DIR}/modules/filters/include

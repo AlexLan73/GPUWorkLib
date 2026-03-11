@@ -198,6 +198,7 @@ private:
 
 // ROCm Python wrappers (include AFTER ROCmGPUContext is defined)
 #include "py_fft_processor_rocm.hpp"
+#include "py_complex_to_mag_rocm.hpp"
 #include "py_spectrum_maxima_finder_rocm.hpp"
 #include "py_form_signal_rocm.hpp"
 #include "py_filters_rocm.hpp"
@@ -1505,6 +1506,9 @@ PYBIND11_MODULE(gpuworklib, m) {
 
     // FFTProcessorROCm (see py_fft_processor_rocm.hpp)
     register_fft_processor_rocm(m);
+
+    // ComplexToMagROCm: magnitude-only conversion (see py_complex_to_mag_rocm.hpp)
+    register_complex_to_mag_rocm(m);
 
     // SpectrumMaximaFinderROCm (see py_spectrum_maxima_finder_rocm.hpp)
     register_spectrum_maxima_finder_rocm(m);

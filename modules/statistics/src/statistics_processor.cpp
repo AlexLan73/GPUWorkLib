@@ -1042,6 +1042,70 @@ std::vector<MedianResult> StatisticsProcessor::ComputeMedianFloat(
   return results;
 }
 
+// =========================================================================
+// PART 6: CPU float data wrappers (vector<float> → hipMalloc → void* API → hipFree)
+// =========================================================================
+
+std::vector<StatisticsResult> StatisticsProcessor::ComputeStatisticsFloat(
+    const std::vector<float>& data,
+    const StatisticsParams& params)
+{
+  size_t expected = static_cast<size_t>(params.beam_count) * params.n_point;
+  if (data.size() != expected) {
+    throw std::invalid_argument("ComputeStatisticsFloat(vector): input size " +
+        std::to_string(data.size()) + " != expected " + std::to_string(expected));
+  }
+
+  void* gpu_ptr = nullptr;
+  size_t bytes = expected * sizeof(float);
+  hipError_t err = hipMalloc(&gpu_ptr, bytes);
+  if (err != hipSuccess) {
+    throw std::runtime_error("ComputeStatisticsFloat: hipMalloc failed: " +
+                              std::string(hipGetErrorString(err)));
+  }
+
+  err = hipMemcpy(gpu_ptr, data.data(), bytes, hipMemcpyHostToDevice);
+  if (err != hipSuccess) {
+    (void)hipFree(gpu_ptr);
+    throw std::runtime_error("ComputeStatisticsFloat: hipMemcpy H2D failed: " +
+                              std::string(hipGetErrorString(err)));
+  }
+
+  auto results = ComputeStatisticsFloat(gpu_ptr, params);
+  (void)hipFree(gpu_ptr);
+  return results;
+}
+
+std::vector<MedianResult> StatisticsProcessor::ComputeMedianFloat(
+    const std::vector<float>& data,
+    const StatisticsParams& params)
+{
+  size_t expected = static_cast<size_t>(params.beam_count) * params.n_point;
+  if (data.size() != expected) {
+    throw std::invalid_argument("ComputeMedianFloat(vector): input size " +
+        std::to_string(data.size()) + " != expected " + std::to_string(expected));
+  }
+
+  void* gpu_ptr = nullptr;
+  size_t bytes = expected * sizeof(float);
+  hipError_t err = hipMalloc(&gpu_ptr, bytes);
+  if (err != hipSuccess) {
+    throw std::runtime_error("ComputeMedianFloat: hipMalloc failed: " +
+                              std::string(hipGetErrorString(err)));
+  }
+
+  err = hipMemcpy(gpu_ptr, data.data(), bytes, hipMemcpyHostToDevice);
+  if (err != hipSuccess) {
+    (void)hipFree(gpu_ptr);
+    throw std::runtime_error("ComputeMedianFloat: hipMemcpy H2D failed: " +
+                              std::string(hipGetErrorString(err)));
+  }
+
+  auto results = ComputeMedianFloat(gpu_ptr, params);
+  (void)hipFree(gpu_ptr);
+  return results;
+}
+
 }  // namespace statistics
 
 #endif  // ENABLE_ROCM

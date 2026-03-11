@@ -12,8 +12,10 @@ Classes:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
+import json
 import os
+from pathlib import Path
 
 
 @dataclass
@@ -102,3 +104,53 @@ class ProcessorConfig:
     def module_plot_dir(self, module_name: str) -> str:
         """Полный путь к директории графиков модуля."""
         return os.path.join(self.plot_dir, module_name)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GPU Config — configGPU.json
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class GpuEntry:
+    """Одна запись GPU из configGPU.json."""
+    id: int = 0
+    is_active: bool = False
+    name: str = ""
+
+
+def load_gpu_config(config_path: Union[str, Path]) -> List[GpuEntry]:
+    """Прочитать configGPU.json и вернуть список GpuEntry.
+
+    Args:
+        config_path: путь к configGPU.json (рядом с бинарником/либо).
+
+    Returns:
+        Список GpuEntry из секции "gpus". Пустой список если файл не найден.
+    """
+    path = Path(config_path)
+    if not path.exists():
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        entries = []
+        for gpu in data.get("gpus", []):
+            entries.append(GpuEntry(
+                id=int(gpu.get("id", 0)),
+                is_active=bool(gpu.get("is_active", False)),
+                name=str(gpu.get("name", "")),
+            ))
+        return entries
+    except Exception:
+        return []
+
+
+def active_gpu_ids(config_path: Union[str, Path]) -> List[int]:
+    """Вернуть список id активных GPU из configGPU.json."""
+    return [e.id for e in load_gpu_config(config_path) if e.is_active]
+
+
+def first_active_gpu_id(config_path: Union[str, Path], default: int = 0) -> int:
+    """Вернуть id первого активного GPU (default если конфиг не найден/пустой)."""
+    ids = active_gpu_ids(config_path)
+    return ids[0] if ids else default

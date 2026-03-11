@@ -69,6 +69,49 @@ extern "C" __global__ void complex_to_mag_phase(
 )HIP";
 }
 
+/**
+ * @brief HIP kernel source: complex_to_magnitude (magnitude-only, no phase)
+ *
+ * Converts complex (re, im) pairs to magnitude only, multiplied by inv_n.
+ * Output is plain float[] — no interleaving.
+ * inv_n is computed on host: norm_coeff<0 ? 1.0f/n_point : (norm_coeff>0 ? norm_coeff : 1.0f)
+ *
+ * One thread per element, 1D grid.
+ */
+inline const char* GetComplexToMagnitudeKernelSource() {
+    return R"HIP(
+
+#ifndef BLOCK_SIZE
+#define BLOCK_SIZE 256
+#endif
+
+struct float2_t {
+    float x;
+    float y;
+};
+
+// ═══════════════════════════════════════════════════════════════
+// Kernel: complex_to_magnitude
+// Converts complex data to magnitude * inv_n (float output, no phase)
+// One thread per element. 1D grid.
+// ═══════════════════════════════════════════════════════════════
+__launch_bounds__(BLOCK_SIZE)
+extern "C" __global__ void complex_to_magnitude(
+    const float2_t* __restrict__ input,   // Complex input: {re, im}
+    float* __restrict__ output,           // Float output: mag * inv_n
+    float inv_n,                          // Normalization factor (host-computed)
+    unsigned int total)                   // Total elements (beam_count * n_point)
+{
+    unsigned int gid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (gid >= total) return;
+
+    float2_t z = input[gid];
+    output[gid] = __fsqrt_rn(z.x * z.x + z.y * z.y) * inv_n;
+}
+
+)HIP";
+}
+
 }  // namespace kernels
 }  // namespace fft_processor
 

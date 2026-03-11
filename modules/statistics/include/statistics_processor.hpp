@@ -147,6 +147,38 @@ public:
       void* gpu_float_data,
       const StatisticsParams& params);
 
+  // =========================================================================
+  // Public API -- CPU float data (vector<float> wrappers for tests)
+  // =========================================================================
+
+  /**
+   * @brief Compute statistics on float magnitudes per beam (CPU data)
+   *
+   * Convenience wrapper for testing: uploads data via hipMalloc+hipMemcpy,
+   * calls ComputeStatisticsFloat(void*, params), frees GPU buffer.
+   *
+   * @param data Flat float array [beam_count * n_point]
+   * @param params Statistics parameters
+   * @return StatisticsResult per beam
+   */
+  std::vector<StatisticsResult> ComputeStatisticsFloat(
+      const std::vector<float>& data,
+      const StatisticsParams& params);
+
+  /**
+   * @brief Compute median of float magnitudes per beam (CPU data)
+   *
+   * Convenience wrapper for testing: uploads data via hipMalloc+hipMemcpy,
+   * calls ComputeMedianFloat(void*, params), frees GPU buffer.
+   *
+   * @param data Flat float array [beam_count * n_point]
+   * @param params Statistics parameters
+   * @return MedianResult per beam
+   */
+  std::vector<MedianResult> ComputeMedianFloat(
+      const std::vector<float>& data,
+      const StatisticsParams& params);
+
 private:
   // =========================================================================
   // GPU Resources management

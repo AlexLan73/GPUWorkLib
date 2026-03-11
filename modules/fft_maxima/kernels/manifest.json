@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kernels": [
+    {
+      "name": "spectrum_kernels",
+      "comment": "spectrum_kernels: pad_data + compute_magnitudes",
+      "created": "2026-03-11T16:30:28",
+      "params": "gfx1201",
+      "backend": "rocm"
+    },
+    {
+      "name": "all_maxima_kernels",
+      "comment": "all_maxima: detect + scan + add + compact",
+      "created": "2026-03-11T16:30:28",
+      "params": "gfx1201",
+      "backend": "rocm"
+    }
+  ]
+}
