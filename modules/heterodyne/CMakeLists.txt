@@ -43,7 +43,7 @@ target_link_libraries(${MODULE_NAME}
     PUBLIC
         drvgpu
         signal_generators
-        spectrum_maxima
+        fft_func
         OpenCL::OpenCL
 )
 

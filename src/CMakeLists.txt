@@ -66,10 +66,10 @@ if(TARGET GPUWorkLib::signal_generators)
     message(STATUS "Linked: GPUWorkLib::signal_generators")
 endif()
 
-# FFT Processor module (для test_fft_processor)
-if(TARGET GPUWorkLib::fft_processor)
-    target_link_libraries(GPUWorkLib PRIVATE GPUWorkLib::fft_processor)
-    message(STATUS "✅ Linked: GPUWorkLib::fft_processor")
+# FFT Functions module (объединяет fft_processor + fft_maxima)
+if(TARGET GPUWorkLib::fft_func)
+    target_link_libraries(GPUWorkLib PRIVATE GPUWorkLib::fft_func)
+    message(STATUS "✅ Linked: GPUWorkLib::fft_func")
 endif()
 
 # LchFarrow module (для test_lch_farrow)
@@ -114,21 +114,8 @@ if(TARGET GPUWorkLib::strategies)
     message(STATUS "✅ Linked: GPUWorkLib::strategies")
 endif()
 
-# Spectrum Maxima module (для test_spectrum_maxima)
-# Используем -Wl,--start-group / --end-group для разрешения циклических зависимостей
-if(TARGET GPUWorkLib::spectrum_maxima)
-    if(CLFFT_FOUND AND CLFFT_LIB)
-        target_link_libraries(GPUWorkLib PRIVATE
-            -Wl,--start-group
-            GPUWorkLib::spectrum_maxima
-            ${CLFFT_LIB}
-            -Wl,--end-group
-        )
-    else()
-        target_link_libraries(GPUWorkLib PRIVATE GPUWorkLib::spectrum_maxima)
-    endif()
-    message(STATUS "✅ Linked: GPUWorkLib::spectrum_maxima")
-endif()
+# spectrum_maxima alias теперь указывает на fft_func (backward compat)
+# Линковка уже выполнена выше через GPUWorkLib::fft_func
 
 # ============================================================================
 # OpenCL - ПРАВИЛЬНЫЙ СПОСОБ через imported target
@@ -184,9 +171,8 @@ target_include_directories(GPUWorkLib PRIVATE
     ${CMAKE_SOURCE_DIR}/DrvGPU
     ${CMAKE_SOURCE_DIR}/modules/example/include
     ${CMAKE_SOURCE_DIR}/modules/search_maxim/include
-    ${CMAKE_SOURCE_DIR}/modules/fft_maxima/include
+    ${CMAKE_SOURCE_DIR}/modules/fft_func/include
     ${CMAKE_SOURCE_DIR}/modules/signal_generators/include
-    ${CMAKE_SOURCE_DIR}/modules/fft_processor/include
     ${CMAKE_SOURCE_DIR}/modules/lch_farrow/include
     ${CMAKE_SOURCE_DIR}/modules/filters/include
     ${CMAKE_SOURCE_DIR}/modules/heterodyne/include

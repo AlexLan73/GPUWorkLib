@@ -11,10 +11,9 @@ import os
 # Order for "all" (matches create_agent_test.md)
 DEFAULT_ORDER = [
     "drvgpu",
-    "fft_processor",
+    "fft_func",
     "statistics",
     "vector_algebra",
-    "fft_maxima",
     "filters",
     "signal_generators",
     "lch_farrow",
@@ -24,10 +23,9 @@ DEFAULT_ORDER = [
 # Python test dirs (drvgpu has no Python tests)
 MODULE_TO_PYTHON_DIR = {
     "drvgpu": None,
-    "fft_processor": None,
+    "fft_func": "Python_test/fft_func",
     "statistics": "Python_test/statistics",
     "vector_algebra": "Python_test/vector_algebra",
-    "fft_maxima": "Python_test/fft_maxima",
     "filters": "Python_test/filters",
     "signal_generators": "Python_test/signal_generators",
     "lch_farrow": "Python_test/lch_farrow",
@@ -122,9 +120,9 @@ def main():
         total += 1
         print(f"  >>> {mod}")
 
-        # fft_maxima: AMD -> только *_rocm тесты; NVIDIA -> только clFFT (исключить rocm)
+        # fft_func: AMD -> только *_rocm тесты; NVIDIA (opencl-clfft branch) -> только clFFT
         pytest_args = [py_dir, "-v", "-s"]
-        if mod == "fft_maxima":
+        if mod == "fft_func":
             if gpu == "amd":
                 pytest_args.extend(["-k", "rocm"])
             elif gpu == "nvidia":

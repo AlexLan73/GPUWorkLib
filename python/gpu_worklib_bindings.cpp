@@ -30,8 +30,10 @@
 // GPUWorkLib headers
 #include "backends/opencl/opencl_backend.hpp"
 #include "interface/i_backend.hpp"
+#if ENABLE_CLFFT
 #include "fft_processor.hpp"
 #include "fft_processor_types.hpp"
+#endif
 #include "signal_service.hpp"
 #include "signal_generator_factory.hpp"
 #include "generators/cw_generator.hpp"
@@ -44,7 +46,9 @@
 #include "params/signal_request.hpp"
 #include "params/system_sampling.hpp"
 #include "params/form_params.hpp"
+#if ENABLE_CLFFT
 #include "spectrum_maxima_finder.h"
+#endif
 
 // ============================================================================
 // ROCm headers (Linux + AMD GPU only)
@@ -491,8 +495,9 @@ private:
 };
 
 // ============================================================================
-// PyFFTProcessor — pythonic wrapper over fft_processor::FFTProcessor
+// PyFFTProcessor — pythonic wrapper over fft_processor::FFTProcessor (OpenCL/clFFT)
 // ============================================================================
+#if ENABLE_CLFFT
 
 // Обёртка над FFTProcessor с двумя режимами вывода:
 //   process_complex  → numpy complex64 (спектр как комплексный массив)
@@ -638,6 +643,7 @@ private:
     GPUContext& ctx_;
     fft_processor::FFTProcessor fft_;
 };
+#endif  // ENABLE_CLFFT
 
 // ============================================================================
 // PyScriptGenerator — text DSL -> OpenCL kernel compiler
@@ -1101,8 +1107,9 @@ private:
 #include "py_heterodyne.hpp"
 
 // ============================================================================
-// PySpectrumMaximaFinder — find all local maxima in FFT spectrum
+// PySpectrumMaximaFinder — find all local maxima in FFT spectrum (OpenCL/clFFT)
 // ============================================================================
+#if ENABLE_CLFFT
 
 // Ищет все локальные максимумы в FFT-спектре (не только глобальный).
 // Принимает комплексный FFT-результат, вычисляет магнитуды внутри на GPU,
@@ -1212,6 +1219,7 @@ private:
     GPUContext& ctx_;
     antenna_fft::SpectrumMaximaFinder finder_;
 };
+#endif  // ENABLE_CLFFT
 
 // ============================================================================
 // PYBIND11_MODULE — the entry point
@@ -1380,8 +1388,9 @@ PYBIND11_MODULE(gpuworklib, m) {
              "  numpy.ndarray complex64");
 
     // ════════════════════════════════════════════════════════════════
-    // FFTProcessor
+    // FFTProcessor (OpenCL/clFFT — только при ENABLE_CLFFT=1)
     // ════════════════════════════════════════════════════════════════
+#if ENABLE_CLFFT
     py::class_<PyFFTProcessor>(m, "FFTProcessor",
         "GPU FFT processor (clFFT backend).\n\n"
         "Usage:\n"
@@ -1415,6 +1424,7 @@ PYBIND11_MODULE(gpuworklib, m) {
 
         .def_property_readonly("nfft", &PyFFTProcessor::get_nfft,
              "Last used nFFT value");
+#endif  // ENABLE_CLFFT
 
     // ════════════════════════════════════════════════════════════════
     // ScriptGenerator
@@ -1762,8 +1772,9 @@ PYBIND11_MODULE(gpuworklib, m) {
         });
 
     // ════════════════════════════════════════════════════════════════
-    // SpectrumMaximaFinder
+    // SpectrumMaximaFinder (OpenCL/clFFT — только при ENABLE_CLFFT=1)
     // ════════════════════════════════════════════════════════════════
+#if ENABLE_CLFFT
     py::class_<PySpectrumMaximaFinder>(m, "SpectrumMaximaFinder",
         "Find all local maxima in FFT spectrum (GPU accelerated).\n\n"
         "Pipeline: Detection -> Prefix Sum (Blelloch Scan) -> Compaction\n\n"
@@ -1804,6 +1815,7 @@ PYBIND11_MODULE(gpuworklib, m) {
              "  peaks = finder.find_all_maxima(spectrum, sample_rate=1000)\n"
              "  print(f'Found {peaks[\"num_maxima\"]} peaks')\n"
              "  print(f'Frequencies: {peaks[\"frequencies\"]} Hz')");
+#endif  // ENABLE_CLFFT
 
     // ════════════════════════════════════════════════════════════════
     // LfmAnalyticalDelay (see py_lfm_analytical_delay.hpp)

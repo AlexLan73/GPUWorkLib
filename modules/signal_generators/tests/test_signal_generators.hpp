@@ -20,7 +20,9 @@
 #include "generators/cw_generator.hpp"
 #include "generators/lfm_generator.hpp"
 #include "generators/noise_generator.hpp"
+#if ENABLE_CLFFT
 #include "fft_processor.hpp"
+#endif
 #include "DrvGPU/backends/opencl/opencl_backend.hpp"
 
 #include <CL/cl.h>
@@ -247,7 +249,9 @@ inline bool TestNoiseStatistics(drv_gpu_lib::IBackend* backend) {
 
 /**
  * @brief Test 5: Integration — CW -> FFTProcessor -> check frequency
+ * Only available when clFFT is enabled (ENABLE_CLFFT=1).
  */
+#if ENABLE_CLFFT
 inline bool TestCwFftIntegration(drv_gpu_lib::IBackend* backend) {
     std::cout << "\n  [SigGen 5] Integration: CW -> FFT -> freq check...\n";
 
@@ -292,6 +296,7 @@ inline bool TestCwFftIntegration(drv_gpu_lib::IBackend* backend) {
     std::cout << "    " << (pass ? "PASS" : "FAIL") << "\n";
     return pass;
 }
+#endif  // ENABLE_CLFFT
 
 /**
  * @brief Test 6: Factory creates correct types
@@ -368,7 +373,9 @@ inline int run() {
         runTest(TestCwMultiBeam(backend.get()));
         runTest(TestLfmGpuVsCpu(backend.get()));
         runTest(TestNoiseStatistics(backend.get()));
+#if ENABLE_CLFFT
         runTest(TestCwFftIntegration(backend.get()));
+#endif
         runTest(TestFactory(backend.get()));
 
         std::cout << "\n════════════════════════════════════════════════════════════\n";

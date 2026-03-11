@@ -22,7 +22,9 @@
 #include "params/signal_request.hpp"
 #include "params/system_sampling.hpp"
 
+#if ENABLE_CLFFT
 #include "spectrum_maxima_finder.h"
+#endif
 
 #include "DrvGPU/backends/opencl/opencl_backend.hpp"
 #include "DrvGPU/services/console_output.hpp"
@@ -225,9 +227,9 @@ inline void run_test_5_antennas_linear() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Test 3: dechirp_correct — verify peak moves to DC
+// Test 3: dechirp_correct — verify peak moves to DC (requires ENABLE_CLFFT=1)
 // ════════════════════════════════════════════════════════════════════════════
-
+#if ENABLE_CLFFT
 inline void run_test_correction() {
   int gpu_id = 0;
   auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
@@ -318,6 +320,7 @@ inline void run_test_correction() {
     con.Print(gpu_id, "Heterodyne", "    EXCEPTION: " + std::string(e.what()));
   }
 }
+#endif  // ENABLE_CLFFT
 
 // ════════════════════════════════════════════════════════════════════════════
 // Test 6: Random delays (seed=42), 5 antennas, delays [10..600] us

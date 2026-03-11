@@ -24,14 +24,11 @@ message(STATUS "")
 # DrvGPU library (корневая)
 add_subdirectory(DrvGPU)
 
-# FFT Maxima module
-add_subdirectory(modules/fft_maxima)
+# FFT Functions module (FFTProcessor + SpectrumMaximaFinder, объединяет fft_processor + fft_maxima)
+add_subdirectory(modules/fft_func)
 
 # Signal Generators module
 add_subdirectory(modules/signal_generators)
-
-# FFT Processor module
-add_subdirectory(modules/fft_processor)
 
 # LCH Farrow module (standalone fractional delay processor)
 add_subdirectory(modules/lch_farrow)

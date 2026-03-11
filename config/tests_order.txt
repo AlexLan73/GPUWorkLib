@@ -3,8 +3,7 @@
 # Order is mandatory. Used by default (no args) and by "all"
 
 drvgpu        # набор драйверов 
-fft_processor
-fft_maxima
+fft_func      # объединяет fft_processor + fft_maxima
 signal_generators
 statistics
 lch_farrow

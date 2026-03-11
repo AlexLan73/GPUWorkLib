@@ -59,16 +59,15 @@ target_include_directories(${MODULE_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/DrvGPU
-        ${CMAKE_SOURCE_DIR}/modules/fft_maxima/include
+        ${CMAKE_SOURCE_DIR}/modules/fft_func/include
         ${CMAKE_SOURCE_DIR}/modules/statistics/include
-        ${CMAKE_SOURCE_DIR}/modules/fft_processor/include
 )
 
 target_link_libraries(${MODULE_NAME}
     PUBLIC
         drvgpu
         statistics
-        spectrum_maxima
+        fft_func
         hip::host
         roc::hipblas
         hip::hipfft
