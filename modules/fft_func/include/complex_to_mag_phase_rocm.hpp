@@ -175,6 +175,24 @@ public:
         const MagPhaseParams& params,
         size_t gpu_memory_bytes = 0);
 
+    /**
+     * @brief Convert GPU complex data to magnitude only, write to caller's buffer
+     *
+     * Zero allocations. Reads from gpu_complex_in, writes to gpu_magnitude_out.
+     * Used by strategies to fill d_magnitudes_ directly after FFT.
+     *
+     * norm_coeff in params:
+     *   0.0f  → no normalization (inv_n = 1.0)
+     *  -1.0f  → divide by n_point
+     *  >0.0f  → multiply by norm_coeff
+     *
+     * @param gpu_complex_in  Device pointer to complex<float> data [beam_count * n_point]
+     * @param gpu_magnitude_out  Device pointer to float output [beam_count * n_point]
+     * @param params  MagPhaseParams (beam_count, n_point, norm_coeff)
+     */
+    void ProcessMagnitudeToBuffer(void* gpu_complex_in, void* gpu_magnitude_out,
+        const MagPhaseParams& params);
+
 private:
     // =========================================================================
     // Internal methods

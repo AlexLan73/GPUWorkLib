@@ -15,6 +15,7 @@
 
 #include "test_strategies_pipeline.hpp"
 #include "test_strategies_step_profiling.hpp"
+#include "test_strategies_benchmark_streams.hpp"
 
 #if ENABLE_ROCM
 #include "backends/rocm/rocm_backend.hpp"
@@ -50,6 +51,7 @@ inline void run() {
   test_strategies::test_full_pipeline(backend);
   test_strategies::test_external_weights(backend);
   // test_strategies_profiling::run_step_profiling(backend);
+  test_strategies_benchmark_streams::run_benchmark_streams(backend);
 
   con.Print(gpu_id, "Strategies", "════════════════════════════════════════════════════════════");
   con.Print(gpu_id, "Strategies", " All Strategies tests PASSED ✅");

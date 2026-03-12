@@ -38,9 +38,10 @@
 #include <complex>
 
 // Forward declarations
-namespace drv_gpu_lib { class IBackend; class KernelCacheService; }
-namespace statistics  { class StatisticsProcessor; }
-namespace antenna_fft { class AllMaximaPipelineROCm; }
+namespace drv_gpu_lib   { class IBackend; class KernelCacheService; }
+namespace statistics    { class StatisticsProcessor; }
+namespace antenna_fft   { class AllMaximaPipelineROCm; }
+namespace fft_processor { class ComplexToMagPhaseROCm; }
 
 namespace strategies {
 
@@ -91,6 +92,8 @@ protected:
   void do_window_fft();
   void do_debug_point_23(AntennaResult& result);
   void do_run_post_fft_scenarios(AntennaResult& result);
+  /// 3-stream parallel variant of do_run_post_fft_scenarios (for benchmark 3.6)
+  void do_run_post_fft_parallel(AntennaResult& result);
 
   // Access to internal buffers (for AntennaProcessorTest)
   void*    get_d_X() const { return d_X_; }
@@ -111,10 +114,14 @@ private:
 
 #if ENABLE_ROCM
   // HIP streams
-  hipStream_t stream_main_   = nullptr;  ///< Stream 2: GEMM -> Window+FFT
-  hipStream_t stream_debug1_ = nullptr;  ///< Stream 1: debug 2.1 (stats d_S)
-  hipStream_t stream_debug2_ = nullptr;  ///< Stream 3: debug 2.2 (stats d_X)
-  hipStream_t stream_debug3_ = nullptr;  ///< Stream 4: debug 2.3 + post-FFT
+  hipStream_t stream_main_    = nullptr;  ///< Stream 2: GEMM -> Window+FFT
+  hipStream_t stream_debug1_  = nullptr;  ///< Stream 1: debug 2.1 (stats d_S)
+  hipStream_t stream_debug2_  = nullptr;  ///< Stream 3: debug 2.2 (stats d_X)
+  hipStream_t stream_debug3_  = nullptr;  ///< Stream 4: debug 2.3 + post-FFT
+  // Extra streams for parallel post-FFT benchmark (3.6)
+  hipStream_t stream_bench3a_ = nullptr;  ///< OneMax stream (parallel scenario)
+  hipStream_t stream_bench3b_ = nullptr;  ///< AllMaxima stream (parallel scenario)
+  hipStream_t stream_bench3c_ = nullptr;  ///< GlobalMinMax stream (parallel scenario)
 
   // HIP events
   hipEvent_t event_gemm_done_ = nullptr;
@@ -158,6 +165,7 @@ private:
   // Components
   std::unique_ptr<statistics::StatisticsProcessor> stats_processor_;
   std::unique_ptr<antenna_fft::AllMaximaPipelineROCm> all_maxima_pipeline_;
+  std::unique_ptr<fft_processor::ComplexToMagPhaseROCm> complex_to_mag_;
   std::unique_ptr<ICheckpointSave> checkpoint_;
   std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
 

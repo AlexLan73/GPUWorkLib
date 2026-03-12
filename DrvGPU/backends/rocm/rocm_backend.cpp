@@ -336,6 +336,32 @@ void* ROCmBackend::Allocate(size_t size_bytes, unsigned int /*flags*/) {
 }
 
 /**
+ * @brief Выделяет unified memory через hipMallocManaged
+ *
+ * CPU может читать содержимое напрямую без явного hipMemcpy — удобно для отладки
+ * и checkpoint-операций. Освобождать через Free() (hipFree совместим).
+ *
+ * @param size_bytes Размер буфера в байтах
+ * @return Указатель на managed memory; nullptr при ошибке
+ */
+void* ROCmBackend::AllocateManaged(size_t size_bytes) {
+  if (!initialized_) {
+    return nullptr;
+  }
+
+  void* ptr = nullptr;
+  hipError_t err = hipMallocManaged(&ptr, size_bytes);
+  if (err != hipSuccess) {
+    DRVGPU_LOG_ERROR_GPU(device_index_, "ROCmBackend",
+                         "hipMallocManaged failed: " + std::string(hipGetErrorString(err)) +
+                         " (requested " + std::to_string(size_bytes) + " bytes)");
+    return nullptr;
+  }
+
+  return ptr;
+}
+
+/**
  * @brief Освобождает device memory через hipFree
  *
  * Безопасен для nullptr (ранний выход). Логирует ошибки через plog (не бросает).

@@ -258,6 +258,52 @@ inline void TestMultiBeamManaged(ComplexToMagPhaseROCm& proc, ConsoleOutput& con
 }
 
 // =========================================================================
+// Test 6: ProcessMagnitudeToBuffer — zero allocations, caller's buffer
+//         Compare result with ProcessMagnitudeToGPU + hipMemcpy
+// =========================================================================
+
+inline void TestProcessMagnitudeToBuffer(ComplexToMagPhaseROCm& proc, ConsoleOutput& con, int gpu_id) {
+    constexpr uint32_t kBeams = 2;
+    constexpr uint32_t N = 2048;
+    constexpr size_t kTotal = static_cast<size_t>(kBeams) * N;
+
+    auto src = MakeSinusoid(kTotal, 1.5f);
+
+    // Input on GPU
+    void* gpu_in = nullptr;
+    (void)hipMalloc(&gpu_in, kTotal * sizeof(std::complex<float>));
+    (void)hipMemcpy(gpu_in, src.data(), kTotal * sizeof(std::complex<float>), hipMemcpyHostToDevice);
+
+    // Pre-allocated output buffer (caller owns, no alloc inside ProcessMagnitudeToBuffer)
+    void* gpu_out = nullptr;
+    (void)hipMalloc(&gpu_out, kTotal * sizeof(float));
+
+    MagPhaseParams params;
+    params.beam_count = kBeams;
+    params.n_point    = N;
+    params.norm_coeff = 0.0f;  // inv_n = 1
+
+    // Call ProcessMagnitudeToBuffer (zero allocations)
+    proc.ProcessMagnitudeToBuffer(gpu_in, gpu_out, params);
+
+    // Reference: ProcessMagnitudeToGPU (allocates internally, then hipFree)
+    void* gpu_ref = proc.ProcessMagnitudeToGPU(gpu_in, params);
+
+    // Compare both GPU outputs
+    std::vector<float> result_buf(kTotal);
+    std::vector<float> result_ref(kTotal);
+    (void)hipMemcpy(result_buf.data(), gpu_out, kTotal * sizeof(float), hipMemcpyDeviceToHost);
+    (void)hipMemcpy(result_ref.data(), gpu_ref, kTotal * sizeof(float), hipMemcpyDeviceToHost);
+
+    (void)hipFree(gpu_in);
+    (void)hipFree(gpu_out);
+    (void)hipFree(gpu_ref);
+
+    bool ok = AllClose(result_buf, result_ref);
+    print_result(con, gpu_id, "T6 ProcessMagnitudeToBuffer 2×2048", ok);
+}
+
+// =========================================================================
 // Entry point
 // =========================================================================
 
@@ -276,6 +322,7 @@ inline void run() {
     TestNormZeroAndZeroSignal(proc, con, gpu_id);
     TestProcessMagnitudeToGPU(proc, con, gpu_id);
     TestMultiBeamManaged(proc, con, gpu_id);
+    TestProcessMagnitudeToBuffer(proc, con, gpu_id);
 
     con.Print(gpu_id, "ProcMag", "=== Done ===");
 }

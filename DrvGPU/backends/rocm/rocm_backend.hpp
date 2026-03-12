@@ -149,6 +149,9 @@ public:
   // Выделяет device memory через hipMalloc. flags — игнорируется (HIP не имеет
   // аналога CL_MEM_FLAGS). Возвращает nullptr при ошибке (не бросает).
   void* Allocate(size_t size_bytes, unsigned int flags = 0) override;
+  // hipMallocManaged — unified memory. CPU может читать без D2H (для отладки).
+  // Освобождать через Free() (hipFree совместим с managed memory).
+  void* AllocateManaged(size_t size_bytes) override;
   // hipFree(ptr). Безопасен для nullptr. Логирует ошибки через plog.
   void Free(void* ptr) override;
 

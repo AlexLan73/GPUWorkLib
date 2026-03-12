@@ -3,7 +3,7 @@
 > **Проект**: Библиотеки GPU-вычислений (OpenCL, ROCm, HIP)
 > **Автор**: Alex
 > **AI-ассистент**: Кодо
-> **Обновлено**: 2026-03-09
+> **Обновлено**: 2026-03-10
 
 ---
 
@@ -22,3 +22,13 @@
 | **vector_algebra** | 🟢 Active | `Doc/Modules/vector_algebra/Full.md` ✅ API.md ✅ |
 | fm_correlator | 🟢 Active | `Doc/Modules/fm_correlator/Full.md` |
 | **strategies** | 🟢 Active | `Doc/Modules/strategies/Full.md` ✅ Quick.md ✅ API.md ✅ |
+
+---
+
+## Текущие задачи (см. MemoryBank/tasks/)
+
+| Задача | Описание | Статус |
+|--------|----------|--------|
+| **Task_13** | Strategies Pipeline: fft_func + ProcessMagnitudeToBuffer + CPU wrappers + AllocateManaged + benchmark | ✅ COMPLETED 2026-03-12 |
+
+*Активных задач нет — ждём следующий большой раздел.*

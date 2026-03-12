@@ -440,6 +440,31 @@ void* ComplexToMagPhaseROCm::ProcessMagnitudeToGPU(
     return output_ptr;  // CALLER OWNS — must hipFree
 }
 
+void ComplexToMagPhaseROCm::ProcessMagnitudeToBuffer(
+    void* gpu_complex_in, void* gpu_magnitude_out,
+    const MagPhaseParams& params)
+{
+    if (!gpu_complex_in || !gpu_magnitude_out) {
+        throw std::invalid_argument("ProcessMagnitudeToBuffer: null pointer");
+    }
+
+    n_point_ = params.n_point;
+
+    if (!magnitude_kernel_compiled_) {
+        CompileMagnitudeKernel();
+    }
+
+    float inv_n = 1.0f;
+    if (params.norm_coeff < 0.0f)
+        inv_n = (params.n_point > 0) ? 1.0f / static_cast<float>(params.n_point) : 1.0f;
+    else if (params.norm_coeff > 0.0f)
+        inv_n = params.norm_coeff;
+
+    size_t total = static_cast<size_t>(params.beam_count) * params.n_point;
+    ExecuteMagnitudeKernel(gpu_complex_in, gpu_magnitude_out, total, inv_n);
+    hipStreamSynchronize(stream_);
+}
+
 // =========================================================================
 // PART 3: GPU Resources Management
 // =========================================================================

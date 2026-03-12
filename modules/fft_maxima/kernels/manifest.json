@@ -4,14 +4,14 @@
     {
       "name": "spectrum_kernels",
       "comment": "spectrum_kernels: pad_data + compute_magnitudes",
-      "created": "2026-03-11T16:30:28",
+      "created": "2026-03-12T09:42:33",
       "params": "gfx1201",
       "backend": "rocm"
     },
     {
       "name": "all_maxima_kernels",
       "comment": "all_maxima: detect + scan + add + compact",
-      "created": "2026-03-11T16:30:28",
+      "created": "2026-03-12T09:42:33",
       "params": "gfx1201",
       "backend": "rocm"
     }

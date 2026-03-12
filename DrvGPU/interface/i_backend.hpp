@@ -194,6 +194,18 @@ public:
      * @return Указатель на выделенную память
      */
     virtual void* Allocate(size_t size_bytes, unsigned int flags = 0) = 0;
+
+    /**
+     * @brief Выделить unified memory (CPU+GPU доступ без явного hipMemcpy)
+     *
+     * ROCm: hipMallocManaged — полезно для отладки (CPU читает без D2H).
+     * OpenCL: не поддерживается, возвращает nullptr.
+     * Освобождать через Free() (hipFree совместим с managed memory).
+     *
+     * @param size_bytes Размер в байтах
+     * @return Указатель на managed memory; nullptr если не поддерживается
+     */
+    virtual void* AllocateManaged(size_t size_bytes) { (void)size_bytes; return nullptr; }
     
     /**
      * @brief Освободить память на GPU

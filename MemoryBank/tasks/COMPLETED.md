@@ -1,6 +1,19 @@
 # COMPLETED — Завершённые задачи
 
-> **Обновлено**: 2026-03-09
+> **Обновлено**: 2026-03-12
+
+---
+
+## Task_13 — Strategies Pipeline: fft_func + vector<float> API ✅ 2026-03-12
+
+- **ProcessMagnitudeToBuffer** в `fft_func` (zero-alloc, пишет в буфер вызывающего)
+- **T6 тест** для ProcessMagnitudeToBuffer — **PASSED** ✅
+- **strategies**: `ComplexToMagPhaseROCm` вместо `magnitudes_kernel_` в `do_window_fft`
+- **StrategiesFloatApi** (`strategies_float_api.hpp`): `OneMaxParabolaFromFloat`, `GlobalMinMaxFromFloat`, `AllMaximaFromMagnitudes`
+- **AllocateManaged** в `IBackend` (default nullptr) + `ROCmBackend` (hipMallocManaged)
+- **Parallel benchmark**: `stream_bench3a/b/c_`, `do_run_post_fft_parallel()`, `test_strategies_benchmark_streams.hpp`
+- **Python tests**: 13/13 PASSED (`test_strategies_step_by_step.py`)
+- Сборка: 100% OK, без ошибок
 
 ---
 

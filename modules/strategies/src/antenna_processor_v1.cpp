@@ -5,6 +5,8 @@
 #if ENABLE_ROCM
 #include "statistics_processor.hpp"
 #include "pipelines/all_maxima_pipeline_rocm.hpp"
+#include "complex_to_mag_phase_rocm.hpp"
+#include "types/mag_phase_types.hpp"
 #include "backends/rocm/rocm_backend.hpp"
 #include "services/console_output.hpp"
 #include "services/kernel_cache_service.hpp"
@@ -53,6 +55,10 @@ AntennaProcessor_v1::AntennaProcessor_v1(
   HIP_CHECK(hipStreamCreate(&stream_debug1_));
   HIP_CHECK(hipStreamCreate(&stream_debug2_));
   HIP_CHECK(hipStreamCreate(&stream_debug3_));
+  // Extra streams for parallel post-FFT benchmark (3.6)
+  HIP_CHECK(hipStreamCreate(&stream_bench3a_));
+  HIP_CHECK(hipStreamCreate(&stream_bench3b_));
+  HIP_CHECK(hipStreamCreate(&stream_bench3c_));
 
   // Create events (disable timing for lower overhead where not needed)
   HIP_CHECK(hipEventCreateWithFlags(&event_gemm_done_, hipEventDisableTiming));
@@ -87,6 +93,9 @@ AntennaProcessor_v1::AntennaProcessor_v1(
   all_maxima_pipeline_ = std::make_unique<antenna_fft::AllMaximaPipelineROCm>(
       stream_debug3_, backend_);
 
+  // Create ComplexToMagPhaseROCm for zero-alloc magnitude conversion
+  complex_to_mag_ = std::make_unique<fft_processor::ComplexToMagPhaseROCm>(backend_);
+
   // Default checkpoint: NullCheckpointSave
   checkpoint_ = std::make_unique<NullCheckpointSave>();
 }
@@ -111,10 +120,13 @@ AntennaProcessor_v1::~AntennaProcessor_v1() {
   if (event_c1_done_)   hipEventDestroy(event_c1_done_);
   if (event_c2_done_)   hipEventDestroy(event_c2_done_);
 
-  if (stream_main_)   hipStreamDestroy(stream_main_);
-  if (stream_debug1_) hipStreamDestroy(stream_debug1_);
-  if (stream_debug2_) hipStreamDestroy(stream_debug2_);
-  if (stream_debug3_) hipStreamDestroy(stream_debug3_);
+  if (stream_main_)    hipStreamDestroy(stream_main_);
+  if (stream_debug1_)  hipStreamDestroy(stream_debug1_);
+  if (stream_debug2_)  hipStreamDestroy(stream_debug2_);
+  if (stream_debug3_)  hipStreamDestroy(stream_debug3_);
+  if (stream_bench3a_) hipStreamDestroy(stream_bench3a_);
+  if (stream_bench3b_) hipStreamDestroy(stream_bench3b_);
+  if (stream_bench3c_) hipStreamDestroy(stream_bench3c_);
 }
 
 int AntennaProcessor_v1::gpu_id() const {
@@ -471,18 +483,14 @@ void AntennaProcessor_v1::do_window_fft() {
       static_cast<hipfftComplex*>(d_spectrum_),
       HIPFFT_FORWARD));
 
-  // 4. Compute magnitudes: |d_spectrum_| -> d_magnitudes_
-  //    2D grid: Y=beam, X=position — no div/mod (P6)
+  // 4. Compute magnitudes via fft_func (no extra alloc)
+  //    Uses ComplexToMagPhaseROCm::ProcessMagnitudeToBuffer — writes to d_magnitudes_ directly
   {
-    unsigned int grid_x = (nFFT_ + kBlockSize - 1) / kBlockSize;
-    unsigned int grid_y = n_ant;
-    void* args[] = { &d_spectrum_, &d_magnitudes_, &n_ant, &nFFT_ };
-    HIP_CHECK(hipModuleLaunchKernel(
-        magnitudes_kernel_,
-        grid_x, grid_y, 1,      // 2D grid
-        kBlockSize, 1, 1,
-        0, stream_main_,
-        args, nullptr));
+    fft_processor::MagPhaseParams mp;
+    mp.beam_count  = n_ant;
+    mp.n_point     = nFFT_;
+    mp.norm_coeff  = 0.0f;  // no normalization (inv_n = 1)
+    complex_to_mag_->ProcessMagnitudeToBuffer(d_spectrum_, d_magnitudes_, mp);
   }
 }
 
@@ -564,6 +572,73 @@ void AntennaProcessor_v1::do_run_post_fft_scenarios(AntennaResult& result) {
                          n_ant * sizeof(MinMaxResult), hipMemcpyDeviceToHost));
 
     checkpoint_->save_c3_minmax(result.minmax.data(), n_ant, gpu_id());
+  }
+}
+
+// ============================================================================
+// Parallel post-FFT scenarios (3 streams — for benchmark 3.6)
+// OneMax → stream_bench3a_, AllMaxima → stream_bench3b_, MinMax → stream_bench3c_
+// ============================================================================
+
+void AntennaProcessor_v1::do_run_post_fft_parallel(AntennaResult& result) {
+  uint32_t n_ant = cfg_.n_ant;
+  float sr = cfg_.sample_rate;
+  const auto mode = cfg_.scenario_mode;
+
+  // Step2.1: OneMax on stream_bench3a_
+  if (mode == PostFftScenarioMode::ALL_REQUIRED ||
+      mode == PostFftScenarioMode::ONE_MAX_PARABOLA) {
+    void* args[] = { &d_magnitudes_, &d_spectrum_, &d_one_max_results_, &n_ant, &nFFT_, &sr };
+    HIP_CHECK(hipModuleLaunchKernel(
+        one_max_kernel_,
+        1, n_ant, 1,
+        kBlockSize, 1, 1,
+        0, stream_bench3a_,
+        args, nullptr));
+  }
+
+  // Step2.3: GlobalMinMax on stream_bench3c_ (launched early, alongside AllMaxima)
+  if (mode == PostFftScenarioMode::ALL_REQUIRED ||
+      mode == PostFftScenarioMode::GLOBAL_MINMAX) {
+    void* args[] = { &d_magnitudes_, &d_minmax_results_, &n_ant, &nFFT_, &sr };
+    HIP_CHECK(hipModuleLaunchKernel(
+        minmax_kernel_,
+        1, n_ant, 1,
+        kBlockSize, 1, 1,
+        0, stream_bench3c_,
+        args, nullptr));
+  }
+
+  // Step2.2: AllMaxima uses stream_debug3_ (bound at construction)
+  //          Runs concurrently with OneMax + MinMax above
+  if (mode == PostFftScenarioMode::ALL_REQUIRED ||
+      mode == PostFftScenarioMode::ALL_MAXIMA) {
+    auto am_result = all_maxima_pipeline_->Execute(
+        d_magnitudes_,
+        d_spectrum_,
+        n_ant,
+        nFFT_,
+        sr,
+        antenna_fft::OutputDestination::CPU,
+        1, 0, 1000);
+    result.all_maxima = std::move(am_result.beams);
+  }
+
+  // Sync all three streams and collect results
+  if (mode == PostFftScenarioMode::ALL_REQUIRED ||
+      mode == PostFftScenarioMode::ONE_MAX_PARABOLA) {
+    HIP_CHECK(hipStreamSynchronize(stream_bench3a_));
+    result.one_max.resize(n_ant);
+    HIP_CHECK(hipMemcpy(result.one_max.data(), d_one_max_results_,
+                         n_ant * sizeof(OneMaxParabolaLite), hipMemcpyDeviceToHost));
+  }
+
+  if (mode == PostFftScenarioMode::ALL_REQUIRED ||
+      mode == PostFftScenarioMode::GLOBAL_MINMAX) {
+    HIP_CHECK(hipStreamSynchronize(stream_bench3c_));
+    result.minmax.resize(n_ant);
+    HIP_CHECK(hipMemcpy(result.minmax.data(), d_minmax_results_,
+                         n_ant * sizeof(MinMaxResult), hipMemcpyDeviceToHost));
   }
 }
 
