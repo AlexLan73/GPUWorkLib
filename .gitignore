@@ -106,3 +106,6 @@ amdgpu-install*
 setup_github_mcp.zip
 setup_github_mcp.md
 
+# Ninja (локально на nvidia)
+tools/ninja-win.zip
+
