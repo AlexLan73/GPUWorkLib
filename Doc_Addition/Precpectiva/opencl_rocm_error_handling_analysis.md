@@ -27,3 +27,6 @@
 - Рекомендация: единый CheckCLError с расшифровкой кода (clGetErrorName/clGetErrorString или таблица).
 
 **Полный анализ и предложения** — в исходном файле MemoryBank/specs/Precpectiva/opencl_rocm_error_handling_analysis.md (части 2–5).
+
+рассмотреть
+
