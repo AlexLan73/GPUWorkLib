@@ -2,7 +2,7 @@
 
 > **Дата**: понедельник 2026-03-17
 > **Ветка**: `main`
-> **Задача**: Ref03 — проверить Foundation + Statistics на GPU, затем Ref03-C
+> **Задача**: Ref03 — проверить Foundation + Statistics + FFT на GPU, затем Ref03-C
 
 ---
 
@@ -33,10 +33,18 @@
 - `statistics_processor.hpp` + `.cpp` — ПЕРЕПИСАН как thin Facade (1290 → 320 строк)
 - **API НЕ изменился** — Python bindings не трогали
 
+### ✅ Ref03-E: FFT refactoring (commit `f0d0a67`)
+- 2 Op-класса в `modules/fft_func/include/operations/`:
+  - `pad_data_op.hpp` — zero-padding (memset + pad_data kernel)
+  - `mag_phase_op.hpp` — complex → magnitude/phase conversion
+- `fft_processor_rocm.hpp` + `.cpp` — ПЕРЕПИСАН как thin Facade (1027 → ~550 строк, -46%)
+- BufferSet<4> заменяет 4 raw void* pipeline buffers
+- hipFFT LRU-2 plan cache сохранён
+- **НЕ ТЕСТИРОВАНО НА GPU**
+
 ### ❌ НЕ написано:
 - Ref03-C: Strategies Pipeline (IPipelineStep, PipelineBuilder, 6 Steps)
-- Ref03-D: Filters refactoring
-- Ref03-E: FFT refactoring
+- Ref03-D: Filters refactoring (низкий приоритет — уже чистый код)
 
 ---
 
@@ -51,10 +59,11 @@ cmake .. -DENABLE_ROCM=ON
 make -j$(nproc)
 ```
 
-### Шаг 2: Прогнать ВСЕ тесты statistics
+### Шаг 2: Прогнать тесты statistics + FFT
 ```bash
-./gpu_work_lib  # запустить test_statistics_rocm::run()
-# Ожидание: 11/11 passed (T1-T11)
+./gpu_work_lib  # запустить:
+# test_statistics_rocm::run()  → 11/11 passed (T1-T11)
+# test_fft_processor_rocm::run()  → все passed
 ```
 
 ### Шаг 3: Проверить baseline timing
@@ -73,6 +82,8 @@ make -j$(nproc)
 1. **Include paths** — Op-классы включают `services/gpu_kernel_op.hpp` и `interface/gpu_context.hpp`. Проверить что CMakeLists.txt добавляет `DrvGPU/` в include dirs.
 2. **gpu_context.cpp** и **gpu_kernel_op.cpp** — добавить в CMakeLists.txt (DrvGPU/src/).
 3. **statistics_sort_gpu.hpp** include — путь может отличаться (проверить).
+4. **FFT**: `fft_processor_types.hpp` include — проверить путь.
+5. **FFT**: `hipfft/hipfft.h` — нужен `-lhipfft` при линковке.
 
 ### Если тесты падают:
 1. Проверить что `kernels::GetStatisticsKernelSource()` возвращает ВСЕ 10 kernels.
