@@ -136,7 +136,7 @@ public:
   // ══════════════════════════════════════════════════════════════════════
 
   /**
-   * @brief Генерация на GPU с метаданными (InputData — как в fft_maxima)
+   * @brief Генерация на GPU с метаданными (InputData — как в fft_func)
    * @return InputData<cl_mem> с data, antenna_count, n_point, gpu_memory_bytes
    * @note Вызывающий код должен освободить input.data через clReleaseMemObject()
    */

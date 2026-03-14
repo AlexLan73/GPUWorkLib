@@ -2,7 +2,7 @@
 
 /**
  * @file spectrum_modes.hpp
- * @brief Режимы поиска пиков (fft_maxima)
+ * @brief Режимы поиска пиков (fft_func spectrum)
  *
  * @author Кодо (AI Assistant)
  * @date 2026-02-15

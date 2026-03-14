@@ -5,7 +5,7 @@
  * @brief AllMaximaStep — find all local maxima via AllMaximaPipelineROCm
  *
  * Ref03-C Pipeline Step.
- * Delegates to AllMaximaPipelineROCm from fft_maxima module.
+ * Delegates to AllMaximaPipelineROCm from fft_func module.
  * Reads: kBufMagnitudes, kBufSpectrum
  * Writes: result->all_maxima
  *

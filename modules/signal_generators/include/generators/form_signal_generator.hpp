@@ -51,7 +51,7 @@ namespace signal_gen {
  * params.tau_step = 0.0001;
  * gen.SetParams(params);
  *
- * // GPU (InputData<cl_mem> — совместимо с fft_maxima)
+ * // GPU (InputData<cl_mem> — совместимо с fft_func)
  * auto input = gen.GenerateInputData();
  * // input.data, input.antenna_count, input.n_point, input.gpu_memory_bytes
  * // ... передать в SpectrumMaximaFinder::Process(input) ...
@@ -87,7 +87,7 @@ public:
   }
 
   /**
-   * @brief Генерация на GPU с метаданными (InputData — как в fft_maxima)
+   * @brief Генерация на GPU с метаданными (InputData — как в fft_func)
    * @return InputData<cl_mem> с data, antenna_count, n_point, gpu_memory_bytes
    * @note Вызывающий код должен освободить input.data через clReleaseMemObject()!
    */

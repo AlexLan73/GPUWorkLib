@@ -92,7 +92,7 @@ public:
     /**
      * @brief Генерация FormSignal на GPU (мультиканальная)
      * @param params FormParams (fs, antennas, points уже внутри)
-     * @return InputData<cl_mem> — совместимо с fft_maxima (data, antenna_count, n_point, gpu_memory_bytes)
+     * @return InputData<cl_mem> — совместимо с fft_func (data, antenna_count, n_point, gpu_memory_bytes)
      * @note Вызывающий код должен освободить result.data через clReleaseMemObject()
      */
     drv_gpu_lib::InputData<cl_mem> GenerateFormGpu(const FormParams& params);

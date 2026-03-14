@@ -5,7 +5,7 @@
  * @brief Interface for post-FFT processing scenarios
  *
  * Each scenario works on the SAME d_spectrum computed once by Window+FFT block.
- * Implementations live in modules/fft_maxima/ (not in strategies).
+ * Implementations live in modules/fft_func/ (not in strategies).
  *
  * @date 2026-03-07
  */

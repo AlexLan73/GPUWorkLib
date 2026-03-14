@@ -2,7 +2,7 @@
 
 /**
  * @file spectrum_types.hpp
- * @brief Индекс всех типов fft_maxima
+ * @brief Индекс всех типов fft_func (spectrum maxima)
  *
  * @author Кодо (AI Assistant)
  * @date 2026-02-15

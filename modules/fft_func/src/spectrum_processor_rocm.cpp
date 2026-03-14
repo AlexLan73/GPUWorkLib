@@ -942,7 +942,7 @@ void SpectrumProcessorROCm::CompileKernels() {
 
     // ── Try loading from disk cache (HSACO) ──
     drv_gpu_lib::KernelCacheService cache(
-        "modules/fft_maxima/kernels", drv_gpu_lib::BackendType::ROCm);
+        "modules/fft_func/kernels", drv_gpu_lib::BackendType::ROCm);
     try {
         auto entry = cache.Load(kCacheName);
         if (entry.has_binary()) {

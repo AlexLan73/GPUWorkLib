@@ -2,7 +2,7 @@
 
 /**
  * @file spectrum_profiling.hpp
- * @brief Локальные данные профилирования модуля fft_maxima
+ * @brief Локальные данные профилирования модуля fft_func (spectrum)
  *
  * Для централизованного профилирования (JSON, MD) используется GPUProfiler
  * с OpenCLProfilingData. ProfilingData — локальный формат для GetProfilingData().

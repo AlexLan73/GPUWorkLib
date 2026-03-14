@@ -536,7 +536,7 @@ void AntennaProcessor_v1::do_run_post_fft_scenarios(AntennaResult& result) {
                          n_ant * sizeof(OneMaxParabolaLite), hipMemcpyDeviceToHost));
   }
 
-  // Step2.2: AllMaxima via fft_maxima pipeline
+  // Step2.2: AllMaxima via fft_func pipeline (AllMaximaPipelineROCm)
   if (mode == PostFftScenarioMode::ALL_REQUIRED ||
       mode == PostFftScenarioMode::ALL_MAXIMA) {
     auto am_result = all_maxima_pipeline_->Execute(

@@ -4,7 +4,7 @@
  * @file result_types.hpp
  * @brief Result structures for AntennaProcessor pipeline
  *
- * Reuses MaxValue, AllMaximaBeamResult from fft_maxima.
+ * Reuses MaxValue, AllMaximaBeamResult from fft_func.
  * Reuses StatisticsResult, MedianResult from statistics.
  * Adds MinMaxResult for Step2.3 and AntennaResult as aggregate.
  *
