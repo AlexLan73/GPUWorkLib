@@ -2,7 +2,7 @@
 
 > **Дата**: понедельник 2026-03-17
 > **Ветка**: `main`
-> **Задача**: Ref03 — проверить Foundation + Statistics + FFT на GPU, затем Ref03-C
+> **Задача**: Ref03 — проверить B+E на GPU, подключить C (Facade rewrite), signal_generators ROCm
 
 ---
 
@@ -42,9 +42,21 @@
 - hipFFT LRU-2 plan cache сохранён
 - **НЕ ТЕСТИРОВАНО НА GPU**
 
+### ✅ Ref03-C: Strategies Pipeline INFRASTRUCTURE (commit `7613def`)
+- 4 инфраструктурных файла: PipelineContext, IPipelineStep, Pipeline, PipelineBuilder
+- 6 Step классов: GemmStep, WindowFftStep, DebugStatsStep, OneMaxStep, AllMaximaStep, MinMaxStep
+- **Facade rewrite НЕ сделан** — делаем в понедельник с живым тестированием
+- Порядок: подключить Pipeline к AntennaProcessor_v1 → test_full_pipeline → test_benchmark_streams
+
+### ✅ Signal Generators ROCm port (commit `0e6e395`)
+- CwGeneratorROCm, LfmGeneratorROCm, NoiseGeneratorROCm
+- HIP kernels (sincos→__sincosf, Philox PRNG, Box-Muller)
+- GpuContext для lazy compilation + disk cache
+- **НЕ ТЕСТИРОВАНО НА GPU**
+
 ### ❌ НЕ написано:
-- Ref03-C: Strategies Pipeline (IPipelineStep, PipelineBuilder, 6 Steps)
-- Ref03-D: Filters refactoring (низкий приоритет — уже чистый код)
+- Ref03-C Facade rewrite (antenna_processor_v1 → Pipeline delegation) — понедельник
+- Ref03-D: Filters refactoring (низкий приоритет)
 
 ---
 
@@ -70,9 +82,15 @@ make -j$(nproc)
 - Сравнить с предыдущими benchmark результатами
 - Не должно быть regression (Op-классы — zero overhead wrappers)
 
-### Шаг 4: Если всё ОК → начать Ref03-C
-- Читать `TASK_Ref03_unified_architecture.md` секцию C1-C8
-- Порядок: IPipelineStep → PipelineContext → Concrete Steps → Pipeline → PipelineBuilder → AntennaProcessor rewrite
+### Шаг 4: Ref03-C Facade rewrite (30 мин с GPU)
+- Инфраструктура + Steps УЖЕ написаны (commit `7613def`)
+- Нужно: переписать `antenna_processor_v1.hpp + .cpp` → Pipeline delegation
+- Обновить `antenna_processor_test.hpp` → FindStep pattern
+- Тесты: test_full_pipeline → test_external_weights → test_benchmark_streams
+
+### Шаг 5: Signal Generators ROCm тесты
+- Написать test_cw_rocm.hpp, test_lfm_rocm.hpp, test_noise_rocm.hpp
+- Сравнить GPU vs CPU reference (GenerateToGpu vs GenerateToCpu)
 
 ---
 
