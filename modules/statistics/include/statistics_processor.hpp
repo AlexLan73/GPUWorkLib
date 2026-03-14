@@ -6,7 +6,7 @@
  *
  * ROCm-only module. Computes per-beam statistics on complex float GPU data:
  * - Mean (complex) -- hierarchical reduction kernel
- * - Median (magnitude) -- rocPRIM radix sort + middle element
+ * - Median (magnitude) -- histogram method (large data) or rocPRIM radix sort (small data)
  * - Variance / STD (magnitude) -- single-pass Welford kernel
  * - ComputeStatistics -- one-pass mean + variance + std (Welford)
  *
@@ -227,6 +227,10 @@ private:
   /// Copy float GPU data to magnitudes_buf_ (D2D, float-sized)
   void CopyFloatGpuData(void* src, size_t count);
 
+  /// Execute histogram-based median (4-pass byte-wise histogram for exact median)
+  /// Reads magnitudes_buf_ (float) or input_buffer_ (complex) depending on is_complex
+  void ExecuteHistogramMedian(size_t beam_count, size_t n_point, bool is_complex);
+
   // =========================================================================
   // Members
   // =========================================================================
@@ -245,6 +249,11 @@ private:
   void* result_buf_          = nullptr;  ///< per-beam results (various types)
   void* medians_compact_buf_ = nullptr;  ///< TASK-2: compact float[beam_count] medians
 
+  // Histogram median buffers
+  void* hist_buf_            = nullptr;  ///< uint32[beam_count × 256] histogram bins
+  void* hist_target_prefix_  = nullptr;  ///< uint32[beam_count] running prefix count
+  void* hist_target_value_   = nullptr;  ///< uint32[beam_count] accumulated target value
+
   // hiprtc compiled kernels
   hipModule_t module_ = nullptr;
   hipFunction_t magnitudes_kernel_      = nullptr;  ///< complex -> |z|
@@ -254,7 +263,16 @@ private:
   hipFunction_t welford_fused_kernel_   = nullptr;  ///< TASK-1: fused, input only
   hipFunction_t welford_float_kernel_  = nullptr;  ///< Welford for float input (magnitudes)
   hipFunction_t extract_medians_kernel_ = nullptr;  ///< TASK-2: compact median extract
+
+  // Histogram median kernels
+  hipFunction_t hist_median_kernel_         = nullptr;  ///< histogram_median_pass (float input)
+  hipFunction_t hist_median_complex_kernel_ = nullptr;  ///< histogram_median_pass_complex
+  hipFunction_t find_bucket_kernel_         = nullptr;  ///< find_median_bucket
+
   bool kernels_compiled_ = false;
+
+  /// Auto-select threshold: n_point > kHistogramThreshold → histogram, else radix sort
+  static constexpr size_t kHistogramThreshold = 100'000;
 
   // TASK-3: Disk cache for compiled HSACO
   std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;

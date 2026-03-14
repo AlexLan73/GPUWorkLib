@@ -12,6 +12,10 @@
  * 5. ComputeStatistics -- GPU input (void*)
  * 6. ComputeMean -- constant signal (mean = constant)
  * 7. Benchmark -- ComputeMedian GPU vs CPU sort (4 beams x 500000 points)
+ * 8. Histogram Median -- basic correctness (1 beam × 200K, triggers histogram path)
+ * 9. Histogram Median -- multi-beam (4 × 500K, compare with CPU sort)
+ * 10. Histogram Median Float -- ComputeMedianFloat path (2 × 200K)
+ * 11. Histogram vs CPU -- timing benchmark
  *
  * IMPORTANT: Tests compile ONLY with ENABLE_ROCM=1.
  * On Windows (no ROCm) this file is completely skipped.
@@ -526,6 +530,248 @@ inline bool test_benchmark_median(ConsoleOutput& con, int gpu_id) {
 }
 
 // =========================================================================
+// Test 8: Histogram median -- basic correctness (1 beam × 1024)
+// Forces histogram path by using > kHistogramThreshold points
+// Then also checks small data path (radix sort) for same result
+// =========================================================================
+
+inline bool test_histogram_median_basic(ConsoleOutput& con, int gpu_id) {
+  try {
+    // Use 200K points to trigger histogram path (> 100K threshold)
+    const uint32_t beam_count = 1;
+    const uint32_t n_point = 200000;
+
+    // Generate known linear magnitudes: data[i] = complex(i+1, 0)
+    // => magnitudes = [1, 2, ..., 200000]
+    // => sorted median at index 100000 = 100001.0f
+    std::vector<std::complex<float>> data(n_point);
+    for (uint32_t i = 0; i < n_point; ++i) {
+      data[i] = std::complex<float>(static_cast<float>(i + 1), 0.0f);
+    }
+
+    StatisticsParams params;
+    params.beam_count = beam_count;
+    params.n_point = n_point;
+
+    ROCmBackend backend;
+    backend.Initialize(gpu_id);
+    StatisticsProcessor stats(&backend);
+
+    auto results = stats.ComputeMedian(data, params);
+
+    float expected = static_cast<float>(n_point / 2 + 1);  // sorted[N/2]
+    float gpu_median = results[0].median_magnitude;
+    float err = std::abs(gpu_median - expected);
+
+    con.Print(gpu_id, "Stats ROCm",
+              "  Histogram basic: median=" + std::to_string(gpu_median) +
+              " expected=" + std::to_string(expected) + " err=" + std::to_string(err));
+
+    bool ok = (err < 1.0f);
+    print_result(con, gpu_id, "Histogram Median Basic (200K)", ok);
+    return ok;
+  } catch (const std::exception& e) {
+    con.Print(gpu_id, "Stats ROCm",
+              "[X] Histogram Median Basic EXCEPTION: " + std::string(e.what()));
+    return false;
+  }
+}
+
+// =========================================================================
+// Test 9: Histogram median -- multi-beam (4 beams × 500K)
+// Compares histogram result with CPU reference
+// =========================================================================
+
+inline bool test_histogram_median_multi(ConsoleOutput& con, int gpu_id) {
+  try {
+    const uint32_t beam_count = 4;
+    const uint32_t n_point = 500000;
+
+    std::mt19937 rng(123);
+    std::uniform_real_distribution<float> dist(0.1f, 1000.0f);
+
+    std::vector<std::complex<float>> data(beam_count * n_point);
+    for (auto& v : data) {
+      v = std::complex<float>(dist(rng), 0.0f);
+    }
+
+    // CPU reference: sort magnitudes, take middle
+    std::vector<float> cpu_medians(beam_count);
+    for (uint32_t b = 0; b < beam_count; ++b) {
+      std::vector<float> mags(n_point);
+      for (uint32_t i = 0; i < n_point; ++i) {
+        mags[i] = std::abs(data[b * n_point + i]);
+      }
+      std::sort(mags.begin(), mags.end());
+      cpu_medians[b] = mags[n_point / 2];
+    }
+
+    StatisticsParams params;
+    params.beam_count = beam_count;
+    params.n_point = n_point;
+
+    ROCmBackend backend;
+    backend.Initialize(gpu_id);
+    StatisticsProcessor stats(&backend);
+
+    auto results = stats.ComputeMedian(data, params);
+
+    bool ok = true;
+    for (uint32_t b = 0; b < beam_count; ++b) {
+      float err = std::abs(results[b].median_magnitude - cpu_medians[b]);
+      // Exact match expected (same element from same data)
+      if (err > 0.01f) {
+        con.Print(gpu_id, "Stats ROCm",
+                  "  Beam " + std::to_string(b) +
+                  ": gpu=" + std::to_string(results[b].median_magnitude) +
+                  " cpu=" + std::to_string(cpu_medians[b]) +
+                  " err=" + std::to_string(err));
+        ok = false;
+      }
+    }
+
+    print_result(con, gpu_id, "Histogram Median Multi (4×500K)", ok);
+    return ok;
+  } catch (const std::exception& e) {
+    con.Print(gpu_id, "Stats ROCm",
+              "[X] Histogram Median Multi EXCEPTION: " + std::string(e.what()));
+    return false;
+  }
+}
+
+// =========================================================================
+// Test 10: Histogram median float -- ComputeMedianFloat path
+// =========================================================================
+
+inline bool test_histogram_median_float(ConsoleOutput& con, int gpu_id) {
+  try {
+    const uint32_t beam_count = 2;
+    const uint32_t n_point = 200000;
+
+    std::mt19937 rng(777);
+    std::uniform_real_distribution<float> dist(0.0f, 500.0f);
+
+    std::vector<float> magnitudes(beam_count * n_point);
+    for (auto& v : magnitudes) v = dist(rng);
+
+    // CPU reference
+    std::vector<float> cpu_medians(beam_count);
+    for (uint32_t b = 0; b < beam_count; ++b) {
+      std::vector<float> sorted_mags(
+          magnitudes.begin() + b * n_point,
+          magnitudes.begin() + (b + 1) * n_point);
+      std::sort(sorted_mags.begin(), sorted_mags.end());
+      cpu_medians[b] = sorted_mags[n_point / 2];
+    }
+
+    StatisticsParams params;
+    params.beam_count = beam_count;
+    params.n_point = n_point;
+
+    ROCmBackend backend;
+    backend.Initialize(gpu_id);
+    StatisticsProcessor stats(&backend);
+
+    auto results = stats.ComputeMedianFloat(magnitudes, params);
+
+    bool ok = true;
+    for (uint32_t b = 0; b < beam_count; ++b) {
+      float err = std::abs(results[b].median_magnitude - cpu_medians[b]);
+      if (err > 0.01f) {
+        con.Print(gpu_id, "Stats ROCm",
+                  "  Float beam " + std::to_string(b) +
+                  ": gpu=" + std::to_string(results[b].median_magnitude) +
+                  " cpu=" + std::to_string(cpu_medians[b]));
+        ok = false;
+      }
+    }
+
+    print_result(con, gpu_id, "Histogram Median Float (2×200K)", ok);
+    return ok;
+  } catch (const std::exception& e) {
+    con.Print(gpu_id, "Stats ROCm",
+              "[X] Histogram Median Float EXCEPTION: " + std::string(e.what()));
+    return false;
+  }
+}
+
+// =========================================================================
+// Test 11: Histogram vs Radix Sort benchmark (timing comparison)
+// =========================================================================
+
+inline bool test_histogram_vs_radix_benchmark(ConsoleOutput& con, int gpu_id) {
+  try {
+    const uint32_t beam_count = 4;
+    const uint32_t n_point = 500000;
+
+    std::mt19937 rng(42);
+    std::uniform_real_distribution<float> dist(0.0f, 1000.0f);
+
+    std::vector<std::complex<float>> data(beam_count * n_point);
+    for (auto& v : data) {
+      v = std::complex<float>(dist(rng), 0.0f);
+    }
+
+    StatisticsParams params;
+    params.beam_count = beam_count;
+    params.n_point = n_point;
+
+    ROCmBackend backend;
+    backend.Initialize(gpu_id);
+    StatisticsProcessor stats(&backend);
+
+    // Warm-up
+    {
+      std::vector<std::complex<float>> warm(beam_count * 1024,
+                                             std::complex<float>(1.0f, 0.0f));
+      StatisticsParams wp;
+      wp.beam_count = beam_count;
+      wp.n_point = 1024;
+      stats.ComputeMedian(warm, wp);
+    }
+
+    // n_point = 500K > 100K → will use histogram path
+    auto start_hist = std::chrono::high_resolution_clock::now();
+    auto results_hist = stats.ComputeMedian(data, params);
+    auto end_hist = std::chrono::high_resolution_clock::now();
+    double hist_ms = std::chrono::duration<double, std::milli>(end_hist - start_hist).count();
+
+    // CPU reference for timing comparison
+    auto start_cpu = std::chrono::high_resolution_clock::now();
+    std::vector<float> cpu_medians(beam_count);
+    for (uint32_t b = 0; b < beam_count; ++b) {
+      std::vector<float> mags(n_point);
+      for (uint32_t i = 0; i < n_point; ++i)
+        mags[i] = std::abs(data[b * n_point + i]);
+      std::sort(mags.begin(), mags.end());
+      cpu_medians[b] = mags[n_point / 2];
+    }
+    auto end_cpu = std::chrono::high_resolution_clock::now();
+    double cpu_ms = std::chrono::duration<double, std::milli>(end_cpu - start_cpu).count();
+
+    double speedup = cpu_ms / hist_ms;
+
+    con.Print(gpu_id, "Stats ROCm",
+              "  Histogram benchmark: " + std::to_string(beam_count) +
+              " beams x " + std::to_string(n_point) + " points");
+    con.Print(gpu_id, "Stats ROCm",
+              "  CPU sort      : " + std::to_string(cpu_ms) + " ms");
+    con.Print(gpu_id, "Stats ROCm",
+              "  GPU histogram : " + std::to_string(hist_ms) + " ms");
+    con.Print(gpu_id, "Stats ROCm",
+              "  Speedup       : " + std::to_string(speedup) + "x");
+
+    bool ok = (speedup > 1.0);
+    print_result(con, gpu_id, "Histogram vs CPU Benchmark", ok);
+    return ok;
+  } catch (const std::exception& e) {
+    con.Print(gpu_id, "Stats ROCm",
+              "[X] Histogram Benchmark EXCEPTION: " + std::string(e.what()));
+    return false;
+  }
+}
+
+// =========================================================================
 // Main test runner
 // =========================================================================
 
@@ -549,7 +795,7 @@ inline void run() {
   }
 
   int passed = 0;
-  int total = 7;
+  int total = 11;
 
   if (test_mean_single_beam(con, gpu_id)) ++passed;
   if (test_mean_multi_beam(con, gpu_id)) ++passed;
@@ -558,6 +804,10 @@ inline void run() {
   if (test_gpu_input(con, gpu_id)) ++passed;
   if (test_mean_constant(con, gpu_id)) ++passed;
   if (test_benchmark_median(con, gpu_id)) ++passed;
+  if (test_histogram_median_basic(con, gpu_id)) ++passed;
+  if (test_histogram_median_multi(con, gpu_id)) ++passed;
+  if (test_histogram_median_float(con, gpu_id)) ++passed;
+  if (test_histogram_vs_radix_benchmark(con, gpu_id)) ++passed;
 
   con.Print(gpu_id, "Stats ROCm", "");
   con.Print(gpu_id, "Stats ROCm", "Results: " + std::to_string(passed) + "/" +

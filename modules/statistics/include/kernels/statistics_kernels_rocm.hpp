@@ -463,6 +463,154 @@ extern "C" __global__ void welford_float(
     }
 }
 
+// =========================================================================
+// Kernel 8: histogram_median_pass   [HISTOGRAM MEDIAN]
+// Builds a 256-bin histogram of the specified byte of float magnitudes.
+// Float >= 0 has order-preserving uint32 representation (just flip sign bit).
+// 2D grid: (blocks_per_beam, beam_count), Block: (256)
+// Shared: uint32_t local_hist[256] = 1 KB
+//
+// Parameters:
+//   magnitudes   — float[beam_count × n_point] (already computed |z|)
+//   histograms   — uint32[beam_count × 256] (output, must be zeroed before call)
+//   n_point      — samples per beam
+//   beam_count   — number of beams
+//   pass         — 0..3 (which byte: 0=MSB bits[31:24], 3=LSB bits[7:0])
+//   target_value — uint32[beam_count] accumulated target from previous passes
+// =========================================================================
+__launch_bounds__(256)
+extern "C" __global__ void histogram_median_pass(
+    const float* __restrict__ magnitudes,
+    unsigned int* __restrict__ histograms,
+    unsigned int n_point,
+    unsigned int beam_count,
+    unsigned int pass,
+    const unsigned int* __restrict__ target_value)
+{
+    __shared__ unsigned int local_hist[256];
+
+    unsigned int tid = threadIdx.x;
+    unsigned int beam_id = blockIdx.y;
+    if (beam_id >= beam_count) return;
+
+    // Clear shared histogram
+    if (tid < 256) local_hist[tid] = 0;
+    __syncthreads();
+
+    unsigned int base = beam_id * n_point;
+    unsigned int tv = target_value[beam_id];
+    unsigned int shift = (3u - pass) * 8u;
+    // Mask for bits above current pass (used for filtering in passes 1-3)
+    unsigned int filter_mask = (pass == 0) ? 0u : (0xFFFFFFFFu << ((4u - pass) * 8u));
+
+    // Grid-stride loop
+    #pragma unroll 4
+    for (unsigned int i = blockIdx.x * blockDim.x + tid; i < n_point;
+         i += gridDim.x * blockDim.x) {
+        float val = magnitudes[base + i];
+        // Float >= 0: flip sign bit for order-preserving uint representation
+        unsigned int u = __float_as_uint(val) ^ 0x80000000u;
+
+        // Filter: passes 1-3 only process elements matching target bytes from prior passes
+        if (pass > 0 && (u & filter_mask) != (tv & filter_mask))
+            continue;
+
+        unsigned int byte_val = (u >> shift) & 0xFFu;
+        atomicAdd(&local_hist[byte_val], 1u);
+    }
+    __syncthreads();
+
+    // Reduce local histogram → global histogram
+    if (tid < 256) {
+        atomicAdd(&histograms[beam_id * 256u + tid], local_hist[tid]);
+    }
+}
+
+// =========================================================================
+// Kernel 9: histogram_median_pass_complex   [HISTOGRAM MEDIAN]
+// Same as histogram_median_pass but reads complex input and computes |z| on the fly.
+// Eliminates need for separate compute_magnitudes call (like welford_fused).
+// 2D grid: (blocks_per_beam, beam_count), Block: (256)
+// =========================================================================
+__launch_bounds__(256)
+extern "C" __global__ void histogram_median_pass_complex(
+    const float2_t* __restrict__ input,
+    unsigned int* __restrict__ histograms,
+    unsigned int n_point,
+    unsigned int beam_count,
+    unsigned int pass,
+    const unsigned int* __restrict__ target_value)
+{
+    __shared__ unsigned int local_hist[256];
+
+    unsigned int tid = threadIdx.x;
+    unsigned int beam_id = blockIdx.y;
+    if (beam_id >= beam_count) return;
+
+    if (tid < 256) local_hist[tid] = 0;
+    __syncthreads();
+
+    unsigned int base = beam_id * n_point;
+    unsigned int tv = target_value[beam_id];
+    unsigned int shift = (3u - pass) * 8u;
+    unsigned int filter_mask = (pass == 0) ? 0u : (0xFFFFFFFFu << ((4u - pass) * 8u));
+
+    #pragma unroll 4
+    for (unsigned int i = blockIdx.x * blockDim.x + tid; i < n_point;
+         i += gridDim.x * blockDim.x) {
+        float2_t z = input[base + i];
+        float val = __fsqrt_rn(z.x * z.x + z.y * z.y);
+        unsigned int u = __float_as_uint(val) ^ 0x80000000u;
+
+        if (pass > 0 && (u & filter_mask) != (tv & filter_mask))
+            continue;
+
+        unsigned int byte_val = (u >> shift) & 0xFFu;
+        atomicAdd(&local_hist[byte_val], 1u);
+    }
+    __syncthreads();
+
+    if (tid < 256) {
+        atomicAdd(&histograms[beam_id * 256u + tid], local_hist[tid]);
+    }
+}
+
+// =========================================================================
+// Kernel 10: find_median_bucket   [HISTOGRAM MEDIAN]
+// Prefix-sum over 256-bin histogram to find the bucket containing the median.
+// Updates target_prefix and target_value for the next pass.
+// Grid: (beam_count), Block: (1)  — simple sequential scan per beam
+// =========================================================================
+extern "C" __global__ void find_median_bucket(
+    const unsigned int* __restrict__ histograms,
+    unsigned int* __restrict__ target_prefix,
+    unsigned int* __restrict__ target_value,
+    unsigned int median_rank,
+    unsigned int pass)
+{
+    unsigned int beam_id = blockIdx.x;
+    unsigned int prefix = target_prefix[beam_id];
+    unsigned int shift = (3u - pass) * 8u;
+    unsigned int prev_tv = target_value[beam_id];
+    // Clear bits at current pass position and below
+    unsigned int clear_mask = ~((0xFFu) << shift);
+    unsigned int base_tv = prev_tv & clear_mask;
+
+    for (unsigned int b = 0; b < 256u; b++) {
+        unsigned int count = histograms[beam_id * 256u + b];
+        if (prefix + count > median_rank) {
+            // Median is in this bucket
+            target_value[beam_id] = base_tv | (b << shift);
+            target_prefix[beam_id] = prefix;
+            return;
+        }
+        prefix += count;
+    }
+    // Fallback (should not happen for valid data)
+    target_value[beam_id] = base_tv | (255u << shift);
+    target_prefix[beam_id] = prefix;
+}
+
 )HIP";
 }
 

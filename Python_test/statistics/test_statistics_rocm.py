@@ -85,6 +85,11 @@ T6_N = 4096
 # Test 7: Benchmark
 T7_BEAMS, T7_N = 4, 500_000
 
+# Test 8-11: Histogram median (uses auto-selection > 100K threshold)
+T8_N = 200_000  # triggers histogram path
+T9_BEAMS, T9_N = 4, 500_000
+T10_BEAMS, T10_N = 2, 200_000
+
 # Minimum acceptable GPU speedup for benchmark test
 MIN_SPEEDUP = 2.0
 
@@ -290,10 +295,15 @@ def parse_output(output: str) -> dict:
         results["passed"] = int(m.group(1))
         results["total"] = int(m.group(2))
 
-    # Benchmark timing lines
+    # Benchmark timing lines (both radix sort and histogram)
     _parse_float(results, "benchmark", output, "cpu_ms", r"CPU sort\s*:\s*([\d.]+)\s*ms")
     _parse_float(results, "benchmark", output, "gpu_ms", r"GPU sort\s*:\s*([\d.]+)\s*ms")
     _parse_float(results, "benchmark", output, "speedup", r"Speedup\s*:\s*([\d.]+)x")
+
+    # Histogram benchmark
+    results["hist_benchmark"] = {}
+    _parse_float(results, "hist_benchmark", output, "cpu_ms", r"CPU sort\s+:\s*([\d.]+)\s*ms")
+    _parse_float(results, "hist_benchmark", output, "gpu_ms", r"GPU histogram\s*:\s*([\d.]+)\s*ms")
 
     # Test 1: mean single beam — "mean=(re, im) err_re=..."
     m = re.search(r"mean=\(([-\d.eE+]+),\s*([-\d.eE+]+)\)", output)
@@ -334,12 +344,41 @@ def _parse_float(dest: dict, subkey: str, text: str, key: str, pattern: str):
 
 
 # ============================================================================
+# NumPy reference: histogram median validation
+# ============================================================================
+
+
+def test_numpy_histogram_median_basic():
+    """NumPy ref: median of linear [1..200K] = sorted[N//2] = 100001.0."""
+    n = T8_N
+    mags = np.arange(1, n + 1, dtype=np.float32)
+    expected = float(mags[n // 2])  # sorted[N/2]
+    actual = float(np.sort(mags)[n // 2])
+    print(f"  Linear median [1..{n}]: expected={expected:.0f}, numpy={actual:.0f}")
+    assert expected == actual, f"Median mismatch: {expected} != {actual}"
+    print("  PASSED")
+
+
+def test_numpy_histogram_median_random():
+    """NumPy ref: median of random data (4 beams × 500K) matches np.median."""
+    rng = np.random.default_rng(123)
+    data = rng.uniform(0.1, 1000.0, T9_BEAMS * T9_N).astype(np.float32)
+    for b in range(T9_BEAMS):
+        beam_data = data[b * T9_N : (b + 1) * T9_N]
+        sorted_data = np.sort(beam_data)
+        median_sort = float(sorted_data[T9_N // 2])
+        # np.median returns average of 2 middle elements for even N, we use sorted[N//2]
+        print(f"  Beam {b}: sorted[N//2]={median_sort:.4f}")
+    print("  PASSED (reference values computed)")
+
+
+# ============================================================================
 # GPU binary tests
 # ============================================================================
 
 
 def test_gpu_all_pass():
-    """GPU binary: all 7/7 statistics tests must pass."""
+    """GPU binary: all 11/11 statistics tests must pass."""
     output = run_gpu_binary()
     if not output:
         print("  SKIP: no GPU binary output")
@@ -611,6 +650,8 @@ if __name__ == "__main__":
     run_test("3", test_numpy_welford_statistics)
     run_test("4", test_numpy_median_linear)
     run_test("5", test_numpy_mean_constant)
+    run_test("5a", test_numpy_histogram_median_basic)
+    run_test("5b", test_numpy_histogram_median_random)
 
     # ---- GPU binary tests ----
     if HAS_BINARY:

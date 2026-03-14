@@ -86,6 +86,9 @@ StatisticsProcessor::StatisticsProcessor(StatisticsProcessor&& other) noexcept
     , reduce_buf_(other.reduce_buf_)
     , result_buf_(other.result_buf_)
     , medians_compact_buf_(other.medians_compact_buf_)
+    , hist_buf_(other.hist_buf_)
+    , hist_target_prefix_(other.hist_target_prefix_)
+    , hist_target_value_(other.hist_target_value_)
     , module_(other.module_)
     , magnitudes_kernel_(other.magnitudes_kernel_)
     , mean_reduce_kernel_(other.mean_reduce_kernel_)
@@ -94,6 +97,9 @@ StatisticsProcessor::StatisticsProcessor(StatisticsProcessor&& other) noexcept
     , welford_fused_kernel_(other.welford_fused_kernel_)
     , welford_float_kernel_(other.welford_float_kernel_)
     , extract_medians_kernel_(other.extract_medians_kernel_)
+    , hist_median_kernel_(other.hist_median_kernel_)
+    , hist_median_complex_kernel_(other.hist_median_complex_kernel_)
+    , find_bucket_kernel_(other.find_bucket_kernel_)
     , kernels_compiled_(other.kernels_compiled_)
     , current_beams_(other.current_beams_)
     , current_n_point_(other.current_n_point_)
@@ -110,6 +116,9 @@ StatisticsProcessor::StatisticsProcessor(StatisticsProcessor&& other) noexcept
   other.reduce_buf_            = nullptr;
   other.result_buf_            = nullptr;
   other.medians_compact_buf_   = nullptr;
+  other.hist_buf_              = nullptr;
+  other.hist_target_prefix_    = nullptr;
+  other.hist_target_value_     = nullptr;
   other.module_                = nullptr;
   other.magnitudes_kernel_     = nullptr;
   other.mean_reduce_kernel_    = nullptr;
@@ -118,6 +127,9 @@ StatisticsProcessor::StatisticsProcessor(StatisticsProcessor&& other) noexcept
   other.welford_fused_kernel_  = nullptr;
   other.welford_float_kernel_  = nullptr;
   other.extract_medians_kernel_ = nullptr;
+  other.hist_median_kernel_         = nullptr;
+  other.hist_median_complex_kernel_ = nullptr;
+  other.find_bucket_kernel_         = nullptr;
   other.kernels_compiled_      = false;
   other.current_beams_         = 0;
   other.current_n_point_       = 0;
@@ -138,6 +150,9 @@ StatisticsProcessor& StatisticsProcessor::operator=(StatisticsProcessor&& other)
     reduce_buf_            = other.reduce_buf_;
     result_buf_            = other.result_buf_;
     medians_compact_buf_   = other.medians_compact_buf_;
+    hist_buf_              = other.hist_buf_;
+    hist_target_prefix_    = other.hist_target_prefix_;
+    hist_target_value_     = other.hist_target_value_;
     module_                = other.module_;
     magnitudes_kernel_     = other.magnitudes_kernel_;
     mean_reduce_kernel_    = other.mean_reduce_kernel_;
@@ -146,6 +161,9 @@ StatisticsProcessor& StatisticsProcessor::operator=(StatisticsProcessor&& other)
     welford_fused_kernel_  = other.welford_fused_kernel_;
     welford_float_kernel_  = other.welford_float_kernel_;
     extract_medians_kernel_ = other.extract_medians_kernel_;
+    hist_median_kernel_         = other.hist_median_kernel_;
+    hist_median_complex_kernel_ = other.hist_median_complex_kernel_;
+    find_bucket_kernel_         = other.find_bucket_kernel_;
     kernels_compiled_      = other.kernels_compiled_;
     current_beams_         = other.current_beams_;
     current_n_point_       = other.current_n_point_;
@@ -162,6 +180,9 @@ StatisticsProcessor& StatisticsProcessor::operator=(StatisticsProcessor&& other)
     other.reduce_buf_            = nullptr;
     other.result_buf_            = nullptr;
     other.medians_compact_buf_   = nullptr;
+    other.hist_buf_              = nullptr;
+    other.hist_target_prefix_    = nullptr;
+    other.hist_target_value_     = nullptr;
     other.module_                = nullptr;
     other.magnitudes_kernel_     = nullptr;
     other.mean_reduce_kernel_    = nullptr;
@@ -169,6 +190,9 @@ StatisticsProcessor& StatisticsProcessor::operator=(StatisticsProcessor&& other)
     other.welford_kernel_        = nullptr;
     other.welford_fused_kernel_  = nullptr;
     other.extract_medians_kernel_ = nullptr;
+    other.hist_median_kernel_         = nullptr;
+    other.hist_median_complex_kernel_ = nullptr;
+    other.find_bucket_kernel_         = nullptr;
     other.kernels_compiled_      = false;
     other.current_beams_         = 0;
     other.current_n_point_       = 0;
@@ -272,13 +296,17 @@ std::vector<MedianResult> StatisticsProcessor::ComputeMedian(
   AllocateBuffers(params.beam_count, params.n_point);
   UploadData(data.data(), data.size());
 
-  size_t total = static_cast<size_t>(params.beam_count) * params.n_point;
-  ExecuteMagnitudesKernel(total);
-  ExecuteMedianSort(params.beam_count, params.n_point);
-  ExecuteExtractMediansKernel(params.beam_count, params.n_point);
+  // Auto-select: histogram for large data, radix sort for small
+  if (params.n_point > kHistogramThreshold) {
+    ExecuteHistogramMedian(params.beam_count, params.n_point, /*is_complex=*/true);
+  } else {
+    size_t total = static_cast<size_t>(params.beam_count) * params.n_point;
+    ExecuteMagnitudesKernel(total);
+    ExecuteMedianSort(params.beam_count, params.n_point);
+    ExecuteExtractMediansKernel(params.beam_count, params.n_point);
+  }
   (void)hipStreamSynchronize(stream_);
 
-  // TASK-2: One DtoH for all medians (beam_count floats)
   std::vector<float> medians_host(params.beam_count);
   hipError_t err = hipMemcpyDtoH(medians_host.data(), medians_compact_buf_,
                                    params.beam_count * sizeof(float));
@@ -313,9 +341,13 @@ std::vector<MedianResult> StatisticsProcessor::ComputeMedian(
   size_t count = static_cast<size_t>(params.beam_count) * params.n_point;
   CopyGpuData(gpu_data, count);
 
-  ExecuteMagnitudesKernel(count);
-  ExecuteMedianSort(params.beam_count, params.n_point);
-  ExecuteExtractMediansKernel(params.beam_count, params.n_point);
+  if (params.n_point > kHistogramThreshold) {
+    ExecuteHistogramMedian(params.beam_count, params.n_point, /*is_complex=*/true);
+  } else {
+    ExecuteMagnitudesKernel(count);
+    ExecuteMedianSort(params.beam_count, params.n_point);
+    ExecuteExtractMediansKernel(params.beam_count, params.n_point);
+  }
   (void)hipStreamSynchronize(stream_);
 
   std::vector<float> medians_host(params.beam_count);
@@ -459,6 +491,9 @@ void StatisticsProcessor::CompileKernels() {
           getKernel(&welford_fused_kernel_,   "welford_fused");
           getKernel(&extract_medians_kernel_, "extract_medians");
           getKernel(&welford_float_kernel_,  "welford_float");
+          getKernel(&hist_median_kernel_,         "histogram_median_pass");
+          getKernel(&hist_median_complex_kernel_, "histogram_median_pass_complex");
+          getKernel(&find_bucket_kernel_,         "find_median_bucket");
           kernels_compiled_ = true;
           con.Print(0, "Statistics", "kernels loaded from cache (HSACO)");
           return;
@@ -545,6 +580,9 @@ void StatisticsProcessor::CompileKernels() {
   getKernel(&welford_fused_kernel_,   "welford_fused");
   getKernel(&extract_medians_kernel_, "extract_medians");
   getKernel(&welford_float_kernel_,  "welford_float");
+  getKernel(&hist_median_kernel_,         "histogram_median_pass");
+  getKernel(&hist_median_complex_kernel_, "histogram_median_pass_complex");
+  getKernel(&find_bucket_kernel_,         "find_median_bucket");
 
   kernels_compiled_ = true;
   con.Print(0, "Statistics",
@@ -577,6 +615,9 @@ void StatisticsProcessor::AllocateBuffers(size_t beam_count, size_t n_point) {
   if (reduce_buf_)          { (void)hipFree(reduce_buf_);          reduce_buf_ = nullptr; }
   if (result_buf_)          { (void)hipFree(result_buf_);          result_buf_ = nullptr; }
   if (medians_compact_buf_) { (void)hipFree(medians_compact_buf_); medians_compact_buf_ = nullptr; }
+  if (hist_buf_)            { (void)hipFree(hist_buf_);            hist_buf_ = nullptr; }
+  if (hist_target_prefix_)  { (void)hipFree(hist_target_prefix_);  hist_target_prefix_ = nullptr; }
+  if (hist_target_value_)   { (void)hipFree(hist_target_value_);   hist_target_value_ = nullptr; }
 
   size_t total = beam_count * n_point;
   hipError_t err;
@@ -671,6 +712,23 @@ void StatisticsProcessor::AllocateBuffers(size_t beam_count, size_t n_point) {
                               std::string(hipGetErrorString(err)));
   }
 
+  // 9. Histogram median buffers
+  err = hipMalloc(&hist_buf_, beam_count * 256 * sizeof(unsigned int));
+  if (err != hipSuccess) {
+    throw std::runtime_error("AllocateBuffers: hist_buf hipMalloc failed: " +
+                              std::string(hipGetErrorString(err)));
+  }
+  err = hipMalloc(&hist_target_prefix_, beam_count * sizeof(unsigned int));
+  if (err != hipSuccess) {
+    throw std::runtime_error("AllocateBuffers: hist_target_prefix hipMalloc failed: " +
+                              std::string(hipGetErrorString(err)));
+  }
+  err = hipMalloc(&hist_target_value_, beam_count * sizeof(unsigned int));
+  if (err != hipSuccess) {
+    throw std::runtime_error("AllocateBuffers: hist_target_value hipMalloc failed: " +
+                              std::string(hipGetErrorString(err)));
+  }
+
   current_beams_   = beam_count;
   current_n_point_ = n_point;
 }
@@ -684,6 +742,9 @@ void StatisticsProcessor::ReleaseResources() {
   if (reduce_buf_)          { (void)hipFree(reduce_buf_);          reduce_buf_ = nullptr; }
   if (result_buf_)          { (void)hipFree(result_buf_);          result_buf_ = nullptr; }
   if (medians_compact_buf_) { (void)hipFree(medians_compact_buf_); medians_compact_buf_ = nullptr; }
+  if (hist_buf_)            { (void)hipFree(hist_buf_);            hist_buf_ = nullptr; }
+  if (hist_target_prefix_)  { (void)hipFree(hist_target_prefix_);  hist_target_prefix_ = nullptr; }
+  if (hist_target_value_)   { (void)hipFree(hist_target_value_);   hist_target_value_ = nullptr; }
 
   if (module_) {
     (void)hipModuleUnload(module_);
@@ -695,6 +756,9 @@ void StatisticsProcessor::ReleaseResources() {
     welford_fused_kernel_  = nullptr;
     welford_float_kernel_  = nullptr;
     extract_medians_kernel_ = nullptr;
+    hist_median_kernel_         = nullptr;
+    hist_median_complex_kernel_ = nullptr;
+    find_bucket_kernel_         = nullptr;
     kernels_compiled_      = false;
   }
 
@@ -1018,9 +1082,13 @@ std::vector<MedianResult> StatisticsProcessor::ComputeMedianFloat(
   size_t count = static_cast<size_t>(params.beam_count) * params.n_point;
   CopyFloatGpuData(gpu_float_data, count);
 
-  // Sort magnitudes + extract medians (skip compute_magnitudes — already float)
-  ExecuteMedianSort(params.beam_count, params.n_point);
-  ExecuteExtractMediansKernel(params.beam_count, params.n_point);
+  // Auto-select: histogram for large data, radix sort for small
+  if (params.n_point > kHistogramThreshold) {
+    ExecuteHistogramMedian(params.beam_count, params.n_point, /*is_complex=*/false);
+  } else {
+    ExecuteMedianSort(params.beam_count, params.n_point);
+    ExecuteExtractMediansKernel(params.beam_count, params.n_point);
+  }
   (void)hipStreamSynchronize(stream_);
 
   std::vector<float> medians_host(params.beam_count);
@@ -1104,6 +1172,119 @@ std::vector<MedianResult> StatisticsProcessor::ComputeMedianFloat(
   auto results = ComputeMedianFloat(gpu_ptr, params);
   (void)hipFree(gpu_ptr);
   return results;
+}
+
+// =========================================================================
+// PART 7: Histogram-based median (4-pass byte-wise for exact median)
+// =========================================================================
+
+void StatisticsProcessor::ExecuteHistogramMedian(
+    size_t beam_count, size_t n_point, bool is_complex)
+{
+  unsigned int bc = static_cast<unsigned int>(beam_count);
+  unsigned int np = static_cast<unsigned int>(n_point);
+  unsigned int median_rank = np / 2;  // same as sorted[N/2]
+
+  // Blocks per beam for histogram kernel (grid-stride loop inside)
+  unsigned int blocks_per_beam = std::min(
+      static_cast<unsigned int>((n_point + kBlockSize - 1) / kBlockSize),
+      1024u);  // cap to avoid excessive grid
+
+  // Zero out target_prefix and target_value before starting
+  hipError_t err;
+  err = hipMemsetAsync(hist_target_prefix_, 0, beam_count * sizeof(unsigned int), stream_);
+  if (err != hipSuccess) {
+    throw std::runtime_error("ExecuteHistogramMedian: memset target_prefix failed");
+  }
+  err = hipMemsetAsync(hist_target_value_, 0, beam_count * sizeof(unsigned int), stream_);
+  if (err != hipSuccess) {
+    throw std::runtime_error("ExecuteHistogramMedian: memset target_value failed");
+  }
+
+  // Select kernel: complex or float
+  hipFunction_t hist_kernel = is_complex ? hist_median_complex_kernel_ : hist_median_kernel_;
+  // Data source: complex reads input_buffer_, float reads magnitudes_buf_
+  void* data_ptr = is_complex ? input_buffer_ : magnitudes_buf_;
+
+  // 4 passes: byte 0 (MSB) through byte 3 (LSB)
+  for (unsigned int pass = 0; pass < 4; ++pass) {
+    // Clear histogram bins
+    err = hipMemsetAsync(hist_buf_, 0, beam_count * 256 * sizeof(unsigned int), stream_);
+    if (err != hipSuccess) {
+      throw std::runtime_error("ExecuteHistogramMedian: memset hist_buf failed on pass " +
+                                std::to_string(pass));
+    }
+
+    // Launch histogram kernel: 2D grid (blocks_per_beam × beam_count)
+    void* hist_args[] = {
+      &data_ptr,
+      &hist_buf_,
+      &np,
+      &bc,
+      &pass,
+      &hist_target_value_
+    };
+
+    err = hipModuleLaunchKernel(
+        hist_kernel,
+        blocks_per_beam, bc, 1,
+        kBlockSize, 1, 1,
+        0, stream_,
+        hist_args, nullptr);
+    if (err != hipSuccess) {
+      throw std::runtime_error("ExecuteHistogramMedian: histogram kernel launch failed on pass " +
+                                std::to_string(pass) + ": " + hipGetErrorString(err));
+    }
+
+    // Launch find_median_bucket: 1 block per beam, 1 thread
+    void* bucket_args[] = {
+      &hist_buf_,
+      &hist_target_prefix_,
+      &hist_target_value_,
+      &median_rank,
+      &pass
+    };
+
+    err = hipModuleLaunchKernel(
+        find_bucket_kernel_,
+        bc, 1, 1,
+        1, 1, 1,
+        0, stream_,
+        bucket_args, nullptr);
+    if (err != hipSuccess) {
+      throw std::runtime_error("ExecuteHistogramMedian: find_bucket launch failed on pass " +
+                                std::to_string(pass) + ": " + hipGetErrorString(err));
+    }
+  }
+
+  // After 4 passes, target_value[beam] contains the sortable uint32 of the median.
+  // Convert back to float: uint ^ 0x80000000 → float (reverse of sign-bit flip).
+  // We reuse medians_compact_buf_ for the result. Do this on GPU with a small kernel,
+  // or copy target_value to host, convert, and write to medians_compact_buf_.
+  // For simplicity and correctness, do on host (beam_count is small, typically 256):
+
+  std::vector<unsigned int> target_host(beam_count);
+  err = hipMemcpyDtoH(target_host.data(), hist_target_value_,
+                       beam_count * sizeof(unsigned int));
+  if (err != hipSuccess) {
+    throw std::runtime_error("ExecuteHistogramMedian: DtoH target_value failed");
+  }
+
+  std::vector<float> medians_host(beam_count);
+  for (size_t b = 0; b < beam_count; ++b) {
+    // Reverse order-preserving transform: uint ^ 0x80000000 → float
+    unsigned int u = target_host[b] ^ 0x80000000u;
+    float val;
+    std::memcpy(&val, &u, sizeof(float));
+    medians_host[b] = val;
+  }
+
+  // Upload to medians_compact_buf_ so caller can read uniformly
+  err = hipMemcpyHtoD(medians_compact_buf_, medians_host.data(),
+                       beam_count * sizeof(float));
+  if (err != hipSuccess) {
+    throw std::runtime_error("ExecuteHistogramMedian: HtoD medians failed");
+  }
 }
 
 }  // namespace statistics
