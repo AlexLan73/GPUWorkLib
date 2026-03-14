@@ -196,6 +196,29 @@ obj.sample_rate = 1e6
   - 📌 **ВАЖНО**: Перед `profiler.Start()` вызывать `SetGPUInfo()` — иначе в отчёте «Unknown» и «нет информации о драйверах». Пример: [`Examples/GPUProfiler_SetGPUInfo.md`](Examples/GPUProfiler_SetGPUInfo.md)
   - 🚫 **ВЫВОД данных профилирования** — ТОЛЬКО: `profiler.PrintReport()`, `profiler.ExportMarkdown()`, `profiler.ExportJSON()`. ЗАПРЕЩЕНО: `GetStats()` + цикл + `con.Print` (или std::cout).
 
+### 🏛️ Единая архитектура GPU-операций (Ref03)
+
+> 📐 **Полное описание**: [`Doc_Addition/PLAN/Ref03_Unified_Architecture.md`](Doc_Addition/PLAN/Ref03_Unified_Architecture.md)
+> 📋 **Таски**: [`MemoryBank/tasks/TASK_Ref03_unified_architecture.md`](MemoryBank/tasks/TASK_Ref03_unified_architecture.md)
+
+**Все модули строятся по единой 6-слойной модели:**
+
+| Слой | Класс | Назначение |
+|------|-------|-----------|
+| 1 | `GpuContext` | Per-module: backend, stream, compiled module, shared buffers |
+| 2 | `IGpuOperation` | Interface: Name, Initialize, IsReady, Release |
+| 3 | `GpuKernelOp` | Base: доступ к compiled kernels через GpuContext |
+| 4 | `BufferSet<N>` | Compile-time GPU buffer array (zero overhead, trivial move) |
+| 5 | Concrete Ops | Маленькие классы: MeanReductionOp, MedianHistogramOp, FirFilterOp... |
+| 6 | Facade + Strategy | Тонкий фасад (StatisticsProcessor), авто-выбор (MedianStrategy) |
+
+**Ключевые правила:**
+- **Один класс — один файл** (Op в `operations/`, Step в `steps/`)
+- **BufferSet<N>** вместо raw `void*` полей (enum индексы, compile-time size)
+- **GpuContext per-module** → thread-safe между модулями, parallel streams
+- **Facade API НЕ меняется** → Python bindings не ломаются
+- **Strategies**: `IPipelineStep` + `PipelineBuilder` для гибких pipeline'ов
+
 ### Структура файлов
 - **Новые классы и структуры** — создавать в отдельных файлах
 - **Исключение**: Интерфейсы могут объединяться в один файл по смысловым/логическим признакам
