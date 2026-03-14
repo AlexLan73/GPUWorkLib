@@ -29,7 +29,7 @@
 #include <thread>
 #include <chrono>
 
-#include "modules/fft_maxima/tests/cpu_fft_reference.hpp"
+#include "modules/fft_func/tests/cpu_fft_reference.hpp"
 
 
 #ifndef M_PI
