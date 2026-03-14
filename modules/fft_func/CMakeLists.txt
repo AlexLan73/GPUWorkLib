@@ -29,8 +29,8 @@ message(STATUS "Configuring module: ${MODULE_NAME} [main branch - ROCm/hipFFT]")
 # ════════════════════════════════════════════════════════════════════════════
 
 if(NOT ROCM_ENABLED OR NOT HIPFFT_FOUND)
-    message(FATAL_ERROR "${MODULE_NAME}: ROCm/hipFFT required but not found! "
-            "ROCM_ENABLED=${ROCM_ENABLED}, HIPFFT_FOUND=${HIPFFT_FOUND}")
+    message(STATUS "⏭️  ${MODULE_NAME}: skipped (ROCm/hipFFT not available on this platform)")
+    return()
 endif()
 
 # ════════════════════════════════════════════════════════════════════════════
