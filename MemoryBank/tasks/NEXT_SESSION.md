@@ -1,98 +1,89 @@
 # 🚀 ИНСТРУКЦИЯ ДЛЯ СЛЕДУЮЩЕЙ СЕССИИ
 
-> **Дата**: продолжение 2026-03-14
+> **Дата**: понедельник 2026-03-17
 > **Ветка**: `main`
-> **Задача**: Ref03 — написать код единой архитектуры GPU-операций
+> **Задача**: Ref03 — проверить Foundation + Statistics на GPU, затем Ref03-C
 
 ---
 
 ## ЧТО ЧИТАТЬ ПЕРВЫМ
 
-1. `Doc_Addition/PLAN/Ref03_Unified_Architecture.md` — **ГЛАВНЫЙ ДОКУМЕНТ** (6-слойная модель, все классы, диаграммы)
-2. `MemoryBank/tasks/TASK_Ref03_unified_architecture.md` — **ВСЕ ТАСКИ** с тонкими местами
-3. `MemoryBank/sessions/2026-03-14.md` — что уже сделано
+1. `Doc_Addition/PLAN/Ref03_Unified_Architecture.md` — ГЛАВНЫЙ ДОКУМЕНТ
+2. `MemoryBank/tasks/TASK_Ref03_unified_architecture.md` — ВСЕ ТАСКИ
+3. `MemoryBank/sessions/2026-03-14.md` — предыдущая сессия
 
 ---
 
-## ЧТО УЖЕ НАПИСАНО (код)
+## ЧТО УЖЕ НАПИСАНО (commit `bb0098a`)
 
-### ✅ Готово:
+### ✅ Ref03-A: Foundation (DrvGPU)
 - `DrvGPU/services/buffer_set.hpp` — BufferSet<N> template (Layer 4)
+- `DrvGPU/interface/i_gpu_operation.hpp` — IGpuOperation interface (Layer 2)
+- `DrvGPU/services/gpu_kernel_op.hpp` + `src/gpu_kernel_op.cpp` — GpuKernelOp base (Layer 3)
+- `DrvGPU/interface/gpu_context.hpp` + `src/gpu_context.cpp` — GpuContext per-module (Layer 1)
 
-### ❌ Нужно написать (порядок):
+### ✅ Ref03-B: Statistics refactoring
+- 6 Op-классов в `modules/statistics/include/operations/`:
+  - `mean_reduction_op.hpp` — hierarchical complex mean (BufferSet<1>)
+  - `welford_fused_op.hpp` — single-pass Welford, complex input (BufferSet<0>)
+  - `welford_float_op.hpp` — Welford на float magnitudes (BufferSet<0>)
+  - `median_radix_sort_op.hpp` — rocPRIM sort median (BufferSet<3>)
+  - `median_histogram_op.hpp` — histogram median, float input (BufferSet<3>)
+  - `median_histogram_complex_op.hpp` — histogram median, complex input (BufferSet<3>)
+- `statistics_processor.hpp` + `.cpp` — ПЕРЕПИСАН как thin Facade (1290 → 320 строк)
+- **API НЕ изменился** — Python bindings не трогали
 
-**Ref03-A: Foundation (DrvGPU)**
-1. `DrvGPU/interface/i_gpu_operation.hpp` — IGpuOperation interface (Layer 2)
-2. `DrvGPU/services/gpu_kernel_op.hpp` — GpuKernelOp base class (Layer 3)
-3. `DrvGPU/interface/gpu_context.hpp` — GpuContext per-module (Layer 1)
-
-**Ref03-B: Statistics (6 Op-классов + thin Facade)**
-4. `modules/statistics/include/operations/mean_reduction_op.hpp`
-5. `modules/statistics/include/operations/welford_fused_op.hpp`
-6. `modules/statistics/include/operations/welford_float_op.hpp`
-7. `modules/statistics/include/operations/median_radix_sort_op.hpp`
-8. `modules/statistics/include/operations/median_histogram_op.hpp`
-9. `modules/statistics/include/operations/median_histogram_complex_op.hpp`
-10. ПЕРЕПИСАТЬ `modules/statistics/include/statistics_processor.hpp` → thin Facade
-11. ПЕРЕПИСАТЬ `modules/statistics/src/statistics_processor.cpp` → delegates to Ops
-
-**Ref03-C: Strategies Pipeline**
-12. `modules/strategies/include/i_pipeline_step.hpp` — IPipelineStep interface
-13. `modules/strategies/include/pipeline_context.hpp` — PipelineContext struct
-14. `modules/strategies/include/pipeline.hpp` — Pipeline class (execute + profiling)
-15. `modules/strategies/include/pipeline_builder.hpp` — PipelineBuilder fluent API
-16. `modules/strategies/include/steps/gemm_step.hpp`
-17. `modules/strategies/include/steps/window_fft_step.hpp`
-18. `modules/strategies/include/steps/debug_stats_step.hpp`
-19. `modules/strategies/include/steps/one_max_step.hpp`
-20. `modules/strategies/include/steps/all_maxima_step.hpp`
-21. `modules/strategies/include/steps/minmax_step.hpp`
-22. ПЕРЕПИСАТЬ `modules/strategies/src/antenna_processor_v1.cpp` → uses Pipeline
+### ❌ НЕ написано:
+- Ref03-C: Strategies Pipeline (IPipelineStep, PipelineBuilder, 6 Steps)
+- Ref03-D: Filters refactoring
+- Ref03-E: FFT refactoring
 
 ---
 
-## ТОНКИЕ МЕСТА (запомнить!)
+## ПЕРВОЕ ДЕЙСТВИЕ НА LINUX (понедельник)
 
-### BufferSet<N>:
-- Specialization для N=0 уже есть (welford_fused не нужны приватные буферы)
-- hipMalloc обёрнут в `#if ENABLE_ROCM` — на Windows (nvidia ветка) не компилируется
+### Шаг 1: Собрать
+```bash
+cd ~/GPUWorkLib
+git pull
+mkdir -p build && cd build
+cmake .. -DENABLE_ROCM=ON
+make -j$(nproc)
+```
 
-### GpuContext:
-- CompileModule() — один hiprtc вызов на ВСЕ kernels модуля (не по одному!)
-- Kernel sources: `kernels::GetStatisticsKernelSource()` — уже есть, не менять
-- WARP_SIZE: `arch_name.find("gfx9") == 0` → 64, иначе → 32
-- KernelCacheService: disk HSACO cache — как в текущем CompileKernels()
+### Шаг 2: Прогнать ВСЕ тесты statistics
+```bash
+./gpu_work_lib  # запустить test_statistics_rocm::run()
+# Ожидание: 11/11 passed (T1-T11)
+```
 
-### Statistics Op-классы:
-- Каждая Op читает/пишет shared buffers через GpuContext (kInput, kMagnitudes, kResult, kMediansCompact)
-- MedianRadixSortOp: вызывает `gpu_sort::ExecuteSort()` из `statistics_sort_gpu.hip` — extern C, не менять .hip файл
-- MedianRadixSortOp: `QuerySortTempSize()` при первом Require() → кешировать sort_temp_size_
-- Offsets buffer: upload segment offsets при аллокации (hipMemcpyAsync)
+### Шаг 3: Проверить baseline timing
+- Сравнить с предыдущими benchmark результатами
+- Не должно быть regression (Op-классы — zero overhead wrappers)
 
-### Strategies Pipeline:
-- 7 streams остаются (stream_main_ + stream_debug1-3 + stream_bench3a-c)
-- hipBLAS handle → в PipelineContext
-- hipFFT plan → в WindowFftStep (с LRU-2 cache как сейчас)
-- Parallel steps: OneMax + AllMaxima + MinMax на разных streams
-- DebugStatsStep: использует StatisticsProcessor (другой модуль!) → передаётся через PipelineContext
-- Event synchronization: event_gemm_done_, event_fft_done_ → в PipelineContext
-
-### Python bindings:
-- НЕ ТРОГАТЬ py_statistics.hpp — Facade API не меняется
-- НЕ ТРОГАТЬ Python тесты — отдельная задача
+### Шаг 4: Если всё ОК → начать Ref03-C
+- Читать `TASK_Ref03_unified_architecture.md` секцию C1-C8
+- Порядок: IPipelineStep → PipelineContext → Concrete Steps → Pipeline → PipelineBuilder → AntennaProcessor rewrite
 
 ---
 
-## КАК ПРОВЕРИТЬ
+## ВОЗМОЖНЫЕ ПРОБЛЕМЫ
 
-1. Файлы должны компилироваться (но без GPU — только синтаксис)
-2. На GPU (понедельник): `test_statistics_rocm::run()` → 11/11 passed
-3. На GPU: `strategies_all_test::run()` → все тесты passed
-4. Benchmark regression: timing не должно деградировать
+### Если не компилируется:
+1. **Include paths** — Op-классы включают `services/gpu_kernel_op.hpp` и `interface/gpu_context.hpp`. Проверить что CMakeLists.txt добавляет `DrvGPU/` в include dirs.
+2. **gpu_context.cpp** и **gpu_kernel_op.cpp** — добавить в CMakeLists.txt (DrvGPU/src/).
+3. **statistics_sort_gpu.hpp** include — путь может отличаться (проверить).
+
+### Если тесты падают:
+1. Проверить что `kernels::GetStatisticsKernelSource()` возвращает ВСЕ 10 kernels.
+2. Проверить что `GpuContext::CompileModule()` передаёт `-DBLOCK_SIZE=256`.
+3. Debug: добавить `ConsoleOutput::Print()` в EnsureCompiled().
+
+### Histogram median (commit dc11bc6):
+- Ещё НЕ тестировался на GPU — тоже проверить (тесты T8-T11)!
 
 ---
 
 ## ТАКЖЕ В ОЧЕРЕДИ (не Ref03)
-
-- Histogram median ждёт тестирования на ROCm (commit dc11bc6)
+- Histogram median ждёт тестирования на ROCm
 - В nvidia ветке stash с .gitignore (git stash pop при возврате)
