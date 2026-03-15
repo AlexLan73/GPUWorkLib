@@ -17,6 +17,12 @@
 #include "test_strategies_step_profiling.hpp"
 #include "test_strategies_benchmark_streams.hpp"
 
+// ── New test infrastructure (OOP/SOLID/GRASP/GoF) ───────────────────────────
+#include "test_base_strategy.hpp"
+#include "test_debug_steps.hpp"
+// #include "strategies_profiling_benchmark.hpp"  // включить отдельно если нужно
+// #include "timing_per_step_test.hpp"             // включить отдельно если нужно
+
 #if ENABLE_ROCM
 #include "backends/rocm/rocm_backend.hpp"
 #include "services/console_output.hpp"
@@ -52,6 +58,11 @@ inline void run() {
   test_strategies::test_external_weights(backend);
   // test_strategies_profiling::run_step_profiling(backend);
   test_strategies_benchmark_streams::run_benchmark_streams(backend);
+
+  // ── New tests: OOP/SOLID/GRASP/GoF framework ────────────────────────────
+  test_base_strategy::run_sin_only(backend);          // T1: быстрый smoke-тест
+  // test_base_strategy::run_all_variants(backend);   // T1: все 4 сигнала
+  // test_debug_steps::run_all(backend);              // T2: step-by-step debug
 
   con.Print(gpu_id, "Strategies", "════════════════════════════════════════════════════════════");
   con.Print(gpu_id, "Strategies", " All Strategies tests PASSED ✅");
