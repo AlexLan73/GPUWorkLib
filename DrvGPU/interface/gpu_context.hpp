@@ -31,6 +31,7 @@
 #include <hip/hiprtc.h>
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -122,6 +123,19 @@ public:
   bool IsCompiled() const { return module_ != nullptr; }
 
   // ═══════════════════════════════════════════════════════════════════════
+  // rocBLAS handle — ленивая инициализация (только для ROCm-модулей с BLAS)
+  //
+  // Handle создаётся при первом вызове GetRocblasHandleRaw() и привязывается
+  // к stream_ данного GpuContext (= к конкретному GPU).
+  //
+  // Возвращает void* — caller кастует в rocblas_handle сам:
+  //   auto blas = static_cast<rocblas_handle>(ctx_->GetRocblasHandleRaw());
+  //
+  // Thread-safe: защита уникальным мьютексом per-GpuContext.
+  // ═══════════════════════════════════════════════════════════════════════
+  void* GetRocblasHandleRaw() const;
+
+  // ═══════════════════════════════════════════════════════════════════════
   // Shared GPU buffers (module-wide, used by multiple Ops)
   // ═══════════════════════════════════════════════════════════════════════
 
@@ -162,6 +176,11 @@ private:
 
   // Disk cache (optional)
   std::unique_ptr<KernelCacheService> kernel_cache_;
+
+  // rocBLAS handle — ленивая инициализация, уничтожается в деструкторе
+  // unique_ptr<mutex> необходим для movability GpuContext
+  mutable void*                       blas_handle_ = nullptr;
+  mutable std::unique_ptr<std::mutex> blas_mutex_  = std::make_unique<std::mutex>();
 
   /// Release compiled module
   void ReleaseModule();

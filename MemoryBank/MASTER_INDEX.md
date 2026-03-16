@@ -22,6 +22,7 @@
 | **vector_algebra** | 🟢 Active | `Doc/Modules/vector_algebra/Full.md` ✅ API.md ✅ |
 | fm_correlator | 🟢 Active | `Doc/Modules/fm_correlator/Full.md` |
 | **strategies** | 🟢 Active | `Doc/Modules/strategies/Full.md` ✅ Quick.md ✅ API.md ✅ |
+| **capon** | 🟡 Framework Ready | `Doc/Modules/capon/Full.md` ✅ Quick.md ✅ API.md ✅ |
 
 ---
 
@@ -31,4 +32,6 @@
 |--------|----------|--------|
 | **Task_13** | Strategies Pipeline: fft_func + ProcessMagnitudeToBuffer + CPU wrappers + AllocateManaged + benchmark | ✅ COMPLETED 2026-03-12 |
 
-*Активных задач нет — ждём следующий большой раздел.*
+| **capon_rocblas** | rocBLAS CGEMM в CovarianceMatrixOp / CaponReliefOp / AdaptBeamformOp | 🔴 TODO |
+
+*Следующий шаг: реализация rocBLAS CGEMM (нужен rocblas_handle из backend) или Python bindings.*

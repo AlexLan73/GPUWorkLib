@@ -51,6 +51,9 @@ add_subdirectory(modules/fm_correlator)
 # Strategies module (ROCm only: antenna array processor pipeline)
 add_subdirectory(modules/strategies)
 
+# Capon module (ROCm only: MVDR beamformer — Capon spatial spectrum + adaptive beamforming)
+add_subdirectory(modules/capon)
+
 # Main executable (src/)
 add_subdirectory(src)
 

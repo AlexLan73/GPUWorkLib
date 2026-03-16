@@ -16,6 +16,8 @@
 #include "services/kernel_cache_service.hpp"
 #include "services/console_output.hpp"
 
+#include <rocblas/rocblas.h>
+
 #include <cstring>
 #include <algorithm>
 
@@ -68,6 +70,10 @@ GpuContext::GpuContext(IBackend* backend,
 GpuContext::~GpuContext() {
   ReleaseShared();
   ReleaseModule();
+  if (blas_handle_) {
+    rocblas_destroy_handle(static_cast<rocblas_handle>(blas_handle_));
+    blas_handle_ = nullptr;
+  }
 }
 
 GpuContext::GpuContext(GpuContext&& other) noexcept
@@ -79,30 +85,40 @@ GpuContext::GpuContext(GpuContext&& other) noexcept
     , module_(other.module_)
     , kernels_(std::move(other.kernels_))
     , shared_(std::move(other.shared_))
-    , kernel_cache_(std::move(other.kernel_cache_)) {
-  other.backend_ = nullptr;
-  other.stream_ = nullptr;
-  other.module_ = nullptr;
+    , kernel_cache_(std::move(other.kernel_cache_))
+    , blas_handle_(other.blas_handle_)
+    , blas_mutex_(std::move(other.blas_mutex_)) {
+  other.backend_      = nullptr;
+  other.stream_       = nullptr;
+  other.module_       = nullptr;
+  other.blas_handle_  = nullptr;
 }
 
 GpuContext& GpuContext::operator=(GpuContext&& other) noexcept {
   if (this != &other) {
     ReleaseShared();
     ReleaseModule();
+    if (blas_handle_) {
+      rocblas_destroy_handle(static_cast<rocblas_handle>(blas_handle_));
+      blas_handle_ = nullptr;
+    }
 
-    backend_ = other.backend_;
-    stream_ = other.stream_;
-    module_name_ = other.module_name_;
-    arch_name_ = std::move(other.arch_name_);
-    warp_size_ = other.warp_size_;
-    module_ = other.module_;
-    kernels_ = std::move(other.kernels_);
-    shared_ = std::move(other.shared_);
+    backend_      = other.backend_;
+    stream_       = other.stream_;
+    module_name_  = other.module_name_;
+    arch_name_    = std::move(other.arch_name_);
+    warp_size_    = other.warp_size_;
+    module_       = other.module_;
+    kernels_      = std::move(other.kernels_);
+    shared_       = std::move(other.shared_);
     kernel_cache_ = std::move(other.kernel_cache_);
+    blas_handle_  = other.blas_handle_;
+    blas_mutex_   = std::move(other.blas_mutex_);
 
-    other.backend_ = nullptr;
-    other.stream_ = nullptr;
-    other.module_ = nullptr;
+    other.backend_     = nullptr;
+    other.stream_      = nullptr;
+    other.module_      = nullptr;
+    other.blas_handle_ = nullptr;
   }
   return *this;
 }
@@ -244,6 +260,34 @@ void GpuContext::ReleaseModule() {
     module_ = nullptr;
   }
   kernels_.clear();
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// rocBLAS handle — ленивая инициализация
+// ═════════════════════════════════════════════════════════════════════════════
+
+void* GpuContext::GetRocblasHandleRaw() const {
+  std::lock_guard<std::mutex> lock(*blas_mutex_);
+  if (!blas_handle_) {
+    // hipSetDevice обязателен: при 10-15 GPU текущий device в потоке
+    // может не совпадать с device этого GpuContext.
+    hipSetDevice(backend_->GetDeviceIndex());
+
+    rocblas_handle h;
+    rocblas_status status = rocblas_create_handle(&h);
+    if (status != rocblas_status_success) {
+      throw std::runtime_error(
+          std::string("GpuContext[") + module_name_ +
+          "]: rocblas_create_handle failed (" +
+          std::to_string(static_cast<int>(status)) + ")");
+    }
+    rocblas_set_stream(h, stream_);
+    blas_handle_ = static_cast<void*>(h);
+
+    ConsoleOutput::GetInstance().Print(
+        backend_->GetDeviceIndex(), module_name_, "rocBLAS handle created");
+  }
+  return blas_handle_;
 }
 
 }  // namespace drv_gpu_lib

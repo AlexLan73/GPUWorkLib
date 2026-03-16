@@ -1,22 +1,25 @@
 # ════════════════════════════════════════════════════════════════════════════
-# vector_algebra Module - CMakeLists.txt
+# Capon Module - CMakeLists.txt
 # ════════════════════════════════════════════════════════════════════════════
 #
-# ROCm-only module: Cholesky-based matrix inversion using rocBLAS + rocSOLVER.
-# Task_11 v2: два режима симметризации (Roundtrip / GpuKernel via hiprtc).
+# ROCm-only модуль: алгоритм Кейпона (MVDR beamformer) для GPU.
 #
-#   - CholeskyInverterROCm  — POTRF + POTRI on AMD GPU
-#   - SymmetrizeMode        — Roundtrip (CPU) или GpuKernel (hiprtc)
-#   - Batched variant       — multiple matrices in one call
+# Алгоритм:
+#   R = (1/N) * Y * Y^H + μI     — rocBLAS CGEMM + HIP kernel (диаг. загрузка)
+#   R^{-1}                        — rocSOLVER POTRF + POTRI (Cholesky inversion)
+#   z[m] = 1/(u^H * R^{-1} * u)  — rocBLAS CGEMM + HIP kernel (рельеф)
+#   Y_out = (R^{-1}*U)^H * Y     — rocBLAS CGEMM (адаптивное ДО)
+#
+# Зависимости: rocBLAS (GEMM), rocSOLVER (POTRF+POTRI), hiprtc (custom kernels)
 #
 # ════════════════════════════════════════════════════════════════════════════
 
 cmake_minimum_required(VERSION 3.20)
 
-set(MODULE_NAME vector_algebra)
+set(MODULE_NAME capon)
 
 # ════════════════════════════════════════════════════════════════════════════
-# Check ROCm + rocBLAS + rocSOLVER dependencies
+# Проверка зависимостей
 # ════════════════════════════════════════════════════════════════════════════
 
 if(NOT ROCM_ENABLED)
@@ -41,10 +44,7 @@ message(STATUS "Configuring module: ${MODULE_NAME} (ROCm + rocBLAS + rocSOLVER +
 # ════════════════════════════════════════════════════════════════════════════
 
 add_library(${MODULE_NAME} STATIC
-    src/cholesky_inverter_rocm.cpp
-    src/symmetrize_gpu_rocm.cpp
-    src/diagonal_load_regularizer.cpp
-    src/matrix_ops_rocm.cpp
+    src/capon_processor.cpp   # g++: host logic + hiprtc kernels
 )
 
 # Required for linking into a shared library (.so / Python .pyd)
@@ -55,21 +55,23 @@ target_include_directories(${MODULE_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/DrvGPU
+        ${CMAKE_SOURCE_DIR}/modules/vector_algebra/include  # CholeskyInverterROCm
 )
 
 target_link_libraries(${MODULE_NAME}
     PUBLIC
         drvgpu
+        vector_algebra   # CholeskyInverterROCm — инверсия ковариационной матрицы
         hip::host
         roc::rocblas
         roc::rocsolver
 )
 
-# hiprtc for GPU kernel compilation (SymmetrizeMode::GpuKernel)
+# hiprtc для компиляции GPU kernels в runtime
 if(hiprtc_FOUND)
     target_link_libraries(${MODULE_NAME} PRIVATE hiprtc::hiprtc)
 else()
-    message(WARNING "  ${MODULE_NAME}: hiprtc not found — GpuKernel mode will fail at runtime")
+    message(WARNING "  ${MODULE_NAME}: hiprtc not found — GPU kernels will fail at runtime")
 endif()
 
 target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
@@ -100,8 +102,9 @@ install(DIRECTORY include/
 # ════════════════════════════════════════════════════════════════════════════
 
 message(STATUS "  ${MODULE_NAME}: configured (ROCm only)")
-message(STATUS "    - CholeskyInverterROCm: POTRF + POTRI via rocSOLVER")
-message(STATUS "    - SymmetrizeMode: Roundtrip (CPU) + GpuKernel (hiprtc)")
-message(STATUS "    - IMatrixRegularizer: Strategy (DiagonalLoadRegularizer, NoOpRegularizer)")
-message(STATUS "    - Inputs: CPU vector<complex<float>>, void* (ROCm), cl_mem (ZeroCopy)")
-message(STATUS "    - Batched: multiple matrices in one call")
+message(STATUS "    - CaponProcessor: ComputeRelief + AdaptiveBeamform")
+message(STATUS "    - CovarianceMatrixOp: rocBLAS CGEMM (R = Y*Y^H/N + muI)")
+message(STATUS "    - CaponInvertOp: rocSOLVER POTRF+POTRI (Cholesky inversion)")
+message(STATUS "    - CaponReliefOp: z[m] = 1/Re(u^H * R^{-1} * u)")
+message(STATUS "    - AdaptBeamformOp: Y_out = (R^{-1}*U)^H * Y")
+message(STATUS "    - Input: complex<float>, P channels x N samples x M directions")
