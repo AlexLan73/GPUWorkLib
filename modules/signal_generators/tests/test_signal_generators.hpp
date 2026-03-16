@@ -246,7 +246,6 @@ inline bool TestNoiseStatistics(drv_gpu_lib::IBackend* backend) {
 
 /**
  * @brief Test 5: Integration — CW -> FFTProcessor -> check frequency
- * Only available when clFFT is enabled (ENABLE_CLFFT=1).
  */
 
 /**

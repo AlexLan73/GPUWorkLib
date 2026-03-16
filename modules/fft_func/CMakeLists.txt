@@ -6,7 +6,7 @@
 #
 # Реализации:
 #   ROCm/hipFFT — FFTProcessorROCm, SpectrumMaximaFinderROCm
-#   Без OpenCL/clFFT (только для NVIDIA, который в ветке nvidia)
+#   OpenCL/clFFT — только в ветке nvidia
 #
 # CMake-таргеты:
 #   fft_func                    — основной

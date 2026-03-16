@@ -100,3 +100,12 @@ class AntennaTestParams:
         import math
         nfft = 2 ** math.ceil(math.log2(self.n_samples))
         return round(self.f0_hz / (self.fs / nfft))
+
+    @property
+    def check_peak_freq(self) -> bool:
+        """True если пик FFT должен быть вблизи f0_hz.
+
+        LFM-сигналы без дечирпа дают широкополосный спектр без чёткого пика
+        на f0 — для них FFT-пик валидация не применима.
+        """
+        return self.signal_variant == SignalVariant.SIN or self.fdev_hz == 0

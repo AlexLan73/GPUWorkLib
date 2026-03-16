@@ -29,7 +29,7 @@ std::unique_ptr<ISpectrumProcessor> SpectrumProcessorFactory::Create(
     case drv_gpu_lib::BackendType::ROCm:
         return std::make_unique<SpectrumProcessorROCm>(backend);
     case drv_gpu_lib::BackendType::OPENCL:
-        throw std::runtime_error("SpectrumProcessorFactory: OpenCL/clFFT not available on this branch (use nvidia branch)");
+        throw std::runtime_error("SpectrumProcessorFactory: OpenCL not supported on this branch (use nvidia branch with ROCm disabled)");
     default:
         break;
     }

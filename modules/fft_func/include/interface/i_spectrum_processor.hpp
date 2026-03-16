@@ -2,7 +2,7 @@
 
 /**
  * @file i_spectrum_processor.hpp
- * @brief Strategy interface for spectrum processing (OpenCL vs ROCm)
+ * @brief Strategy interface for spectrum processing (ROCm/hipFFT)
  *
  * Part of SpectrumMaximaFinder refactoring - Strategy + Bridge pattern.
  * Each backend (OpenCL, ROCm) implements this interface.
@@ -26,8 +26,7 @@ namespace antenna_fft {
  * @brief Abstract interface for GPU spectrum processing (FFT + peak search)
  *
  * Implementations:
- * - SpectrumProcessorOpenCL (clFFT, cl_mem)
- * - SpectrumProcessorROCm (hipFFT, hipDevicePtr) - planned
+ * - SpectrumProcessorROCm (hipFFT, hipDevicePtr)
  */
 class ISpectrumProcessor {
 public:

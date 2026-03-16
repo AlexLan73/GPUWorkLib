@@ -24,8 +24,10 @@ if _DIR not in sys.path:
 from test_params import AntennaTestParams, SignalVariant
 from signal_generators_strategy import SignalStrategyFactory
 
-sys.path.insert(0, os.path.join(os.path.dirname(_DIR), "common"))
-from result import TestResult, ValidationResult
+_PYTHON_TEST_DIR = os.path.dirname(_DIR)
+if _PYTHON_TEST_DIR not in sys.path:
+    sys.path.insert(0, _PYTHON_TEST_DIR)
+from common.result import TestResult, ValidationResult
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -111,9 +113,12 @@ def test_gemm_shape_and_gain(variant: SignalVariant):
     SignalVariant.LFM_NO_DELAY,
 ])
 def test_fft_peak_location(variant: SignalVariant):
-    """Step FFT: peak bin ≈ expected_peak_bin (±2 бина)."""
+    """Step FFT: peak bin ≈ expected_peak_bin (±2 бина, только для SIN/CW)."""
     d = _generate_and_run(variant)
     mags, nfft, params = d["magnitudes"], d["nfft"], d["params"]
+
+    if not params.check_peak_freq:
+        pytest.skip(f"LFM без дечирпа не даёт чёткий FFT-пик (variant={variant.name})")
 
     bin_hz   = params.fs / nfft
     peak_bin = int(np.argmax(mags[0, 1:nfft // 2])) + 1
@@ -133,9 +138,12 @@ def test_fft_peak_location(variant: SignalVariant):
     SignalVariant.LFM_NO_DELAY,
 ])
 def test_one_max_accuracy(variant: SignalVariant):
-    """Step OneMax: refined_freq_hz ≈ f0_hz через 3-точечную параболу."""
+    """Step OneMax: refined_freq_hz ≈ f0_hz через 3-точечную параболу (только SIN/CW)."""
     d = _generate_and_run(variant)
     mags, nfft, params = d["magnitudes"], d["nfft"], d["params"]
+
+    if not params.check_peak_freq:
+        pytest.skip(f"LFM без дечирпа не даёт чёткий FFT-пик (variant={variant.name})")
 
     bin_hz         = params.fs / nfft
     peak_bin, offs = _parabolic_peak(mags, beam=0)

@@ -1,38 +1,4 @@
-#pragma once
 
-/**
- * @file fft_processor_kernels_rocm.hpp
- * @brief HIP kernel sources for FFTProcessorROCm
- *
- * Contains:
- * - Pad kernel (n_point -> nFFT zero-padding for batch FFT)
- * - Post-processing kernel (complex -> magnitude + phase)
- *
- * Kernels are compiled at runtime via hiprtc.
- * Uses custom float2_t struct to avoid hiprtc built-in type issues.
- *
- * @author Kodo (AI Assistant)
- * @date 2026-02-23
- */
-
-#if ENABLE_ROCM
-
-namespace fft_processor {
-namespace kernels {
-
-/**
- * @brief Combined HIP kernel source: pad_data + complex_to_mag_phase
- *
- * pad_data:
- *   Pads input data from n_point to nFFT with zeros for batch FFT.
- *   Each thread handles one complex element in the output.
- *
- * complex_to_mag_phase:
- *   Converts complex FFT output to magnitude and phase.
- *   Each thread processes one complex element.
- */
-inline const char* GetHIPKernelSource() {
-    return R"HIP(
 
 #ifndef WARP_SIZE
 #define WARP_SIZE 32
@@ -77,10 +43,3 @@ extern "C" __global__ void complex_to_mag_phase(
     mag_phase[gid] = mp;
 }
 
-)HIP";
-}
-
-}  // namespace kernels
-}  // namespace fft_processor
-
-#endif  // ENABLE_ROCM

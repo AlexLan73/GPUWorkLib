@@ -32,13 +32,13 @@ _STRAT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _STRAT_DIR not in sys.path:
     sys.path.insert(0, _STRAT_DIR)
 
-# Добавить common/ в sys.path
-_COMMON_DIR = os.path.join(os.path.dirname(_STRAT_DIR), "common")
-if _COMMON_DIR not in sys.path:
-    sys.path.insert(0, _COMMON_DIR)
+# Добавить Python_test/ в sys.path (чтобы common был пакетом)
+_PYTHON_TEST_DIR = os.path.dirname(_STRAT_DIR)
+if _PYTHON_TEST_DIR not in sys.path:
+    sys.path.insert(0, _PYTHON_TEST_DIR)
 
-from test_base import TestBase
-from result import TestResult, ValidationResult
+from common.test_base import TestBase
+from common.result import TestResult, ValidationResult
 from test_params import AntennaTestParams, SignalVariant
 from signal_generators_strategy import ISignalStrategy
 

@@ -36,7 +36,6 @@ target_include_directories(${MODULE_NAME}
         ${CMAKE_SOURCE_DIR}/DrvGPU
     PRIVATE
         ${OpenCL_INCLUDE_DIRS}
-        ${CLFFT_INCLUDE_DIR}
 )
 
 target_link_libraries(${MODULE_NAME}

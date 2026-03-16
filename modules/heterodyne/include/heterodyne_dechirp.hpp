@@ -46,7 +46,7 @@ public:
    */
   explicit HeterodyneDechirp(
       IBackend* backend,
-      BackendType compute_backend = BackendType::OPENCL);
+      BackendType compute_backend = BackendType::ROCm);
 
   HeterodyneDechirp(const HeterodyneDechirp&) = delete;
   HeterodyneDechirp& operator=(const HeterodyneDechirp&) = delete;

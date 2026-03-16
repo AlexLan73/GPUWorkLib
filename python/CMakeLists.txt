@@ -81,9 +81,6 @@ if(TARGET GPUWorkLib::strategies)
     target_link_libraries(gpuworklib PRIVATE strategies)
 endif()
 
-if(CLFFT_FOUND AND CLFFT_LIB)
-    target_link_libraries(gpuworklib PRIVATE "${CLFFT_LIB}")
-endif()
 
 target_include_directories(gpuworklib PRIVATE
     ${CMAKE_SOURCE_DIR}/DrvGPU
@@ -102,18 +99,10 @@ target_include_directories(gpuworklib PRIVATE
     ${Python3_NumPy_INCLUDE_DIRS}
 )
 
-if(CLFFT_FOUND)
-    target_include_directories(gpuworklib PRIVATE ${CLFFT_INCLUDE_DIR})
-endif()
-
 target_compile_definitions(gpuworklib PRIVATE
     OPENCL_ENABLED=1
     CL_TARGET_OPENCL_VERSION=300
 )
-
-if(CLFFT_FOUND)
-    target_compile_definitions(gpuworklib PRIVATE CLFFT_VERSION=2)
-endif()
 
 if(MSVC)
     target_compile_options(gpuworklib PRIVATE /W3 /arch:AVX2 /wd4251)
@@ -123,18 +112,6 @@ set_target_properties(gpuworklib PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
 )
-
-# ============================================================================
-# Copy clFFT.dll next to .pyd (Windows)
-# ============================================================================
-
-if(WIN32 AND CLFFT_FOUND AND CLFFT_DLL)
-    add_custom_command(TARGET gpuworklib POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CLFFT_DLL}" "$<TARGET_FILE_DIR:gpuworklib>"
-        COMMENT "Copying clFFT.dll for Python module"
-    )
-endif()
 
 message(STATUS "  gpuworklib Python module configured")
 message(STATUS "")

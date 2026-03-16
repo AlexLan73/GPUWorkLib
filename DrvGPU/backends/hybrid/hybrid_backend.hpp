@@ -5,7 +5,7 @@
  * @brief HybridBackend — гибридный OpenCL + ROCm бэкенд для одного GPU
  *
  * HybridBackend содержит оба sub-backend (OpenCL и ROCm) и позволяет:
- * - Выполнять OpenCL операции (clFFT, существующие kernels)
+ * - Выполнять OpenCL операции (существующие kernels)
  * - Выполнять HIP/ROCm операции (hipFFT, rocPRIM, hiprtc kernels)
  * - Обмениваться данными через ZeroCopyBridge (без копирования CPU)
  *
@@ -284,7 +284,7 @@ private:
   // Обычно true (HybridBackend создаёт sub-backends сам в Initialize()).
   bool owns_resources_;
 
-  std::unique_ptr<OpenCLBackend> opencl_;  // Primary: cl_mem, clFFT, legacy kernels
+  std::unique_ptr<OpenCLBackend> opencl_;  // Primary: cl_mem, legacy kernels
   std::unique_ptr<ROCmBackend>   rocm_;    // Secondary: hipMalloc, hipFFT, rocPRIM, hiprtc
 
   // Мьютекс для Initialize/Cleanup — потокобезопасность при многопоточном создании.

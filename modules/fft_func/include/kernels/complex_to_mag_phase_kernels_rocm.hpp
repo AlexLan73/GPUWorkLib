@@ -61,8 +61,8 @@ extern "C" __global__ void complex_to_mag_phase(
 
     float2_t z = input[gid];
     float2_t mp;
-    mp.x = __fsqrt_rn(z.x * z.x + z.y * z.y);  // fast sqrt intrinsic
-    mp.y = __atan2f(z.y, z.x);                 // P4: fast atan2 intrinsic (~4 ULP)
+    mp.x = sqrtf(z.x * z.x + z.y * z.y);
+    mp.y = atan2f(z.y, z.x);
     mag_phase[gid] = mp;
 }
 

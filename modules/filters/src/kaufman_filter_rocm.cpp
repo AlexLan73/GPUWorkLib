@@ -34,7 +34,7 @@ KaufmanFilterROCm::KaufmanFilterROCm(
   if (!stream_)
     throw std::runtime_error("KaufmanFilterROCm: failed to get HIP stream");
 
-  CompileKernel();
+  // Kernel compiled lazily in EnsureKernel() — requires er_period from SetParams()
 }
 
 KaufmanFilterROCm::~KaufmanFilterROCm() {
@@ -53,7 +53,8 @@ KaufmanFilterROCm::KaufmanFilterROCm(KaufmanFilterROCm&& other) noexcept
       fast_sc_(other.fast_sc_), slow_sc_(other.slow_sc_),
       cached_input_buf_(other.cached_input_buf_),
       cached_input_size_(other.cached_input_size_),
-      block_size_(other.block_size_) {
+      block_size_(other.block_size_),
+      compiled_window_size_(other.compiled_window_size_) {
   other.backend_ = nullptr;
   other.stream_ = nullptr;
   other.module_ = nullptr;
@@ -61,6 +62,7 @@ KaufmanFilterROCm::KaufmanFilterROCm(KaufmanFilterROCm&& other) noexcept
   other.kernel_compiled_ = false;
   other.cached_input_buf_ = nullptr;
   other.cached_input_size_ = 0;
+  other.compiled_window_size_ = 0;
 }
 
 KaufmanFilterROCm& KaufmanFilterROCm::operator=(
@@ -78,6 +80,7 @@ KaufmanFilterROCm& KaufmanFilterROCm::operator=(
     cached_input_buf_ = other.cached_input_buf_;
     cached_input_size_ = other.cached_input_size_;
     block_size_ = other.block_size_;
+    compiled_window_size_ = other.compiled_window_size_;
 
     other.backend_ = nullptr;
     other.stream_ = nullptr;
@@ -86,6 +89,7 @@ KaufmanFilterROCm& KaufmanFilterROCm::operator=(
     other.kernel_compiled_ = false;
     other.cached_input_buf_ = nullptr;
     other.cached_input_size_ = 0;
+    other.compiled_window_size_ = 0;
   }
   return *this;
 }
@@ -103,8 +107,6 @@ void KaufmanFilterROCm::SetParams(uint32_t er_period,
                                    uint32_t slow_period) {
   if (er_period == 0)
     throw std::invalid_argument("KaufmanFilterROCm: er_period must be > 0");
-  if (er_period > 128)
-    throw std::invalid_argument("KaufmanFilterROCm: er_period max 128 (ring buffer limit)");
   if (fast_period == 0 || slow_period == 0)
     throw std::invalid_argument("KaufmanFilterROCm: fast/slow periods must be > 0");
 
@@ -125,11 +127,26 @@ void KaufmanFilterROCm::SetParams(uint32_t er_period,
 // Kernel compilation
 // ════════════════════════════════════════════════════════════════════════════
 
-void KaufmanFilterROCm::CompileKernel() {
-  if (kernel_compiled_) return;
+void KaufmanFilterROCm::EnsureKernel() {
+  uint32_t er = params_.er_period;
+  if (er == 0)
+    throw std::runtime_error("KaufmanFilterROCm: SetParams() must be called before Process()");
+  if (kernel_compiled_ && compiled_window_size_ == er) return;
 
+  // N changed (or first compile) — unload old module if any
+  if (kernel_compiled_) {
+    hipModuleUnload(module_);
+    module_ = nullptr;
+    kernel_ = nullptr;
+    kernel_compiled_ = false;
+  }
+  CompileKernel(er);
+  compiled_window_size_ = er;
+}
+
+void KaufmanFilterROCm::CompileKernel(uint32_t n_window) {
   auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
-  const std::string cache_name = "kaufman_kernel_rocm";
+  const std::string cache_name = "kaufman_kernel_rocm_N" + std::to_string(n_window);
 
   // ── Try loading from KernelCacheService (HSACO fast path) ──
   try {
@@ -171,8 +188,9 @@ void KaufmanFilterROCm::CompileKernel() {
     arch_name = "";
   }
   std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
-  std::string block_size_def = "-DBLOCK_SIZE=" + std::to_string(block_size_);
-  std::vector<const char*> opts = {"-O3", "-DWARP_SIZE=32", block_size_def.c_str()};
+  std::string block_size_def  = "-DBLOCK_SIZE="  + std::to_string(block_size_);
+  std::string n_window_def    = "-DN_WINDOW="    + std::to_string(n_window);
+  std::vector<const char*> opts = {"-O3", "-DWARP_SIZE=32", block_size_def.c_str(), n_window_def.c_str()};
   if (!arch_flag.empty())
     opts.push_back(arch_flag.c_str());
 
@@ -230,8 +248,7 @@ drv_gpu_lib::InputData<void*>
 KaufmanFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points) {
   if (!input_ptr || channels == 0 || points == 0)
     throw std::runtime_error("KaufmanFilterROCm::Process: invalid arguments");
-  if (!kernel_compiled_)
-    throw std::runtime_error("KaufmanFilterROCm::Process: kernel not compiled");
+  EnsureKernel();
 
   size_t total = static_cast<size_t>(channels) * points;
   size_t buffer_size = total * sizeof(std::complex<float>);

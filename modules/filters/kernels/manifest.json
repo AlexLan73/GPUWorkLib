@@ -49,6 +49,27 @@
       "created": "2026-03-10T11:12:26",
       "params": "gfx1201",
       "backend": "rocm"
+    },
+    {
+      "name": "moving_average_kernels_rocm_N10",
+      "comment": "MA filters: SMA/EMA/MMA/DEMA/TEMA",
+      "created": "2026-03-16T15:19:23",
+      "params": "gfx1201",
+      "backend": "rocm"
+    },
+    {
+      "name": "moving_average_kernels_rocm_N8",
+      "comment": "MA filters: SMA/EMA/MMA/DEMA/TEMA",
+      "created": "2026-03-16T15:19:23",
+      "params": "gfx1201",
+      "backend": "rocm"
+    },
+    {
+      "name": "kaufman_kernel_rocm_N10",
+      "comment": "KAMA (Kaufman Adaptive MA)",
+      "created": "2026-03-16T15:19:23",
+      "params": "gfx1201",
+      "backend": "rocm"
     }
   ]
 }

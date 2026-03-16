@@ -44,7 +44,7 @@ struct FFTMagPhaseResult : FFTBeamResult {
 /// Для детального ROCm-профилирования по стадиям — использовать ROCmProfEvents напрямую.
 struct FFTProfilingData {
     double upload_time_ms = 0.0;           ///< CPU→GPU transfer (H2D или D2D copy)
-    double fft_time_ms = 0.0;             ///< Чистое FFT-вычисление (clFFT / hipfftExecC2C)
+    double fft_time_ms = 0.0;             ///< Чистое FFT-вычисление (hipfftExecC2C)
     double post_processing_time_ms = 0.0; ///< Kernel complex→mag+phase (0 если режим COMPLEX)
     double download_time_ms = 0.0;        ///< GPU→CPU transfer (D2H)
     double total_time_ms = 0.0;           ///< Суммарное время из GPUProfiler (включая overhead)

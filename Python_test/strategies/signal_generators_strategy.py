@@ -159,10 +159,9 @@ class LfmFarrowStrategy(ISignalStrategy):
         s0 = _gen_lfm(params, delay_s=0.0)   # базовый сигнал без задержки
 
         for i in range(params.n_ant):
-            delay_s   = i * params.tau_step_us * 1e-6
-            delay_us  = delay_s * 1e6
-            # FarrowDelay.apply(signal, delay_us, fs_hz) → delayed signal
-            delayed   = farrow.apply(s0.astype(np.complex128), delay_us, params.fs)
+            delay_s       = i * params.tau_step_us * 1e-6
+            delay_samples = delay_s * params.fs
+            delayed   = farrow.apply_single(s0.astype(np.complex128), delay_samples)
             result[i] = delayed[:params.n_samples].astype(np.complex64)
 
         return result

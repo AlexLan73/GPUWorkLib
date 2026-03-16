@@ -72,7 +72,8 @@ public:
   bool     IsReady()       const { return kernel_compiled_; }
 
 private:
-  void CompileKernels();
+  void EnsureKernels();
+  void CompileKernels(uint32_t sma_window);
   void LoadKernelFunctions();
   void ReleaseGpuResources();
 
@@ -97,7 +98,8 @@ private:
   void*  cached_input_buf_  = nullptr;  ///< GPU-буфер [channels * points] float2, принадлежит объекту
   size_t cached_input_size_ = 0;        ///< Текущий размер cached_input_buf_ в байтах
 
-  unsigned int block_size_ = 256;  ///< Threads per block для hipModuleLaunchKernel (1 thread per channel)
+  unsigned int block_size_          = 256;  ///< Threads per block для hipModuleLaunchKernel (1 thread per channel)
+  uint32_t     compiled_sma_window_ = 0;   ///< N_WINDOW used in last CompileKernels(); 0 = not compiled
 };
 
 }  // namespace filters

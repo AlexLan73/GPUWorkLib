@@ -9,7 +9,7 @@
  *   Noise signal (ER≈0) → slow reaction (almost frozen)
  *
  * Grid: 1D — one thread per channel, sequential loop.
- * Constraint: er_period <= 128 (ring buffer in thread-local registers).
+ * Ring buffer size = er_period, compiled via hiprtc -DN_WINDOW=<er_period> (lazy, per-N cache).
  *
  * @author Kodo (AI Assistant)
  * @date 2026-03-01
@@ -75,7 +75,8 @@ public:
   bool IsReady() const { return kernel_compiled_; }
 
 private:
-  void CompileKernel();
+  void EnsureKernel();
+  void CompileKernel(uint32_t n_window);
   void ReleaseGpuResources();
 
   drv_gpu_lib::IBackend* backend_ = nullptr;
@@ -96,7 +97,8 @@ private:
   void*  cached_input_buf_  = nullptr;  ///< GPU-буфер [channels * points] float2, принадлежит объекту
   size_t cached_input_size_ = 0;        ///< Размер cached_input_buf_ в байтах
 
-  unsigned int block_size_ = 256;  ///< Threads per block (1 thread per channel)
+  unsigned int block_size_         = 256;  ///< Threads per block (1 thread per channel)
+  uint32_t     compiled_window_size_ = 0;  ///< N_WINDOW used in last CompileKernel(); 0 = not compiled
 };
 
 }  // namespace filters

@@ -26,8 +26,10 @@ from test_params import AntennaTestParams, SignalVariant
 from signal_generators_strategy import SignalStrategyFactory
 from strategy_test_base import StrategyTestBase
 
-sys.path.insert(0, os.path.join(os.path.dirname(_DIR), "common"))
-from result import TestResult, ValidationResult
+_PYTHON_TEST_DIR = os.path.dirname(_DIR)
+if _PYTHON_TEST_DIR not in sys.path:
+    sys.path.insert(0, _PYTHON_TEST_DIR)
+from common.result import TestResult, ValidationResult
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -53,14 +55,15 @@ class NumpyPipelineTest(StrategyTestBase):
         bin_hz    = params.bin_hz
         freq_err  = abs(peak_freq - params.f0_hz)
 
-        # Проверка 1: частота пика ≈ f0
-        tr.add(ValidationResult(
-            passed    = freq_err < 2.0 * bin_hz,
-            metric_name = "peak_freq_error_hz",
-            actual_value = freq_err,
-            threshold    = 2.0 * bin_hz,
-            message      = f"found={peak_freq:.1f} Hz, f0={params.f0_hz:.1f} Hz",
-        ))
+        # Проверка 1: частота пика ≈ f0 (только для SIN/CW; LFM без дечирпа не даёт чёткий пик)
+        if params.check_peak_freq:
+            tr.add(ValidationResult(
+                passed    = freq_err < 2.0 * bin_hz,
+                metric_name = "peak_freq_error_hz",
+                actual_value = freq_err,
+                threshold    = 2.0 * bin_hz,
+                message      = f"found={peak_freq:.1f} Hz, f0={params.f0_hz:.1f} Hz",
+            ))
 
         # Проверка 2: dynamic_range_dB (beam 0)
         mags = result["magnitudes"]

@@ -5,7 +5,7 @@
  * @brief Тесты модуля fft_func — ветка main (ROCm/hipFFT)
  *
  * Ветка: main (Linux / AMD GPU / ROCm)
- * Все тесты используют ROCm/hipFFT. OpenCL/clFFT тестов нет.
+ * Все тесты используют ROCm/hipFFT.
  *
  * main.cpp вызывает этот файл — НЕ отдельные тесты напрямую.
  * Включить/закомментировать нужные тесты здесь.

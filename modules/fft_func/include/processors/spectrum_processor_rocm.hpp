@@ -5,8 +5,8 @@
  * @brief ROCm/HIP implementation of ISpectrumProcessor (hipFFT + hiprtc kernels)
  *
  * Strategy pattern - ROCm backend for spectrum maxima finding.
- * Port of SpectrumProcessorOpenCL with HIP equivalents:
- * - hipFFT instead of clFFT (no pre-callback → separate pad kernel)
+ * HIP implementation:
+ * - hipFFT (no pre-callback → separate pad kernel)
  * - hiprtc-compiled kernels for padding, magnitudes, post-processing
  * - AllMaximaPipelineROCm for FindAllMaxima
  *

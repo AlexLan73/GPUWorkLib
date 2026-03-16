@@ -33,7 +33,7 @@ MovingAverageFilterROCm::MovingAverageFilterROCm(
   if (!stream_)
     throw std::runtime_error("MovingAverageFilterROCm: failed to get HIP stream");
 
-  CompileKernels();
+  // Kernels compiled lazily in EnsureKernels() — SMA requires window_size from SetParams()
 }
 
 MovingAverageFilterROCm::~MovingAverageFilterROCm() {
@@ -56,7 +56,8 @@ MovingAverageFilterROCm::MovingAverageFilterROCm(
       alpha_(other.alpha_),
       cached_input_buf_(other.cached_input_buf_),
       cached_input_size_(other.cached_input_size_),
-      block_size_(other.block_size_) {
+      block_size_(other.block_size_),
+      compiled_sma_window_(other.compiled_sma_window_) {
   other.backend_ = nullptr;
   other.stream_ = nullptr;
   other.module_ = nullptr;
@@ -68,6 +69,7 @@ MovingAverageFilterROCm::MovingAverageFilterROCm(
   other.kernel_compiled_ = false;
   other.cached_input_buf_ = nullptr;
   other.cached_input_size_ = 0;
+  other.compiled_sma_window_ = 0;
 }
 
 MovingAverageFilterROCm& MovingAverageFilterROCm::operator=(
@@ -89,6 +91,7 @@ MovingAverageFilterROCm& MovingAverageFilterROCm::operator=(
     cached_input_buf_ = other.cached_input_buf_;
     cached_input_size_ = other.cached_input_size_;
     block_size_ = other.block_size_;
+    compiled_sma_window_ = other.compiled_sma_window_;
 
     other.backend_ = nullptr;
     other.stream_ = nullptr;
@@ -101,6 +104,7 @@ MovingAverageFilterROCm& MovingAverageFilterROCm::operator=(
     other.kernel_compiled_ = false;
     other.cached_input_buf_ = nullptr;
     other.cached_input_size_ = 0;
+    other.compiled_sma_window_ = 0;
   }
   return *this;
 }
@@ -121,8 +125,8 @@ void MovingAverageFilterROCm::SetParams(const MovingAverageParams& params) {
  * - MMA (Wilder): alpha = 1/N — более медленная реакция чем EMA при том же N
  * - SMA: alpha не используется ядром (работает ring buffer + inv_N)
  *
- * SMA ограничен N <= 128 — ring buffer хранится в thread-local регистрах
- * (float2_t ring[128]), превышение ведёт к spill в global memory.
+ * SMA ring buffer размером N хранится в thread-local регистрах. Размер задаётся через
+ * hiprtc define -DN_WINDOW=<window_size> при компиляции — нет ограничения 128.
  *
  * @param type Тип скользящей средней (SMA/EMA/MMA/DEMA/TEMA)
  * @param window_size N — размер окна; SMA: max 128
@@ -130,8 +134,6 @@ void MovingAverageFilterROCm::SetParams(const MovingAverageParams& params) {
 void MovingAverageFilterROCm::SetParams(MAType type, uint32_t window_size) {
   if (window_size == 0)
     throw std::invalid_argument("MovingAverageFilterROCm: window_size must be > 0");
-  if (type == MAType::SMA && window_size > 128)
-    throw std::invalid_argument("MovingAverageFilterROCm: SMA window_size max 128");
 
   ma_type_ = type;
   window_size_ = window_size;
@@ -155,11 +157,28 @@ void MovingAverageFilterROCm::SetParams(MAType type, uint32_t window_size) {
 // Kernel compilation
 // ════════════════════════════════════════════════════════════════════════════
 
-void MovingAverageFilterROCm::CompileKernels() {
-  if (kernel_compiled_) return;
+void MovingAverageFilterROCm::EnsureKernels() {
+  // For SMA: recompile when window_size changes (N_WINDOW define changes).
+  // For EMA/MMA/DEMA/TEMA: compile once with any N_WINDOW (not used by those kernels).
+  bool sma_window_changed = (ma_type_ == MAType::SMA &&
+                              compiled_sma_window_ != window_size_);
+  if (kernel_compiled_ && !sma_window_changed) return;
 
+  if (kernel_compiled_) {
+    hipModuleUnload(module_);
+    module_ = nullptr;
+    kernel_sma_ = kernel_ema_ = kernel_mma_ = kernel_dema_ = kernel_tema_ = nullptr;
+    kernel_compiled_ = false;
+  }
+  // Pass actual window_size for SMA; for non-SMA pass window_size_ anyway
+  // (EMA/MMA/DEMA/TEMA don't use N_WINDOW — it just lives in the compiled module unused)
+  CompileKernels(window_size_);
+  compiled_sma_window_ = window_size_;
+}
+
+void MovingAverageFilterROCm::CompileKernels(uint32_t sma_window) {
   auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
-  const std::string cache_name = "moving_average_kernels_rocm";
+  const std::string cache_name = "moving_average_kernels_rocm_N" + std::to_string(sma_window);
 
   // ── Try loading from KernelCacheService (HSACO fast path) ──
   try {
@@ -200,7 +219,8 @@ void MovingAverageFilterROCm::CompileKernels() {
   }
   std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
   std::string block_size_def = "-DBLOCK_SIZE=" + std::to_string(block_size_);
-  std::vector<const char*> opts = {"-O3", "-DWARP_SIZE=32", block_size_def.c_str()};
+  std::string n_window_def   = "-DN_WINDOW="   + std::to_string(sma_window);
+  std::vector<const char*> opts = {"-O3", "-DWARP_SIZE=32", block_size_def.c_str(), n_window_def.c_str()};
   if (!arch_flag.empty())
     opts.push_back(arch_flag.c_str());
 
@@ -279,8 +299,7 @@ drv_gpu_lib::InputData<void*>
 MovingAverageFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points) {
   if (!input_ptr || channels == 0 || points == 0)
     throw std::runtime_error("MovingAverageFilterROCm::Process: invalid arguments");
-  if (!kernel_compiled_)
-    throw std::runtime_error("MovingAverageFilterROCm::Process: kernels not compiled");
+  EnsureKernels();
 
   size_t total = static_cast<size_t>(channels) * points;
   size_t buffer_size = total * sizeof(std::complex<float>);

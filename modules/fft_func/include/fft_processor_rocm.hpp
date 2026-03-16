@@ -44,6 +44,9 @@
 
 namespace fft_processor {
 
+/// ROCm profiling events: (name, ROCmProfilingData) pairs collected during processing
+using ROCmProfEvents = std::vector<std::pair<const char*, drv_gpu_lib::ROCmProfilingData>>;
+
 class FFTProcessorROCm {
 public:
   // =========================================================================

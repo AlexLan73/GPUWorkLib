@@ -1,21 +1,4 @@
-#pragma once
 
-/**
- * @file moving_average_kernels_rocm.hpp
- * @brief HIP kernel source for Moving Average filters (SMA, EMA, MMA, DEMA, TEMA)
- *
- * All kernels use 1D grid: one thread per channel, sequential loop over points.
- * Input/output: complex float (float2_t = {re, im}).
- *
- * @author Kodo (AI Assistant)
- * @date 2026-03-01
- */
-
-namespace filters {
-namespace kernels {
-
-inline const char* GetMovingAverageSource_rocm() {
-  return R"HIP(
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 #ifndef BLOCK_SIZE
@@ -210,8 +193,3 @@ void tema_kernel(
     }
 }
 
-)HIP";
-}
-
-}  // namespace kernels
-}  // namespace filters

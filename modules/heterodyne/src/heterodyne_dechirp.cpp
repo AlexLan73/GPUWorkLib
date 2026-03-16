@@ -16,7 +16,6 @@
  */
 
 #include "heterodyne_dechirp.hpp"
-#include "processors/heterodyne_processor_opencl.hpp"
 #include "processors/heterodyne_processor_rocm.hpp"
 
 // Spectrum peak finding: FFT + OnePeak (parabolic interpolation) on GPU
@@ -46,14 +45,14 @@ HeterodyneDechirp::HeterodyneDechirp(
   }
 
   switch (compute_backend) {
-    case BackendType::OPENCL:
     case BackendType::AUTO:
-      compute_backend_ = BackendType::OPENCL;
-      processor_ = std::make_unique<HeterodyneProcessorOpenCL>(backend_);
-      break;
     case BackendType::ROCm:
+      compute_backend_ = BackendType::ROCm;
       processor_ = std::make_unique<HeterodyneProcessorROCm>(backend_);
       break;
+    case BackendType::OPENCL:
+      throw std::runtime_error(
+          "HeterodyneDechirp: OpenCL backend not supported on this branch. Use ROCm.");
     default:
       throw std::runtime_error("HeterodyneDechirp: unsupported backend type");
   }
@@ -172,19 +171,10 @@ HeterodyneResult HeterodyneDechirp::ProcessExternal(
     // OPT-4: Reuse cached conj generator
     EnsureConjugateGenerator();
 
-    std::vector<std::complex<float>> dc_data;
-
-    if (compute_backend_ == BackendType::ROCm) {
-      auto ref_cpu = GenerateConjugateLfmCpu(
-          params.f_start, params.f_end, params.sample_rate,
-          static_cast<size_t>(params.num_samples));
-      dc_data = processor_->DechirpFromGPU(rx_gpu_ptr, ref_cpu, params);
-    } else {
-      // OpenCL path: OPT-3 — generate ref on GPU, dechirp both on GPU
-      cl_mem ref_gpu = conj_gen_->GenerateToGpu();
-      dc_data = processor_->DechirpWithGPURef(rx_gpu_ptr, ref_gpu, params);
-      clReleaseMemObject(ref_gpu);
-    }
+    auto ref_cpu = GenerateConjugateLfmCpu(
+        params.f_start, params.f_end, params.sample_rate,
+        static_cast<size_t>(params.num_samples));
+    auto dc_data = processor_->DechirpFromGPU(rx_gpu_ptr, ref_cpu, params);
 
     // Build result
     last_result_ = BuildResult(dc_data, params);
@@ -228,6 +218,9 @@ HeterodyneResult HeterodyneDechirp::BuildResult(
   } else
 #endif
   {
+    throw std::runtime_error(
+        "HeterodyneDechirp::BuildResult: non-ROCm backend not supported "
+        "on this branch. Use ROCm backend.");
   }
 
   float bandwidth = params.GetBandwidth();

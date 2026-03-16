@@ -2,31 +2,29 @@
 
 /**
  * @file test_heterodyne_basic.hpp
- * @brief Basic heterodyne dechirp tests (GPU kernel verification)
+ * @brief Basic heterodyne dechirp tests — facade HeterodyneDechirp (ROCm backend)
  *
  * Test 1: Single antenna dechirp (delay=100us -> f_beat=300kHz)
  * Test 2: 5 antennas, linear delays [100,200,300,400,500] us
- * Test 3: dechirp_correct verification (peak should move to DC)
+ * Test 6: Random delays (seed=42)
  *
  * Parameters: fs=12MHz, B=2MHz, N=8000, mu=3e9 Hz/s
+ * Tolerance: F_BEAT_TOL_HZ = 5 kHz
  *
  * @author Kodo (AI Assistant)
- * @date 2026-02-21
+ * @date 2026-02-21 (ROCm port 2026-03-16)
  */
 
 #include "heterodyne_dechirp.hpp"
 #include "heterodyne_params.hpp"
-#include "processors/heterodyne_processor_opencl.hpp"
-#include "generators/lfm_conjugate_generator.hpp"
-#include "generators/lfm_generator_analytical_delay.hpp"
-#include "params/signal_request.hpp"
-#include "params/system_sampling.hpp"
 
-
-#include "DrvGPU/backends/opencl/opencl_backend.hpp"
 #include "DrvGPU/services/console_output.hpp"
 
-#include <CL/cl.h>
+#if ENABLE_ROCM
+
+#include "backends/rocm/rocm_backend.hpp"
+
+#include <hip/hip_runtime.h>
 #include <vector>
 #include <complex>
 #include <cmath>
@@ -53,47 +51,37 @@ constexpr float  BANDWIDTH  = F_END - F_START;  // 2 MHz
 constexpr float  DURATION   = static_cast<float>(N) / FS;  // 666.67 us
 constexpr float  MU         = BANDWIDTH / DURATION;  // 3e9 Hz/s
 
-// Linear delays [us] -> f_beat = mu * tau
-// All delays must be < chirp duration T=666us
-// f_beat(100us)=300kHz, f_beat(500us)=1.5MHz — all < fs/2=6MHz
 const std::vector<float> DELAYS_LINEAR_US = {100.f, 200.f, 300.f, 400.f, 500.f};
 
-// Expected beat frequencies [Hz]
-// f_beat = mu * tau = 3e9 * delay_s
-// 100us -> 300kHz, 200us -> 600kHz, 300us -> 900kHz, 400us -> 1.2MHz, 500us -> 1.5MHz
-
-constexpr float F_BEAT_TOL_HZ = 5000.f;  // +/- 5 kHz tolerance (plan requirement)
+constexpr float F_BEAT_TOL_HZ = 5000.f;  // +/- 5 kHz tolerance
 
 // ════════════════════════════════════════════════════════════════════════════
-// Helper: generate delayed LFM rx data and flatten
+// Helper: CPU-only delayed LFM generation (no OpenCL)
+//   if t < tau: 0
+//   else:  exp(j*(pi*mu*(t-tau)^2 + 2*pi*f_start*(t-tau)))
 // ════════════════════════════════════════════════════════════════════════════
 
 inline std::vector<std::complex<float>> GenerateRxFlat(
-    drv_gpu_lib::IBackend* backend,
     const std::vector<float>& delays_us) {
 
-  signal_gen::LfmParams lfm_p;
-  lfm_p.f_start = F_START;
-  lfm_p.f_end = F_END;
-  lfm_p.amplitude = 1.0;
-  lfm_p.complex_iq = true;
+  float duration = static_cast<float>(N) / FS;
+  float mu = (F_END - F_START) / duration;
 
-  signal_gen::SystemSampling sys;
-  sys.fs = FS;
-  sys.length = N;
-
-  signal_gen::LfmGeneratorAnalyticalDelay gen(backend, lfm_p);
-  gen.SetSampling(sys);
-  gen.SetDelays(delays_us);
-
-  auto cpu_2d = gen.GenerateToCpu();
-
-  // Flatten [antennas][samples] -> [antennas * samples]
   size_t total = delays_us.size() * N;
   std::vector<std::complex<float>> flat(total);
+
   for (size_t ant = 0; ant < delays_us.size(); ++ant) {
+    float tau = delays_us[ant] * 1e-6f;
     for (int n = 0; n < N; ++n) {
-      flat[ant * N + n] = cpu_2d[ant][n];
+      float t = static_cast<float>(n) / FS;
+      if (t < tau) {
+        flat[ant * N + n] = {0.0f, 0.0f};
+      } else {
+        float t_local = t - tau;
+        float phase = static_cast<float>(M_PI) * mu * t_local * t_local
+                    + 2.0f * static_cast<float>(M_PI) * F_START * t_local;
+        flat[ant * N + n] = {std::cos(phase), std::sin(phase)};
+      }
     }
   }
   return flat;
@@ -112,14 +100,12 @@ inline void run_test_single_antenna() {
   con.Print(gpu_id, "Heterodyne", "  Test 1: Single antenna dechirp (delay=100us)");
 
   try {
-    auto backend = std::make_unique<drv_gpu_lib::OpenCLBackend>();
+    auto backend = std::make_unique<drv_gpu_lib::ROCmBackend>();
     backend->Initialize(0);
 
-    // Generate single antenna rx with delay=100us
     std::vector<float> delay = {100.f};
-    auto rx_flat = GenerateRxFlat(backend.get(), delay);
+    auto rx_flat = GenerateRxFlat(delay);
 
-    // Setup params for 1 antenna
     drv_gpu_lib::HeterodyneParams params;
     params.f_start = F_START;
     params.f_end = F_END;
@@ -127,7 +113,7 @@ inline void run_test_single_antenna() {
     params.num_samples = N;
     params.num_antennas = 1;
 
-    drv_gpu_lib::HeterodyneDechirp het(backend.get());
+    drv_gpu_lib::HeterodyneDechirp het(backend.get(), drv_gpu_lib::BackendType::ROCm);
     het.SetParams(params);
     auto result = het.Process(rx_flat);
 
@@ -170,10 +156,10 @@ inline void run_test_5_antennas_linear() {
   con.Print(gpu_id, "Heterodyne", "  Test 2: 5 antennas, linear delays");
 
   try {
-    auto backend = std::make_unique<drv_gpu_lib::OpenCLBackend>();
+    auto backend = std::make_unique<drv_gpu_lib::ROCmBackend>();
     backend->Initialize(0);
 
-    auto rx_flat = GenerateRxFlat(backend.get(), DELAYS_LINEAR_US);
+    auto rx_flat = GenerateRxFlat(DELAYS_LINEAR_US);
 
     drv_gpu_lib::HeterodyneParams params;
     params.f_start = F_START;
@@ -182,7 +168,7 @@ inline void run_test_5_antennas_linear() {
     params.num_samples = N;
     params.num_antennas = ANTENNAS;
 
-    drv_gpu_lib::HeterodyneDechirp het(backend.get());
+    drv_gpu_lib::HeterodyneDechirp het(backend.get(), drv_gpu_lib::BackendType::ROCm);
     het.SetParams(params);
     auto result = het.Process(rx_flat);
 
@@ -224,11 +210,7 @@ inline void run_test_5_antennas_linear() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Test 3: dechirp_correct — verify peak moves to DC (requires ENABLE_CLFFT=1)
-// ════════════════════════════════════════════════════════════════════════════
-
-// ════════════════════════════════════════════════════════════════════════════
-// Test 6: Random delays (seed=42), 5 antennas, delays [10..600] us
+// Test 6: Random delays (seed=42), 5 antennas, delays [10..500] us
 // ════════════════════════════════════════════════════════════════════════════
 
 inline void run_test_random_delays() {
@@ -239,12 +221,9 @@ inline void run_test_random_delays() {
   con.Print(gpu_id, "Heterodyne", "  Test 6: Random delays (seed=42)");
 
   try {
-    auto backend = std::make_unique<drv_gpu_lib::OpenCLBackend>();
+    auto backend = std::make_unique<drv_gpu_lib::ROCmBackend>();
     backend->Initialize(0);
 
-    // Generate random delays in [10, 500] us with seed=42
-    // All must be < chirp duration T=666.67 us, and f_beat < fs/2
-    // With B=2MHz, 500us -> f_beat=1.5MHz, matching plan's target range
     std::mt19937 rng(42);
     std::uniform_real_distribution<float> dist(10.0f, 500.0f);
     std::vector<float> delays_us(ANTENNAS);
@@ -252,7 +231,7 @@ inline void run_test_random_delays() {
       delays_us[i] = dist(rng);
     }
 
-    auto rx_flat = GenerateRxFlat(backend.get(), delays_us);
+    auto rx_flat = GenerateRxFlat(delays_us);
 
     drv_gpu_lib::HeterodyneParams params;
     params.f_start = F_START;
@@ -261,7 +240,7 @@ inline void run_test_random_delays() {
     params.num_samples = N;
     params.num_antennas = ANTENNAS;
 
-    drv_gpu_lib::HeterodyneDechirp het(backend.get());
+    drv_gpu_lib::HeterodyneDechirp het(backend.get(), drv_gpu_lib::BackendType::ROCm);
     het.SetParams(params);
     auto result = het.Process(rx_flat);
 
@@ -301,3 +280,13 @@ inline void run_test_random_delays() {
 }
 
 }} // namespace heterodyne::tests
+
+#else  // !ENABLE_ROCM
+
+namespace heterodyne { namespace tests {
+inline void run_test_single_antenna()   {}
+inline void run_test_5_antennas_linear() {}
+inline void run_test_random_delays()    {}
+}} // namespace heterodyne::tests
+
+#endif  // ENABLE_ROCM

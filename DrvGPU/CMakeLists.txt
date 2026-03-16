@@ -128,6 +128,8 @@ set(DRVGPU_HEADERS
 set(DRVGPU_SRC_SOURCES
 "${CMAKE_CURRENT_SOURCE_DIR}/src/drv_gpu.cpp"
 "${CMAKE_CURRENT_SOURCE_DIR}/src/module_registry.cpp"
+"${CMAKE_CURRENT_SOURCE_DIR}/src/gpu_context.cpp"
+"${CMAKE_CURRENT_SOURCE_DIR}/src/gpu_kernel_op.cpp"
 )
 
 # Logger Sources

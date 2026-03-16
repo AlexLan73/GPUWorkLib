@@ -137,15 +137,6 @@ if(OPENCL_ENABLED)
     endif()
 endif()
 
-# clFFT — только на ветке nvidia (ENABLE_CLFFT=ON). На main (ROCm) не нужен.
-if(ENABLE_CLFFT AND CLFFT_FOUND AND CLFFT_LIB)
-    target_link_libraries(GPUWorkLib PRIVATE "${CLFFT_LIB}")
-    message(STATUS "✅ Linked: clFFT")
-elseif(NOT ENABLE_CLFFT)
-    message(STATUS "⏭️  clFFT disabled (main branch — ROCm only)")
-else()
-    message(STATUS "⏭️  clFFT not found")
-endif()
 
 # CUDA (опционально)
 if(CUDA_FOUND)
@@ -193,11 +184,6 @@ if(OPENCL_ENABLED)
     target_include_directories(GPUWorkLib PRIVATE ${OpenCL_INCLUDE_DIRS})
 endif()
 
-# clFFT includes — только при ENABLE_CLFFT=ON (ветка nvidia)
-if(ENABLE_CLFFT AND CLFFT_FOUND)
-    target_include_directories(GPUWorkLib PRIVATE ${CLFFT_INCLUDE_DIR})
-endif()
-
 # ============================================================================
 # COMPILER FLAGS
 # ============================================================================
@@ -225,11 +211,6 @@ if(OPENCL_ENABLED)
     )
 endif()
 
-if(ENABLE_CLFFT AND CLFFT_FOUND)
-    target_compile_definitions(GPUWorkLib PRIVATE
-        CLFFT_VERSION=2
-    )
-endif()
 
 # ============================================================================
 # SET PROPERTIES
@@ -257,41 +238,6 @@ else()
     message(WARNING "⚠️  configGPU.json not found, will be created at runtime")
 endif()
 
-# ============================================================================
-# POST-BUILD: Копирование DLL на Windows (если есть)
-# ============================================================================
-
-if(IS_WINDOWS AND CLFFT_FOUND)
-    # Если DLL уже найден в dependencies.cmake
-    if(CLFFT_DLL)
-        add_custom_command(TARGET GPUWorkLib POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CLFFT_DLL}"
-                "$<TARGET_FILE_DIR:GPUWorkLib>"
-            COMMENT "Copying clFFT.dll to executable directory"
-        )
-        message(STATUS "✅ Will copy clFFT.dll to output directory")
-    else()
-        # Fallback: ищем clFFT.dll рядом с lib или в clFFT/bin
-        set(CLFFT_DLL_PATHS
-            "${CMAKE_SOURCE_DIR}/clFFT/lib"
-            "${CMAKE_SOURCE_DIR}/clFFT/bin"
-            "${CMAKE_SOURCE_DIR}/clFFT"
-        )
-        find_file(CLFFT_DLL NAMES clFFT.dll PATHS ${CLFFT_DLL_PATHS} NO_DEFAULT_PATH)
-        if(CLFFT_DLL)
-            add_custom_command(TARGET GPUWorkLib POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${CLFFT_DLL}"
-                    "$<TARGET_FILE_DIR:GPUWorkLib>"
-                COMMENT "Copying clFFT.dll to executable directory"
-            )
-            message(STATUS "✅ Will copy clFFT.dll: ${CLFFT_DLL}")
-        else()
-            message(WARNING "⚠️  clFFT.dll not found for copying")
-        endif()
-    endif()
-endif()
 
 message(STATUS "✅ Main executable configured: GPUWorkLib")
 message(STATUS "   Output: ${CMAKE_BINARY_DIR}/GPUWorkLib")
