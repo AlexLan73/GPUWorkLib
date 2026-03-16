@@ -943,10 +943,10 @@ void SpectrumProcessorROCm::CompileKernels() {
     // ── Try loading from disk cache (HSACO) ──
     drv_gpu_lib::KernelCacheService cache(
         "modules/fft_func/kernels", drv_gpu_lib::BackendType::ROCm);
-    try {
+    {
         auto entry = cache.Load(kCacheName);
-        if (entry.has_binary()) {
-            hipError_t hip_err = hipModuleLoadData(&module_, entry.binary.data());
+        if (entry && entry->has_binary()) {
+            hipError_t hip_err = hipModuleLoadData(&module_, entry->binary.data());
             if (hip_err == hipSuccess) {
                 hip_err = hipModuleGetFunction(&pad_kernel_, module_, "pad_data");
                 if (hip_err == hipSuccess)
@@ -961,8 +961,6 @@ void SpectrumProcessorROCm::CompileKernels() {
             // Cache binary invalid — fall through to compile
             if (module_) { hipModuleUnload(module_); module_ = nullptr; }
         }
-    } catch (...) {
-        // Cache miss — compile from source
     }
 
     // ── Compile from source (hiprtc) ──

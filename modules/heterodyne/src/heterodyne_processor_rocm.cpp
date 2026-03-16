@@ -648,17 +648,13 @@ void HeterodyneProcessorROCm::CompileKernels() {
 
   // Шаг 1: попробовать загрузить из дискового кеша (~1-5 мс)
   if (kernel_cache_) {
-    try {
-      auto entry = kernel_cache_->Load(kKernelName);
-      if (entry.has_binary()) {
-        loadModuleAndFunctions(entry.binary.data(), entry.binary.size());
-        kernels_compiled_ = true;
-        con.Print(0, "Heterodyne[ROCm]",
-            "HIP kernels loaded from cache (multiply, correct)");
-        return;
-      }
-    } catch (...) {
-      // Cache miss — компилируем
+    auto entry = kernel_cache_->Load(kKernelName);
+    if (entry && entry->has_binary()) {
+      loadModuleAndFunctions(entry->binary.data(), entry->binary.size());
+      kernels_compiled_ = true;
+      con.Print(0, "Heterodyne[ROCm]",
+          "HIP kernels loaded from cache (multiply, correct)");
+      return;
     }
   }
 

@@ -133,22 +133,20 @@ void GpuContext::CompileModule(const char* source,
     }
   };
 
+  const int gpu_id = backend_->GetDeviceIndex();
+
   // ─── Try loading from disk cache ──────────────────────────────────────
   if (kernel_cache_) {
-    try {
-      auto entry = kernel_cache_->Load(cache_name);
-      if (entry.has_binary()) {
-        hipError_t err = hipModuleLoadData(&module_, entry.binary.data());
-        if (err == hipSuccess) {
-          extractKernels();
-          con.Print(0, module_name_, "kernels loaded from cache (HSACO)");
-          return;
-        }
-        // Cache might be stale (different arch) — fall through to compile
-        if (module_) { hipModuleUnload(module_); module_ = nullptr; }
+    auto entry = kernel_cache_->Load(cache_name);  // nullopt = cache miss
+    if (entry && entry->has_binary()) {
+      hipError_t err = hipModuleLoadData(&module_, entry->binary.data());
+      if (err == hipSuccess) {
+        extractKernels();
+        con.Print(gpu_id, module_name_, "kernels loaded from cache (HSACO)");
+        return;
       }
-    } catch (...) {
-      // Cache miss or corrupt — fall through
+      // Cache might be stale (different arch) — fall through to compile
+      if (module_) { hipModuleUnload(module_); module_ = nullptr; }
     }
   }
 
@@ -210,7 +208,7 @@ void GpuContext::CompileModule(const char* source,
   // Extract kernel functions
   extractKernels();
 
-  con.Print(0, module_name_,
+  con.Print(gpu_id, module_name_,
             "kernels compiled (" + std::to_string(code_size) + " bytes HSACO" +
             (arch_name_.empty() ? "" : ", " + arch_name_) + ")");
 

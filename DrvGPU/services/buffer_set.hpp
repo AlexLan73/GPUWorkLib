@@ -110,8 +110,8 @@ public:
                                   std::to_string(bytes) + " bytes) failed: " +
                                   hipGetErrorString(err));
       }
+      e.size = bytes;  // размер запоминаем только если выделение успешно
 #endif
-      e.size = bytes;
     }
     return e.ptr;
   }

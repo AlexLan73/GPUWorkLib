@@ -18,6 +18,21 @@
 namespace statistics {
 
 // =========================================================================
+// Shared GPU buffer slot assignments for StatisticsProcessor
+// =========================================================================
+
+/// Slot indices for GpuContext::RequireShared / GetShared.
+/// Each Op reads/writes specific slots; assignments are module-specific
+/// and do NOT belong in the generic GpuContext infrastructure.
+namespace shared_buf {
+  static constexpr size_t kInput          = 0;  ///< complex<float> input data
+  static constexpr size_t kMagnitudes     = 1;  ///< float magnitudes |z|
+  static constexpr size_t kResult         = 2;  ///< per-beam results (various types)
+  static constexpr size_t kMediansCompact = 3;  ///< float[beam_count] compact medians
+  static constexpr size_t kCount          = 4;  ///< total slots used by this module
+}  // namespace shared_buf
+
+// =========================================================================
 // Input parameters
 // =========================================================================
 

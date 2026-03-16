@@ -9,11 +9,8 @@
 #   OpenCL/clFFT — только в ветке nvidia
 #
 # CMake-таргеты:
-#   fft_func                    — основной
-#   GPUWorkLib::fft_func        — алиас
-#   GPUWorkLib::spectrum_maxima — алиас (backward compat)
-#   GPUWorkLib::fft_processor   — алиас (backward compat)
-#   GPUWorkLib::fft_maxima      — алиас (backward compat)
+#   fft_func             — основной
+#   GPUWorkLib::fft_func — алиас
 #
 # Сборка: cmake --preset Debian-Radeon9070
 # ════════════════════════════════════════════════════════════════════════════
@@ -80,13 +77,10 @@ set_target_properties(${MODULE_NAME} PROPERTIES
 )
 
 # ════════════════════════════════════════════════════════════════════════════
-# Aliases (backward compatibility)
+# Aliases
 # ════════════════════════════════════════════════════════════════════════════
 
-add_library(GPUWorkLib::${MODULE_NAME}      ALIAS ${MODULE_NAME})
-add_library(GPUWorkLib::spectrum_maxima     ALIAS ${MODULE_NAME})
-add_library(GPUWorkLib::fft_processor       ALIAS ${MODULE_NAME})
-add_library(GPUWorkLib::fft_maxima          ALIAS ${MODULE_NAME})
+add_library(GPUWorkLib::${MODULE_NAME} ALIAS ${MODULE_NAME})
 
 # ════════════════════════════════════════════════════════════════════════════
 # Install

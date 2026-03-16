@@ -149,13 +149,13 @@ void KaufmanFilterROCm::CompileKernel(uint32_t n_window) {
   const std::string cache_name = "kaufman_kernel_rocm_N" + std::to_string(n_window);
 
   // ── Try loading from KernelCacheService (HSACO fast path) ──
-  try {
+  {
     drv_gpu_lib::KernelCacheService cache(
         FILTERS_KERNELS_DIR, drv_gpu_lib::BackendType::ROCm);
     auto entry = cache.Load(cache_name);
-    if (entry.has_binary()) {
+    if (entry && entry->has_binary()) {
       hipError_t hipErr = hipModuleLoadData(
-          &module_, entry.binary.data());
+          &module_, entry->binary.data());
       if (hipErr == hipSuccess) {
         hipErr = hipModuleGetFunction(&kernel_, module_, "kaufman_kernel");
         if (hipErr == hipSuccess) {
@@ -166,8 +166,6 @@ void KaufmanFilterROCm::CompileKernel(uint32_t n_window) {
         }
       }
     }
-  } catch (...) {
-    // Cache miss — compile from source
   }
 
   // ── Compile from source (hiprtc) ──

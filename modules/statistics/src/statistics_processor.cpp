@@ -123,10 +123,10 @@ void StatisticsProcessor::EnsureCompiled() {
 
 void StatisticsProcessor::UploadComplexData(const std::complex<float>* data, size_t count) {
   size_t bytes = count * sizeof(std::complex<float>);
-  ctx_.RequireShared(drv_gpu_lib::GpuContext::kInput, bytes);
+  ctx_.RequireShared(statistics::shared_buf::kInput, bytes);
 
   hipError_t err = hipMemcpyHtoDAsync(
-      ctx_.GetShared(drv_gpu_lib::GpuContext::kInput),
+      ctx_.GetShared(statistics::shared_buf::kInput),
       const_cast<std::complex<float>*>(data),
       bytes, ctx_.stream());
   if (err != hipSuccess) {
@@ -137,10 +137,10 @@ void StatisticsProcessor::UploadComplexData(const std::complex<float>* data, siz
 
 void StatisticsProcessor::CopyComplexGpuData(void* src, size_t count) {
   size_t bytes = count * sizeof(std::complex<float>);
-  ctx_.RequireShared(drv_gpu_lib::GpuContext::kInput, bytes);
+  ctx_.RequireShared(statistics::shared_buf::kInput, bytes);
 
   hipError_t err = hipMemcpyDtoDAsync(
-      ctx_.GetShared(drv_gpu_lib::GpuContext::kInput),
+      ctx_.GetShared(statistics::shared_buf::kInput),
       src, bytes, ctx_.stream());
   if (err != hipSuccess) {
     throw std::runtime_error("StatisticsProcessor: D2D copy failed: " +
@@ -150,10 +150,10 @@ void StatisticsProcessor::CopyComplexGpuData(void* src, size_t count) {
 
 void StatisticsProcessor::CopyFloatGpuData(void* src, size_t count) {
   size_t bytes = count * sizeof(float);
-  ctx_.RequireShared(drv_gpu_lib::GpuContext::kMagnitudes, bytes);
+  ctx_.RequireShared(statistics::shared_buf::kMagnitudes, bytes);
 
   hipError_t err = hipMemcpyDtoDAsync(
-      ctx_.GetShared(drv_gpu_lib::GpuContext::kMagnitudes),
+      ctx_.GetShared(statistics::shared_buf::kMagnitudes),
       src, bytes, ctx_.stream());
   if (err != hipSuccess) {
     throw std::runtime_error("StatisticsProcessor: float D2D copy failed: " +
@@ -170,7 +170,7 @@ std::vector<MeanResult> StatisticsProcessor::ReadMeanResults(uint32_t beam_count
   std::vector<float2_t> raw(beam_count);
   hipError_t err = hipMemcpyDtoH(
       raw.data(),
-      ctx_.GetShared(drv_gpu_lib::GpuContext::kResult),
+      ctx_.GetShared(statistics::shared_buf::kResult),
       beam_count * sizeof(float2_t));
   if (err != hipSuccess) {
     throw std::runtime_error("ReadMeanResults: DtoH failed: " +
@@ -195,7 +195,7 @@ std::vector<StatisticsResult> StatisticsProcessor::ReadStatisticsResults(uint32_
   std::vector<WelfordResult> raw(beam_count);
   hipError_t err = hipMemcpyDtoH(
       raw.data(),
-      ctx_.GetShared(drv_gpu_lib::GpuContext::kResult),
+      ctx_.GetShared(statistics::shared_buf::kResult),
       beam_count * sizeof(WelfordResult));
   if (err != hipSuccess) {
     throw std::runtime_error("ReadStatisticsResults: DtoH failed: " +
@@ -220,7 +220,7 @@ std::vector<MedianResult> StatisticsProcessor::ReadMedianResults(uint32_t beam_c
   std::vector<float> medians_host(beam_count);
   hipError_t err = hipMemcpyDtoH(
       medians_host.data(),
-      ctx_.GetShared(drv_gpu_lib::GpuContext::kMediansCompact),
+      ctx_.GetShared(statistics::shared_buf::kMediansCompact),
       beam_count * sizeof(float));
   if (err != hipSuccess) {
     throw std::runtime_error("ReadMedianResults: DtoH failed: " +

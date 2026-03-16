@@ -270,21 +270,6 @@ public:
     }
 
     /**
-     * @brief Проверить, есть ли ROCm данные для ЛЮБОЙ GPU (внутренняя, без блокировки)
-     * @note Вызывать ТОЛЬКО когда stats_mutex_ уже захвачен!
-     */
-    bool HasAnyROCmDataGlobal_NoLock() const {
-        for (const auto& [gpu_id, modules] : stats_) {
-            for (const auto& [mod, mstats] : modules) {
-                for (const auto& [evt, estats] : mstats.events) {
-                    if (estats.has_rocm_data) return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
      * @brief Проверить, есть ли ROCm данные в модуле (внутренняя, без блокировки)
      * @param mod_stats Статистика модуля
      * @return true если хотя бы одно событие имеет ROCm данные
@@ -314,8 +299,22 @@ public:
      * @return true при успешном экспорте
      */
     bool ExportJSON(const std::string& file_path) const {
-        std::lock_guard<std::mutex> lock(stats_mutex_);
-        std::lock_guard<std::mutex> lock2(gpu_info_mutex_);
+        std::scoped_lock lock(stats_mutex_, gpu_info_mutex_);
+
+        // Экранирование спецсимволов JSON в строках (защита от injection)
+        auto escJson = [](const std::string& s) -> std::string {
+            std::string out;
+            out.reserve(s.size() + 8);
+            for (char c : s) {
+                if      (c == '"')  out += "\\\"";
+                else if (c == '\\') out += "\\\\";
+                else if (c == '\n') out += "\\n";
+                else if (c == '\r') out += "\\r";
+                else if (c == '\t') out += "\\t";
+                else                out += c;
+            }
+            return out;
+        };
 
         auto fmtD = [](double val) -> std::string {
             std::ostringstream oss;
@@ -349,7 +348,7 @@ public:
                 if (it != gpu_info_.end()) {
                     info = it->second;
                 }
-                file << "      \"gpu_name\": \"" << (info.gpu_name.empty() ? "Unknown" : info.gpu_name) << "\",\n";
+                file << "      \"gpu_name\": \"" << escJson(info.gpu_name.empty() ? "Unknown" : info.gpu_name) << "\",\n";
                 file << "      \"memory_mb\": " << info.global_mem_mb << ",\n";
 
                 // Drivers array
@@ -363,7 +362,7 @@ public:
                     for (const auto& [key, val] : drv) {
                         if (!first_field) file << ", ";
                         first_field = false;
-                        file << "\"" << key << "\": \"" << val << "\"";
+                        file << "\"" << escJson(key) << "\": \"" << escJson(val) << "\"";
                     }
                     file << "}";
                 }
@@ -377,7 +376,7 @@ public:
                     first_module = false;
 
                     file << "        {\n";
-                    file << "          \"name\": \"" << mod_name << "\",\n";
+                    file << "          \"name\": \"" << escJson(mod_name) << "\",\n";
                     file << "          \"run_count\": " << mod_stats.GetRunCount() << ",\n";
                     file << "          \"avg_run_time_ms\": " << fmtD(mod_stats.GetAvgRunTimeMs()) << ",\n";
 
@@ -389,7 +388,7 @@ public:
                         first_event = false;
 
                         file << "            {\n";
-                        file << "              \"name\": \"" << evt_name << "\",\n";
+                        file << "              \"name\": \"" << escJson(evt_name) << "\",\n";
                         file << "              \"calls\": " << evt_stats.total_calls << ",\n";
                         file << "              \"total_ms\": " << fmtD(evt_stats.total_time_ms) << ",\n";
                         file << "              \"avg_ms\": " << fmtD(evt_stats.GetAvgTimeMs()) << ",\n";
@@ -462,8 +461,7 @@ public:
      * Очередь, Отправка, Старт, Конец, Готово
      */
     void PrintReport() const {
-        std::lock_guard<std::mutex> lock(stats_mutex_);
-        std::lock_guard<std::mutex> lock2(gpu_info_mutex_);
+        std::scoped_lock lock(stats_mutex_, gpu_info_mutex_);
 
         const int W = 110;
 
@@ -700,8 +698,7 @@ public:
      * @return true при успешном экспорте
      */
     bool ExportMarkdown(const std::string& file_path) const {
-        std::lock_guard<std::mutex> lock(stats_mutex_);
-        std::lock_guard<std::mutex> lock2(gpu_info_mutex_);
+        std::scoped_lock lock(stats_mutex_, gpu_info_mutex_);
 
         auto fmtD = [](double val, int prec = 3) -> std::string {
             if (val == 0.0) return "-";
@@ -849,6 +846,18 @@ private:
     // ========================================================================
 
     GPUProfiler() : enabled_(true) {}
+
+    // Вызывать ТОЛЬКО когда stats_mutex_ уже захвачен!
+    bool HasAnyROCmDataGlobal_NoLock() const {
+        for (const auto& [gpu_id, modules] : stats_) {
+            for (const auto& [mod, mstats] : modules) {
+                for (const auto& [evt, estats] : mstats.events) {
+                    if (estats.has_rocm_data) return true;
+                }
+            }
+        }
+        return false;
+    }
 
     // ========================================================================
     // Приватные члены

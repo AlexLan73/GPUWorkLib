@@ -20,6 +20,7 @@
 #include "services/gpu_kernel_op.hpp"
 #include "services/buffer_set.hpp"
 #include "interface/gpu_context.hpp"
+#include "statistics_types.hpp"
 
 #include <hip/hip_runtime.h>
 #include <stdexcept>
@@ -50,10 +51,10 @@ public:
     size_t reduce_count = beam_count * blocks_per_beam;
     bufs_.Require(kReduce, reduce_count * 2 * sizeof(float));  // float2
 
-    void* input_buf  = ctx_->GetShared(drv_gpu_lib::GpuContext::kInput);
+    void* input_buf  = ctx_->GetShared(shared_buf::kInput);
     void* reduce_buf = bufs_.Get(kReduce);
     void* result_buf = ctx_->RequireShared(
-        drv_gpu_lib::GpuContext::kResult,
+        shared_buf::kResult,
         beam_count * 5 * sizeof(float));  // max: WelfordResult (5 floats)
 
     // Phase 1: block-level reduction (2D grid: blocks_per_beam × beam_count)

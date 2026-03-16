@@ -135,21 +135,26 @@ inline bool TestKernelCacheService() {
 
     // 2. Load kernel
     auto entry = cache.Load("test_kernel");
-    if (!entry.has_source()) {
-      std::cout << "  [FAIL] Loaded entry has no source\n";
+    if (!entry) {
+      std::cout << "  [FAIL] Load returned nullopt (cache miss after Save)\n";
       ok = false;
-    }
-    if (!entry.has_binary()) {
-      std::cout << "  [FAIL] Loaded entry has no binary\n";
-      ok = false;
-    }
-    if (entry.source != source) {
-      std::cout << "  [FAIL] Source mismatch\n";
-      ok = false;
-    }
-    if (entry.binary != binary) {
-      std::cout << "  [FAIL] Binary mismatch\n";
-      ok = false;
+    } else {
+      if (!entry->has_source()) {
+        std::cout << "  [FAIL] Loaded entry has no source\n";
+        ok = false;
+      }
+      if (!entry->has_binary()) {
+        std::cout << "  [FAIL] Loaded entry has no binary\n";
+        ok = false;
+      }
+      if (entry->source != source) {
+        std::cout << "  [FAIL] Source mismatch\n";
+        ok = false;
+      }
+      if (entry->binary != binary) {
+        std::cout << "  [FAIL] Binary mismatch\n";
+        ok = false;
+      }
     }
 
     // 3. ListKernels
@@ -169,13 +174,18 @@ inline bool TestKernelCacheService() {
     cache.Save("test_kernel", source2, binary2, "N=2048", "updated");
 
     auto entry2 = cache.Load("test_kernel");
-    if (entry2.source != source2) {
-      std::cout << "  [FAIL] Updated source mismatch\n";
+    if (!entry2) {
+      std::cout << "  [FAIL] Load returned nullopt after re-Save\n";
       ok = false;
-    }
-    if (entry2.binary != binary2) {
-      std::cout << "  [FAIL] Updated binary mismatch\n";
-      ok = false;
+    } else {
+      if (entry2->source != source2) {
+        std::cout << "  [FAIL] Updated source mismatch\n";
+        ok = false;
+      }
+      if (entry2->binary != binary2) {
+        std::cout << "  [FAIL] Updated binary mismatch\n";
+        ok = false;
+      }
     }
 
     // Check that old versioned file exists
@@ -185,7 +195,14 @@ inline bool TestKernelCacheService() {
       ok = false;
     }
 
-    // 5. GetBinDir / GetCacheDir (cross-platform: normalize paths for Windows)
+    // 5. Cache miss → nullopt (not found)
+    auto miss = cache.Load("nonexistent_kernel");
+    if (miss) {
+      std::cout << "  [FAIL] Load('nonexistent_kernel') should return nullopt\n";
+      ok = false;
+    }
+
+    // 6. GetBinDir / GetCacheDir (cross-platform: normalize paths for Windows)
     auto expected_bin = (fs::path(dir) / "bin").lexically_normal();
     auto actual_bin = fs::path(cache.GetBinDir()).lexically_normal();
     if (cache.GetCacheDir() != dir) {

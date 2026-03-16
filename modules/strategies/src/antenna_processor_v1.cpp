@@ -225,30 +225,26 @@ void AntennaProcessor_v1::compile_kernels() {
 
   // ── Try loading from disk cache (HSACO) — P2 ──
   if (kernel_cache_) {
-    try {
-      auto entry = kernel_cache_->Load(kCacheName);
-      if (entry.has_binary()) {
-        hipError_t hip_err = hipModuleLoadData(&kernel_module_, entry.binary.data());
+    auto entry = kernel_cache_->Load(kCacheName);
+    if (entry && entry->has_binary()) {
+      hipError_t hip_err = hipModuleLoadData(&kernel_module_, entry->binary.data());
+      if (hip_err == hipSuccess) {
+        hip_err = hipModuleGetFunction(&hamming_pad_kernel_, kernel_module_, "hamming_pad_fused");
+        if (hip_err == hipSuccess)
+          hip_err = hipModuleGetFunction(&magnitudes_kernel_, kernel_module_, "compute_magnitudes");
+        if (hip_err == hipSuccess)
+          hip_err = hipModuleGetFunction(&minmax_kernel_, kernel_module_, "global_minmax");
+        if (hip_err == hipSuccess)
+          hip_err = hipModuleGetFunction(&one_max_kernel_, kernel_module_, "one_max_no_phase");
         if (hip_err == hipSuccess) {
-          hip_err = hipModuleGetFunction(&hamming_pad_kernel_, kernel_module_, "hamming_pad_fused");
-          if (hip_err == hipSuccess)
-            hip_err = hipModuleGetFunction(&magnitudes_kernel_, kernel_module_, "compute_magnitudes");
-          if (hip_err == hipSuccess)
-            hip_err = hipModuleGetFunction(&minmax_kernel_, kernel_module_, "global_minmax");
-          if (hip_err == hipSuccess)
-            hip_err = hipModuleGetFunction(&one_max_kernel_, kernel_module_, "one_max_no_phase");
-          if (hip_err == hipSuccess) {
-            kernels_compiled_ = true;
-            con.Print(0, "Strategies",
-                "Kernels loaded from cache (HSACO)");
-            return;
-          }
+          kernels_compiled_ = true;
+          con.Print(0, "Strategies",
+              "Kernels loaded from cache (HSACO)");
+          return;
         }
-        // Cache hit but load failed — fall through to compile
-        if (kernel_module_) { hipModuleUnload(kernel_module_); kernel_module_ = nullptr; }
       }
-    } catch (...) {
-      // Cache miss — compile from source
+      // Cache hit but load failed — fall through to compile
+      if (kernel_module_) { hipModuleUnload(kernel_module_); kernel_module_ = nullptr; }
     }
   }
 

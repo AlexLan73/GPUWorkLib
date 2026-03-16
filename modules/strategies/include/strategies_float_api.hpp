@@ -257,22 +257,20 @@ private:
 
     // Try loading from disk cache
     if (kernel_cache_) {
-      try {
-        auto entry = kernel_cache_->Load(kCacheName);
-        if (entry.has_binary()) {
-          hipError_t err = hipModuleLoadData(&kernel_module_, entry.binary.data());
+      auto entry = kernel_cache_->Load(kCacheName);
+      if (entry && entry->has_binary()) {
+        hipError_t err = hipModuleLoadData(&kernel_module_, entry->binary.data());
+        if (err == hipSuccess) {
+          err = hipModuleGetFunction(&minmax_kernel_,   kernel_module_, "global_minmax");
+          if (err == hipSuccess)
+            err = hipModuleGetFunction(&one_max_kernel_, kernel_module_, "one_max_no_phase");
           if (err == hipSuccess) {
-            err = hipModuleGetFunction(&minmax_kernel_,   kernel_module_, "global_minmax");
-            if (err == hipSuccess)
-              err = hipModuleGetFunction(&one_max_kernel_, kernel_module_, "one_max_no_phase");
-            if (err == hipSuccess) {
-              kernels_compiled_ = true;
-              return;
-            }
+            kernels_compiled_ = true;
+            return;
           }
-          if (kernel_module_) { hipModuleUnload(kernel_module_); kernel_module_ = nullptr; }
         }
-      } catch (...) { /* cache miss */ }
+        if (kernel_module_) { hipModuleUnload(kernel_module_); kernel_module_ = nullptr; }
+      }
     }
 
     // Compile from source

@@ -181,13 +181,13 @@ void MovingAverageFilterROCm::CompileKernels(uint32_t sma_window) {
   const std::string cache_name = "moving_average_kernels_rocm_N" + std::to_string(sma_window);
 
   // ── Try loading from KernelCacheService (HSACO fast path) ──
-  try {
+  {
     drv_gpu_lib::KernelCacheService cache(
         FILTERS_KERNELS_DIR, drv_gpu_lib::BackendType::ROCm);
     auto entry = cache.Load(cache_name);
-    if (entry.has_binary()) {
+    if (entry && entry->has_binary()) {
       hipError_t hipErr = hipModuleLoadData(
-          &module_, entry.binary.data());
+          &module_, entry->binary.data());
       if (hipErr == hipSuccess) {
         LoadKernelFunctions();
         kernel_compiled_ = true;
@@ -196,8 +196,6 @@ void MovingAverageFilterROCm::CompileKernels(uint32_t sma_window) {
         return;
       }
     }
-  } catch (...) {
-    // Cache miss — compile from source
   }
 
   // ── Compile from source (hiprtc) ──

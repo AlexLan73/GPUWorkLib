@@ -112,12 +112,12 @@ void KernelCacheService::Save(const std::string& name,
  * Приоритет бинаря: clCreateProgramWithBinary пропускает JIT-компиляцию →
  * быстрее старта, стабильнее результат. Если бинарь есть — возвращаем {source+binary}.
  * Если только исходник — {source, {}}: caller компилирует и может сохранить через Save().
+ * Если ни source ни binary нет — возвращаем nullopt (cache miss, без исключения).
  *
  * @param name Имя кернела (без расширения)
- * @return CacheEntry с source и/или binary
- * @throws std::runtime_error если ни source ни binary не найдены
+ * @return CacheEntry с source и/или binary, или nullopt при cache miss
  */
-KernelCacheService::CacheEntry
+std::optional<KernelCacheService::CacheEntry>
 KernelCacheService::Load(const std::string& name) const {
   CacheEntry entry;
 
@@ -148,11 +148,9 @@ KernelCacheService::Load(const std::string& name) const {
     }
   }
 
-  // Neither found
+  // Neither found → cache miss
   if (!entry.has_binary() && !entry.has_source()) {
-    throw std::runtime_error(
-        "KernelCacheService::Load: kernel '" + name
-        + "' not found (checked: " + bin_path + ", " + cl_path + ")");
+    return std::nullopt;
   }
 
   return entry;

@@ -71,7 +71,7 @@ static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromClock(
 // =========================================================================
 
 FFTProcessorROCm::FFTProcessorROCm(drv_gpu_lib::IBackend* backend)
-    : ctx_(backend, "FFTProc", "modules/fft_processor/kernels") {
+    : ctx_(backend, "FFTProc", "modules/fft_func/kernels") {
 }
 
 FFTProcessorROCm::~FFTProcessorROCm() {

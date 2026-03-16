@@ -477,12 +477,17 @@ void FormScriptGenerator::SaveKernel(const std::string& name,
 void FormScriptGenerator::LoadKernel(const std::string& name) {
   auto entry = kernel_cache_->Load(name);
 
-  if (entry.has_binary()) {
-    std::vector<unsigned char> binary(entry.binary.begin(), entry.binary.end());
+  if (!entry) {
+    throw std::runtime_error(
+        "FormScriptGenerator::LoadKernel: kernel '" + name + "' not found");
+  }
+
+  if (entry->has_binary()) {
+    std::vector<unsigned char> binary(entry->binary.begin(), entry->binary.end());
     try {
       LoadFromBinary(binary);
-      if (entry.has_source()) {
-        kernel_source_ = entry.source;
+      if (entry->has_source()) {
+        kernel_source_ = entry->source;
       }
       loaded_kernel_name_ = name;
       return;
@@ -491,14 +496,14 @@ void FormScriptGenerator::LoadKernel(const std::string& name) {
     }
   }
 
-  if (entry.has_source()) {
-    LoadFromSource(entry.source);
+  if (entry->has_source()) {
+    LoadFromSource(entry->source);
 
     // Save binary for next time
     try {
       auto binary = GetProgramBinary();
       std::vector<uint8_t> binary_u8(binary.begin(), binary.end());
-      kernel_cache_->Save(name, entry.source, binary_u8, "", "auto-cached");
+      kernel_cache_->Save(name, entry->source, binary_u8, "", "auto-cached");
     } catch (...) {
       // Non-critical: binary save failed, source still works
     }
@@ -508,7 +513,7 @@ void FormScriptGenerator::LoadKernel(const std::string& name) {
   }
 
   throw std::runtime_error(
-      "FormScriptGenerator::LoadKernel: kernel '" + name + "' not found");
+      "FormScriptGenerator::LoadKernel: kernel '" + name + "' not found in cache");
 }
 
 // ════════════════════════════════════════════════════════════════════════════

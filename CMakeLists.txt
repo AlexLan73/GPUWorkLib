@@ -24,7 +24,7 @@ message(STATUS "")
 # DrvGPU library (корневая)
 add_subdirectory(DrvGPU)
 
-# FFT Functions module (FFTProcessor + SpectrumMaximaFinder, объединяет fft_processor + fft_maxima)
+# FFT Functions module (FFTProcessor + SpectrumMaximaFinder)
 add_subdirectory(modules/fft_func)
 
 # Signal Generators module

@@ -23,6 +23,7 @@
 #include "services/gpu_kernel_op.hpp"
 #include "services/buffer_set.hpp"
 #include "interface/gpu_context.hpp"
+#include "statistics_types.hpp"
 
 #include <hip/hip_runtime.h>
 #include <stdexcept>
@@ -56,7 +57,7 @@ public:
         static_cast<unsigned int>((n_point + kBlockSize - 1) / kBlockSize),
         1024u);
 
-    void* data_ptr = ctx_->GetShared(drv_gpu_lib::GpuContext::kInput);
+    void* data_ptr = ctx_->GetShared(shared_buf::kInput);
     void* hist_buf = bufs_.Get(kHist);
     void* prefix   = bufs_.Get(kPrefix);
     void* value    = bufs_.Get(kValue);
@@ -115,7 +116,7 @@ private:
     bufs_.Require(kPrefix, beam_count * sizeof(unsigned int));
     bufs_.Require(kValue,  beam_count * sizeof(unsigned int));
 
-    ctx_->RequireShared(drv_gpu_lib::GpuContext::kMediansCompact,
+    ctx_->RequireShared(shared_buf::kMediansCompact,
                         beam_count * sizeof(float));
   }
 
@@ -136,7 +137,7 @@ private:
     }
 
     err = hipMemcpyHtoD(
-        ctx_->GetShared(drv_gpu_lib::GpuContext::kMediansCompact),
+        ctx_->GetShared(shared_buf::kMediansCompact),
         medians_host.data(),
         beam_count * sizeof(float));
     if (err != hipSuccess) {

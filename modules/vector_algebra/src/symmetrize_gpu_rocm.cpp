@@ -68,18 +68,14 @@ void CholeskyInverterROCm::CompileKernels() {
 
   // ─── Try loading from disk cache ───────────────────────────────────────
   if (kernel_cache_) {
-    try {
-      auto entry = kernel_cache_->Load(kKernelName);
-      if (entry.has_binary()) {
-        LoadModuleAndFunction(entry.binary.data(), entry.binary.size(),
-                               sym_module_, sym_kernel_);
-        kernels_compiled_ = true;
-        con.Print(0, "VecAlg",
-                  "symmetrize kernel loaded from cache (HSACO)");
-        return;
-      }
-    } catch (...) {
-      // Cache miss or corrupt — fall through to compile
+    auto entry = kernel_cache_->Load(kKernelName);
+    if (entry && entry->has_binary()) {
+      LoadModuleAndFunction(entry->binary.data(), entry->binary.size(),
+                             sym_module_, sym_kernel_);
+      kernels_compiled_ = true;
+      con.Print(0, "VecAlg",
+                "symmetrize kernel loaded from cache (HSACO)");
+      return;
     }
   }
 

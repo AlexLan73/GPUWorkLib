@@ -286,7 +286,9 @@ void* ROCmBackend::GetNativeContext() const {
  * ЗАЧЕМ: IBackend интерфейс возвращает void* для backend-агностичного кода.
  */
 void* ROCmBackend::GetNativeDevice() const {
-  return reinterpret_cast<void*>(static_cast<intptr_t>(device_));
+  // Делегируем в core_ — авторитетный источник (cached device_ = копия, используется внутри)
+  if (!core_) return reinterpret_cast<void*>(static_cast<intptr_t>(device_));
+  return reinterpret_cast<void*>(static_cast<intptr_t>(core_->GetDevice()));
 }
 
 /**
@@ -296,7 +298,9 @@ void* ROCmBackend::GetNativeDevice() const {
  * Использование: hipFFT, hipBLAS принимают hipStream_t — получать через GetCore().GetStream().
  */
 void* ROCmBackend::GetNativeQueue() const {
-  return static_cast<void*>(stream_);
+  // Делегируем в core_ — авторитетный источник (cached stream_ = копия, используется внутри)
+  if (!core_) return static_cast<void*>(stream_);
+  return static_cast<void*>(core_->GetStream());
 }
 
 // ════════════════════════════════════════════════════════════════════════════

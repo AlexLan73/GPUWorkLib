@@ -23,6 +23,7 @@
 #include "services/gpu_kernel_op.hpp"
 #include "services/buffer_set.hpp"
 #include "interface/gpu_context.hpp"
+#include "statistics_types.hpp"
 
 #include <hip/hip_runtime.h>
 #include <stdexcept>
@@ -46,9 +47,9 @@ public:
     unsigned int bc = static_cast<unsigned int>(beam_count);
     unsigned int np = static_cast<unsigned int>(n_point);
 
-    void* input_buf  = ctx_->GetShared(drv_gpu_lib::GpuContext::kInput);
+    void* input_buf  = ctx_->GetShared(shared_buf::kInput);
     void* result_buf = ctx_->RequireShared(
-        drv_gpu_lib::GpuContext::kResult,
+        shared_buf::kResult,
         beam_count * 5 * sizeof(float));
 
     // 4 shared arrays × (kBlockSize+1) floats

@@ -21,6 +21,7 @@
 
 #include <string>
 #include <vector>
+#include <optional>
 #include <cstdint>
 
 namespace drv_gpu_lib {
@@ -65,13 +66,13 @@ public:
   /**
    * @brief Load kernel from disk
    * @param name Kernel name (no extension)
-   * @return CacheEntry with source and/or binary
-   * @throws std::runtime_error if kernel not found
+   * @return CacheEntry with source and/or binary, or nullopt if not found
    *
    * Fast path: binary exists -> return {source, binary}
    * Fallback: only source exists -> return {source, {}}
+   * Cache miss: return nullopt (no throw)
    */
-  CacheEntry Load(const std::string& name) const;
+  std::optional<CacheEntry> Load(const std::string& name) const;
 
   /**
    * @brief List cached kernel names from manifest.json

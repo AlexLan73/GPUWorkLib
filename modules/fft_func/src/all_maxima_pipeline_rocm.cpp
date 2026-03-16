@@ -91,10 +91,10 @@ void AllMaximaPipelineROCm::CompileKernels() {
     // ── Try loading from disk cache (HSACO) ──
     drv_gpu_lib::KernelCacheService cache(
         "modules/fft_func/kernels", drv_gpu_lib::BackendType::ROCm);
-    try {
+    {
         auto entry = cache.Load(kCacheName);
-        if (entry.has_binary()) {
-            hipError_t hip_err = hipModuleLoadData(&module_, entry.binary.data());
+        if (entry && entry->has_binary()) {
+            hipError_t hip_err = hipModuleLoadData(&module_, entry->binary.data());
             if (hip_err == hipSuccess) {
                 hip_err = hipModuleGetFunction(&detect_kernel_, module_, "detect_all_maxima");
                 if (hip_err == hipSuccess)
@@ -112,8 +112,6 @@ void AllMaximaPipelineROCm::CompileKernels() {
             }
             if (module_) { hipModuleUnload(module_); module_ = nullptr; }
         }
-    } catch (...) {
-        // Cache miss — compile from source
     }
 
     // ── Compile from source (hiprtc) ──

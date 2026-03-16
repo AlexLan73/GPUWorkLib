@@ -53,7 +53,7 @@ ComplexToMagPhaseROCm::ComplexToMagPhaseROCm(drv_gpu_lib::IBackend* backend)
 
     // Initialize disk cache for compiled HSACO kernels
     kernel_cache_ = std::make_unique<drv_gpu_lib::KernelCacheService>(
-        "modules/fft_processor/kernels", drv_gpu_lib::BackendType::ROCm);
+        "modules/fft_func/kernels", drv_gpu_lib::BackendType::ROCm);
 }
 
 ComplexToMagPhaseROCm::~ComplexToMagPhaseROCm() {
@@ -525,27 +525,23 @@ void ComplexToMagPhaseROCm::CompileKernels() {
 
     // ─── Try loading from HSACO disk cache ─────────────────────────────────
     if (kernel_cache_) {
-        try {
-            auto entry = kernel_cache_->Load(kCacheName);
-            if (entry.has_binary()) {
-                hipError_t hip_err = hipModuleLoadData(&module_, entry.binary.data());
+        auto entry = kernel_cache_->Load(kCacheName);
+        if (entry && entry->has_binary()) {
+            hipError_t hip_err = hipModuleLoadData(&module_, entry->binary.data());
+            if (hip_err == hipSuccess) {
+                hip_err = hipModuleGetFunction(&kernel_, module_, "complex_to_mag_phase");
                 if (hip_err == hipSuccess) {
-                    hip_err = hipModuleGetFunction(&kernel_, module_, "complex_to_mag_phase");
-                    if (hip_err == hipSuccess) {
-                        kernels_compiled_ = true;
-                        con.Print(gpu_id, "C2MP", "kernel loaded from HSACO cache");
-                        DRVGPU_LOG_INFO_GPU(gpu_id, "C2MP", "HIP kernel loaded from cache");
-                        return;
-                    }
-                }
-                // Stale cache (different arch) -- fall through to recompile
-                if (module_) {
-                    (void)hipModuleUnload(module_);
-                    module_ = nullptr;
+                    kernels_compiled_ = true;
+                    con.Print(gpu_id, "C2MP", "kernel loaded from HSACO cache");
+                    DRVGPU_LOG_INFO_GPU(gpu_id, "C2MP", "HIP kernel loaded from cache");
+                    return;
                 }
             }
-        } catch (...) {
-            // Cache miss or corrupt -- fall through to compile
+            // Stale cache (different arch) -- fall through to recompile
+            if (module_) {
+                (void)hipModuleUnload(module_);
+                module_ = nullptr;
+            }
         }
     }
 

@@ -118,12 +118,14 @@ public:
      * @note Необходимо вызвать до Enqueue(), иначе сообщения не обрабатываются.
      */
     void Start() {
-        // Избегаем повторного запуска
-        if (running_.load(std::memory_order_acquire)) {
-            return;
+        // compare_exchange: атомарно проверяем false → true.
+        // Без этого два потока могли бы одновременно пройти load()==false и оба запустить поток.
+        bool expected = false;
+        if (!running_.compare_exchange_strong(expected, true,
+                                              std::memory_order_acq_rel,
+                                              std::memory_order_acquire)) {
+            return;  // Уже запущен
         }
-
-        running_.store(true, std::memory_order_release);
 
         worker_thread_ = std::thread([this]() {
             WorkerLoop();
@@ -242,11 +244,14 @@ public:
      *
      * Используется перед чтением результатов (напр. PrintReport),
      * чтобы гарантировать полноту данных.
+     *
+     * Реализация: condition_variable (не spin-wait) — CPU не сжигается в ожидании.
      */
     void WaitEmpty() const {
-        while (pending_count_.load(std::memory_order_acquire) > 0) {
-            std::this_thread::yield();
-        }
+        std::unique_lock<std::mutex> lock(empty_mutex_);
+        empty_cv_.wait(lock, [this]() {
+            return pending_count_.load(std::memory_order_acquire) == 0;
+        });
     }
 
 protected:
@@ -328,7 +333,10 @@ private:
             for (const auto& msg : batch) {
                 ProcessMessage(msg);
                 processed_count_.fetch_add(1, std::memory_order_relaxed);
-                pending_count_.fetch_sub(1, std::memory_order_release);
+                // fetch_sub returns old value: if it was 1, queue just became empty
+                if (pending_count_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                    empty_cv_.notify_all();
+                }
             }
 
             // Check if we should stop (after processing remaining messages)
@@ -345,7 +353,9 @@ private:
                 for (const auto& msg : final_batch) {
                     ProcessMessage(msg);
                     processed_count_.fetch_add(1, std::memory_order_relaxed);
-                    pending_count_.fetch_sub(1, std::memory_order_release);
+                    if (pending_count_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                        empty_cv_.notify_all();
+                    }
                 }
                 break;
             }
@@ -378,8 +388,11 @@ private:
     std::atomic<uint64_t> processed_count_{0};
 
     /// Counter of pending (enqueued but not yet processed) messages
-    /// Used by WaitEmpty() to block until all messages are processed
     mutable std::atomic<uint64_t> pending_count_{0};
+
+    /// Mutex + CV for WaitEmpty() — нотификация когда очередь опустела
+    mutable std::mutex empty_mutex_;
+    mutable std::condition_variable empty_cv_;
 };
 
 } // namespace drv_gpu_lib

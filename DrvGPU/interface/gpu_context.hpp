@@ -47,17 +47,18 @@ namespace drv_gpu_lib {
 class GpuContext {
 public:
   // ═══════════════════════════════════════════════════════════════════════
-  // Shared buffer IDs — used by Ops to access module-wide GPU buffers.
-  // Each module can define additional IDs starting after kSharedCount.
+  // Shared GPU buffer pool — module-wide buffers reused by multiple Ops.
+  //
+  // GpuContext is generic infrastructure: it does NOT know what each slot
+  // means. Each module defines its own slot assignments, e.g.:
+  //   statistics module → statistics::shared_buf::{kInput, kMagnitudes, ...}
+  //   fft module        → fft::shared_buf::{kInput, kOutput, ...}
+  //
+  // Max slots per module is kMaxSharedBuffers (currently 8).
   // ═══════════════════════════════════════════════════════════════════════
 
-  enum SharedBuf : size_t {
-    kInput = 0,           ///< complex<float> input data
-    kMagnitudes,          ///< float magnitudes (|z|)
-    kResult,              ///< per-beam results (various types)
-    kMediansCompact,      ///< float[beam_count] compact medians
-    kSharedCount          ///< total count — used as BufferSet<N> template arg
-  };
+  /// Maximum shared GPU buffer slots available per module.
+  static constexpr size_t kMaxSharedBuffers = 8;
 
   // ═══════════════════════════════════════════════════════════════════════
   // Construction / Destruction
@@ -126,17 +127,17 @@ public:
 
   /**
    * @brief Get or allocate shared buffer
-   * @param id SharedBuf enum value
+   * @param id Slot index (defined by the module, e.g. statistics::shared_buf::kInput)
    * @param bytes Required size in bytes
    * @return Device pointer (reused if existing buffer is large enough)
    */
-  void* RequireShared(SharedBuf id, size_t bytes) {
-    return shared_.Require(static_cast<size_t>(id), bytes);
+  void* RequireShared(size_t id, size_t bytes) {
+    return shared_.Require(id, bytes);
   }
 
   /// Get existing shared buffer (no allocation, nullptr if not allocated)
-  void* GetShared(SharedBuf id) const {
-    return shared_.Get(static_cast<size_t>(id));
+  void* GetShared(size_t id) const {
+    return shared_.Get(id);
   }
 
   /// Release all shared buffers
@@ -156,8 +157,8 @@ private:
   hipModule_t module_ = nullptr;
   std::unordered_map<std::string, hipFunction_t> kernels_;
 
-  // Shared buffers
-  BufferSet<kSharedCount> shared_;
+  // Shared buffers (kMaxSharedBuffers slots; modules use a subset)
+  BufferSet<kMaxSharedBuffers> shared_;
 
   // Disk cache (optional)
   std::unique_ptr<KernelCacheService> kernel_cache_;

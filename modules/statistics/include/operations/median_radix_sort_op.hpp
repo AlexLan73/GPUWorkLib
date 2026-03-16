@@ -24,6 +24,7 @@
 #include "services/gpu_kernel_op.hpp"
 #include "services/buffer_set.hpp"
 #include "interface/gpu_context.hpp"
+#include "statistics_types.hpp"
 #include "statistics_sort_gpu.hpp"
 
 #include <hip/hip_runtime.h>
@@ -131,10 +132,10 @@ private:
     }
 
     // Ensure shared magnitudes buffer exists
-    ctx_->RequireShared(drv_gpu_lib::GpuContext::kMagnitudes,
+    ctx_->RequireShared(shared_buf::kMagnitudes,
                         total * sizeof(float));
     // Ensure shared medians_compact buffer exists
-    ctx_->RequireShared(drv_gpu_lib::GpuContext::kMediansCompact,
+    ctx_->RequireShared(shared_buf::kMediansCompact,
                         beam_count * sizeof(float));
 
     current_beams_ = beam_count;
@@ -145,8 +146,8 @@ private:
     unsigned int total = static_cast<unsigned int>(total_elements);
     unsigned int grid = (total + kBlockSize * 2 - 1) / (kBlockSize * 2);
 
-    void* input_buf = ctx_->GetShared(drv_gpu_lib::GpuContext::kInput);
-    void* mag_buf   = ctx_->GetShared(drv_gpu_lib::GpuContext::kMagnitudes);
+    void* input_buf = ctx_->GetShared(shared_buf::kInput);
+    void* mag_buf   = ctx_->GetShared(shared_buf::kMagnitudes);
 
     void* args[] = { &input_buf, &mag_buf, &total };
 
@@ -163,7 +164,7 @@ private:
   void ExecuteSort(size_t beam_count, size_t n_point, size_t total) {
     auto* d_offsets = static_cast<const unsigned int*>(bufs_.Get(kOffsets));
     auto* mag_buf   = static_cast<const float*>(
-        ctx_->GetShared(drv_gpu_lib::GpuContext::kMagnitudes));
+        ctx_->GetShared(shared_buf::kMagnitudes));
     auto* sort_buf  = static_cast<float*>(bufs_.Get(kSortBuf));
 
     hipError_t err = gpu_sort::ExecuteSort(
@@ -185,7 +186,7 @@ private:
     unsigned int grid = (bc + kBlockSize - 1) / kBlockSize;
 
     void* sort_buf    = bufs_.Get(kSortBuf);
-    void* medians_buf = ctx_->GetShared(drv_gpu_lib::GpuContext::kMediansCompact);
+    void* medians_buf = ctx_->GetShared(shared_buf::kMediansCompact);
 
     void* args[] = { &sort_buf, &medians_buf, &np, &bc };
 

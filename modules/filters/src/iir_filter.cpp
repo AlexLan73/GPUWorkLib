@@ -273,14 +273,12 @@ void IirFilter::CompileKernel() {
   const std::string kernel_name = "iir_filter_cf32";
 
   // Try loading from cache (binary fast path ~1 ms)
-  try {
+  {
     auto entry = kernel_cache_->Load(kernel_name);
-    if (entry.has_binary()) {
-      LoadFromBinary(entry.binary);
+    if (entry && entry->has_binary()) {
+      LoadFromBinary(entry->binary);
       return;
     }
-  } catch (...) {
-    // Cache miss or load error — compile from source
   }
 
   // Compile from source (~50 ms first time)

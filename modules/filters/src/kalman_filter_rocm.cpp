@@ -127,13 +127,13 @@ void KalmanFilterROCm::CompileKernel() {
   const std::string cache_name = "kalman_kernel_rocm";
 
   // ── Try loading from KernelCacheService (HSACO fast path) ──
-  try {
+  {
     drv_gpu_lib::KernelCacheService cache(
         FILTERS_KERNELS_DIR, drv_gpu_lib::BackendType::ROCm);
     auto entry = cache.Load(cache_name);
-    if (entry.has_binary()) {
+    if (entry && entry->has_binary()) {
       hipError_t hipErr = hipModuleLoadData(
-          &module_, entry.binary.data());
+          &module_, entry->binary.data());
       if (hipErr == hipSuccess) {
         hipErr = hipModuleGetFunction(&kernel_, module_, "kalman_kernel");
         if (hipErr == hipSuccess) {
@@ -144,8 +144,6 @@ void KalmanFilterROCm::CompileKernel() {
         }
       }
     }
-  } catch (...) {
-    // Cache miss — compile from source
   }
 
   // ── Compile from source (hiprtc) ──

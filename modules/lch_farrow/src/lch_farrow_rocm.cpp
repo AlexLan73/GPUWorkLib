@@ -623,25 +623,21 @@ void LchFarrowROCm::CompileKernel() {
 
   // ─── Try loading from disk cache (HSACO) ────────────────────────────
   if (kernel_cache_) {
-    try {
-      auto entry = kernel_cache_->Load(kKernelName);
-      if (entry.has_binary()) {
-        hipError_t hipErr = hipModuleLoadData(
-            &module_, entry.binary.data());
+    auto entry = kernel_cache_->Load(kKernelName);
+    if (entry && entry->has_binary()) {
+      hipError_t hipErr = hipModuleLoadData(
+          &module_, entry->binary.data());
+      if (hipErr == hipSuccess) {
+        hipErr = hipModuleGetFunction(&kernel_, module_, kKernelName);
         if (hipErr == hipSuccess) {
-          hipErr = hipModuleGetFunction(&kernel_, module_, kKernelName);
-          if (hipErr == hipSuccess) {
-            kernel_compiled_ = true;
-            con.Print(0, "LchFarrow[ROCm]",
-                "HIP kernel loaded from cache (HSACO)");
-            return;
-          }
+          kernel_compiled_ = true;
+          con.Print(0, "LchFarrow[ROCm]",
+              "HIP kernel loaded from cache (HSACO)");
+          return;
         }
-        // Cache binary incompatible — fall through to recompile
-        if (module_) { hipModuleUnload(module_); module_ = nullptr; }
       }
-    } catch (...) {
-      // Cache miss or corrupt — fall through to compile
+      // Cache binary incompatible — fall through to recompile
+      if (module_) { hipModuleUnload(module_); module_ = nullptr; }
     }
   }
 

@@ -326,12 +326,12 @@ void IirFilterROCm::CompileKernel() {
   const std::string cache_name = "iir_biquad_cascade_rocm";
 
   // Try loading from KernelCacheService (HSACO fast path)
-  try {
+  {
     drv_gpu_lib::KernelCacheService cache(
         FILTERS_KERNELS_DIR, drv_gpu_lib::BackendType::ROCm);
     auto entry = cache.Load(cache_name);
-    if (entry.has_binary()) {
-      hipError_t hipErr = hipModuleLoadData(&module_, entry.binary.data());
+    if (entry && entry->has_binary()) {
+      hipError_t hipErr = hipModuleLoadData(&module_, entry->binary.data());
       if (hipErr == hipSuccess) {
         hipErr = hipModuleGetFunction(&kernel_, module_, "iir_biquad_cascade_cf32");
         if (hipErr == hipSuccess) {
@@ -342,7 +342,7 @@ void IirFilterROCm::CompileKernel() {
         }
       }
     }
-  } catch (...) {}
+  }
 
   // Compile from source (hiprtc)
   const char* source = kernels::GetIirBiquadCascadeSource_rocm();

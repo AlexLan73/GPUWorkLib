@@ -2,9 +2,9 @@
   "version": 1,
   "kernels": [
     {
-      "name": "fft_processor_kernels",
-      "comment": "ROCm fft_processor hiprtc kernels",
-      "created": "2026-03-02T12:34:22",
+      "name": "FFTProc_kernels",
+      "comment": "ROCm FFTProcessorROCm hiprtc kernels",
+      "created": "2026-03-16T16:11:00",
       "params": "",
       "backend": "rocm"
     },

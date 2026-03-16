@@ -66,7 +66,7 @@ if(TARGET GPUWorkLib::signal_generators)
     message(STATUS "Linked: GPUWorkLib::signal_generators")
 endif()
 
-# FFT Functions module (объединяет fft_processor + fft_maxima)
+# FFT Functions module
 if(TARGET GPUWorkLib::fft_func)
     target_link_libraries(GPUWorkLib PRIVATE GPUWorkLib::fft_func)
     message(STATUS "✅ Linked: GPUWorkLib::fft_func")

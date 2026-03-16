@@ -554,17 +554,13 @@ void FMCorrelatorProcessorROCm::CompileKernels() {
 
   // Шаг 1: попробовать загрузить из дискового кеша (~1-5 мс вместо ~100-200 мс)
   if (kernel_cache_) {
-    try {
-      auto entry = kernel_cache_->Load(kKernelName);
-      if (entry.has_binary()) {
-        loadModuleAndFunctions(entry.binary.data(), entry.binary.size());
-        kernels_compiled_ = true;
-        con.Print(0, "FM_Corr[ROCm]",
-            "HIP kernels loaded from cache (4 kernels)");
-        return;
-      }
-    } catch (...) {
-      // Cache miss или повреждение — компилируем из исходника
+    auto entry = kernel_cache_->Load(kKernelName);
+    if (entry && entry->has_binary()) {
+      loadModuleAndFunctions(entry->binary.data(), entry->binary.size());
+      kernels_compiled_ = true;
+      con.Print(0, "FM_Corr[ROCm]",
+          "HIP kernels loaded from cache (4 kernels)");
+      return;
     }
   }
 
