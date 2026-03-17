@@ -24,6 +24,7 @@
 | fm_correlator | 🟢 Active | `Doc/Modules/fm_correlator/Full.md` |
 | **strategies** | 🟢 Active | `Doc/Modules/strategies/Full.md` ✅ Quick.md ✅ API.md ✅ |
 | **capon** | 🟡 Framework Ready | `Doc/Modules/capon/Full.md` ✅ Quick.md ✅ API.md ✅ |
+| **range_angle** | 🟡 Beta | `Doc/Modules/range_angle/Full.md` ✅ Quick.md ✅ API.md ✅ |
 
 ---
 

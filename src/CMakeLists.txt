@@ -120,6 +120,12 @@ if(TARGET GPUWorkLib::capon)
     message(STATUS "✅ Linked: GPUWorkLib::capon")
 endif()
 
+# RangeAngle module (ROCm only: LFM range-angle processing)
+if(TARGET GPUWorkLib::range_angle)
+    target_link_libraries(GPUWorkLib PRIVATE GPUWorkLib::range_angle)
+    message(STATUS "✅ Linked: GPUWorkLib::range_angle")
+endif()
+
 # spectrum_maxima alias теперь указывает на fft_func (backward compat)
 # Линковка уже выполнена выше через GPUWorkLib::fft_func
 
@@ -181,6 +187,7 @@ target_include_directories(GPUWorkLib PRIVATE
     ${CMAKE_SOURCE_DIR}/modules/fm_correlator/include
     ${CMAKE_SOURCE_DIR}/modules/strategies/include
     ${CMAKE_SOURCE_DIR}/modules/capon/include
+    ${CMAKE_SOURCE_DIR}/modules/range_angle/include
 )
 #    ${CMAKE_SOURCE_DIR}/include/ManagerOpenCL
 #    ${CMAKE_SOURCE_DIR}/include/GPU

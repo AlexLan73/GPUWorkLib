@@ -209,6 +209,7 @@ private:
 #include "py_vector_algebra_rocm.hpp"
 #include "py_fm_correlator_rocm.hpp"
 #include "py_strategies_rocm.hpp"
+#include "py_range_angle_rocm.hpp"
 
 // ============================================================================
 // HybridGPUContext — wraps HybridBackend (OpenCL + ROCm on one GPU)
@@ -1542,6 +1543,9 @@ PYBIND11_MODULE(gpuworklib, m) {
 
     // AntennaProcessorTest + WeightGenerator (see py_strategies_rocm.hpp)
     register_strategies_rocm(m);
+
+    // RangeAngleProcessor (see py_range_angle_rocm.hpp)
+    register_range_angle(m);
 
     // HybridGPUContext
     py::class_<HybridGPUContext>(m, "HybridGPUContext",

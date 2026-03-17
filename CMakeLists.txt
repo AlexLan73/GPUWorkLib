@@ -54,6 +54,9 @@ add_subdirectory(modules/strategies)
 # Capon module (ROCm only: MVDR beamformer — Capon spatial spectrum + adaptive beamforming)
 add_subdirectory(modules/capon)
 
+# RangeAngle module (ROCm only: LFM dechirp + range FFT + beam FFT + peak search)
+add_subdirectory(modules/range_angle)
+
 # Main executable (src/)
 add_subdirectory(src)
 
