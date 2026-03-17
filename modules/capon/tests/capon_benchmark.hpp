@@ -28,7 +28,7 @@
 #if ENABLE_ROCM
 
 #include "capon_processor.hpp"
-#include "DrvGPU/services/gpu_benchmark_base.hpp"
+#include "services/gpu_benchmark_base.hpp"
 
 #include <hip/hip_runtime.h>
 #include <complex>

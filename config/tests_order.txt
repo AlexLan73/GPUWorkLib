@@ -4,11 +4,12 @@
 
 drvgpu        # набор драйверов 
 fft_func      # объединяет fft_processor + fft_maxima
-lch_farrow
+#lch_farrow
 signal_generators
 statistics
 vector_algebra
-filters
-heterodyne
-fm_correlator
+#filters
+#heterodyne
+#fm_correlator
 strategies
+capon

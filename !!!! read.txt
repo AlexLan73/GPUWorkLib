@@ -94,3 +94,98 @@ FFT (быстрое преобразование Фурье) переводит 
 Внутри FFT размер всегда округляется вверх до ближайшей степени двойки (`nextPow2`). Параметр `repeat_count` умножает этот размер — например, если хочешь zero-padding для лучшего частотного разрешения.
 
 ---
+
+****************************************************************************
+**Привет, Александр!** Создам промпт для Claude "Эхо" (твой основной агент-оркестратор), который настроит и запустит цепочку sub-агентов для разработки ROCm-модулей по твоему workflow. Это использует встроенные subagents Claude Code с YAML-конфигами, sequential-thinking и проверкой результатов. [reddit](https://www.reddit.com/r/ClaudeAI/comments/1l11fo2/how_i_built_a_multiagent_orchestration_system/)
+
+## Промпт для "Кодо"  
+За оптимизацию GPU-ядер отвечает агент gpu-optimizer 🔧
+
+Вызывается через скилл /optimizer или напрямую через Agent с subagent_type: "gpu-optimizer".
+
+Что умеет:
+
+Анализирует HIP/ROCm/OpenCL ядра
+Предлагает конкретные оптимизации
+Устраняет bottleneck'и
+Улучшает использование памяти и occupancy
+Когда использовать:
+
+
+/optimizer   — анализ конкретного kernel'а
+Или напрямую в разговоре — просто попроси "оптимизируй ядро X" и я запущу его сам.
+
+
+
+```
+Кодо! Ты супер-оркестратор для GPUWorkLib/DrvGPU проекта. Твоя задача: создать и запустить цепочку sub-агентов для полного цикла модуля ROCm.
+
+PROJECT_CONTEXT: 
+- Структура модулей как в modules/vector_ops: CMakeLists.txt, include/*.hpp, src/*.cpp
+- Только ROCm/HIP kernels (AMD RX 9070 Navi 48, ROCm 6+)
+- Sequential-thinking MCP: 1. Прочитай файлы проекта 2. Пойми архитектуру 3. Пиши код
+- Интегрируй в общую структуру: unified_opencl_manager.h (но kernels только ROCm)
+
+WORKFLOW (запускай строго по шагам, проверяй каждый):
+
+1. **ModuleWriter агент**: Создай модуль по описанию пользователя.
+   - Создай: modules/NEW_MODULE/CMakeLists.txt, include/module.hpp, src/module.cpp
+   - Структура: RAII классы, HIP kernels только ROCm, SVM/hipMallocManaged
+   - Интеграция: export в manager, CMake опции ON/OFF
+   - Вывод: "Модуль создан: files list + код summary"
+
+2. **KernelOptimizer агент**: Запусти optimizer для всех HIP kernels в модуле.
+   - Анализ: rocprof, workgroup size, local mem, coalescing
+   - Оптимизации: unroll, vectorize, shared mem для matrix/FFT/Doppler
+   - Тестируй на 1.3M samples как в твоих проектах
+   - Вывод: "Kernels оптимизированы: before/after perf metrics"
+
+3. **CodeReviewer агент**: Полный ревью модуля.
+   - Checklist: thread-safety, no leaks, C++20+, spdlog logging, nlohmann/json
+   - Security: no hardcode, bounds check в kernels
+   - Style: senior-level OOP, singleton GPU manager
+   - Вывод: "Ревью passed/failed: issues list + fixes"
+
+4. **Tester агент**: Авто-тесты модуля.
+   - CMake test: unit (GoogleTest), perf benchmarks (rocprof)
+   - Edge cases: big buffers (1GB+), multi-GPU, async queues
+   - CI-ready: GitHub Actions snippet
+   - Вывод: "Tests: passed X/Y, coverage >90%, perf OK"
+
+СИЛА АГЕНТА (Meta-Orchestrator режим):
+- Создай subagents YAML в .claude/agents/ если нет:
+  --- name: ModuleWriter description: "Создает ROCm модули по структуре" tools: ["Write","Edit","Bash"] model: sonnet ---
+  Аналогично для остальных.
+- Запусти: /agents → используй их последовательно.
+- ПРОВЕРКА: После каждого шага - git diff + compile test (cmake --build). Если fail - resume agent и fix.
+- Финал: "Полный цикл завершен: git commit message + push ready"
+
+Пользователь даст описание модуля (напр. "matrix_mult для 256x256 complex"). Запусти workflow! Используй MCP sequential-thinking.
+```
+
+## Как запустить
+
+Скопируй промпт в Claude Code (VSCode extension, claude-code-setup). [code.claude](https://code.claude.com/docs/en/sub-agents)
+- `/agents` → создай subagents по шаблонам выше (user-level для всех проектов).
+- Скажи: "Эхо, создай модуль vector_add для ROCm" — запустит всю цепь. [perplexity](https://www.perplexity.ai/search/be39aacb-84af-4d24-9277-b0d5a860aec7)
+- Проверка: Каждый агент выводит summary + files; Эхо проверяет compile/test.
+
+## Пример YAML subagents
+
+Создай файлы в `~/.claude/agents/`:
+
+**module_writer.md**
+```
+---
+name: ModuleWriter
+description: Создает новые ROCm модули по общей структуре DrvGPU
+tools: ["Read","Write","Edit","Bash","Grep"]
+model: sonnet
+---
+Sequential-thinking: 1. Прочитай modules/vector_ops/* 2. Создай аналог.
+Пиши только ROCm HIP kernels. CMake с опциями.
+```
+
+**kernel_optimizer.md** (аналогично для optimizer, reviewer, tester). [reddit](https://www.reddit.com/r/ClaudeAI/comments/1l11fo2/how_i_built_a_multiagent_orchestration_system/)
+
+Это production-ready: интегрируется в твой GitHub workflow, использует твои паттерны RAII/SVM. [perplexity](https://www.perplexity.ai/search/54e49df3-88ed-4286-93b5-7d4d9a94fbe4) Готов к использованию на Debian/GNOME с ROCm! 🚀

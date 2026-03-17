@@ -47,8 +47,8 @@ public:
    * Предусловие: ComputeWeightsOp::Execute() уже запущен и записал W в kWeight.
    */
   void Execute(uint32_t n_channels, uint32_t n_directions) {
-    const uint32_t P = n_channels;
-    const uint32_t M = n_directions;
+    uint32_t P = n_channels;
+    uint32_t M = n_directions;
 
     void* U   = ctx_->GetShared(shared_buf::kSteering);
     void* W   = ctx_->GetShared(shared_buf::kWeight);

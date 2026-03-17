@@ -29,6 +29,7 @@
 #include "kernels/capon_kernels_rocm.hpp"
 #include "services/console_output.hpp"
 
+#include <hip/hip_runtime.h>
 #include <stdexcept>
 #include <cstring>
 #include <complex>
@@ -135,25 +136,39 @@ void CaponProcessor::EnsureCompiled() {
 void CaponProcessor::UploadSignal(const std::complex<float>* data, size_t count) {
   size_t bytes = count * sizeof(std::complex<float>);
   void* buf = ctx_.RequireShared(shared_buf::kSignal, bytes);
-  ctx_.UploadToDevice(buf, data, bytes);
+  hipError_t err = hipMemcpyHtoDAsync(buf, const_cast<std::complex<float>*>(data),
+                                      bytes, ctx_.stream());
+  if (err != hipSuccess)
+    throw std::runtime_error("CaponProcessor: signal H2D failed: " +
+                              std::string(hipGetErrorString(err)));
 }
 
 void CaponProcessor::UploadSteering(const std::complex<float>* data, size_t count) {
   size_t bytes = count * sizeof(std::complex<float>);
   void* buf = ctx_.RequireShared(shared_buf::kSteering, bytes);
-  ctx_.UploadToDevice(buf, data, bytes);
+  hipError_t err = hipMemcpyHtoDAsync(buf, const_cast<std::complex<float>*>(data),
+                                      bytes, ctx_.stream());
+  if (err != hipSuccess)
+    throw std::runtime_error("CaponProcessor: steering H2D failed: " +
+                              std::string(hipGetErrorString(err)));
 }
 
 void CaponProcessor::CopySignalGpu(void* src, size_t count) {
   size_t bytes = count * sizeof(std::complex<float>);
   void* buf = ctx_.RequireShared(shared_buf::kSignal, bytes);
-  ctx_.CopyDeviceToDevice(buf, src, bytes);
+  hipError_t err = hipMemcpyDtoDAsync(buf, src, bytes, ctx_.stream());
+  if (err != hipSuccess)
+    throw std::runtime_error("CaponProcessor: signal D2D failed: " +
+                              std::string(hipGetErrorString(err)));
 }
 
 void CaponProcessor::CopySteeringGpu(void* src, size_t count) {
   size_t bytes = count * sizeof(std::complex<float>);
   void* buf = ctx_.RequireShared(shared_buf::kSteering, bytes);
-  ctx_.CopyDeviceToDevice(buf, src, bytes);
+  hipError_t err = hipMemcpyDtoDAsync(buf, src, bytes, ctx_.stream());
+  if (err != hipSuccess)
+    throw std::runtime_error("CaponProcessor: steering D2D failed: " +
+                              std::string(hipGetErrorString(err)));
 }
 
 // ============================================================================
@@ -194,9 +209,11 @@ CaponReliefResult CaponProcessor::ReadReliefResult(uint32_t n_directions) {
   CaponReliefResult result;
   result.relief.resize(n_directions);
   void* buf = ctx_.GetShared(shared_buf::kOutput);
-  ctx_.DownloadFromDevice(result.relief.data(),
-                          buf,
-                          n_directions * sizeof(float));
+  hipError_t err = hipMemcpyDtoH(result.relief.data(), buf,
+                                  n_directions * sizeof(float));
+  if (err != hipSuccess)
+    throw std::runtime_error("CaponProcessor: relief D2H failed: " +
+                              std::string(hipGetErrorString(err)));
   return result;
 }
 
@@ -208,9 +225,11 @@ CaponBeamResult CaponProcessor::ReadBeamResult(uint32_t n_directions,
   const size_t count  = static_cast<size_t>(n_directions) * n_samples;
   result.output.resize(count);
   void* buf = ctx_.GetShared(shared_buf::kOutput);
-  ctx_.DownloadFromDevice(result.output.data(),
-                          buf,
-                          count * sizeof(std::complex<float>));
+  hipError_t err = hipMemcpyDtoH(result.output.data(), buf,
+                                  count * sizeof(std::complex<float>));
+  if (err != hipSuccess)
+    throw std::runtime_error("CaponProcessor: beam D2H failed: " +
+                              std::string(hipGetErrorString(err)));
   return result;
 }
 
@@ -260,7 +279,7 @@ CaponReliefResult CaponProcessor::ComputeRelief(
 
   relief_op_.Execute(params.n_channels, params.n_directions);
 
-  ctx_.Synchronize();
+  backend_->Synchronize();
   return ReadReliefResult(params.n_directions);
 }
 
@@ -280,7 +299,7 @@ CaponBeamResult CaponProcessor::AdaptiveBeamform(
   beam_op_.Execute(params.n_channels, params.n_samples, params.n_directions,
                    mat_ops_);
 
-  ctx_.Synchronize();
+  backend_->Synchronize();
   return ReadBeamResult(params.n_directions, params.n_samples);
 }
 
@@ -306,7 +325,7 @@ CaponReliefResult CaponProcessor::ComputeRelief(
   RunComputeWeights(params);
   relief_op_.Execute(params.n_channels, params.n_directions);
 
-  ctx_.Synchronize();
+  backend_->Synchronize();
   return ReadReliefResult(params.n_directions);
 }
 
@@ -329,7 +348,7 @@ CaponBeamResult CaponProcessor::AdaptiveBeamform(
   beam_op_.Execute(params.n_channels, params.n_samples, params.n_directions,
                    mat_ops_);
 
-  ctx_.Synchronize();
+  backend_->Synchronize();
   return ReadBeamResult(params.n_directions, params.n_samples);
 }
 

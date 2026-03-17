@@ -11,6 +11,7 @@
 #include "diagonal_load_regularizer.hpp"
 #include "kernels/diagonal_load_kernel_rocm.hpp"
 
+#include <hip/hiprtc.h>
 #include <stdexcept>
 #include <string>
 

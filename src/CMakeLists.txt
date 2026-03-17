@@ -114,6 +114,12 @@ if(TARGET GPUWorkLib::strategies)
     message(STATUS "✅ Linked: GPUWorkLib::strategies")
 endif()
 
+# Capon module (ROCm only: MVDR beamformer)
+if(TARGET GPUWorkLib::capon)
+    target_link_libraries(GPUWorkLib PRIVATE GPUWorkLib::capon)
+    message(STATUS "✅ Linked: GPUWorkLib::capon")
+endif()
+
 # spectrum_maxima alias теперь указывает на fft_func (backward compat)
 # Линковка уже выполнена выше через GPUWorkLib::fft_func
 
@@ -174,6 +180,7 @@ target_include_directories(GPUWorkLib PRIVATE
     ${CMAKE_SOURCE_DIR}/modules/vector_algebra/include
     ${CMAKE_SOURCE_DIR}/modules/fm_correlator/include
     ${CMAKE_SOURCE_DIR}/modules/strategies/include
+    ${CMAKE_SOURCE_DIR}/modules/capon/include
 )
 #    ${CMAKE_SOURCE_DIR}/include/ManagerOpenCL
 #    ${CMAKE_SOURCE_DIR}/include/GPU

@@ -68,8 +68,7 @@ public:
    */
   vector_algebra::CholeskyResult Execute(void* gpu_R, uint32_t n_channels) {
     drv_gpu_lib::InputData<void*> input;
-    input.data  = gpu_R;
-    input.count = static_cast<size_t>(n_channels) * n_channels;  // элементов complex<float>
+    input.data = gpu_R;
 
     return inverter_.Invert(input, static_cast<int>(n_channels));
   }

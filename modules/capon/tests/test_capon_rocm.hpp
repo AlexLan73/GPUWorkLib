@@ -22,7 +22,7 @@
 
 #include "capon_processor.hpp"
 #include "services/console_output.hpp"
-#include "services/test_helpers.hpp"  // GetTestBackend(), CheckClose()
+#include "backends/rocm/rocm_backend.hpp"
 
 #include <vector>
 #include <complex>
@@ -34,7 +34,18 @@
 namespace test_capon_rocm {
 
 using cx = std::complex<float>;
-using Con = drv_gpu_lib::ConsoleOutput;
+
+inline void TestPrint(const std::string& msg) {
+  drv_gpu_lib::ConsoleOutput::GetInstance().Print(0, "Capon", msg);
+}
+
+inline drv_gpu_lib::IBackend* GetTestBackend() {
+  static drv_gpu_lib::ROCmBackend backend;
+  if (!backend.IsInitialized()) {
+    backend.Initialize(0);
+  }
+  return &backend;
+}
 
 // ============================================================================
 // Вспомогательные функции
@@ -126,9 +137,9 @@ static void AddInterference(std::vector<cx>& Y,
 // ============================================================================
 
 inline void test_01_relief_noise_only() {
-  Con::Print("[test_capon_rocm::01] ComputeRelief — only noise (flat spectrum)");
+  TestPrint("[test_capon_rocm::01] ComputeRelief — only noise (flat spectrum)");
 
-  auto* backend = drv_gpu_lib::GetTestBackend();
+  auto* backend = GetTestBackend();
 
   const uint32_t P = 8;   // channels
   const uint32_t N = 64;  // samples
@@ -155,7 +166,7 @@ inline void test_01_relief_noise_only() {
     assert(result.relief[m] > 0.0f);
   }
 
-  Con::Print("[test_capon_rocm::01] PASS");
+  TestPrint("[test_capon_rocm::01] PASS");
 }
 
 // ============================================================================
@@ -167,9 +178,9 @@ inline void test_01_relief_noise_only() {
 // ============================================================================
 
 inline void test_02_relief_with_interference() {
-  Con::Print("[test_capon_rocm::02] ComputeRelief — interference suppression check");
+  TestPrint("[test_capon_rocm::02] ComputeRelief — interference suppression check");
 
-  auto* backend = drv_gpu_lib::GetTestBackend();
+  auto* backend = GetTestBackend();
 
   const uint32_t P = 8;
   const uint32_t N = 128;
@@ -210,7 +221,7 @@ inline void test_02_relief_with_interference() {
   // z[m_int] < mean/2 — Capon хорошо подавляет помеху
   assert(result.relief[m_int] < mean_relief * 0.5f);
 
-  Con::Print("[test_capon_rocm::02] PASS (MVDR suppression confirmed at interference direction)");
+  TestPrint("[test_capon_rocm::02] PASS (MVDR suppression confirmed at interference direction)");
 }
 
 // ============================================================================
@@ -218,9 +229,9 @@ inline void test_02_relief_with_interference() {
 // ============================================================================
 
 inline void test_03_adaptive_beamform_dims() {
-  Con::Print("[test_capon_rocm::03] AdaptiveBeamform — output dimensions");
+  TestPrint("[test_capon_rocm::03] AdaptiveBeamform — output dimensions");
 
-  auto* backend = drv_gpu_lib::GetTestBackend();
+  auto* backend = GetTestBackend();
 
   const uint32_t P = 4;
   const uint32_t N = 32;
@@ -244,7 +255,7 @@ inline void test_03_adaptive_beamform_dims() {
     assert(std::isfinite(v.real()) && std::isfinite(v.imag()));
   }
 
-  Con::Print("[test_capon_rocm::03] PASS");
+  TestPrint("[test_capon_rocm::03] PASS");
 }
 
 // ============================================================================
@@ -252,9 +263,9 @@ inline void test_03_adaptive_beamform_dims() {
 // ============================================================================
 
 inline void test_04_regularization() {
-  Con::Print("[test_capon_rocm::04] Regularization — mu=0 vs mu=0.1");
+  TestPrint("[test_capon_rocm::04] Regularization — mu=0 vs mu=0.1");
 
-  auto* backend = drv_gpu_lib::GetTestBackend();
+  auto* backend = GetTestBackend();
 
   const uint32_t P = 4;
   const uint32_t N = 8;  // N < P → матрица вырождена без регуляризации
@@ -275,7 +286,7 @@ inline void test_04_regularization() {
     assert(std::isfinite(v) && v >= 0.0f);
   }
 
-  Con::Print("[test_capon_rocm::04] PASS");
+  TestPrint("[test_capon_rocm::04] PASS");
 }
 
 // ============================================================================
@@ -283,9 +294,9 @@ inline void test_04_regularization() {
 // ============================================================================
 
 inline void test_05_gpu_to_gpu() {
-  Con::Print("[test_capon_rocm::05] GPU-to-GPU pipeline");
+  TestPrint("[test_capon_rocm::05] GPU-to-GPU pipeline");
 
-  auto* backend = drv_gpu_lib::GetTestBackend();
+  auto* backend = GetTestBackend();
 
   const uint32_t P = 8;
   const uint32_t N = 64;
@@ -305,7 +316,7 @@ inline void test_05_gpu_to_gpu() {
   // auto result = processor.ComputeRelief(gpu_signal, gpu_steering, params);
   // assert(result.relief.size() == M);
 
-  Con::Print("[test_capon_rocm::05] SKIP (TODO: GPU alloc/upload API в тесте)");
+  TestPrint("[test_capon_rocm::05] SKIP (TODO: GPU alloc/upload API в тесте)");
 }
 
 // ============================================================================
@@ -313,13 +324,14 @@ inline void test_05_gpu_to_gpu() {
 // ============================================================================
 
 inline void run() {
-  Con::Print("=== test_capon_rocm ===");
+  drv_gpu_lib::ConsoleOutput::GetInstance().Start();
+  TestPrint("=== test_capon_rocm ===");
   test_01_relief_noise_only();
   test_02_relief_with_interference();
   test_03_adaptive_beamform_dims();
   test_04_regularization();
   test_05_gpu_to_gpu();
-  Con::Print("=== test_capon_rocm DONE ===");
+  TestPrint("=== test_capon_rocm DONE ===");
 }
 
 }  // namespace test_capon_rocm
