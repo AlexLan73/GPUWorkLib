@@ -3,7 +3,7 @@
 > **Проект**: Библиотеки GPU-вычислений (OpenCL, ROCm, HIP)
 > **Автор**: Alex
 > **AI-ассистент**: Кодо
-> **Обновлено**: 2026-03-10
+> **Обновлено**: 2026-03-17
 
 ---
 
@@ -13,8 +13,9 @@
 |--------|--------|-------------|
 | **DrvGPU** | 🟢 Active | `Doc/DrvGPU/Full.md` ✅ Quick.md ✅ API.md ✅ |
 | signal_generators | 🟢 Active | `Doc/Modules/signal_generators/Full.md` |
-| fft_processor | 🟢 Active | `Doc/Modules/fft_processor/Full.md` |
-| fft_maxima | 🟢 Active | `Doc/Modules/fft_maxima/Full.md` |
+| **fft_func** | 🟢 Active | `Doc/Modules/fft_func/Full.md` ✅ Quick.md ✅ API.md ✅ |
+| ~~fft_processor~~ | ⚫ Merged → fft_func | `Doc/Modules/~!/fft_processor/Full.md` (архив) |
+| ~~fft_maxima~~ | ⚫ Merged → fft_func | `Doc/Modules/~!/fft_maxima/Full.md` (архив) |
 | filters | 🟢 Active | `Doc/Modules/filters/Full.md` |
 | **lch_farrow** | 🟢 Active | `Doc/Modules/lch_farrow/Full.md` ✅ API.md ✅ |
 | heterodyne | 🟢 Active | `Doc/Modules/heterodyne/Full.md` |
