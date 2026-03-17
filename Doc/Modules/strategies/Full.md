@@ -836,6 +836,7 @@ cfg.save_cfg = &save_cfg;
 - [Doc/Modules/statistics/Full.md](../statistics/Full.md) — StatisticsProcessor, Welford
 - [Doc/Modules/signal_generators/Full.md](../signal_generators/Full.md) — FormSignalGeneratorROCm
 - [Doc/Modules/lch_farrow/Full.md](../lch_farrow/Full.md) — Lagrange 48×5 Farrow
+- [Farrow_Pipeline.md](Farrow_Pipeline.md) — Pipeline A vs B: фазовая коррекция vs Farrow выравнивание (сравнение для ЛЧМ), дорожная карта GPU + MVDR
 - [Doc/DrvGPU/Architecture.md](../../DrvGPU/Architecture.md) — IBackend, GPUProfiler, ConsoleOutput
 - [Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md](../../Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md) — HIP optimization guide
 - [Examples/GPUProfiler_SetGPUInfo.md](../../Examples/GPUProfiler_SetGPUInfo.md) — SetGPUInfo паттерн

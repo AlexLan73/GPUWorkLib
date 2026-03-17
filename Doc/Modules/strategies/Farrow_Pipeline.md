@@ -1,11 +1,12 @@
 # 📝 Farrow Pipeline — Спецификация
 
-> **Модуль**: `Python_test/strategies/`
+> **Модули**: `Python_test/strategies/` + `modules/lch_farrow/` + `modules/capon/`
 > **Статус**: 🟢 Фаза 1 DONE | Фазы 2-4 в планах
-> **Платформы**: Python (numpy) — CPU reference для сравнения с GPU
+> **Платформы**: Python reference (Фаза 1-2) → ROCm GPU (Фаза 3-4)
 > **Автор**: Alex + Кодо
 > **Создано**: 2026-03-08
 > **Обновлено**: 2026-03-17
+> **Связано**: [strategies/Full.md](Full.md) · [lch_farrow/Full.md](../lch_farrow/Full.md) · [capon/Full.md](../capon/Full.md)
 
 ---
 
