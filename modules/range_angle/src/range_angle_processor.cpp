@@ -38,6 +38,7 @@ static const std::vector<std::string> kKernelNames = {
   "gen_ref_kernel",
   "dechirp_window_kernel",
   "transpose_complex_kernel",
+  "apply_beam_window_kernel",
   "fftshift2d_kernel",
   "magnitude_sq_kernel",
 };

@@ -192,6 +192,32 @@ __global__ void fftshift2d_kernel(
 }
 
 // ============================================================================
+// apply_beam_window_kernel
+// Multiply spatial data by 2D Hamming window (separable: w_az * w_el).
+// data layout: [n_range_bins × n_ant]  where n_ant = n_az * n_el
+// window layout: [n_ant]  (row-major [n_az × n_el], flattened)
+// Each block handles one range bin × up to 256 antennas.
+// Grid: (n_range_bins, ceil(n_ant/256), 1)  Block: (256, 1, 1)
+// ============================================================================
+
+__launch_bounds__(256)
+__global__ void apply_beam_window_kernel(
+    float2_t*    __restrict__ data,    // [n_range_bins × n_ant]
+    const float* __restrict__ window,  // [n_ant]
+    unsigned int n_range_bins,
+    unsigned int n_ant)
+{
+  unsigned int r = blockIdx.x;
+  unsigned int k = blockIdx.y * blockDim.x + threadIdx.x;  // antenna index
+  if (r >= n_range_bins || k >= n_ant) return;
+
+  float w = window[k];
+  unsigned long idx = (unsigned long)r * n_ant + k;
+  data[idx].x *= w;
+  data[idx].y *= w;
+}
+
+// ============================================================================
 // magnitude_sq_kernel
 // |z|^2 : float2_t → float   (power cube)
 // Grid: (ceil(total/256), 1, 1)  Block: (256, 1, 1)

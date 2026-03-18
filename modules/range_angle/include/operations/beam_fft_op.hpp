@@ -26,8 +26,10 @@
 #include <hip/hip_runtime.h>
 #include <hipfft/hipfft.h>
 #include <cstdint>
+#include <cmath>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace range_angle {
 
@@ -36,20 +38,59 @@ public:
   const char* Name() const override { return "BeamFFT"; }
 
   /**
-   * @brief Create 2-D batched hipFFT plan for beam-forming FFT.
+   * @brief Create 2-D batched hipFFT plan + upload 2D Hamming spatial window.
    * @param n_az         Azimuth FFT size (= n_ant_az)
    * @param n_el         Elevation FFT size (= n_ant_el)
    * @param n_range_bins Batch size
+   *
+   * Window: separable 2D Hamming  w[az,el] = hamming(az, N_az) * hamming(el, N_el)
+   * Applied in Execute() before Beam FFT to reduce spatial sidelobes from -13 dB → -43 dB.
    */
   void InitPlan(uint32_t n_az, uint32_t n_el, uint32_t n_range_bins) {
     if (plan_ != 0) {
       hipfftDestroy(plan_);
       plan_ = 0;
     }
+    if (d_beam_window_) {
+      (void)hipFree(d_beam_window_);
+      d_beam_window_ = nullptr;
+    }
 
     n_az_         = n_az;
     n_el_         = n_el;
     n_range_bins_ = n_range_bins;
+
+    // Build separable 2D Hamming window on CPU, upload to GPU
+    // w2d[az, el] = hamming(az, N_az) * hamming(el, N_el)
+    uint32_t n_ant = n_az * n_el;
+    std::vector<float> h_win(n_ant);
+    for (uint32_t az = 0; az < n_az; ++az) {
+      float w_az = (n_az > 1)
+          ? (0.54f - 0.46f * cosf(2.f * 3.14159265f * float(az) / float(n_az - 1)))
+          : 1.f;
+      for (uint32_t el = 0; el < n_el; ++el) {
+        float w_el = (n_el > 1)
+            ? (0.54f - 0.46f * cosf(2.f * 3.14159265f * float(el) / float(n_el - 1)))
+            : 1.f;
+        h_win[az * n_el + el] = w_az * w_el;
+      }
+    }
+
+    hipError_t herr = hipMalloc(&d_beam_window_,
+                                static_cast<size_t>(n_ant) * sizeof(float));
+    if (herr != hipSuccess) {
+      throw std::runtime_error(
+          std::string("BeamFftOp::InitPlan hipMalloc beam_window: ") +
+          hipGetErrorString(herr));
+    }
+    herr = hipMemcpy(d_beam_window_, h_win.data(),
+                     static_cast<size_t>(n_ant) * sizeof(float),
+                     hipMemcpyHostToDevice);
+    if (herr != hipSuccess) {
+      throw std::runtime_error(
+          std::string("BeamFftOp::InitPlan hipMemcpy beam_window: ") +
+          hipGetErrorString(herr));
+    }
 
     // hipfftPlanMany for 2-D C2C batched plan
     int rank      = 2;
@@ -82,11 +123,14 @@ public:
   /**
    * @brief Execute 2-D beam-forming FFT in-place, then fftshift2d in-place.
    *
+   * Order:
+   *   1. apply_beam_window_kernel  — multiply by 2D Hamming spatial window
+   *   2. hipfftExecC2C             — 2D forward FFT (in-place)
+   *   3. fftshift2d_kernel         — swap 4 quadrants (in-place)
+   *
    * Reads/writes shared_buf::kTransposed (in-place).
-   * The fftshift2d swaps quadrants of each range bin's 2-D spectrum.
    */
   void Execute() {
-    // 2-D FFT in-place on kTransposed
     void* d_buf = ctx_->GetShared(shared_buf::kTransposed);
     if (!d_buf) {
       throw std::runtime_error("BeamFftOp::Execute: kTransposed buffer is null");
@@ -95,6 +139,27 @@ public:
       throw std::runtime_error("BeamFftOp::Execute: plan not initialized");
     }
 
+    // Step 1: Apply 2D Hamming spatial window before beam FFT
+    // Grid: (n_range_bins, ceil(n_ant/256), 1)  Block: (256, 1, 1)
+    if (d_beam_window_) {
+      uint32_t n_ant     = n_az_ * n_el_;
+      uint32_t grid_ant  = (n_ant + 255u) / 256u;
+      void* win_args[]   = { &d_buf, &d_beam_window_,
+                             &n_range_bins_, &n_ant };
+      hipError_t werr = hipModuleLaunchKernel(
+          kernel("apply_beam_window_kernel"),
+          n_range_bins_, grid_ant, 1,
+          256, 1, 1,
+          0, stream(),
+          win_args, nullptr);
+      if (werr != hipSuccess) {
+        throw std::runtime_error(
+            std::string("BeamFftOp::Execute apply_beam_window_kernel: ") +
+            hipGetErrorString(werr));
+      }
+    }
+
+    // Step 2: 2-D FFT in-place on kTransposed
     hipfftResult res = hipfftExecC2C(
         plan_,
         static_cast<hipfftComplex*>(d_buf),
@@ -105,7 +170,7 @@ public:
           "BeamFftOp::Execute hipfftExecC2C failed: " + std::to_string(res));
     }
 
-    // fftshift2d in-place
+    // Step 3: fftshift2d in-place
     // Grid: (n_range_bins, n_az/2, n_el/2)  Block: (1, 1, 1)
     uint32_t half_az = n_az_ >> 1u;
     uint32_t half_el = n_el_ >> 1u;
@@ -133,14 +198,19 @@ protected:
       hipfftDestroy(plan_);
       plan_ = 0;
     }
+    if (d_beam_window_) {
+      (void)hipFree(d_beam_window_);
+      d_beam_window_ = nullptr;
+    }
     n_az_ = n_el_ = n_range_bins_ = 0;
   }
 
 private:
-  hipfftHandle plan_         = 0;
-  uint32_t     n_az_         = 0;
-  uint32_t     n_el_         = 0;
-  uint32_t     n_range_bins_ = 0;
+  hipfftHandle plan_           = 0;
+  float*       d_beam_window_  = nullptr;  // 2D Hamming [n_az × n_el] on GPU
+  uint32_t     n_az_           = 0;
+  uint32_t     n_el_           = 0;
+  uint32_t     n_range_bins_   = 0;
 };
 
 }  // namespace range_angle
