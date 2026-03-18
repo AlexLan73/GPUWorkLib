@@ -1,15 +1,29 @@
 """
-test_timing_analysis.py — анализ JSON из TimingPerStepTest (T4)
-================================================================
+test_timing_analysis.py — анализ JSON из C++ TimingPerStepTest (T4)
+====================================================================
 
-Читает JSON файлы, созданные C++ TimingPerStepTest, строит:
-  - Таблицу timing по шагам
-  - Bar chart → Results/Plots/strategies/timing_{signal}.png
+ЗАЧЕМ:
+    После того как C++ тесты прогнали TimingPerStepTest — этот Python файл
+    берёт сохранённые JSON файлы из Results/strategies/ и делает из них:
+    - Таблицу с временем каждого шага GPU (gpu_ms) и wall (wall_ms)
+    - Bar chart → Results/Plots/strategies/timing_{signal}.png
 
-Запуск (после прогона C++ TimingPerStepTest):
+    Это позволяет увидеть какой шаг pipeline самый долгий и где узкое место.
+
+ЧТО ПРОВЕРЯЕТ:
+    Что timing_*.json файлы существуют (иначе skip — нужно сначала запустить C++).
+    Структуру JSON: поля signal, n_ant, n_samples, steps с gpu_ms/wall_ms.
+    Sanity: FullProcess < 1000 мс, все gpu_ms >= 0.
+    Строит и сохраняет bar chart если matplotlib доступен.
+
+GPU: НЕ НУЖЕН — читает уже готовые JSON, не запускает GPU.
+
+ЗАВИСИМОСТЬ: нужно сначала запустить C++ тест TimingPerStepTest,
+    который создаёт Results/strategies/timing_*.json.
+    Без этих файлов все тесты будут pytest.skip.
+
+ЗАПУСК (из корня проекта):
     pytest Python_test/strategies/test_timing_analysis.py -v
-
-Или как скрипт:
     python Python_test/strategies/test_timing_analysis.py
 """
 

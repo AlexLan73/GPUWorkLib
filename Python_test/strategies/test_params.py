@@ -1,12 +1,27 @@
 """
-test_params.py — AntennaTestParams dataclass для Python тестов стратегий
-========================================================================
+test_params.py — параметры тестов антенных стратегий (не тест, а dataclass!)
+=============================================================================
 
-GRASP Information Expert: содержит все параметры теста.
+ЗАЧЕМ:
+    Это НЕ файл с тестами, а файл с конфигурацией тестов — dataclass AntennaTestParams.
+    Содержит все параметры (размеры, частоты, задержки) в одном месте.
+    Все остальные test_*.py импортируют отсюда AntennaTestParams и SignalVariant.
+
+    Принцип GRASP Information Expert: тот кто владеет данными — тот и считает
+    производные (bin_hz, expected_peak_bin, check_peak_freq).
+
+ЧТО ВНУТРИ:
+    SignalVariant — enum вариантов сигнала: SIN, LFM_NO_DELAY, LFM_WITH_DELAY, LFM_FARROW.
+    AntennaTestParams — dataclass с фабричными методами:
+      .small()      → быстрый тест: 100 антенн
+      .full_spec()  → полный по spec: 2500 антенн × 5000 отсчётов
+      .debug()      → small + сохранение в файлы
+    Свойства: bin_hz, expected_peak_bin, check_peak_freq.
+
+GPU: НЕ НУЖЕН — только Python dataclass.
+
 Соответствует C++ AntennaTestParams из tests/antenna_test_params.hpp.
-
-Параметры по TestStrategia.md:
-    n_ant=2500, n_samples=5000, fs=0.5e6, fdev=90кГц, W=2500×100
+Параметры по TestStrategia.md: n_ant=2500, n_samples=5000, fs=0.5e6, fdev=90кГц.
 """
 
 from dataclasses import dataclass, field

@@ -1,14 +1,21 @@
 """
-test_debug_steps.py — пошаговая валидация pipeline (T2)
-========================================================
+test_debug_steps.py — проверка каждого шага NumPy pipeline по отдельности (T2)
+===============================================================================
 
-pytest тесты для каждого шага NumPy pipeline:
-    Step GEMM    → shape + coherent gain
-    Step FFT     → peak bin location ≈ expected_peak_bin
-    Step OneMax  → refined freq ≈ f0_hz (через NumPy parabolic fit)
-    Step MinMax  → max >= min, dynamic_range > 20 dB
+ЗАЧЕМ:
+    test_base_pipeline.py проверяет результат целиком. Этот файл идёт глубже —
+    проверяет каждый шаг в отдельности с конкретными числовыми критериями.
+    Если base pipeline упал, запусти этот тест чтобы понять на каком шаге ошибка.
 
-Запуск:
+    Шаги и что именно проверяется:
+    - GEMM: shape (n_ant, n_samples) и coherent gain ≈ 1/sqrt(n_ant)
+    - FFT:  peak bin ≈ expected_peak_bin (±2 бина) — только для SIN, не для ЛЧМ без дечирпа
+    - OneMax: уточнённая частота через 3-точечную параболическую интерполяцию ≈ f0_hz
+    - MinMax: max >= min, dynamic_range > 20 дБ
+
+GPU: НЕ НУЖЕН — чистый NumPy.
+
+ЗАПУСК (из корня проекта):
     pytest Python_test/strategies/test_debug_steps.py -v
 """
 

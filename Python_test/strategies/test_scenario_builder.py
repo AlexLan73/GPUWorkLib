@@ -1,50 +1,50 @@
 #!/usr/bin/env python3
 """
-ScenarioBuilder -- numpy-only unit tests
-==========================================
+test_scenario_builder.py — физическая модель ULA + генерация сигналов (NumPy)
+==============================================================================
 
-Тесты физической модели генератора сценариев для AntennaProcessor.
-Работают без GPU -- чистый numpy.
+ЗАЧЕМ:
+    Проверяет что физическая модель антенной решётки (ULA) и генератор сигналов
+    дают математически правильные результаты. Это фундамент всего pipeline —
+    если здесь ошибка, все остальные тесты бессмысленны.
 
-Tests:
-  ULA Geometry:
-    1. test_ula_delays_broadside      -- theta=0 -> все задержки = 0
-    2. test_ula_delays_endfire        -- theta=90 -> максимальные задержки
-    3. test_ula_delays_negative_angle -- theta<0 -> отрицательные задержки
-    4. test_ula_from_lambda_half      -- d = c / (2*f_carrier)
+    Аналогия: это как проверить что рулетка правильно показывает метры,
+    перед тем как мерять расстояния.
 
-  Signal Generation:
-    5. test_cw_single_antenna         -- CW сигнал, FFT пик на f0
-    6. test_lfm_bandwidth             -- ЛЧМ, полоса ~ fdev в спектре
-    7. test_lfm_compatibility_with_cpp -- формула совместима с FormParams
+ЧТО ПРОВЕРЯЕТ:
+    ULA Geometry: theta=0 → задержки нули, theta=90 → максимальные задержки,
+    отрицательный угол → отрицательные задержки, d = lambda/2.
 
-  Multi-source:
-    8. test_two_targets_sum           -- 2 CW цели, 2 FFT пика
-    9. test_target_plus_jammer        -- цель + помеха, оба видны в спектре
+    Генерация сигналов: CW → FFT-пик на f0, ЛЧМ → полоса ~ fdev,
+    fdev=0 эквивалентен CW, задержка между антеннами корректна.
 
-  Noise:
-   10. test_awgn_statistics           -- AWGN: mean~0, std~sigma
-   11. test_noise_reproducibility     -- одинаковый seed -> одинаковый шум
+    Multi-source: 2 CW цели → 2 FFT пика, цель + помеха оба видны.
 
-  Weight Matrix:
-   12. test_weight_matrix_shape       -- W: [n_ant x n_ant] complex64
-   13. test_weight_matrix_unit_norm   -- ||row|| = 1
-   14. test_beamforming_snr_gain      -- SNR улучшается после W @ S
+    Шум: AWGN — mean≈0, std≈sigma, воспроизводимость по seed.
 
-  Factory Scenarios:
-   15. test_make_single_target        -- фабрика single target
-   16. test_make_target_and_jammer    -- фабрика target + jammer
-   17. test_make_multi_target         -- фабрика multi-target
+    Матрица весов W: shape [n_ant × n_ant], ||строка||=1, beamforming не обнуляет сигнал.
 
-Usage:
-  pytest Python_test/strategies/test_scenario_builder.py -v
+    Фабричные сценарии: make_single_target, make_target_and_jammer, make_multi_target.
+
+GPU: НЕ НУЖЕН — чистый NumPy.
+
+ЗАПУСК (из корня проекта):
+    pytest Python_test/strategies/test_scenario_builder.py -v
+    python Python_test/strategies/test_scenario_builder.py
 
 Author: Кодо (AI Assistant)
 Date: 2026-03-08
 """
 
+import os
+import sys
 import numpy as np
 import pytest
+
+# Добавить strategies/ в sys.path для импорта scenario_builder и др.
+_DIR = os.path.dirname(os.path.abspath(__file__))
+if _DIR not in sys.path:
+    sys.path.insert(0, _DIR)
 
 from scenario_builder import (
     ULAGeometry,

@@ -1,14 +1,21 @@
 """
-test_base_pipeline.py — BaseStrategyTest × 4 варианта сигнала (T1)
-====================================================================
+test_base_pipeline.py — проверка математики pipeline без GPU (T1)
+==================================================================
 
-pytest тесты для полного NumPy pipeline:
-    S → GEMM → Hamming + FFT → peak finding
+ЗАЧЕМ:
+    Проверяет что алгоритм (GEMM + Hamming + FFT + поиск пика) математически
+    правильный на NumPy, прежде чем запускать на GPU.
+    Если этот тест падает — сломана математика, не GPU.
+    Если этот тест проходит — ошибки на GPU не в алгоритме, а в реализации ядер.
 
-Не требуют GPU — используют NumPy reference из StrategyTestBase.
-Проверяют: peak_freq ≈ f0_hz (±2 бина), dynamic_range > 20 дБ.
+ЧТО ПРОВЕРЯЕТ:
+    Полный NumPy pipeline: S → GEMM(W) → Hamming window → FFT → argmax
+    Для 4 вариантов сигнала: SIN, LFM_NO_DELAY, LFM_WITH_DELAY, LFM_FARROW.
+    Критерии: peak_freq ≈ f0_hz (±2 бина), dynamic_range > 20 дБ.
 
-Запуск:
+GPU: НЕ НУЖЕН — чистый NumPy.
+
+ЗАПУСК (из корня проекта):
     pytest Python_test/strategies/test_base_pipeline.py -v
 """
 

@@ -1,63 +1,44 @@
 #!/usr/bin/env python3
 """
-Farrow Pipeline -- сравнение двух программных веток beamforming
-================================================================
+test_farrow_pipeline.py — сравнение Pipeline A (фазовая коррекция) vs B (Farrow задержка)
+===========================================================================================
 
-Pipeline A (без Farrow):
-  S_raw → GEMM(W_phase) → Window+FFT → peaks
-  W_phase[b][a] = (1/√N) · exp(-j·2π·f0·τ_a)  -- фазовая коррекция
+ЗАЧЕМ:
+    Отвечает на ключевой вопрос: когда ЛЧМ сигнал, Pipeline B (Farrow) точнее Pipeline A?
+    Pipeline A компенсирует задержки через фазу несущей — работает хорошо для узкополосного CW.
+    Pipeline B сначала выравнивает сигналы по времени через Farrow интерполяцию, потом суммирует.
+    Для ЛЧМ (широкополосного) Pipeline B не даёт temporal smearing → энергия не размазывается.
 
-Pipeline B (с Farrow):
-  S_raw → FarrowDelay → S_aligned → GEMM(W_sum) → Window+FFT → peaks
-  W_sum[b][a] = 1/√N  -- когерентное суммирование
+    Тест также проверяет сам FarrowDelay: delay=0 не меняет сигнал, целая задержка — точный сдвиг,
+    compensate() восстанавливает оригинал.
 
-Для CW обе ветки ≈ одинаковы.
-Для ЛЧМ (широкополосных) Pipeline B точнее -- нет temporal smearing.
+ЧТО ПРОВЕРЯЕТ:
+    FarrowDelay unit: delay=0, integer delay, compensate round-trip, per-antenna delays.
+    Pipeline A vs B: CW сигнал — оба одинаковы (пик на f0).
+    Pipeline A vs B: ЛЧМ — B не хуже A по суммарной энергии в полосе (KEY TEST).
+    Сложные сценарии: 2 цели, цель + помеха, SNR gain от beamforming.
+    Статистика: mean/std/power на каждом шаге, checkpoint'ы на диск (.npy, .json).
 
-Каждый pipeline собирает:
-  - Статистику (mean, std, power, max/min) на каждом этапе
-  - Опционально сохраняет промежуточные данные на диск (.npy, .json)
-  - Результаты (пики) доступны для Python тестов
+GPU: НЕ НУЖЕН — чистый NumPy + FarrowDelay (Python реализация).
 
-Tests:
-  FarrowDelay unit tests:
-    1. test_farrow_identity         -- delay=0 → сигнал не меняется
-    2. test_farrow_integer_delay    -- целая задержка → точный сдвиг
-    3. test_farrow_compensate       -- delay + compensate ≈ original
-    4. test_farrow_multi_antenna    -- per-antenna задержки
-
-  Pipeline basic:
-    5. test_cw_pipeline_a           -- CW + Pipeline A → пик на f0
-    6. test_cw_pipeline_b           -- CW + Pipeline B → пик на f0
-    7. test_lfm_pipeline_a          -- ЛЧМ + Pipeline A
-    8. test_lfm_pipeline_b          -- ЛЧМ + Pipeline B
-
-  Pipeline comparison (A vs B):
-    9. test_cw_comparison           -- CW: A ≈ B
-   10. test_lfm_comparison          -- ЛЧМ: B >= A (KEY!)
-   11. test_lfm_large_delay         -- Большие задержки: разница ↑
-
-  Complex scenarios:
-   12. test_multi_target_farrow     -- 2 цели + Farrow
-   13. test_jammer_scenario         -- цель + ЛЧМ помеха
-   14. test_snr_improvement         -- SNR gain после beamforming
-
-  Statistics & checkpoints:
-   15. test_stats_computed           -- статистика есть на каждом шаге
-   16. test_pipeline_result_access   -- промежуточные данные доступны
-   17. test_save_to_disk            -- checkpoint'ы на диск
-
-Usage:
-  pytest Python_test/strategies/test_farrow_pipeline.py -v
+ЗАПУСК (из корня проекта):
+    pytest Python_test/strategies/test_farrow_pipeline.py -v
+    python Python_test/strategies/test_farrow_pipeline.py
 
 Author: Kodo (AI Assistant)
 Date: 2026-03-08
 """
 
 import os
+import sys
 import tempfile
 import numpy as np
 import pytest
+
+# Добавить strategies/ в sys.path для импорта scenario_builder, farrow_delay и т.д.
+_DIR = os.path.dirname(os.path.abspath(__file__))
+if _DIR not in sys.path:
+    sys.path.insert(0, _DIR)
 
 from scenario_builder import ULAGeometry, ScenarioBuilder, make_single_target
 from farrow_delay import FarrowDelay

@@ -1,34 +1,39 @@
 #!/usr/bin/env python3
 """
-Strategies ROCm -- Python step-by-step validation test
-=======================================================
+test_strategies_step_by_step.py — пошаговая валидация pipeline GPU vs NumPy
+=============================================================================
 
-Validates AntennaProcessorTest pipeline against NumPy/SciPy reference.
+ЗАЧЕМ:
+    Сравнивает каждый шаг GPU-пайплайна с NumPy-эталоном пошагово.
+    Если GPU даёт неверный результат — этот тест покажет на каком именно шаге
+    (GEMM? FFT? OneMax?) расходятся GPU и NumPy.
+    Аналогия: пошаговая отладка, только вместо debugger — NumPy как эталон.
 
-Test parameters (same as C++ test):
-  - 5 antennas, 8000 points
-  - fs = 12 MHz, f0 = 2 MHz
-  - Delay-and-sum matrix W (tau_step = 100 us)
-  - No noise (noise_amplitude = 0)
+ЧТО ПРОВЕРЯЕТ:
+    Часть 1 (NumPy, GPU не нужен):
+      1. W matrix shape и унитарность (||строка||=1)
+      2. Коэффициенты Хэмминга совпадают с формулой
+      3. W @ S совпадает с numpy matmul
+      4. FFT-пик около f0=2 МГц
 
-Tests:
-  NumPy reference (always run, no GPU needed):
-    1. test_weight_matrix_numpy       -- W matrix shape and unitarity
-    2. test_hamming_window_numpy      -- Hamming coefficients match scipy
-    3. test_gemm_numpy                -- W @ S matches numpy matmul
-    4. test_fft_peak_numpy            -- FFT peak near f0=2MHz
+    Часть 2 (ROCm GPU, AntennaProcessorTest):
+      5. GPU GEMM ≈ NumPy (rtol=1e-3)
+      6. GPU FFT shape и пик ≈ f0
+      7. OneMax: уточнённая частота через параболу
+      8. AllMaxima: хотя бы 1 пик на луч
+      9. GlobalMinMax: max >= min, DR > 0 дБ
+     10. Full pipeline: total_ms > 0, результаты есть
 
-  GPU vs NumPy (requires gpuworklib with ROCm):
-    5. test_gpu_gemm_vs_numpy         -- GPU GEMM matches numpy
-    6. test_gpu_fft_vs_numpy          -- GPU FFT spectrum matches numpy
-    7. test_gpu_one_max_frequency     -- Step2.1 peak near f0
-    8. test_gpu_all_maxima            -- Step2.2 finds maxima
-    9. test_gpu_global_minmax         -- Step2.3 min < max
-   10. test_gpu_full_pipeline         -- Full pipeline runs without error
+    Параметры: 5 антенн × 8000 отсчётов, fs=12 МГц, f0=2 МГц, tau_step=100 мкс.
 
-Usage:
-  python Python_test/strategies/test_strategies_step_by_step.py
-  pytest Python_test/strategies/test_strategies_step_by_step.py -v
+GPU:
+    Часть 1 — НЕ НУЖЕН (чистый NumPy).
+    Часть 2 — нужен ROCm + класс AntennaProcessorTest в gpuworklib.
+    Если GPU недоступен — Часть 2 пропускается автоматически (pytest.skip).
+
+ЗАПУСК (из корня проекта):
+    pytest Python_test/strategies/test_strategies_step_by_step.py -v
+    python Python_test/strategies/test_strategies_step_by_step.py
 
 Author: Kodo (AI Assistant)
 Date: 2026-03-07
@@ -170,10 +175,11 @@ class TestNumpyReference:
 try:
     sys.path.insert(0, os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        "build", "debian-radeon9070"
+        "build", "debian-radeon9070", "python"
     ))
     import gpuworklib
-    HAS_GPU = hasattr(gpuworklib, 'AntennaProcessorTest')
+    HAS_GPU = (hasattr(gpuworklib, 'AntennaProcessorTest') and
+               hasattr(gpuworklib, 'ROCmGPUContext'))
 except ImportError:
     HAS_GPU = False
 
