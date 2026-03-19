@@ -42,7 +42,6 @@ Date: 2026-03-07
 import os
 import sys
 import numpy as np
-import pytest
 
 # ============================================================================
 # Constants (mirror C++ test)
@@ -183,17 +182,14 @@ try:
 except ImportError:
     HAS_GPU = False
 
-gpu_required = pytest.mark.skipif(not HAS_GPU,
-    reason="gpuworklib with ROCm strategies not available")
-
-
-@gpu_required
 class TestGPUvsNumPy:
     """Compare GPU pipeline output with NumPy reference."""
 
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        """Create GPU context and processor once per test class."""
+    def setUp(self):
+        """Create GPU context and processor once. Call before running tests."""
+        if not HAS_GPU:
+            from common.runner import SkipTest
+            raise SkipTest("gpuworklib with ROCm strategies not available")
         self.ctx = gpuworklib.ROCmGPUContext(0)
         self.proc = gpuworklib.AntennaProcessorTest(
             self.ctx,

@@ -1,39 +1,34 @@
 """
-conftest.py — pytest fixtures для Python_test/fft_maxima/
+conftest.py — фабричные функции для Python_test/fft_func/
 ==========================================================
 
-Fixtures:
-    maxima_plot_dir — Results/Plots/fft_maxima/
-    maxima_finder   — SpectrumMaximaFinder (GPU, scope=session)
-    cw_spectrum     — спектр CW-сигнала с известным пиком
+Без pytest. Предоставляет factory functions для создания тестовых объектов.
+
+Использование:
+    from conftest import make_maxima_finder, make_cw_spectrum, maxima_plot_dir
 """
 
 import os
-import pytest
 import numpy as np
 
 _FS = 12e6
 _N_SAMPLES = 4096
 _F_PEAK = 2e6      # Гц — ожидаемый пик
 
-
-@pytest.fixture(scope="session")
-def maxima_plot_dir(plot_dir) -> str:
-    path = os.path.join(plot_dir, "fft_maxima")
-    os.makedirs(path, exist_ok=True)
-    return path
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+maxima_plot_dir: str = os.path.join(_PROJECT_ROOT, "Results", "Plots", "fft_maxima")
+os.makedirs(maxima_plot_dir, exist_ok=True)
 
 
-@pytest.fixture(scope="session")
-def maxima_finder(gw, gpu_ctx):
-    """SpectrumMaximaFinder (skip если нет GPU)."""
+def make_maxima_finder(gw, gpu_ctx):
+    """SpectrumMaximaFinder. SkipTest если нет GPU или класса."""
+    from common.runner import SkipTest
     if not hasattr(gw, "SpectrumMaximaFinder"):
-        pytest.skip("SpectrumMaximaFinder не доступен в этой сборке")
+        raise SkipTest("SpectrumMaximaFinder не доступен в этой сборке")
     return gw.SpectrumMaximaFinder(gpu_ctx)
 
 
-@pytest.fixture(scope="module")
-def cw_spectrum() -> tuple:
+def make_cw_spectrum() -> tuple:
     """Спектр CW-сигнала на F_PEAK.
 
     Returns:
@@ -45,8 +40,7 @@ def cw_spectrum() -> tuple:
     return spectrum, _F_PEAK
 
 
-@pytest.fixture
-def noise_spectrum() -> np.ndarray:
+def make_noise_spectrum() -> np.ndarray:
     """Спектр шумового сигнала (равномерный)."""
     rng = np.random.default_rng(42)
     signal = (rng.standard_normal(_N_SAMPLES) +

@@ -1,17 +1,15 @@
 """
-validators.py — Strategy pattern для валидации результатов GPU
-===============================================================
+validators.py — DataValidator (Strategy GoF)
+=============================================
 
-Strategy (GoF) + Polymorphism (GRASP):
-    IValidator — абстрактный интерфейс
-    NumericValidator  — |actual - ref| / |ref| < tolerance
-    SpectralValidator — пик в пределах freq_tol_hz и mag_tol_db
-    EnergyValidator   — энергия в полосе >= min_ratio * total_energy
+Один универсальный класс вместо 4 специализированных.
 
-Usage:
-    v = NumericValidator(tolerance=0.01)
-    result = v.validate(gpu_output, scipy_reference)
-    assert result.passed
+Убраны: NumericValidator, RMSEValidator, SpectralValidator, EnergyValidator.
+Добавлен: DataValidator — работает со скалярами, векторами и матрицами.
+
+Classes:
+    IValidator    — абстрактный интерфейс (Strategy GoF)
+    DataValidator — универсальный валидатор, метрика задаётся при создании
 """
 
 from abc import ABC, abstractmethod
@@ -38,169 +36,141 @@ class IValidator(ABC):
         ...
 
 
-class NumericValidator(IValidator):
-    """Проверка численной точности: max(|actual - ref|) / max(|ref|) < tolerance.
+class DataValidator(IValidator):
+    """Универсальный валидатор: скаляр / вектор / матрица.
 
-    Используется для прямого сравнения GPU-выхода с scipy/numpy эталоном.
-    Работает с вещественными и комплексными массивами.
+    Strategy (GoF) — метрика выбирается при создании.
+    Information Expert (GRASP) — знает как сравнивать данные.
+
+    Все данные приводятся через np.atleast_1d(x).ravel()
+    к одномерному массиву, затем применяется одна из трёх метрик.
+
+    Метрики:
+        "max_rel" → max(|actual - ref|) / max(|ref|) < tolerance
+                    Для сигналов, спектров, статистики.
+                    При ref ≈ 0 переключается на абсолютный допуск 1e-10.
+
+        "abs"     → max(|actual - ref|) < tolerance
+                    Для частот в Гц, индексов бинов FFT.
+                    reference может быть нулём — не нормируется.
+
+        "rmse"    → rms(|actual - ref|) / rms(|ref|) < tolerance
+                    Для шумных данных где нужна среднеквадратичная метрика.
+                    При ref ≈ 0 переключается на абсолютный допуск 1e-10.
+
+    Usage:
+        # Сравнить комплексные векторы (сигнал):
+        v = DataValidator(tolerance=0.01, metric="max_rel")
+        r = v.validate(gpu_mean, numpy_mean, name="mean_stats")
+        print(r)   # [PASS] mean_stats: 0.003421 (tol=0.01)
+
+        # Сравнить частоту пика (абсолютная погрешность в Гц):
+        v = DataValidator(tolerance=50e3, metric="abs")
+        r = v.validate(refined_freq_hz, expected_f0=2e6, name="peak_freq")
+
+        # Сравнить матрицы float32:
+        v = DataValidator(tolerance=0.001, metric="max_rel")
+        r = v.validate(gemm_output_gpu, gemm_output_numpy, name="gemm")
     """
 
-    def __init__(self, tolerance: float = 0.01,
-                 metric_name: str = "relative_error"):
+    METRICS = ("max_rel", "abs", "rmse")
+
+    def __init__(self, tolerance: float,
+                 metric: str = "max_rel",
+                 name: str = ""):
         """
         Args:
-            tolerance:   допустимая относительная погрешность (0..1)
-            metric_name: название метрики в отчёте
+            tolerance: допустимый порог (зависит от metric)
+            metric:    "max_rel" | "abs" | "rmse"
+            name:      имя метрики для отчёта (если не передано в validate())
         """
+        if metric not in self.METRICS:
+            raise ValueError(
+                f"metric должен быть одним из {self.METRICS}, получено: {metric!r}"
+            )
         self.tolerance = tolerance
-        self.metric_name = metric_name
+        self.metric = metric
+        self._default_name = name
 
-    def validate(self, actual: np.ndarray,
-                 reference: np.ndarray) -> ValidationResult:
-        actual_f = actual.ravel().astype(np.complex128)
-        ref_f = reference.ravel().astype(np.complex128)
+    def validate(self, actual, reference,
+                 name: str = "") -> ValidationResult:
+        """Сравнить actual с reference.
 
-        diff = np.abs(actual_f - ref_f)
-        ref_norm = np.max(np.abs(ref_f))
+        Args:
+            actual:    GPU-результат (скаляр, list, np.ndarray любой формы)
+            reference: эталон (скаляр, list, np.ndarray любой формы)
+            name:      имя метрики для ValidationResult (переопределяет self._default_name)
 
+        Returns:
+            ValidationResult
+
+        Note:
+            Оба аргумента приводятся к complex128 для вычислений (точность),
+            но исходные типы могут быть float32/complex64 — это нормально.
+        """
+        metric_name = name or self._default_name or self.metric
+        # Привести к 1D complex128 для вычислений
+        a = np.atleast_1d(np.asarray(actual)).ravel().astype(np.complex128)
+        r = np.atleast_1d(np.asarray(reference)).ravel().astype(np.complex128)
+
+        if self.metric == "max_rel":
+            return self._max_rel(a, r, metric_name)
+        elif self.metric == "abs":
+            return self._abs(a, r, metric_name)
+        else:  # "rmse"
+            return self._rmse(a, r, metric_name)
+
+    # ── Приватные методы вычисления метрик ──────────────────────────────────
+
+    def _max_rel(self, a, r, name) -> ValidationResult:
+        """max(|a-r|) / max(|r|) < tolerance"""
+        diff = np.abs(a - r)
+        ref_norm = np.max(np.abs(r))
         if ref_norm < 1e-15:
-            error = float(np.max(diff))
-            passed = error < 1e-10
+            # reference ≈ 0 → абсолютный допуск
+            err = float(np.max(diff))
             return ValidationResult(
-                passed=passed,
-                metric_name=self.metric_name,
-                actual_value=error,
+                passed=err < 1e-10,
+                metric_name=name,
+                actual_value=err,
                 threshold=1e-10,
                 message="(near-zero reference, using absolute tolerance)"
             )
-
-        rel_error = float(np.max(diff) / ref_norm)
+        err = float(np.max(diff) / ref_norm)
         return ValidationResult(
-            passed=rel_error < self.tolerance,
-            metric_name=self.metric_name,
-            actual_value=rel_error,
+            passed=err < self.tolerance,
+            metric_name=name,
+            actual_value=err,
             threshold=self.tolerance,
         )
 
+    def _abs(self, a, r, name) -> ValidationResult:
+        """max(|a-r|) < tolerance"""
+        err = float(np.max(np.abs(a - r)))
+        return ValidationResult(
+            passed=err < self.tolerance,
+            metric_name=name,
+            actual_value=err,
+            threshold=self.tolerance,
+        )
 
-class RMSEValidator(IValidator):
-    """Проверка RMSE: rms(actual - ref) / rms(ref) < tolerance."""
-
-    def __init__(self, tolerance: float = 0.01,
-                 metric_name: str = "rmse_relative"):
-        self.tolerance = tolerance
-        self.metric_name = metric_name
-
-    def validate(self, actual: np.ndarray,
-                 reference: np.ndarray) -> ValidationResult:
-        diff = actual.ravel() - reference.ravel()
+    def _rmse(self, a, r, name) -> ValidationResult:
+        """rms(|a-r|) / rms(|r|) < tolerance"""
+        diff = a - r
         rmse = float(np.sqrt(np.mean(np.abs(diff) ** 2)))
-        ref_rms = float(np.sqrt(np.mean(np.abs(reference.ravel()) ** 2)))
-
+        ref_rms = float(np.sqrt(np.mean(np.abs(r) ** 2)))
         if ref_rms < 1e-15:
             return ValidationResult(
                 passed=rmse < 1e-10,
-                metric_name=self.metric_name,
+                metric_name=name,
                 actual_value=rmse,
                 threshold=1e-10,
                 message="(near-zero reference)"
             )
-
-        rel = rmse / ref_rms
+        err = rmse / ref_rms
         return ValidationResult(
-            passed=rel < self.tolerance,
-            metric_name=self.metric_name,
-            actual_value=rel,
+            passed=err < self.tolerance,
+            metric_name=name,
+            actual_value=err,
             threshold=self.tolerance,
-        )
-
-
-class SpectralValidator(IValidator):
-    """Проверка спектрального пика: частота и амплитуда в допуске.
-
-    Ищет максимум спектра в actual и reference,
-    проверяет что они отличаются не более чем на freq_tol_hz и mag_tol_db.
-    """
-
-    def __init__(self, fs: float,
-                 freq_tol_hz: float = 10.0,
-                 mag_tol_db: float = 1.0):
-        """
-        Args:
-            fs:           частота дискретизации (Гц)
-            freq_tol_hz:  допуск по частоте пика (Гц)
-            mag_tol_db:   допуск по амплитуде пика (дБ)
-        """
-        self.fs = fs
-        self.freq_tol_hz = freq_tol_hz
-        self.mag_tol_db = mag_tol_db
-
-    def _find_peak(self, signal: np.ndarray):
-        """Найти пик спектра. Возвращает (freq_hz, mag_db)."""
-        n = len(signal)
-        spectrum = np.abs(np.fft.fft(signal))
-        freqs = np.fft.fftfreq(n, d=1.0 / self.fs)
-        idx = np.argmax(spectrum)
-        return float(freqs[idx]), float(20 * np.log10(spectrum[idx] + 1e-30))
-
-    def validate(self, actual: np.ndarray,
-                 reference: np.ndarray) -> ValidationResult:
-        act_freq, act_mag = self._find_peak(actual.ravel())
-        ref_freq, ref_mag = self._find_peak(reference.ravel())
-
-        freq_err = abs(act_freq - ref_freq)
-        mag_err = abs(act_mag - ref_mag)
-        passed = (freq_err <= self.freq_tol_hz) and (mag_err <= self.mag_tol_db)
-
-        return ValidationResult(
-            passed=passed,
-            metric_name="spectral_peak",
-            actual_value=freq_err,
-            threshold=self.freq_tol_hz,
-            message=(f"peak_freq: {act_freq:.1f} Hz (ref={ref_freq:.1f} Hz), "
-                     f"mag_err={mag_err:.2f} dB (tol={self.mag_tol_db:.1f} dB)")
-        )
-
-
-class EnergyValidator(IValidator):
-    """Проверка энергии в полосе: E(band) / E(total) >= min_ratio.
-
-    Полезно для проверки фильтров — убедиться что полезная полоса
-    содержит достаточную долю энергии сигнала.
-    """
-
-    def __init__(self, fs: float,
-                 band_hz: tuple,
-                 min_ratio: float = 0.8):
-        """
-        Args:
-            fs:        частота дискретизации (Гц)
-            band_hz:   (f_low, f_high) — интересующая полоса
-            min_ratio: минимально допустимая доля энергии в полосе
-        """
-        self.fs = fs
-        self.band_hz = band_hz
-        self.min_ratio = min_ratio
-
-    def validate(self, actual: np.ndarray,
-                 reference: np.ndarray) -> ValidationResult:
-        sig = actual.ravel()
-        n = len(sig)
-        spectrum = np.abs(np.fft.fft(sig)) ** 2
-        freqs = np.fft.fftfreq(n, d=1.0 / self.fs)
-
-        f_low, f_high = self.band_hz
-        mask = (np.abs(freqs) >= f_low) & (np.abs(freqs) <= f_high)
-
-        e_band = float(np.sum(spectrum[mask]))
-        e_total = float(np.sum(spectrum))
-
-        ratio = e_band / (e_total + 1e-30)
-
-        return ValidationResult(
-            passed=ratio >= self.min_ratio,
-            metric_name="energy_ratio",
-            actual_value=ratio,
-            threshold=self.min_ratio,
-            message=f"band=[{f_low:.0f}, {f_high:.0f}] Hz"
         )

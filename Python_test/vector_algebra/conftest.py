@@ -1,48 +1,40 @@
 """
-conftest.py — pytest fixtures для Python_test/vector_algebra/
-==============================================================
+conftest.py — фабричные функции для Python_test/vector_algebra/
+================================================================
 
-Fixtures:
-    va_plot_dir     — Results/Plots/vector_algebra/
-    cholesky_solver — CholeskyInverter (GPU, scope=session)
-    spd_matrix      — симметричная положительно-определённая матрица [N×N]
+Без pytest. Предоставляет factory functions для тестов линейной алгебры.
 """
 
 import os
-import pytest
 import numpy as np
 
-_N = 8   # размер матрицы
+_N = 8   # размер матрицы по умолчанию
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+va_plot_dir: str = os.path.join(_PROJECT_ROOT, "Results", "Plots", "vector_algebra")
+os.makedirs(va_plot_dir, exist_ok=True)
 
 
-@pytest.fixture(scope="session")
-def va_plot_dir(plot_dir) -> str:
-    path = os.path.join(plot_dir, "vector_algebra")
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-@pytest.fixture(scope="session")
-def cholesky_solver(gw, gpu_ctx):
-    """CholeskyInverter (skip если нет GPU)."""
+def make_cholesky_solver(gw, gpu_ctx):
+    """CholeskyInverter. SkipTest если нет GPU или класса."""
+    from common.runner import SkipTest
     if not hasattr(gw, "CholeskyInverter"):
-        pytest.skip("CholeskyInverter не доступен в этой сборке")
+        raise SkipTest("CholeskyInverter не доступен в этой сборке")
     return gw.CholeskyInverter(gpu_ctx)
 
 
-@pytest.fixture(scope="module")
-def spd_matrix() -> np.ndarray:
+def make_spd_matrix(n: int = _N) -> np.ndarray:
     """Симметричная положительно-определённая матрица [N×N] complex128.
 
     Генерируется как A = R†R + N*I (гарантированно SPD).
     """
     rng = np.random.default_rng(42)
-    R = rng.standard_normal((_N, _N)) + 1j * rng.standard_normal((_N, _N))
-    A = R.conj().T @ R + _N * np.eye(_N)
+    R = rng.standard_normal((n, n)) + 1j * rng.standard_normal((n, n))
+    A = R.conj().T @ R + n * np.eye(n)
     return A.astype(np.complex128)
 
 
-@pytest.fixture(scope="module")
-def spd_matrix_batch(spd_matrix) -> np.ndarray:
-    """Батч SPD матриц [batch=4, N, N]."""
-    return np.stack([spd_matrix * (i + 1) for i in range(4)])
+def make_spd_matrix_batch(n: int = _N, batch: int = 4) -> np.ndarray:
+    """Батч SPD матриц [batch, N, N]."""
+    base = make_spd_matrix(n)
+    return np.stack([base * (i + 1) for i in range(batch)])

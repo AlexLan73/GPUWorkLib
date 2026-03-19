@@ -22,8 +22,14 @@ Signal formula (getX):
   PYTHONPATH=build/python pytest Python_test/signal_generators/test_form_signal_rocm.py -v
 """
 
+import sys
+import os
 import numpy as np
-import pytest
+
+_PT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PT_DIR not in sys.path:
+    sys.path.insert(0, _PT_DIR)
+from common.runner import SkipTest, TestRunner
 
 # ─── GPU availability ─────────────────────────────────────────────────────────
 
@@ -33,8 +39,6 @@ try:
 except ImportError:
     HAS_FORM_ROCM = False
 
-rocm_only = pytest.mark.skipif(not HAS_FORM_ROCM,
-                                reason="FormSignalGeneratorROCm not available")
 
 
 # ─── NumPy helpers ────────────────────────────────────────────────────────────
@@ -101,7 +105,8 @@ class TestNumPyReference:
         a, norm = 2.0, 0.5
         t = np.arange(N) / fs
         sig = (a * norm * np.exp(1j * 2 * np.pi * f0 * t)).astype(np.complex64)
-        assert np.abs(sig).mean() == pytest.approx(a * norm, rel=1e-4)
+        expected = a * norm
+        assert abs(np.abs(sig).mean() - expected) < expected * 1e-4
 
     def test_lfm_spectral_spread(self):
         """LFM чирп: спектр размазан (нет единственного доминирующего пика)."""
@@ -142,14 +147,12 @@ class TestNumPyReference:
 
     def test_params_from_string_parse(self):
         """ParseFromString: парсит f0, antennas, points."""
-        # Проверяем Python-сторону: просто что строка правильно формируется
         params_str = "f0=2e6,antennas=5,points=8000,fs=12e6"
-        # Парсим вручную для проверки формата
         parsed = {}
         for kv in params_str.split(","):
             k, v = kv.split("=")
             parsed[k] = float(v)
-        assert parsed["f0"] == pytest.approx(2e6)
+        assert abs(parsed["f0"] - 2e6) < 1.0
         assert int(parsed["antennas"]) == 5
         assert int(parsed["points"]) == 8000
 
@@ -189,29 +192,29 @@ class TestNumPyReference:
 
 # ─── GPU tests ────────────────────────────────────────────────────────────────
 
-@rocm_only
 class TestFormSignalGeneratorROCm:
     """Тесты GPU-реализации (FormSignalGeneratorROCm)."""
 
-    @pytest.fixture(scope="class")
-    def gen(self):
+    def setUp(self):
+        if not HAS_FORM_ROCM:
+            raise SkipTest("FormSignalGeneratorROCm not available")
         ctx = gpuworklib.ROCmGPUContext(0)
-        return gpuworklib.FormSignalGeneratorROCm(ctx)
+        self._gen = gpuworklib.FormSignalGeneratorROCm(ctx)
 
     # ── CW signal ────────────────────────────────────────────────────────────
 
-    def test_generate_shape(self, gen):
+    def test_generate_shape(self):
         """generate(): shape (antennas, points), dtype complex64."""
-        gen.set_params(antennas=5, points=8000, fs=12e6, f0=2e6)
-        sig = gen.generate()
+        self._gen.set_params(antennas=5, points=8000, fs=12e6, f0=2e6)
+        sig = self._gen.generate()
         assert sig.shape == (5, 8000)
         assert sig.dtype == np.complex64
 
-    def test_generate_cw_peak_frequency(self, gen):
+    def test_generate_cw_peak_frequency(self):
         """CW: пик FFT близко к f0."""
         N, fs, f0 = 4096, 12e6, 2e6
-        gen.set_params(antennas=1, points=N, fs=fs, f0=f0)
-        sig = gen.generate()
+        self._gen.set_params(antennas=1, points=N, fs=fs, f0=f0)
+        sig = self._gen.generate()
         assert sig.shape == (1, N)
 
         f_peak = peak_freq(sig[0], fs)
@@ -219,34 +222,34 @@ class TestFormSignalGeneratorROCm:
         assert abs(f_peak - f0) < 2 * freq_res, \
             f"GPU peak={f_peak:.0f} Hz, expected={f0:.0f} Hz"
 
-    def test_generate_vs_numpy(self, gen):
+    def test_generate_vs_numpy(self):
         """CW без задержки: GPU совпадает с NumPy-эталоном (atol ≤ 1e-4)."""
         N, fs, f0 = 1024, 12e6, 1e6
-        gen.set_params(antennas=1, points=N, fs=fs, f0=f0)
-        gpu_sig = gen.generate()[0]
+        self._gen.set_params(antennas=1, points=N, fs=fs, f0=f0)
+        gpu_sig = self._gen.generate()[0]
 
         ref = generate_cw_numpy(1, N, fs, f0)[0]
         np.testing.assert_allclose(np.abs(gpu_sig), np.abs(ref), atol=1e-4)
 
     # ── LFM chirp ────────────────────────────────────────────────────────────
 
-    def test_lfm_spectral_spread(self, gen):
+    def test_lfm_spectral_spread(self):
         """LFM: спектр размазан (GPU аналогично NumPy)."""
         N, fs, f0, fdev = 4096, 12e6, 1e6, 2e6
-        gen.set_params(antennas=1, points=N, fs=fs, f0=f0, fdev=fdev)
-        sig = gen.generate()[0]
+        self._gen.set_params(antennas=1, points=N, fs=fs, f0=f0, fdev=fdev)
+        sig = self._gen.generate()[0]
         spec = np.abs(np.fft.fft(sig))[:N // 2]
         assert spec.max() < 30 * spec.mean(), \
             "LFM spectrum should be spread"
 
     # ── Delay ────────────────────────────────────────────────────────────────
 
-    def test_linear_delay_crosscorr(self, gen):
+    def test_linear_delay_crosscorr(self):
         """tau_step: кросс-корреляция ant0/ant1 — пик на ожидаемом лаге."""
         N, fs, f0 = 4096, 12e6, 2e6
         tau_step = 100e-9  # 100 нс
-        gen.set_params(antennas=2, points=N, fs=fs, f0=f0, tau_step=tau_step)
-        data = gen.generate()
+        self._gen.set_params(antennas=2, points=N, fs=fs, f0=f0, tau_step=tau_step)
+        data = self._gen.generate()
         assert data.shape == (2, N)
 
         corr = np.fft.ifft(np.fft.fft(data[0]) * np.conj(np.fft.fft(data[1])))
@@ -257,11 +260,19 @@ class TestFormSignalGeneratorROCm:
 
     # ── set_params_from_string ────────────────────────────────────────────────
 
-    def test_set_params_from_string(self, gen):
+    def test_set_params_from_string(self):
         """set_params_from_string: генерация после парсинга CSV."""
-        gen.set_params_from_string("f0=2e6,antennas=3,points=1024,fs=12e6")
-        sig = gen.generate()
+        self._gen.set_params_from_string("f0=2e6,antennas=3,points=1024,fs=12e6")
+        sig = self._gen.generate()
         assert sig.shape == (3, 1024)
         assert sig.dtype == np.complex64
-        assert gen.antennas == 3
-        assert gen.points == 1024
+        assert self._gen.antennas == 3
+        assert self._gen.points == 1024
+
+
+if __name__ == "__main__":
+    from common.runner import TestRunner
+    runner = TestRunner()
+    results = runner.run(TestNumPyReference())
+    results += runner.run(TestFormSignalGeneratorROCm())
+    runner.print_summary(results)

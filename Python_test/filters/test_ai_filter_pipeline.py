@@ -873,11 +873,10 @@ def demo_russian_request():
 
 def test_ai_pipeline_iir_lowpass():
     """AI Pipeline: IIR low-pass produces valid filtered output"""
-    import pytest
     if not HAS_GPU or not HAS_SCIPY:
-        pytest.skip("missing gpuworklib or scipy")
+        return  # missing gpuworklib or scipy — skip silently
     if not _has_ai_backend():
-        pytest.skip("AI backend not available (pip install groq or ollama)")
+        return  # AI backend not available
     result = demo_iir_lowpass()
     assert result["validation"]["ok"], "IIR pipeline validation failed"
     print("  PASSED")
@@ -885,11 +884,10 @@ def test_ai_pipeline_iir_lowpass():
 
 def test_ai_pipeline_fir_lowpass():
     """AI Pipeline: FIR low-pass produces valid filtered output"""
-    import pytest
     if not HAS_GPU or not HAS_SCIPY:
-        pytest.skip("missing gpuworklib or scipy")
+        return
     if not _has_ai_backend():
-        pytest.skip("AI backend not available (pip install groq or ollama)")
+        return
     result = demo_fir_lowpass()
     assert result["validation"]["ok"], "FIR pipeline validation failed"
     print("  PASSED")
@@ -897,11 +895,10 @@ def test_ai_pipeline_fir_lowpass():
 
 def test_ai_pipeline_iir_highpass():
     """AI Pipeline: IIR high-pass produces valid filtered output"""
-    import pytest
     if not HAS_GPU or not HAS_SCIPY:
-        pytest.skip("missing gpuworklib or scipy")
+        return
     if not _has_ai_backend():
-        pytest.skip("AI backend not available (pip install groq or ollama)")
+        return
     result = demo_iir_highpass()
     assert result["validation"]["ok"], "IIR highpass pipeline validation failed"
     print("  PASSED")
@@ -909,11 +906,10 @@ def test_ai_pipeline_iir_highpass():
 
 def test_ai_pipeline_russian():
     """AI Pipeline: Russian language request works"""
-    import pytest
     if not HAS_GPU or not HAS_SCIPY:
-        pytest.skip("missing gpuworklib or scipy")
+        return
     if not _has_ai_backend():
-        pytest.skip("AI backend not available (pip install groq or ollama)")
+        return
     result = demo_russian_request()
     assert result["validation"]["ok"], "Russian request pipeline failed"
     print("  PASSED")

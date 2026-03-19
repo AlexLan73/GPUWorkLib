@@ -33,8 +33,13 @@ import os
 import subprocess
 import sys
 
+import sys
 import numpy as np
-import pytest
+
+_PT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PT_DIR not in sys.path:
+    sys.path.insert(0, _PT_DIR)
+from common.runner import SkipTest
 
 # ============================================================================
 # Project paths
@@ -147,7 +152,7 @@ class TestCaponReference:
     N = 64
     M = 16
 
-    def setup_method(self):
+    def setUp(self):
         self.Y = make_noise(self.P, self.N, sigma=1.0, seed=42)
         self.U = make_steering_matrix(
             self.P, self.M,
@@ -252,9 +257,12 @@ class TestCaponReference:
 # Tests: GPU binary (require Linux + AMD GPU + ROCm build)
 # ============================================================================
 
-@pytest.mark.skipif(not HAS_BINARY, reason="GPU binary not found — build first")
 class TestCaponGPU:
     """Tests that run the C++ binary and parse output."""
+
+    def setUp(self):
+        if not HAS_BINARY:
+            raise SkipTest("GPU binary not found — build first")
 
     def _run_binary(self, timeout: int = 120) -> str:
         result = subprocess.run(
@@ -288,31 +296,11 @@ class TestCaponGPU:
 # ============================================================================
 
 if __name__ == "__main__":
+    from common.runner import TestRunner
+    runner = TestRunner()
     print("Running Capon reference tests (no GPU)...")
+    results = runner.run(TestCaponReference())
+    if HAS_BINARY:
+        results += runner.run(TestCaponGPU())
+    runner.print_summary(results)
 
-    suite = TestCaponReference()
-    tests = [
-        ("relief_shape",               suite.test_relief_shape),
-        ("relief_positive",            suite.test_relief_positive),
-        ("relief_finite",              suite.test_relief_finite),
-        ("relief_interference_suppr",  suite.test_relief_interference_suppression),
-        ("beamform_shape",             suite.test_beamform_shape),
-        ("beamform_finite",            suite.test_beamform_finite),
-        ("regularization_singular",    suite.test_regularization_singular),
-        ("two_sources_resolved",       suite.test_two_sources_resolved),
-    ]
-
-    passed = 0
-    for name, fn in tests:
-        suite.setup_method()
-        try:
-            fn()
-            print(f"  PASS  {name}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  FAIL  {name}: {e}")
-        except Exception as e:
-            print(f"  ERR   {name}: {e}")
-
-    print(f"\n{passed}/{len(tests)} tests passed")
-    sys.exit(0 if passed == len(tests) else 1)

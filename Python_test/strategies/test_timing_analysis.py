@@ -31,9 +31,13 @@ import sys
 import os
 import json
 import glob
-import pytest
 import numpy as np
 from pathlib import Path
+
+_PYTHON_TEST_DIR_EARLY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PYTHON_TEST_DIR_EARLY not in sys.path:
+    sys.path.insert(0, _PYTHON_TEST_DIR_EARLY)
+from common.runner import SkipTest
 
 _DIR    = os.path.dirname(os.path.abspath(__file__))
 _ROOT   = os.path.dirname(os.path.dirname(_DIR))
@@ -123,7 +127,7 @@ def test_timing_files_exist():
     """Проверить что JSON файлы timing созданы C++ TimingPerStepTest."""
     files = _find_timing_files()
     if not files:
-        pytest.skip(
+        raise SkipTest(
             f"No timing_*.json found in {_RESULTS_DIR}. "
             "Run C++ TimingPerStepTest first."
         )
@@ -137,7 +141,7 @@ def test_timing_json_valid():
     """Проверить структуру JSON файлов."""
     files = _find_timing_files()
     if not files:
-        pytest.skip("No timing files found.")
+        raise SkipTest("No timing files found.")
 
     for path in files:
         data = _load_timing_json(path)
@@ -159,7 +163,7 @@ def test_timing_sanity():
     """Sanity: FullProcess < 1000 ms, все шаги > 0 ms."""
     files = _find_timing_files()
     if not files:
-        pytest.skip("No timing files found.")
+        raise SkipTest("No timing files found.")
 
     for path in files:
         data = _load_timing_json(path)
@@ -176,7 +180,7 @@ def test_plot_timing_bars():
     """Построить bar chart для всех найденных JSON файлов."""
     files = _find_timing_files()
     if not files:
-        pytest.skip("No timing files found.")
+        raise SkipTest("No timing files found.")
 
     for path in files:
         data = _load_timing_json(path)

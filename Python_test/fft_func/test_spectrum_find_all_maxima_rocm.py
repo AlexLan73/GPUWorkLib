@@ -22,10 +22,13 @@ Date: 2026-03-02
 import sys
 import os
 import subprocess
-import pytest
 
 # Path to gpuworklib
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_PT_DIR = os.path.join(PROJECT_ROOT, "Python_test")
+if _PT_DIR not in sys.path:
+    sys.path.insert(0, _PT_DIR)
+from common.runner import SkipTest
 for subdir in ["build/python", "build/debian-radeon9070/python", "build/python/Release", "build/python/Debug"]:
     p = os.path.join(PROJECT_ROOT, subdir.replace("/", os.sep))
     if os.path.isdir(p):
@@ -55,11 +58,11 @@ def _is_amd_rocm():
 def test_rocm_context_available():
     """ROCmGPUContext создаётся на AMD."""
     if not HAS_GPU:
-        pytest.skip("gpuworklib not found")
+        raise SkipTest("gpuworklib not found")
     if not _is_amd_rocm():
-        pytest.skip("ROCm not available (need AMD GPU)")
+        raise SkipTest("ROCm not available (need AMD GPU)")
     if not hasattr(gpuworklib, "ROCmGPUContext"):
-        pytest.skip("gpuworklib built without ROCm")
+        raise SkipTest("gpuworklib built without ROCm")
     ctx = gpuworklib.ROCmGPUContext(0)
     assert ctx is not None
     assert "AMD" in ctx.device_name or "Radeon" in ctx.device_name
@@ -76,11 +79,11 @@ def test_spectrum_via_heterodyne_rocm():
     dechirp должен найти f_beat.
     """
     if not HAS_GPU:
-        pytest.skip("gpuworklib not found")
+        raise SkipTest("gpuworklib not found")
     if not _is_amd_rocm():
-        pytest.skip("ROCm not available (need AMD GPU)")
+        raise SkipTest("ROCm not available (need AMD GPU)")
     if not hasattr(gpuworklib, "HeterodyneDechirp") or not hasattr(gpuworklib, "ROCmGPUContext"):
-        pytest.skip("HeterodyneDechirp or ROCmGPUContext not available")
+        raise SkipTest("HeterodyneDechirp or ROCmGPUContext not available")
 
     ctx = gpuworklib.ROCmGPUContext(0)
     het = gpuworklib.HeterodyneDechirp(ctx)

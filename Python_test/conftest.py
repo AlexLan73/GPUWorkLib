@@ -1,92 +1,76 @@
 """
-conftest.py — корневые pytest fixtures для Python_test/
-========================================================
+conftest.py — общие helpers и синглтоны для Python_test/
+=========================================================
 
-Fixtures доступны во всех тестах Python_test/ без явного импорта.
-
-Fixtures:
-    gw          — модуль gpuworklib (scope=session)
-    gpu_ctx     — GPU-контекст GPUContext (scope=session)
-    project_root — путь к корню проекта
-    plot_dir    — путь к директории Results/Plots/
+Без pytest. Предоставляет ленивую инициализацию GPU-контекста
+через GPULoader / GPUContextManager.
 
 Использование в тестах:
-    def test_something(gpu_ctx):
-        filter = gpuworklib.FirFilterROCm(gpu_ctx, ...)
+    from conftest import get_gw, get_gpu_ctx, get_rocm_ctx, PROJECT_ROOT, PLOT_DIR
+
+    def test_something():
+        ctx = get_rocm_ctx()   # SkipTest если ROCm недоступен
         ...
 
     def test_without_gpu():
-        # не принимает gpu_ctx → работает без GPU
-        ...
+        ...  # не вызывает GPU-функции → работает без GPU
 """
 
 import os
 import sys
-import pytest
+import numpy as np
 
 # Добавить Python_test/ в sys.path для импорта common.*
 _PT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PT_DIR not in sys.path:
     sys.path.insert(0, _PT_DIR)
 
+from common.runner import SkipTest
 from common.gpu_loader import GPULoader
-from common.gpu_context import GPUContextManager, _find_config_path
+from common.gpu_context import GPUContextManager
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Константы (модульный уровень)
+# ─────────────────────────────────────────────────────────────────────────────
+
+PROJECT_ROOT: str = os.path.dirname(_PT_DIR)
+PLOT_DIR: str = os.path.join(PROJECT_ROOT, "Results", "Plots")
+os.makedirs(PLOT_DIR, exist_ok=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Session-scope fixtures (создаются один раз для всей pytest-сессии)
+# Lazy GPU helpers (синглтоны, создаются при первом вызове)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.fixture(scope="session")
-def gw():
-    """Модуль gpuworklib. Skip если не найден."""
+def get_gw():
+    """Модуль gpuworklib. SkipTest если не найден."""
     module = GPULoader.get()
     if module is None:
-        pytest.skip(
+        raise SkipTest(
             "gpuworklib не найден. "
-            f"Проверьте пути: {GPULoader._SEARCH_PATHS if hasattr(GPULoader, '_SEARCH_PATHS') else 'build/'}"
+            f"Проверьте пути: {getattr(GPULoader, '_SEARCH_PATHS', 'build/')}"
         )
     return module
 
 
-@pytest.fixture(scope="session")
-def gpu_ctx(gw):
-    """GPU-контекст (OpenCL). Skip если GPU недоступен."""
+def get_gpu_ctx():
+    """GPU-контекст (OpenCL). SkipTest если GPU недоступен."""
+    get_gw()  # убедиться что gpuworklib загружен
     ctx = GPUContextManager.get()
     if ctx is None:
-        pytest.skip("GPU-контекст не создан (нет GPU или ошибка драйвера)")
+        raise SkipTest("GPU-контекст не создан (нет GPU или ошибка драйвера)")
     return ctx
 
 
-@pytest.fixture(scope="session")
-def rocm_ctx(gw):
-    """ROCmGPUContext. GPU-индекс из configGPU.json рядом с .so. Skip если ROCm недоступен."""
+def get_rocm_ctx():
+    """ROCmGPUContext. SkipTest если ROCm недоступен."""
+    get_gw()  # убедиться что gpuworklib загружен
     ctx = GPUContextManager.get_rocm()
     if ctx is None:
-        pytest.skip("ROCmGPUContext не создан (нет ROCm GPU или ошибка драйвера)")
+        raise SkipTest("ROCmGPUContext не создан (нет ROCm GPU или ошибка драйвера)")
     return ctx
 
 
-@pytest.fixture(scope="session")
-def project_root() -> str:
-    """Абсолютный путь к корню проекта GPUWorkLib."""
-    return os.path.dirname(_PT_DIR)
-
-
-@pytest.fixture(scope="session")
-def plot_dir(project_root) -> str:
-    """Путь к директории Results/Plots/."""
-    path = os.path.join(project_root, "Results", "Plots")
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Function-scope fixtures (создаются для каждого теста)
-# ─────────────────────────────────────────────────────────────────────────────
-
-@pytest.fixture
-def rng():
+def make_rng(seed: int = 42) -> np.random.Generator:
     """NumPy RNG с фиксированным seed (воспроизводимость)."""
-    import numpy as np
-    return np.random.default_rng(seed=42)
+    return np.random.default_rng(seed=seed)

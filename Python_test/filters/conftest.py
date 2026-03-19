@@ -1,22 +1,12 @@
 """
-conftest.py — pytest fixtures для Python_test/filters/
-========================================================
+conftest.py — фабричные функции для Python_test/filters/
+=========================================================
 
-Fixtures наследуют gpu_ctx, gw из родительского conftest.py.
-Здесь добавляются специфичные для фильтров fixtures.
-
-Fixtures:
-    filter_plot_dir — директория для графиков Results/Plots/filters/
-    fir_coeffs      — стандартные FIR-коэффициенты для тестов (scipy Kaiser)
-    iir_coeffs_b/a  — стандартные IIR-коэффициенты (scipy Butterworth)
-    complex_signal  — тестовый комплексный сигнал [n_samples]
-    multichannel_signal — тестовый сигнал [n_channels, n_samples]
+Без pytest. Предоставляет factory functions для тестов фильтров.
 """
 
 import os
-import pytest
 import numpy as np
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Параметры тестов по умолчанию
@@ -27,72 +17,59 @@ _N_SAMPLES = 4096
 _N_CHANNELS = 8
 _FIR_TAPS = 64
 _FIR_CUTOFF = 0.1    # нормированная (Nyquist=1)
-_F_LOW = 200.0       # Hz — полоса пропускания
-_F_HIGH = 8_000.0    # Hz — полоса задерживания
-_ATOL = 1e-4
+_F_LOW = 200.0       # Hz
+_F_HIGH = 8_000.0    # Hz
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+filter_plot_dir: str = os.path.join(_PROJECT_ROOT, "Results", "Plots", "filters")
+os.makedirs(filter_plot_dir, exist_ok=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Fixtures
+# Фабричные функции
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.fixture(scope="session")
-def filter_plot_dir(plot_dir) -> str:
-    """Директория Results/Plots/filters/."""
-    path = os.path.join(plot_dir, "filters")
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-@pytest.fixture(scope="session")
-def fs() -> float:
-    """Частота дискретизации для тестов фильтров."""
-    return _FS
-
-
-@pytest.fixture(scope="session")
-def fir_coeffs() -> np.ndarray:
-    """FIR-коэффициенты (Kaiser window, 64 taps, cutoff=0.1).
-
-    Вычисляется через scipy один раз для всей сессии.
-    """
-    scipy_signal = pytest.importorskip("scipy.signal",
-                                        reason="scipy required for FIR coeffs")
+def make_fir_coeffs() -> np.ndarray:
+    """FIR-коэффициенты (Kaiser window, 64 taps, cutoff=0.1). SkipTest если нет scipy."""
+    from common.runner import SkipTest
+    try:
+        from scipy import signal as scipy_signal
+    except ImportError:
+        raise SkipTest("scipy required for FIR coeffs")
     return scipy_signal.firwin(_FIR_TAPS, _FIR_CUTOFF,
                                window="kaiser").astype(np.float32)
 
 
-@pytest.fixture(scope="session")
-def iir_coeffs():
-    """IIR Butterworth 4-го порядка LP @ 0.1*Nyquist.
+def make_iir_coeffs() -> tuple:
+    """IIR Butterworth 4-го порядка LP @ 0.1*Nyquist. SkipTest если нет scipy.
 
     Returns:
         (b, a) — числитель и знаменатель передаточной функции
     """
-    scipy_signal = pytest.importorskip("scipy.signal",
-                                        reason="scipy required for IIR coeffs")
+    from common.runner import SkipTest
+    try:
+        from scipy import signal as scipy_signal
+    except ImportError:
+        raise SkipTest("scipy required for IIR coeffs")
     b, a = scipy_signal.butter(4, _FIR_CUTOFF, btype="low")
     return b.astype(np.float64), a.astype(np.float64)
 
 
-@pytest.fixture
-def complex_signal() -> np.ndarray:
+def make_complex_signal() -> np.ndarray:
     """Одноканальный комплексный сигнал [n_samples] complex64."""
     rng = np.random.default_rng(42)
     return (rng.standard_normal(_N_SAMPLES) +
             1j * rng.standard_normal(_N_SAMPLES)).astype(np.complex64)
 
 
-@pytest.fixture
-def multichannel_signal() -> np.ndarray:
+def make_multichannel_signal() -> np.ndarray:
     """Многоканальный сигнал [n_channels, n_samples] complex64."""
     rng = np.random.default_rng(42)
     return (rng.standard_normal((_N_CHANNELS, _N_SAMPLES)) +
             1j * rng.standard_normal((_N_CHANNELS, _N_SAMPLES))).astype(np.complex64)
 
 
-@pytest.fixture
-def two_tone_signal() -> np.ndarray:
+def make_two_tone_signal() -> np.ndarray:
     """Двухтональный сигнал: f_low (в полосе) + f_high (вне полосы)."""
     t = np.arange(_N_SAMPLES, dtype=np.float32) / np.float32(_FS)
     sig = (np.cos(2 * np.pi * _F_LOW * t) + 0.5 * np.cos(2 * np.pi * _F_HIGH * t) +

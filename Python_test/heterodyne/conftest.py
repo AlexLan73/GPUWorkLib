@@ -1,20 +1,12 @@
 """
-conftest.py — pytest fixtures для Python_test/heterodyne/
-==========================================================
+conftest.py — фабричные функции для Python_test/heterodyne/
+============================================================
 
-Наследует gpu_ctx, gw из корневого conftest.py.
-Fixtures специфичны для тестов гетеродина/дечирпа.
-
-Fixtures:
-    het_plot_dir   — Results/Plots/heterodyne/
-    dechirp_params — параметры ЛЧМ дечирпа (FS, B, N, MU, C)
-    het_proc       — HeterodyneDechirp (GPU, scope=session)
-    lfm_srx        — тестовый приёмный ЛЧМ сигнал
+Без pytest. Предоставляет factory functions для тестов гетеродина/дечирпа.
 """
 
 import os
 from dataclasses import dataclass
-import pytest
 import numpy as np
 
 
@@ -22,25 +14,20 @@ import numpy as np
 # Параметры по умолчанию (из C++ тестов)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_FS = 12e6          # 12 МГц
+_FS = 12e6
 _F_START = 0.0
-_F_END = 2e6        # 2 МГц
-_N = 8000           # число отсчётов
+_F_END = 2e6
+_N = 8000
 _N_ANTENNAS = 5
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+het_plot_dir: str = os.path.join(_PROJECT_ROOT, "Results", "Plots", "heterodyne")
+os.makedirs(het_plot_dir, exist_ok=True)
 
 
 @dataclass
 class DechirpParams:
-    """Параметры LFM Dechirp тестов.
-
-    Attributes:
-        fs:          частота дискретизации (Гц)
-        f_start:     начальная частота ЛЧМ (Гц)
-        f_end:       конечная частота ЛЧМ (Гц)
-        n_samples:   число отсчётов
-        n_antennas:  число антенн
-        c_light:     скорость света (м/с)
-    """
+    """Параметры LFM Dechirp тестов."""
     fs: float = _FS
     f_start: float = _F_START
     f_end: float = _F_END
@@ -58,75 +45,63 @@ class DechirpParams:
 
     @property
     def chirp_rate(self) -> float:
-        """Скорость изменения частоты (Гц/с)."""
         return self.bandwidth / self.duration
 
     def range_from_delay(self, delay_s: float) -> float:
-        """Дальность по задержке."""
         return self.c_light * delay_s / 2.0
 
     def fbeat_from_delay(self, delay_s: float) -> float:
-        """Биение (beat frequency) по задержке."""
         return self.chirp_rate * delay_s
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Fixtures
+# Фабричные функции
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.fixture(scope="session")
-def het_plot_dir(plot_dir) -> str:
-    """Директория Results/Plots/heterodyne/."""
-    path = os.path.join(plot_dir, "heterodyne")
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-@pytest.fixture(scope="session")
-def dechirp_params() -> DechirpParams:
-    """Параметры дечирпа (фиксированные для всех тестов сессии)."""
+def make_dechirp_params() -> DechirpParams:
+    """Параметры дечирпа по умолчанию."""
     return DechirpParams()
 
 
-@pytest.fixture(scope="session")
-def het_proc(gw, gpu_ctx, dechirp_params):
-    """HeterodyneDechirp — GPU процессор (skip если нет GPU)."""
-    p = dechirp_params
+def make_het_proc(gw, gpu_ctx, params: DechirpParams = None):
+    """HeterodyneDechirp — GPU процессор."""
+    if params is None:
+        params = DechirpParams()
     return gw.HeterodyneDechirp(
         gpu_ctx,
-        p.fs, p.f_start, p.f_end, p.n_samples, p.n_antennas
+        params.fs, params.f_start, params.f_end, params.n_samples, params.n_antennas
     )
 
 
-@pytest.fixture(scope="module")
-def delays_linear_us(dechirp_params) -> np.ndarray:
-    """Линейные задержки для 5 антенн (100..500 мкс)."""
-    return np.array([100., 200., 300., 400., 500.])[:dechirp_params.n_antennas]
+def make_delays_linear_us(n_antennas: int = _N_ANTENNAS) -> np.ndarray:
+    """Линейные задержки (100..500 мкс)."""
+    return np.array([100., 200., 300., 400., 500.])[:n_antennas]
 
 
-@pytest.fixture(scope="module")
-def lfm_srx(dechirp_params, delays_linear_us) -> np.ndarray:
+def make_lfm_srx(params: DechirpParams = None,
+                 delays_us: np.ndarray = None) -> np.ndarray:
     """Приёмный ЛЧМ сигнал [n_antennas, n_samples] с задержками."""
-    p = dechirp_params
-    delays_s = delays_linear_us * 1e-6
-    S = np.zeros((p.n_antennas, p.n_samples), dtype=np.complex64)
-
-    for ant in range(p.n_antennas):
+    if params is None:
+        params = DechirpParams()
+    if delays_us is None:
+        delays_us = make_delays_linear_us(params.n_antennas)
+    delays_s = delays_us * 1e-6
+    S = np.zeros((params.n_antennas, params.n_samples), dtype=np.complex64)
+    for ant in range(params.n_antennas):
         tau = delays_s[ant]
-        t = np.arange(p.n_samples) / p.fs
+        t = np.arange(params.n_samples) / params.fs
         mask = t >= tau
         t_local = t[mask] - tau
-        phase = 2 * np.pi * (p.f_start * t_local +
-                              0.5 * p.chirp_rate * t_local ** 2)
+        phase = 2 * np.pi * (params.f_start * t_local +
+                              0.5 * params.chirp_rate * t_local ** 2)
         S[ant, mask] = np.exp(1j * phase).astype(np.complex64)
-
     return S
 
 
-@pytest.fixture(scope="module")
-def s_ref(dechirp_params) -> np.ndarray:
+def make_s_ref(params: DechirpParams = None) -> np.ndarray:
     """Опорный ЛЧМ сигнал [n_samples] с нулевой задержкой."""
-    p = dechirp_params
-    t = np.arange(p.n_samples) / p.fs
-    phase = 2 * np.pi * (p.f_start * t + 0.5 * p.chirp_rate * t ** 2)
+    if params is None:
+        params = DechirpParams()
+    t = np.arange(params.n_samples) / params.fs
+    phase = 2 * np.pi * (params.f_start * t + 0.5 * params.chirp_rate * t ** 2)
     return np.exp(1j * phase).astype(np.complex64)

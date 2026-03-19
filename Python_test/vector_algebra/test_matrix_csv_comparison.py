@@ -6,39 +6,38 @@ Python тест: сравнение инверсии матриц vector_algebra
 
 Запуск:
     cd /home/alex/C++/GPUWorkLib
-    pytest Python_test/vector_algebra/test_matrix_csv_comparison.py -v
+    python Python_test/vector_algebra/test_matrix_csv_comparison.py
+    PYTHONPATH=build/python pytest Python_test/vector_algebra/test_matrix_csv_comparison.py -v
 
-Требования: ROCm, gpuworklib (ENABLE_ROCM=ON), pytest, numpy
+Требования: ROCm, gpuworklib (ENABLE_ROCM=ON), numpy
 """
 
 import os
 import sys
 from datetime import datetime
 
-import pytest
 import numpy as np
 
-# Path to gpuworklib
-_BUILD_PATHS = [
-    os.path.join(os.path.dirname(__file__), "..", "..", "build", "python"),
-    os.path.join(os.path.dirname(__file__), "..", "..", "build", "python", "Release"),
-    os.path.join(os.path.dirname(__file__), "..", "..", "build", "python", "Debug"),
-]
-for _p in _BUILD_PATHS:
-    if os.path.isdir(_p):
-        sys.path.insert(0, os.path.abspath(_p))
-        break
+_PT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PT_DIR not in sys.path:
+    sys.path.insert(0, _PT_DIR)
+from common.runner import SkipTest, TestRunner
 
 try:
     import gpuworklib
+    _gw = gpuworklib
 except ImportError:
-    gpuworklib = None
+    _gw = None
 
 # Paths
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(_THIS_DIR, "..", ".."))
 DATA_DIR = os.path.join(_REPO_ROOT, "modules", "vector_algebra", "tests", "Data")
 REPORT_DIR = os.path.join(_REPO_ROOT, "Results", "Reports", "vector_algebra")
+
+# Пороги: float32, реальные данные — допускаем относительную ошибку по результатам прогона
+REL_ERR_THRESHOLD_85 = 2e-2   # 85×85 (~1.85e-2 observed)
+REL_ERR_THRESHOLD_341 = 5e-2  # 341×341
 
 
 # ============================================================================
@@ -57,7 +56,6 @@ def load_complex_matrix_csv(path: str) -> np.ndarray:
             cells = [c.strip() for c in line.split(",")]
             row = []
             for cell in cells:
-                # Python complex() использует 'j', CSV использует 'i'
                 s = cell.replace("i", "j").replace("I", "j")
                 row.append(complex(s))
             rows.append(row)
@@ -112,121 +110,110 @@ def generate_report(results: list, report_path: str) -> None:
 
 
 # ============================================================================
-# Fixtures
-# ============================================================================
-
-
-@pytest.fixture(scope="module")
-def rocm_context():
-    """ROCm GPU контекст. Пропустить если ROCm недоступен."""
-    if gpuworklib is None:
-        pytest.skip("gpuworklib not found")
-    try:
-        ctx = gpuworklib.ROCmGPUContext(0)
-        return ctx
-    except Exception as e:
-        pytest.skip(f"ROCm недоступен: {e}")
-
-
-@pytest.fixture(scope="module")
-def inverter(rocm_context):
-    """CholeskyInverterROCm (GpuKernel mode)."""
-    return gpuworklib.CholeskyInverterROCm(
-        rocm_context, gpuworklib.SymmetrizeMode.GpuKernel
-    )
-
-
-@pytest.fixture(scope="session")
-def matrix_csv_report_data():
-    """Собирает результаты для отчёта. По завершении session пишет отчёт."""
-    data = []
-    yield data
-    if data:
-        report_path = os.path.join(REPORT_DIR, "matrix_csv_comparison_report.md")
-        generate_report(data, report_path)
-
-
-# ============================================================================
 # Tests
 # ============================================================================
 
-# Пороги: float32, реальные данные — допускаем относительную ошибку по результатам прогона
-REL_ERR_THRESHOLD_85 = 2e-2   # 85×85 (~1.85e-2 observed)
-REL_ERR_THRESHOLD_341 = 5e-2  # 341×341
+_report_data = []  # accumulated across test runs
 
 
-def test_inv_r85_matches_reference(inverter, matrix_csv_report_data):
-    """R_inv_85 → inv → сравнить с R_85 (1).csv"""
-    n = 85
-    r_inv_path = os.path.join(DATA_DIR, "R_inv_85.csv")
-    r_ref_path = os.path.join(DATA_DIR, "R_85 (1).csv")
+class TestMatrixCsvComparison:
+    """Тесты сравнения инверсии матриц с CSV-эталоном."""
 
-    if not os.path.isfile(r_inv_path):
-        pytest.skip(f"Data file not found: {r_inv_path}")
-    if not os.path.isfile(r_ref_path):
-        pytest.skip(f"Data file not found: {r_ref_path}")
+    def setUp(self):
+        if _gw is None:
+            raise SkipTest("gpuworklib не найден")
+        try:
+            ctx = _gw.ROCmGPUContext(0)
+            self._inverter = _gw.CholeskyInverterROCm(
+                ctx, _gw.SymmetrizeMode.GpuKernel
+            )
+        except Exception as e:
+            raise SkipTest(f"ROCm недоступен: {e}")
 
-    R_inv = load_complex_matrix_csv(r_inv_path)
-    R_ref = load_complex_matrix_csv(r_ref_path)
+    def test_inv_r85_matches_reference(self):
+        """R_inv_85 → inv → сравнить с R_85 (1).csv"""
+        n = 85
+        r_inv_path = os.path.join(DATA_DIR, "R_inv_85.csv")
+        r_ref_path = os.path.join(DATA_DIR, "R_85 (1).csv")
 
-    assert R_inv.shape == (n, n), f"R_inv shape {R_inv.shape}"
-    assert R_ref.shape == (n, n), f"R_ref shape {R_ref.shape}"
+        if not os.path.isfile(r_inv_path):
+            raise SkipTest(f"Data file not found: {r_inv_path}")
+        if not os.path.isfile(r_ref_path):
+            raise SkipTest(f"Data file not found: {r_ref_path}")
 
-    # inv(R_inv) = R
-    computed_R = inverter.invert_cpu(R_inv.flatten(), n)
+        R_inv = load_complex_matrix_csv(r_inv_path)
+        R_ref = load_complex_matrix_csv(r_ref_path)
 
-    frob_diff = frobenius_diff(computed_R, R_ref)
-    rel_err = relative_error(computed_R, R_ref)
-    passed = rel_err < REL_ERR_THRESHOLD_85
+        assert R_inv.shape == (n, n), f"R_inv shape {R_inv.shape}"
+        assert R_ref.shape == (n, n), f"R_ref shape {R_ref.shape}"
 
-    matrix_csv_report_data.append({
-        "name": "85×85",
-        "r_inv_file": "R_inv_85.csv",
-        "r_ref_file": "R_85 (1).csv",
-        "frobenius_diff": frob_diff,
-        "rel_err": rel_err,
-        "passed": passed,
-    })
+        computed_R = self._inverter.invert_cpu(R_inv.flatten(), n)
 
-    assert passed, (
-        f"R_85: rel_err={rel_err:.2e} >= {REL_ERR_THRESHOLD_85}, "
-        f"||Δ||_F={frob_diff:.2e}"
-    )
+        frob_diff = frobenius_diff(computed_R, R_ref)
+        rel_err = relative_error(computed_R, R_ref)
+        passed = rel_err < REL_ERR_THRESHOLD_85
+
+        _report_data.append({
+            "name": "85×85",
+            "r_inv_file": "R_inv_85.csv",
+            "r_ref_file": "R_85 (1).csv",
+            "frobenius_diff": frob_diff,
+            "rel_err": rel_err,
+            "passed": passed,
+        })
+
+        assert passed, (
+            f"R_85: rel_err={rel_err:.2e} >= {REL_ERR_THRESHOLD_85}, "
+            f"||Δ||_F={frob_diff:.2e}"
+        )
+
+    def test_inv_r341_matches_reference(self):
+        """R_inv_341 → inv → сравнить с R_341 (1).csv"""
+        n = 341
+        r_inv_path = os.path.join(DATA_DIR, "R_inv_341.csv")
+        r_ref_path = os.path.join(DATA_DIR, "R_341 (1).csv")
+
+        if not os.path.isfile(r_inv_path):
+            raise SkipTest(f"Data file not found: {r_inv_path}")
+        if not os.path.isfile(r_ref_path):
+            raise SkipTest(f"Data file not found: {r_ref_path}")
+
+        R_inv = load_complex_matrix_csv(r_inv_path)
+        R_ref = load_complex_matrix_csv(r_ref_path)
+
+        assert R_inv.shape == (n, n), f"R_inv shape {R_inv.shape}"
+        assert R_ref.shape == (n, n), f"R_ref shape {R_ref.shape}"
+
+        computed_R = self._inverter.invert_cpu(R_inv.flatten(), n)
+
+        frob_diff = frobenius_diff(computed_R, R_ref)
+        rel_err = relative_error(computed_R, R_ref)
+        passed = rel_err < REL_ERR_THRESHOLD_341
+
+        _report_data.append({
+            "name": "341×341",
+            "r_inv_file": "R_inv_341.csv",
+            "r_ref_file": "R_341 (1).csv",
+            "frobenius_diff": frob_diff,
+            "rel_err": rel_err,
+            "passed": passed,
+        })
+
+        assert passed, (
+            f"R_341: rel_err={rel_err:.2e} >= {REL_ERR_THRESHOLD_341}, "
+            f"||Δ||_F={frob_diff:.2e}"
+        )
+
+    def test_write_report(self):
+        """Записать отчёт о результатах сравнения."""
+        if not _report_data:
+            raise SkipTest("Нет данных для отчёта (предыдущие тесты были пропущены)")
+        report_path = os.path.join(REPORT_DIR, "matrix_csv_comparison_report.md")
+        generate_report(_report_data, report_path)
+        print(f"\n  Report saved: {report_path}")
 
 
-def test_inv_r341_matches_reference(inverter, matrix_csv_report_data):
-    """R_inv_341 → inv → сравнить с R_341 (1).csv"""
-    n = 341
-    r_inv_path = os.path.join(DATA_DIR, "R_inv_341.csv")
-    r_ref_path = os.path.join(DATA_DIR, "R_341 (1).csv")
-
-    if not os.path.isfile(r_inv_path):
-        pytest.skip(f"Data file not found: {r_inv_path}")
-    if not os.path.isfile(r_ref_path):
-        pytest.skip(f"Data file not found: {r_ref_path}")
-
-    R_inv = load_complex_matrix_csv(r_inv_path)
-    R_ref = load_complex_matrix_csv(r_ref_path)
-
-    assert R_inv.shape == (n, n), f"R_inv shape {R_inv.shape}"
-    assert R_ref.shape == (n, n), f"R_ref shape {R_ref.shape}"
-
-    computed_R = inverter.invert_cpu(R_inv.flatten(), n)
-
-    frob_diff = frobenius_diff(computed_R, R_ref)
-    rel_err = relative_error(computed_R, R_ref)
-    passed = rel_err < REL_ERR_THRESHOLD_341
-
-    matrix_csv_report_data.append({
-        "name": "341×341",
-        "r_inv_file": "R_inv_341.csv",
-        "r_ref_file": "R_341 (1).csv",
-        "frobenius_diff": frob_diff,
-        "rel_err": rel_err,
-        "passed": passed,
-    })
-
-    assert passed, (
-        f"R_341: rel_err={rel_err:.2e} >= {REL_ERR_THRESHOLD_341}, "
-        f"||Δ||_F={frob_diff:.2e}"
-    )
+if __name__ == "__main__":
+    runner = TestRunner()
+    results = runner.run(TestMatrixCsvComparison())
+    runner.print_summary(results)

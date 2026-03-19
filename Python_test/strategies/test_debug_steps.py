@@ -21,8 +21,12 @@ GPU: НЕ НУЖЕН — чистый NumPy.
 
 import sys
 import os
-import pytest
 import numpy as np
+
+_PYTHON_TEST_DIR_EARLY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PYTHON_TEST_DIR_EARLY not in sys.path:
+    sys.path.insert(0, _PYTHON_TEST_DIR_EARLY)
+from common.runner import SkipTest
 
 _DIR = os.path.dirname(os.path.abspath(__file__))
 if _DIR not in sys.path:
@@ -91,85 +95,79 @@ def _parabolic_peak(mags: np.ndarray, beam: int = 0,
 # STEP GEMM
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("variant", [
-    SignalVariant.SIN,
-    SignalVariant.LFM_NO_DELAY,
-])
-def test_gemm_shape_and_gain(variant: SignalVariant):
-    """Step GEMM: shape = (n_ant, n_samples), gain ≈ 1/sqrt(n_ant)."""
-    d = _generate_and_run(variant)
-    X, S, params = d["X"], d["S"], d["params"]
+def test_gemm_shape_and_gain():
+    """Step GEMM: shape = (n_ant, n_samples), gain ≈ 1/sqrt(n_ant) — для SIN и LFM_NO_DELAY."""
+    for variant in [SignalVariant.SIN, SignalVariant.LFM_NO_DELAY]:
+        d = _generate_and_run(variant)
+        X, S, params = d["X"], d["S"], d["params"]
 
-    # Shape
-    assert X.shape == (params.n_ant, params.n_samples), \
-        f"GEMM shape mismatch: {X.shape}"
+        # Shape
+        assert X.shape == (params.n_ant, params.n_samples), \
+            f"[{variant.name}] GEMM shape mismatch: {X.shape}"
 
-    # Coherent gain (identity/sqrt(n_ant) матрица)
-    gain     = float(np.mean(np.abs(X))) / max(float(np.mean(np.abs(S))), 1e-30)
-    expected = 1.0 / np.sqrt(params.n_ant)
-    err      = abs(gain - expected) / max(expected, 1e-30)
-    assert err < 0.1, f"GEMM gain error {err:.3f} > 0.1 (gain={gain:.4f})"
+        # Coherent gain (identity/sqrt(n_ant) матрица)
+        gain     = float(np.mean(np.abs(X))) / max(float(np.mean(np.abs(S))), 1e-30)
+        expected = 1.0 / np.sqrt(params.n_ant)
+        err      = abs(gain - expected) / max(expected, 1e-30)
+        assert err < 0.1, \
+            f"[{variant.name}] GEMM gain error {err:.3f} > 0.1 (gain={gain:.4f})"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP FFT
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("variant", [
-    SignalVariant.SIN,
-    SignalVariant.LFM_NO_DELAY,
-])
-def test_fft_peak_location(variant: SignalVariant):
+def test_fft_peak_location():
     """Step FFT: peak bin ≈ expected_peak_bin (±2 бина, только для SIN/CW)."""
-    d = _generate_and_run(variant)
-    mags, nfft, params = d["magnitudes"], d["nfft"], d["params"]
+    for variant in [SignalVariant.SIN, SignalVariant.LFM_NO_DELAY]:
+        d = _generate_and_run(variant)
+        mags, nfft, params = d["magnitudes"], d["nfft"], d["params"]
 
-    if not params.check_peak_freq:
-        pytest.skip(f"LFM без дечирпа не даёт чёткий FFT-пик (variant={variant.name})")
+        if not params.check_peak_freq:
+            continue  # LFM без дечирпа не даёт чёткий FFT-пик — пропустить
 
-    bin_hz   = params.fs / nfft
-    peak_bin = int(np.argmax(mags[0, 1:nfft // 2])) + 1
-    found_f  = peak_bin * bin_hz
-    err_hz   = abs(found_f - params.f0_hz)
+        bin_hz   = params.fs / nfft
+        peak_bin = int(np.argmax(mags[0, 1:nfft // 2])) + 1
+        found_f  = peak_bin * bin_hz
+        err_hz   = abs(found_f - params.f0_hz)
 
-    assert err_hz < 2.0 * bin_hz, \
-        f"FFT peak freq error {err_hz:.1f} Hz > 2·bin={2*bin_hz:.1f} Hz"
+        assert err_hz < 2.0 * bin_hz, \
+            f"[{variant.name}] FFT peak freq error {err_hz:.1f} Hz > 2·bin={2*bin_hz:.1f} Hz"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP OneMax (паrabolic fit)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("variant", [
-    SignalVariant.SIN,
-    SignalVariant.LFM_NO_DELAY,
-])
-def test_one_max_accuracy(variant: SignalVariant):
+def test_one_max_accuracy():
     """Step OneMax: refined_freq_hz ≈ f0_hz через 3-точечную параболу (только SIN/CW)."""
-    d = _generate_and_run(variant)
-    mags, nfft, params = d["magnitudes"], d["nfft"], d["params"]
+    for variant in [SignalVariant.SIN, SignalVariant.LFM_NO_DELAY]:
+        d = _generate_and_run(variant)
+        mags, nfft, params = d["magnitudes"], d["nfft"], d["params"]
 
-    if not params.check_peak_freq:
-        pytest.skip(f"LFM без дечирпа не даёт чёткий FFT-пик (variant={variant.name})")
+        if not params.check_peak_freq:
+            continue  # LFM без дечирпа — пропустить
 
-    bin_hz         = params.fs / nfft
-    peak_bin, offs = _parabolic_peak(mags, beam=0)
-    refined_freq   = (peak_bin + offs) * bin_hz
-    err_hz         = abs(refined_freq - params.f0_hz)
+        bin_hz         = params.fs / nfft
+        peak_bin, offs = _parabolic_peak(mags, beam=0)
+        refined_freq   = (peak_bin + offs) * bin_hz
+        err_hz         = abs(refined_freq - params.f0_hz)
 
-    assert err_hz < 2.0 * bin_hz, \
-        f"OneMax refined_freq error {err_hz:.1f} Hz > 2·bin={2*bin_hz:.1f} Hz"
+        assert err_hz < 2.0 * bin_hz, \
+            f"[{variant.name}] OneMax refined_freq error {err_hz:.1f} Hz > 2·bin={2*bin_hz:.1f} Hz"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP MinMax
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("variant", [
-    SignalVariant.SIN,
-    SignalVariant.LFM_NO_DELAY,
-])
-def test_minmax_dynamic_range(variant: SignalVariant):
+def test_minmax_dynamic_range_loop():
+    """Step MinMax: max >= min, dynamic_range > 20 dB — для SIN и LFM_NO_DELAY."""
+    for variant in [SignalVariant.SIN, SignalVariant.LFM_NO_DELAY]:
+        _test_minmax_dynamic_range_single(variant)
+
+
+def _test_minmax_dynamic_range_single(variant: SignalVariant):
     """Step MinMax: max >= min, dynamic_range > 20 dB."""
     d    = _generate_and_run(variant)
     mags = d["magnitudes"]

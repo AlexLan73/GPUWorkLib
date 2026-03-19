@@ -1,46 +1,53 @@
 """
-conftest.py — pytest fixtures для Python_test/strategies/
-==========================================================
+conftest.py — фабричные функции для Python_test/strategies/
+============================================================
 
-Fixtures для тестов pipeline (beamforming, Farrow, scenario).
-Наследует gpu_ctx, gw из корневого conftest.py.
+Без pytest. Предоставляет plain factory functions вместо @pytest.fixture.
+Каждый вызов make_*() создаёт новый объект.
 
-Fixtures:
-    strategy_plot_dir — Results/Plots/strategies/
-    scenario_8ant     — стандартный сценарий 8 антенн, 1 цель, theta=30°
-    scenario_multi    — сценарий с 3 целями
-    pipeline_runner   — PipelineRunner без checkpoint'ов
-    farrow            — FarrowDelay (numpy, не GPU)
+Использование:
+    from conftest import make_farrow, make_scenario_8ant, strategy_plot_dir
+
+    def test_something():
+        farrow = make_farrow()
+        scenario = make_scenario_8ant()
+        ...
 """
 
 import os
 import sys
-import pytest
-import numpy as np
 
-# Добавить strategies/ в sys.path для импорта scenario_builder, farrow_delay
+# Добавить strategies/ в sys.path
 _STRATEGIES_DIR = os.path.dirname(os.path.abspath(__file__))
 if _STRATEGIES_DIR not in sys.path:
     sys.path.insert(0, _STRATEGIES_DIR)
 
-
-@pytest.fixture(scope="session")
-def strategy_plot_dir(plot_dir) -> str:
-    """Директория Results/Plots/strategies/."""
-    path = os.path.join(plot_dir, "strategies")
-    os.makedirs(path, exist_ok=True)
-    return path
+# Добавить Python_test/ в sys.path
+_PT_DIR = os.path.dirname(_STRATEGIES_DIR)
+if _PT_DIR not in sys.path:
+    sys.path.insert(0, _PT_DIR)
 
 
-@pytest.fixture(scope="session")
-def farrow():
+# ─────────────────────────────────────────────────────────────────────────────
+# Пути
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PROJECT_ROOT = os.path.dirname(_PT_DIR)
+strategy_plot_dir: str = os.path.join(_PROJECT_ROOT, "Results", "Plots", "strategies")
+os.makedirs(strategy_plot_dir, exist_ok=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Фабричные функции
+# ─────────────────────────────────────────────────────────────────────────────
+
+def make_farrow():
     """FarrowDelay — numpy реализация (не требует GPU)."""
     from farrow_delay import FarrowDelay
     return FarrowDelay()
 
 
-@pytest.fixture(scope="module")
-def scenario_8ant():
+def make_scenario_8ant():
     """Сценарий: 8 антенн, 1 цель @ theta=30°, fs=12МГц."""
     from scenario_builder import make_single_target
     return make_single_target(
@@ -52,8 +59,7 @@ def scenario_8ant():
     )
 
 
-@pytest.fixture(scope="module")
-def scenario_multi():
+def make_scenario_multi():
     """Сценарий: 8 антенн, 3 цели @ 15°/30°/45°."""
     from scenario_builder import make_multi_target
     return make_multi_target(
@@ -66,8 +72,7 @@ def scenario_multi():
     )
 
 
-@pytest.fixture(scope="session")
-def pipeline_runner():
+def make_pipeline_runner():
     """PipelineRunner без checkpoint'ов (нет вывода на диск)."""
     from pipeline_runner import PipelineRunner
     return PipelineRunner(output_dir=None)

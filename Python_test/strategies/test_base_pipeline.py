@@ -21,7 +21,6 @@ GPU: НЕ НУЖЕН — чистый NumPy.
 
 import sys
 import os
-import pytest
 import numpy as np
 
 # Добавить strategies/ в sys.path
@@ -151,13 +150,13 @@ def test_lfm_farrow_pipeline():
     assert result.passed, result.summary()
 
 
-@pytest.mark.parametrize("variant", [
-    SignalVariant.SIN,
-    SignalVariant.LFM_NO_DELAY,
-    SignalVariant.LFM_WITH_DELAY,
-    SignalVariant.LFM_FARROW,
-])
-def test_all_variants_parametrize(variant: SignalVariant):
-    """T1 parametrize: все 4 варианта сигнала."""
-    result = _run_variant(variant)
-    assert result.passed, result.summary()
+def test_all_variants():
+    """T1: все 4 варианта сигнала (явный цикл вместо parametrize)."""
+    for variant in [
+        SignalVariant.SIN,
+        SignalVariant.LFM_NO_DELAY,
+        SignalVariant.LFM_WITH_DELAY,
+        SignalVariant.LFM_FARROW,
+    ]:
+        result = _run_variant(variant)
+        assert result.passed, f"{variant.name}: {result.summary()}"

@@ -33,7 +33,6 @@ import os
 import sys
 import tempfile
 import numpy as np
-import pytest
 
 # Добавить strategies/ в sys.path для импорта scenario_builder, farrow_delay и т.д.
 _DIR = os.path.dirname(os.path.abspath(__file__))

@@ -39,7 +39,6 @@ Date: 2026-03-08
 import os
 import sys
 import numpy as np
-import pytest
 
 # Добавить strategies/ в sys.path для импорта scenario_builder и др.
 _DIR = os.path.dirname(os.path.abspath(__file__))

@@ -1,20 +1,12 @@
 """
-conftest.py — pytest fixtures для Python_test/signal_generators/
-=================================================================
+conftest.py — фабричные функции для Python_test/signal_generators/
+===================================================================
 
-Наследует gpu_ctx, gw из корневого conftest.py.
-Fixtures специфичны для тестов генераторов сигналов.
-
-Fixtures:
-    sig_plot_dir    — Results/Plots/signal_generators/
-    sig_gen         — SignalGenerator (scope=session, requires GPU)
-    default_fs      — частота дискретизации 12 МГц
-    default_length  — число отсчётов 8192
-    lfm_params      — типичные параметры ЛЧМ
+Без pytest. Предоставляет factory functions для тестов генераторов сигналов.
+NumPy-эталонные функции также здесь (Information Expert).
 """
 
 import os
-import pytest
 import numpy as np
 from dataclasses import dataclass
 
@@ -27,6 +19,10 @@ _FS = 12e6        # 12 МГц
 _LENGTH = 8192
 _F0 = 2e6         # 2 МГц несущая
 _FDEV = 1e6       # девиация ЛЧМ
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sig_plot_dir: str = os.path.join(_PROJECT_ROOT, "Results", "Plots", "signal_generators")
+os.makedirs(sig_plot_dir, exist_ok=True)
 
 
 @dataclass
@@ -41,49 +37,26 @@ class LfmParams:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Fixtures
+# Фабричные функции
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.fixture(scope="session")
-def sig_plot_dir(plot_dir) -> str:
-    """Директория Results/Plots/signal_generators/."""
-    path = os.path.join(plot_dir, "signal_generators")
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-@pytest.fixture(scope="session")
-def default_fs() -> float:
-    """Частота дискретизации по умолчанию: 12 МГц."""
-    return _FS
-
-
-@pytest.fixture(scope="session")
-def default_length() -> int:
-    """Число отсчётов по умолчанию: 8192."""
-    return _LENGTH
-
-
-@pytest.fixture(scope="session")
-def sig_gen(gw, gpu_ctx):
-    """SignalGenerator (создаётся один раз, skip если нет GPU)."""
+def make_sig_gen(gw, gpu_ctx):
+    """SignalGenerator (создаётся один раз)."""
     return gw.SignalGenerator(gpu_ctx)
 
 
-@pytest.fixture(scope="session")
-def fft_proc(gw, gpu_ctx):
+def make_fft_proc(gw, gpu_ctx):
     """FFTProcessor (создаётся один раз)."""
     return gw.FFTProcessor(gpu_ctx)
 
 
-@pytest.fixture(scope="module")
-def lfm_params() -> LfmParams:
+def make_lfm_params() -> LfmParams:
     """Типичные параметры ЛЧМ-сигнала."""
     return LfmParams()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# NumPy эталонные функции (Information Expert — конфиг сам генерирует эталон)
+# NumPy эталонные функции
 # ─────────────────────────────────────────────────────────────────────────────
 
 def cw_numpy(fs: float, length: int, f0: float,

@@ -14,8 +14,14 @@ Author: Kodo (AI Assistant)
 Date: 2026-03-10
 """
 
+import sys
+import os
 import numpy as np
-import pytest
+
+_PT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PT_DIR not in sys.path:
+    sys.path.insert(0, _PT_DIR)
+from common.runner import SkipTest, TestRunner
 
 
 # ============================================================================
@@ -127,7 +133,8 @@ class TestCorrelationNumpy:
         corr = correlate_numpy(ref, ref)
 
         # corr[0] должен быть максимальным среди первых 100 точек
-        assert corr[0] == pytest.approx(np.max(corr[:100]), rel=0.01), \
+        max_val = float(np.max(corr[:100]))
+        assert abs(corr[0] - max_val) < abs(max_val) * 0.01, \
             "corr[0] должен быть максимальным при нулевом сдвиге"
 
     def test_output_shape_matches_params(self):
@@ -165,23 +172,17 @@ try:
 except ImportError:
     HAS_FM_CORRELATOR = False
 
-rocm_only = pytest.mark.skipif(
-    not HAS_FM_CORRELATOR,
-    reason="gpuworklib.FMCorrelatorROCm не найден (нужна пересборка с ENABLE_ROCM=ON)"
-)
-
-
-@rocm_only
 class TestFMCorrelatorROCm:
     """Тесты GPU-реализации через gpuworklib.FMCorrelatorROCm."""
 
-    @pytest.fixture(scope='class')
-    def ctx(self):
-        return gpuworklib.ROCmGPUContext(0)
+    def setUp(self):
+        if not HAS_FM_CORRELATOR:
+            raise SkipTest("gpuworklib.FMCorrelatorROCm не найден (нужна пересборка с ENABLE_ROCM=ON)")
+        self._ctx = gpuworklib.ROCmGPUContext(0)
 
-    def test_generate_msequence_values(self, ctx):
+    def test_generate_msequence_values(self):
         """GPU: generate_msequence возвращает ±1 массив."""
-        corr = gpuworklib.FMCorrelatorROCm(ctx)
+        corr = gpuworklib.FMCorrelatorROCm(self._ctx)
         corr.set_params(fft_size=1024, num_shifts=1, num_signals=1,
                         num_output_points=50)
         seq = corr.generate_msequence(seed=0x12345678)
@@ -190,9 +191,9 @@ class TestFMCorrelatorROCm:
         assert len(seq) == 1024
         assert np.all(np.abs(seq) == 1.0), "Все элементы должны быть ±1"
 
-    def test_gpu_autocorrelation_snr(self, ctx):
+    def test_gpu_autocorrelation_snr(self):
         """GPU: автокорреляция M-sequence → SNR > 10."""
-        corr = gpuworklib.FMCorrelatorROCm(ctx)
+        corr = gpuworklib.FMCorrelatorROCm(self._ctx)
         corr.set_params(fft_size=4096, num_shifts=1, num_signals=1,
                         num_output_points=200)
 
@@ -212,14 +213,14 @@ class TestFMCorrelatorROCm:
 
         assert snr > 10, f"SNR={snr:.2f} < 10"
 
-    def test_gpu_shift_peak_position(self, ctx):
+    def test_gpu_shift_peak_position(self):
         """GPU: test_pattern с shift_step=2 → пики на ожидаемых позициях."""
         S = 3
         K = 4
         shift_step = 2
         n_kg = 100
 
-        corr = gpuworklib.FMCorrelatorROCm(ctx)
+        corr = gpuworklib.FMCorrelatorROCm(self._ctx)
         corr.set_params(fft_size=1024, num_shifts=K, num_signals=S,
                         num_output_points=n_kg)
         corr.prepare_reference()
@@ -233,11 +234,11 @@ class TestFMCorrelatorROCm:
         peak_k0 = np.argmax(peaks[0, 0, :])
         assert peak_k0 == 0, f"s=0, k=0: пик в {peak_k0}, ожидали 0"
 
-    def test_gpu_vs_numpy_correlation(self, ctx):
+    def test_gpu_vs_numpy_correlation(self):
         """GPU результат совпадает с NumPy эталоном (max_error < 0.05)."""
         n = 1024
 
-        corr = gpuworklib.FMCorrelatorROCm(ctx)
+        corr = gpuworklib.FMCorrelatorROCm(self._ctx)
         corr.set_params(fft_size=n, num_shifts=1, num_signals=1,
                         num_output_points=100)
 
@@ -254,3 +255,11 @@ class TestFMCorrelatorROCm:
 
         max_err = np.max(np.abs(peaks_gpu[0, 0] - corr_np))
         assert max_err < 0.05, f"max_error={max_err:.6f} >= 0.05 (GPU vs NumPy)"
+
+
+if __name__ == "__main__":
+    runner = TestRunner()
+    results = runner.run(TestMSequence())
+    results += runner.run(TestCorrelationNumpy())
+    results += runner.run(TestFMCorrelatorROCm())
+    runner.print_summary(results)
