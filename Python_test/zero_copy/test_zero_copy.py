@@ -2,9 +2,7 @@
 test_zero_copy.py — Python тесты ZeroCopy Bridge (OpenCL → ROCm)
 
 Запуск:
-    sg render -c "python3 Python_test/zero_copy/test_zero_copy.py"
-    или:
-    pytest Python_test/zero_copy/test_zero_copy.py -v
+    python Python_test/zero_copy/test_zero_copy.py
 
 Тесты проверяют доступность ZeroCopy и корректность определения метода.
 Если устройство не поддерживает ZeroCopy — тесты gracefully пропускаются.

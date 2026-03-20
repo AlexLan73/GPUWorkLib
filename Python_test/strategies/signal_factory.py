@@ -34,12 +34,22 @@ class SignalVariant(Enum):
     """Выбор сценария перед стартом теста.
 
     Information Expert (GRASP): знает параметры каждого варианта.
+
+    V1–V5: варианты CW pipeline (используются SignalSourceFactory + ISignalSource).
+    SIN/LFM_*: варианты LFM/SIN стратегий (используются SignalStrategyFactory + ISignalStrategy).
     """
-    V1_CW_CLEAN        = 1  # CW без шума,   W = Identity
-    V2_CW_NOISE        = 2  # CW + AWGN,     W = Identity
-    V3_CW_PHASE_DELAY  = 3  # CW + задержки, W = delay_and_sum, без шума
-    V4_CW_PHASE_NOISE  = 4  # CW + задержки, W = delay_and_sum, + AWGN
-    V5_FROM_FILE       = 5  # Загрузка из файла → GPU (заглушка)
+    # CW pipeline variants (для test_strategies_pipeline.py)
+    V1_CW_CLEAN        = 1   # CW без шума,   W = Identity
+    V2_CW_NOISE        = 2   # CW + AWGN,     W = Identity
+    V3_CW_PHASE_DELAY  = 3   # CW + задержки, W = delay_and_sum, без шума
+    V4_CW_PHASE_NOISE  = 4   # CW + задержки, W = delay_and_sum, + AWGN
+    V5_FROM_FILE       = 5   # Загрузка из файла → GPU (заглушка)
+
+    # LFM/SIN variants (для test_base_pipeline.py, test_debug_steps.py)
+    SIN            = 10  # синус (fdev=0)
+    LFM_NO_DELAY   = 11  # ЛЧМ без задержек (2.1)
+    LFM_WITH_DELAY = 12  # ЛЧМ + целочисленные задержки (2.2.1)
+    LFM_FARROW     = 13  # ЛЧМ + дробные задержки (2.2.2)
 
 
 @dataclass
@@ -97,7 +107,7 @@ class ISignalSource(ABC):
         ...
 
 
-class GpuCwCleanSignalSource(ISignalSource):
+class CwCleanSignalSource(ISignalSource):
     """V1: CW без шума, весовая матрица = Identity.
 
     GEMM тривиален: X = I @ S = S.
@@ -120,7 +130,7 @@ class GpuCwCleanSignalSource(ISignalSource):
         )
 
 
-class GpuCwNoiseSignalSource(ISignalSource):
+class CwNoiseSignalSource(ISignalSource):
     """V2: CW + белый гауссов шум (AWGN), W = Identity.
 
     S[k,n] = exp(j*2π*f0*n/fs) + noise[k,n]
@@ -155,7 +165,7 @@ class GpuCwNoiseSignalSource(ISignalSource):
         )
 
 
-class GpuCwDelayedSignalSource(ISignalSource):
+class CwDelayedSignalSource(ISignalSource):
     """V3: CW с межантенной задержкой, W = delay_and_sum (без шума).
 
     Задержка k-й антенны: tau[k] = tau_step * k
@@ -188,12 +198,12 @@ class GpuCwDelayedSignalSource(ISignalSource):
         )
 
 
-class GpuCwPhaseNoiseSignalSource(ISignalSource):
+class CwPhaseNoiseSignalSource(ISignalSource):
     """V4: V3 + AWGN шум. Полный реальный сценарий."""
 
     def generate(self, cfg: SignalConfig) -> SignalData:
         # Взять V3 за основу
-        v3_source = GpuCwDelayedSignalSource()
+        v3_source = CwDelayedSignalSource()
         data = v3_source.generate(cfg)
 
         # Добавить шум к S_ref
@@ -261,10 +271,10 @@ class SignalSourceFactory:
     """
 
     _registry: dict = {
-        SignalVariant.V1_CW_CLEAN       : GpuCwCleanSignalSource,
-        SignalVariant.V2_CW_NOISE       : GpuCwNoiseSignalSource,
-        SignalVariant.V3_CW_PHASE_DELAY : GpuCwDelayedSignalSource,
-        SignalVariant.V4_CW_PHASE_NOISE : GpuCwPhaseNoiseSignalSource,
+        SignalVariant.V1_CW_CLEAN       : CwCleanSignalSource,
+        SignalVariant.V2_CW_NOISE       : CwNoiseSignalSource,
+        SignalVariant.V3_CW_PHASE_DELAY : CwDelayedSignalSource,
+        SignalVariant.V4_CW_PHASE_NOISE : CwPhaseNoiseSignalSource,
         SignalVariant.V5_FROM_FILE      : FileSignalSource,
     }
 

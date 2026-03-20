@@ -8,7 +8,7 @@ test_ai_pipeline.py — тесты AI filter pipeline
 
 Запуск:
     python Python_test/filters/ai_pipeline/test_ai_pipeline.py
-    PYTHONPATH=build/python pytest Python_test/filters/ai_pipeline/test_ai_pipeline.py -v
+    PYTHONPATH=build/python python Python_test/filters/ai_pipeline/test_ai_pipeline.py
 
 Тесты:
     test_mock_parser_lowpass      — парсинг "FIR lowpass"

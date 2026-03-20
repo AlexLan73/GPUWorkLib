@@ -6,7 +6,7 @@ common — общая инфраструктура для Python_test/
     result      — TestResult, ValidationResult (value objects)
     configs     — SignalConfig, FilterConfig (dataclasses)
     validators  — IValidator + DataValidator (Strategy GoF)
-    runner      — TestRunner + SkipTest (без pytest)
+    runner      — TestRunner + SkipTest
     reporters   — IReporter + ConsoleReporter / JSONReporter
     gpu_loader  — GPULoader (Singleton) — находит .so один раз
     gpu_context — GPUContextManager (Singleton) — хранит GPU-контекст

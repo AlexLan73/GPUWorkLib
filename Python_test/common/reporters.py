@@ -120,7 +120,9 @@ class JSONReporter(IReporter):
         self.output_path = output_path
         self._records: list = []
         self._start_times: dict = {}
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        parent = os.path.dirname(output_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
 
     def on_test_started(self, name: str) -> None:
         self._start_times[name] = time.time()

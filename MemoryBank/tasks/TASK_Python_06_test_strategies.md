@@ -1,6 +1,6 @@
 # TASK Python-06: strategies/test_strategies_pipeline.py — 5 тестов
 
-**Статус**: 🔲 TODO
+**Статус**: ✅ DONE (2026-03-20)
 **Приоритет**: 🟡 ВЫСОКИЙ
 **Файл**: `Python_test/strategies/test_strategies_pipeline.py` (создать новый)
 **Зависимости**: TASK_Python_01..05 (все предыдущие)

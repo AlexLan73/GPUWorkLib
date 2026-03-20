@@ -57,6 +57,8 @@ class TestResult:
         """True если все валидации прошли и нет ошибки."""
         if self.error is not None:
             return False
+        if not self.validations:
+            return False
         return all(v.passed for v in self.validations)
 
     def add(self, v: ValidationResult) -> "TestResult":

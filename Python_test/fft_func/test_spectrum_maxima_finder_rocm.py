@@ -14,7 +14,7 @@ test_spectrum_maxima_finder_rocm.py — тесты SpectrumMaximaFinderROCm (ROC
 
 Запуск:
   cd /home/alex/C++/GPUWorkLib
-  PYTHONPATH=build/python pytest Python_test/fft_maxima/test_spectrum_maxima_finder_rocm.py -v
+  PYTHONPATH=build/python python Python_test/fft_maxima/test_spectrum_maxima_finder_rocm.py
 """
 
 import sys

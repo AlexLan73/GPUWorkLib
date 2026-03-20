@@ -29,7 +29,6 @@ test_scenario_builder.py — физическая модель ULA + генер�
 GPU: НЕ НУЖЕН — чистый NumPy.
 
 ЗАПУСК (из корня проекта):
-    pytest Python_test/strategies/test_scenario_builder.py -v
     python Python_test/strategies/test_scenario_builder.py
 
 Author: Кодо (AI Assistant)

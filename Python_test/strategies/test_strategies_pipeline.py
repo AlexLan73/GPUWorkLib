@@ -2,7 +2,7 @@
 test_strategies_pipeline.py — Тест pipeline strategies (5 вариантов сигнала)
 =============================================================================
 
-Запуск (без pytest!):
+Запуск:
     python Python_test/strategies/test_strategies_pipeline.py
 
 Или через TestRunner:
@@ -57,7 +57,7 @@ class TestStrategiesPipeline:
     """Тест полного pipeline strategies — 5 вариантов сигнала.
 
     Каждый метод test_v* = один вариант сигнала.
-    Запускается через TestRunner (без pytest!).
+    Запускается через TestRunner.
 
     Template Method (GoF): _run_pipeline() — общий скелет для всех тестов.
     Strategy (GoF): SignalSourceFactory выбирает источник сигнала.
@@ -214,7 +214,7 @@ class TestStrategiesPipeline:
         return result
 
 
-# ── Точка входа (прямой запуск без pytest) ───────────────────────────────────
+# ── Точка входа (прямой запуск) ──────────────────────────────────────────────
 
 if __name__ == "__main__":
     import sys

@@ -16,7 +16,7 @@ test_base_pipeline.py — проверка математики pipeline без 
 GPU: НЕ НУЖЕН — чистый NumPy.
 
 ЗАПУСК (из корня проекта):
-    pytest Python_test/strategies/test_base_pipeline.py -v
+    python Python_test/strategies/test_base_pipeline.py
 """
 
 import sys
@@ -109,7 +109,7 @@ class NumpyPipelineTest(StrategyTestBase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# pytest tests
+# Tests
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _run_variant(variant: SignalVariant,

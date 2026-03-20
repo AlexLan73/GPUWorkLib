@@ -1,5 +1,5 @@
 """
-conftest.py — pytest configuration for capon module tests.
+conftest.py — фабричные функции для Python_test/capon/
 """
 import sys
 import os

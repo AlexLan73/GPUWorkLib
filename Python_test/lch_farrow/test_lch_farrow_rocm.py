@@ -20,7 +20,6 @@ Tests:
 
 Usage:
   python Python_test/lch_farrow/test_lch_farrow_rocm.py
-  pytest Python_test/lch_farrow/test_lch_farrow_rocm.py -v
 
 Author: Kodo (AI Assistant)
 Date: 2026-02-24

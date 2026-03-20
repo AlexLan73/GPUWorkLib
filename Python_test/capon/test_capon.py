@@ -22,7 +22,6 @@ Tests (NumPy reference — no GPU needed):
   7. all_tests_pass        — C++ tests 01-04 PASS in stdout
 
 Usage:
-  pytest Python_test/capon/test_capon.py -v
   python Python_test/capon/test_capon.py
 
 Author: Кодо (AI Assistant)

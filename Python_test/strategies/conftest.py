@@ -2,8 +2,7 @@
 conftest.py — фабричные функции для Python_test/strategies/
 ============================================================
 
-Без pytest. Предоставляет plain factory functions вместо @pytest.fixture.
-Каждый вызов make_*() создаёт новый объект.
+Предоставляет фабричные функции. Каждый вызов make_*() создаёт новый объект.
 
 Использование:
     from conftest import make_farrow, make_scenario_8ant, strategy_plot_dir

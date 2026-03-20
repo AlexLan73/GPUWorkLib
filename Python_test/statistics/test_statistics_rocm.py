@@ -24,7 +24,6 @@ Tests:
 
 Usage:
   python Python_test/statistics/test_statistics_rocm.py
-  pytest Python_test/statistics/test_statistics_rocm.py -v
 
 Author: Kodo (AI Assistant)
 Date: 2026-02-24

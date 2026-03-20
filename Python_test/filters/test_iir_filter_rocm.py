@@ -14,7 +14,6 @@ Note: GPU IIR is most efficient with many channels (>= 8).
 
 Usage:
   python Python_test/filters/test_iir_filter_rocm.py
-  pytest Python_test/filters/test_iir_filter_rocm.py -v
 
 Author: Kodo (AI Assistant)
 Date: 2026-02-24

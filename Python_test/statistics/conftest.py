@@ -2,7 +2,7 @@
 conftest.py — фабричные функции для Python_test/statistics/
 ============================================================
 
-Без pytest. Предоставляет factory functions для тестов статистики.
+Предоставляет factory functions для тестов статистики.
 """
 
 import os

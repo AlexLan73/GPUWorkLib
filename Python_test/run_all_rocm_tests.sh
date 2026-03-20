@@ -60,6 +60,13 @@ echo "============================================================"
 run_test "Python_test/statistics/test_statistics_rocm.py" \
          "StatisticsProcessor (mean/median/statistics, GPU sort)"
 
+run_test "Python_test/statistics/test_statistics_float_rocm.py" \
+         "StatisticsProcessor float (mean/median float32)"
+
+# ── Vector Algebra ───────────────────────────────────────────────
+run_test "Python_test/vector_algebra/test_cholesky_inverter_rocm.py" \
+         "CholeskyInverterROCm (POTRF+POTRI, Roundtrip/GpuKernel)"
+
 # ── Фильтры ─────────────────────────────────────────────────────
 run_test "Python_test/filters/test_fir_filter_rocm.py" \
          "FirFilterROCm (LP/BP/HP/multi-channel)"

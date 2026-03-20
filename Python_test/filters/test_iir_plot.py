@@ -9,8 +9,7 @@ Panels:
   4. Pole-Zero diagram (order=8) with unit circle
 
 Usage:
-  python Python_test/filters/test_iir_plot.py          (standalone)
-  pytest Python_test/filters/test_iir_plot.py -v        (pytest)
+  python Python_test/filters/test_iir_plot.py
 
 Author: Kodo (AI Assistant)
 Date: 2026-02-18

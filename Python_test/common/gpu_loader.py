@@ -3,7 +3,7 @@ gpu_loader.py — GPULoader Singleton
 =====================================
 
 Singleton (GoF) + Protected Variations (GRASP):
-  Находит gpuworklib.so/.pyd один раз для всей pytest-сессии.
+  Находит gpuworklib.so/.pyd один раз для всей сессии.
   Все тесты получают модуль через GPULoader.get() вместо хардкода путей.
 
 Порядок поиска (от приоритетного к резервному):
@@ -19,7 +19,7 @@ Singleton (GoF) + Protected Variations (GRASP):
 Usage:
     gw = GPULoader.get()           # модуль gpuworklib или None
     if gw is None:
-        pytest.skip("gpuworklib not found")
+        raise SkipTest("gpuworklib not found")
 
     ctx = gw.GPUContext()
 
@@ -29,7 +29,7 @@ Cross-platform:
     Python import system resolves the extension automatically.
 
     Override build path:
-        GPUWORKLIB_BUILD_DIR=/path/to/build/python pytest Python_test/
+        GPUWORKLIB_BUILD_DIR=/path/to/build/python python Python_test/module/test_xxx.py
 """
 
 import glob
@@ -128,7 +128,7 @@ class GPULoader:
             for found in sorted(glob.glob(pattern, recursive=True)):
                 fp = Path(found)
                 # Только .pyd (Windows) или .so (Linux), пропустить .so.debug и т.п.
-                if fp.suffix in (".pyd",) or (fp.suffix == ".so" or ".cpython" in fp.name):
+                if fp.suffix in (".pyd", ".so") or ".cpython" in fp.name:
                     parent = fp.parent
                     if _try_path(parent, f"auto: {parent}"):
                         return

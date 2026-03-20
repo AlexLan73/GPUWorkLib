@@ -29,10 +29,9 @@ test_strategies_step_by_step.py — пошаговая валидация pipeli
 GPU:
     Часть 1 — НЕ НУЖЕН (чистый NumPy).
     Часть 2 — нужен ROCm + класс AntennaProcessorTest в gpuworklib.
-    Если GPU недоступен — Часть 2 пропускается автоматически (pytest.skip).
+    Если GPU недоступен — Часть 2 пропускается (SkipTest).
 
 ЗАПУСК (из корня проекта):
-    pytest Python_test/strategies/test_strategies_step_by_step.py -v
     python Python_test/strategies/test_strategies_step_by_step.py
 
 Author: Kodo (AI Assistant)

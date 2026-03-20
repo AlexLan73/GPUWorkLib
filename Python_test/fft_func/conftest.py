@@ -2,7 +2,7 @@
 conftest.py — фабричные функции для Python_test/fft_func/
 ==========================================================
 
-Без pytest. Предоставляет factory functions для создания тестовых объектов.
+Предоставляет factory functions для создания тестовых объектов.
 
 Использование:
     from conftest import make_maxima_finder, make_cw_spectrum, maxima_plot_dir

@@ -9,7 +9,7 @@ Tests:
 
 Run:
   python Python_test/fm_correlator/test_fm_correlator_rocm.py
-  PYTHONPATH=build/python pytest Python_test/fm_correlator/test_fm_correlator_rocm.py -v
+  PYTHONPATH=build/python python Python_test/fm_correlator/test_fm_correlator_rocm.py
 """
 
 import sys

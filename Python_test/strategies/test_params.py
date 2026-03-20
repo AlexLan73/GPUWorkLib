@@ -25,18 +25,8 @@ GPU: НЕ НУЖЕН — только Python dataclass.
 """
 
 from dataclasses import dataclass, field
-from enum import Enum, auto
 
-
-class SignalVariant(Enum):
-    """Варианты входного сигнала (Strategy GoF).
-
-    Соответствует C++ enum class SignalVariant.
-    """
-    SIN            = auto()   # синус (fdev=0)
-    LFM_NO_DELAY   = auto()   # ЛЧМ без задержек (2.1)
-    LFM_WITH_DELAY = auto()   # ЛЧМ + целочисленные задержки (2.2.1)
-    LFM_FARROW     = auto()   # ЛЧМ + дробные задержки (2.2.2)
+from signal_factory import SignalVariant  # единый enum для всех стратегий
 
 
 @dataclass

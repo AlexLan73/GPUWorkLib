@@ -22,7 +22,6 @@ test_farrow_pipeline.py — сравнение Pipeline A (фазовая кор
 GPU: НЕ НУЖЕН — чистый NumPy + FarrowDelay (Python реализация).
 
 ЗАПУСК (из корня проекта):
-    pytest Python_test/strategies/test_farrow_pipeline.py -v
     python Python_test/strategies/test_farrow_pipeline.py
 
 Author: Kodo (AI Assistant)

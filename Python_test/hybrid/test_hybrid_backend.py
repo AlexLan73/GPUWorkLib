@@ -2,9 +2,7 @@
 test_hybrid_backend.py — Python тесты HybridBackend (OpenCL + ROCm)
 
 Запуск:
-    sg render -c "python3 Python_test/hybrid/test_hybrid_backend.py"
-    или:
-    pytest Python_test/hybrid/test_hybrid_backend.py -v
+    python Python_test/hybrid/test_hybrid_backend.py
 
 Тесты проверяют создание HybridGPUContext и корректную работу
 обоих sub-backend (OpenCL + ROCm) на одном GPU.

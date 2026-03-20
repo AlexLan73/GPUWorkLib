@@ -7,7 +7,7 @@ Python тест: сравнение инверсии матриц vector_algebra
 Запуск:
     cd /home/alex/C++/GPUWorkLib
     python Python_test/vector_algebra/test_matrix_csv_comparison.py
-    PYTHONPATH=build/python pytest Python_test/vector_algebra/test_matrix_csv_comparison.py -v
+    PYTHONPATH=build/python python Python_test/vector_algebra/test_matrix_csv_comparison.py
 
 Требования: ROCm, gpuworklib (ENABLE_ROCM=ON), numpy
 """

@@ -3,7 +3,7 @@ gpu_context.py — GPUContextManager Singleton
 =============================================
 
 Singleton (GoF):
-  Создаёт GPU-контекст один раз для всей pytest-сессии.
+  Создаёт GPU-контекст один раз для всей сессии.
   Переиспользование контекста критично — создание занимает ~1-2 сек.
 
   GPU-индекс берётся из configGPU.json (рядом с gpuworklib.so),
@@ -13,14 +13,9 @@ Usage:
     ctx = GPUContextManager.get()            # GPUContext (OpenCL), device из конфига
     ctx_rocm = GPUContextManager.get_rocm() # ROCmGPUContext, device из конфига
 
-    # В pytest conftest.py:
-    @pytest.fixture(scope="session")
-    def gpu_ctx():
-        return GPUContextManager.get()
-
-    @pytest.fixture(scope="session")
-    def rocm_ctx():
-        return GPUContextManager.get_rocm()
+    # Использование в тестах:
+    ctx = GPUContextManager.get()
+    ctx_rocm = GPUContextManager.get_rocm()
 """
 
 from pathlib import Path

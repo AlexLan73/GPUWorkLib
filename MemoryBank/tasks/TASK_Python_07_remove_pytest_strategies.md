@@ -1,6 +1,6 @@
 # TASK Python-07: Удалить pytest из strategies/
 
-**Статус**: 🔲 TODO
+**Статус**: ✅ DONE (2026-03-20)
 **Приоритет**: 🟠 СРЕДНИЙ — после TASK 01–06
 **Файлы**: все `*.py` в `Python_test/strategies/` и `Python_test/conftest.py`
 **Стиль**: ООП, SOLID, GRASP, GoF — обязательно!

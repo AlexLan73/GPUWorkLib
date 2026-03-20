@@ -23,6 +23,7 @@ strategy_test_base.py — StrategyTestBase (Template Method GoF)
 """
 
 from abc import abstractmethod
+import math
 import numpy as np
 import sys
 import os
@@ -143,7 +144,6 @@ class StrategyTestBase(TestBase):
         Returns:
             (spectrum [n_ant, nFFT] complex64, magnitudes [n_ant, nFFT] float32)
         """
-        import math
         n_samples = X.shape[1]
         if nfft is None:
             nfft = 2 ** math.ceil(math.log2(n_samples))

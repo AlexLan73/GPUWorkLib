@@ -19,7 +19,7 @@ Signal formula (getX):
 
 Запуск:
   cd /home/alex/C++/GPUWorkLib
-  PYTHONPATH=build/python pytest Python_test/signal_generators/test_form_signal_rocm.py -v
+  PYTHONPATH=build/python python Python_test/signal_generators/test_form_signal_rocm.py
 """
 
 import sys

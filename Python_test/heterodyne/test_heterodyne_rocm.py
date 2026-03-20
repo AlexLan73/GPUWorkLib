@@ -16,25 +16,19 @@ Tests:
 
 Usage:
   python Python_test/heterodyne/test_heterodyne_rocm.py
-  pytest Python_test/heterodyne/test_heterodyne_rocm.py -v
-
-Author: Kodo (AI Assistant)
-Date: 2026-02-24
 """
 
 import sys
 import os
 import numpy as np
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(PROJECT_ROOT, 'build', 'debian-radeon9070', 'python'))
+_PT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PT_DIR not in sys.path:
+    sys.path.insert(0, _PT_DIR)
 
-try:
-    import gpuworklib
-    HAS_GPU = True
-except ImportError:
-    HAS_GPU = False
-    print("WARNING: gpuworklib not found. Skipping GPU tests.")
+from common.gpu_loader import GPULoader
+from common.gpu_context import GPUContextManager
+from common.runner import SkipTest
 
 # ============================================================================
 # Default LFM parameters
@@ -94,9 +88,13 @@ def make_random_signal(total: int, seed: int = 42) -> np.ndarray:
     return (rng.standard_normal(total) + 1j * rng.standard_normal(total)).astype(np.complex64)
 
 
-def make_ctx_het(num_samples=NUM_SAMPLES, num_antennas=NUM_ANTENNAS):
-    ctx = gpuworklib.ROCmGPUContext(0)
-    het = gpuworklib.HeterodyneROCm(ctx)
+def _make_het(num_samples=NUM_SAMPLES, num_antennas=NUM_ANTENNAS):
+    """Создать HeterodyneROCm через GPUContextManager (синглтон)."""
+    ctx = GPUContextManager.get_rocm()
+    if ctx is None:
+        raise SkipTest("ROCm недоступен")
+    gw = GPULoader.get()
+    het = gw.HeterodyneROCm(ctx)
     het.set_params(
         f_start=F_START, f_end=F_END,
         sample_rate=SAMPLE_RATE,
@@ -106,15 +104,23 @@ def make_ctx_het(num_samples=NUM_SAMPLES, num_antennas=NUM_ANTENNAS):
     return ctx, het
 
 
+def _check_gpu():
+    """Проверить доступность GPU — бросает SkipTest если нет."""
+    gw = GPULoader.get()
+    if gw is None or not hasattr(gw, 'HeterodyneROCm'):
+        raise SkipTest("gpuworklib/HeterodyneROCm недоступен")
+    ctx = GPUContextManager.get_rocm()
+    if ctx is None:
+        raise SkipTest("ROCm недоступен")
+
+
 # ============================================================================
 # Test 1: dechirp vs numpy
 # ============================================================================
 
 def test_dechirp_vs_numpy():
     """Dechirp: GPU conj(rx*ref) matches numpy reference."""
-    if not HAS_GPU:
-        print("  SKIP: no GPU")
-        return
+    _check_gpu()
 
     N   = 1024
     ant = 3
@@ -122,7 +128,7 @@ def test_dechirp_vs_numpy():
     rx  = make_random_signal(total, seed=1)
     ref = make_random_signal(N, seed=2)
 
-    ctx, het = make_ctx_het(num_samples=N, num_antennas=ant)
+    ctx, het = _make_het(num_samples=N, num_antennas=ant)
     gpu_dc = het.dechirp(rx, ref)
 
     np_dc = ref_dechirp(rx, ref)
@@ -139,15 +145,13 @@ def test_dechirp_vs_numpy():
 
 def test_dechirp_multi_antenna():
     """Dechirp multi-antenna: 5 antennas, 8000 samples."""
-    if not HAS_GPU:
-        print("  SKIP: no GPU")
-        return
+    _check_gpu()
 
     total = NUM_ANTENNAS * NUM_SAMPLES
     rx  = make_random_signal(total, seed=10)
     ref = make_random_signal(NUM_SAMPLES, seed=20)
 
-    ctx, het = make_ctx_het()
+    ctx, het = _make_het()
     gpu_dc = het.dechirp(rx, ref)
 
     np_dc = ref_dechirp(rx, ref)
@@ -164,9 +168,7 @@ def test_dechirp_multi_antenna():
 
 def test_correct_zero_beat():
     """Correct with zero beat: output equals input."""
-    if not HAS_GPU:
-        print("  SKIP: no GPU")
-        return
+    _check_gpu()
 
     N   = 512
     ant = 2
@@ -174,7 +176,7 @@ def test_correct_zero_beat():
     dc = make_random_signal(total, seed=5)
     f_beat = [0.0] * ant
 
-    ctx, het = make_ctx_het(num_samples=N, num_antennas=ant)
+    ctx, het = _make_het(num_samples=N, num_antennas=ant)
     gpu_out = het.correct(dc, f_beat)
 
     max_diff = float(np.max(np.abs(gpu_out - dc)))
@@ -189,9 +191,7 @@ def test_correct_zero_beat():
 
 def test_correct_vs_numpy():
     """Correct: GPU exp(j*phase_step*n) matches numpy reference."""
-    if not HAS_GPU:
-        print("  SKIP: no GPU")
-        return
+    _check_gpu()
 
     N   = 2048
     ant = 3
@@ -199,7 +199,7 @@ def test_correct_vs_numpy():
     dc = make_random_signal(total, seed=7)
     f_beat = [12_345.0, -8_765.0, 50_000.0]  # Hz, one per antenna
 
-    ctx, het = make_ctx_het(num_samples=N, num_antennas=ant)
+    ctx, het = _make_het(num_samples=N, num_antennas=ant)
     gpu_out = het.correct(dc, f_beat)
 
     np_out = ref_correct(dc, f_beat, SAMPLE_RATE, N)
@@ -216,11 +216,9 @@ def test_correct_vs_numpy():
 
 def test_params_dict():
     """HeterodyneROCm.params returns correct values."""
-    if not HAS_GPU:
-        print("  SKIP: no GPU")
-        return
+    _check_gpu()
 
-    ctx, het = make_ctx_het()
+    ctx, het = _make_het()
     p = het.params
 
     assert abs(p['f_start']     - F_START)      < 1.0, f"f_start={p['f_start']}"
@@ -242,9 +240,7 @@ def test_params_dict():
 
 def test_dechirp_correct_chain():
     """Pipeline: dechirp → correct produces expected numpy result."""
-    if not HAS_GPU:
-        print("  SKIP: no GPU")
-        return
+    _check_gpu()
 
     N   = 1024
     ant = 2
@@ -253,7 +249,7 @@ def test_dechirp_correct_chain():
     ref = make_random_signal(N, seed=22)
     f_beat = [1000.0, -2000.0]
 
-    ctx, het = make_ctx_het(num_samples=N, num_antennas=ant)
+    ctx, het = _make_het(num_samples=N, num_antennas=ant)
 
     # GPU pipeline
     dc_gpu  = het.dechirp(rx, ref)
@@ -278,18 +274,20 @@ if __name__ == '__main__':
     print(SEP)
     print('  HeterodyneROCm — Python Test')
     print(SEP)
-    print(f'  HAS_GPU={HAS_GPU}')
     print(f'  F_START={F_START/1e6:.1f} MHz  F_END={F_END/1e6:.1f} MHz')
     print(f'  SAMPLE_RATE={SAMPLE_RATE/1e6:.0f} MHz  N={NUM_SAMPLES}  ANT={NUM_ANTENNAS}')
 
-    passed, failed = 0, 0
+    passed, failed, skipped = 0, 0, 0
 
     def run(label, fn):
-        global passed, failed
+        global passed, failed, skipped
         print(f'\n[{label}] {fn.__doc__}')
         try:
             fn()
             passed += 1
+        except SkipTest as e:
+            print(f'  SKIP: {e}')
+            skipped += 1
         except AssertionError as e:
             print(f'  FAILED: {e}')
             failed += 1
@@ -302,6 +300,8 @@ if __name__ == '__main__':
     run('6', test_dechirp_correct_chain)
 
     print(f'\n{SEP}')
-    print(f'  Results: {passed}/{passed + failed} passed', end='')
+    print(f'  Results: {passed}/{passed + failed + skipped} passed', end='')
+    if skipped:
+        print(f'  ({skipped} skipped)', end='')
     print('  — ALL PASSED ✓' if not failed else f'  ({failed} FAILED)')
     print(SEP)

@@ -11,7 +11,7 @@ Tests:
 
 Запуск:
   python Python_test/integration/test_fft_integration.py
-  PYTHONPATH=build/python pytest Python_test/integration/test_fft_integration.py -v
+  PYTHONPATH=build/python python Python_test/integration/test_fft_integration.py
 """
 
 import sys

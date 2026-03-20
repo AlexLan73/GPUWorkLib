@@ -30,13 +30,12 @@ PipelineStepValidator его НЕ создаёт и НЕ уничтожает.
 """
 
 import os
+import sys
 import numpy as np
 from typing import Optional
 
-import sys
-import os as _os
-_sys_path_root = _os.path.join(
-    _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+_sys_path_root = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
 if _sys_path_root not in sys.path:
     sys.path.insert(0, _sys_path_root)
@@ -283,9 +282,13 @@ class PipelineStepValidator:
 
         CHECK-6.3a: min_magnitude < max_magnitude per beam
         CHECK-6.3b: dynamic_range_dB > 0 per beam
+        CHECK-6.3c: |GPU dyn_range - NumPy dyn_range| < 1.0 dB per beam
         """
         tr = TestResult(test_name="step_6_3_global_minmax")
         minmax = self._proc.step_6_3_global_minmax()  # list of dicts
+
+        # CHECK-6.3c: эталон dynamic_range per beam
+        ref_dyn_range = self._ref.compute_dynamic_range_db()  # [n_ant] float32
 
         for mm in minmax:
             beam_id = mm["beam_id"]
@@ -303,6 +306,17 @@ class PipelineStepValidator:
                 actual_value=float(mm["dynamic_range_dB"]),
                 threshold=0.0,
                 message=f"dynamic_range={mm['dynamic_range_dB']:.1f} dB"
+            ))
+            # CHECK-6.3c: GPU dynamic_range ≈ NumPy эталон (допуск 1.0 dB)
+            diff_db = abs(float(mm["dynamic_range_dB"]) - float(ref_dyn_range[beam_id]))
+            tr.add(ValidationResult(
+                passed=diff_db < 1.0,
+                metric_name=f"CHECK-6.3c_dyn_range_vs_ref_beam{beam_id}",
+                actual_value=diff_db,
+                threshold=1.0,
+                message=(f"GPU={mm['dynamic_range_dB']:.2f} dB "
+                         f"ref={ref_dyn_range[beam_id]:.2f} dB "
+                         f"diff={diff_db:.3f} dB")
             ))
         return tr
 

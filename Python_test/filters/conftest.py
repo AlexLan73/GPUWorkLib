@@ -2,7 +2,7 @@
 conftest.py — фабричные функции для Python_test/filters/
 =========================================================
 
-Без pytest. Предоставляет factory functions для тестов фильтров.
+Предоставляет factory functions для тестов фильтров.
 """
 
 import os

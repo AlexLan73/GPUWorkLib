@@ -20,10 +20,9 @@ GPU: НЕ НУЖЕН — читает уже готовые JSON, не запу�
 
 ЗАВИСИМОСТЬ: нужно сначала запустить C++ тест TimingPerStepTest,
     который создаёт Results/strategies/timing_*.json.
-    Без этих файлов все тесты будут pytest.skip.
+    Без этих файлов все тесты будут SkipTest.
 
 ЗАПУСК (из корня проекта):
-    pytest Python_test/strategies/test_timing_analysis.py -v
     python Python_test/strategies/test_timing_analysis.py
 """
 
@@ -120,7 +119,7 @@ def _plot_timing_bars(data: dict, out_dir: str) -> str | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# pytest tests
+# Tests
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_timing_files_exist():

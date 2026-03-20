@@ -16,7 +16,7 @@ test_debug_steps.py — проверка каждого шага NumPy pipeline 
 GPU: НЕ НУЖЕН — чистый NumPy.
 
 ЗАПУСК (из корня проекта):
-    pytest Python_test/strategies/test_debug_steps.py -v
+    python Python_test/strategies/test_debug_steps.py
 """
 
 import sys

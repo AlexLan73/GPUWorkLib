@@ -7,7 +7,7 @@ Python тесты CholeskyInverterROCm (Task_11 v2: SymmetrizeMode).
 Запуск:
     cd /home/alex/C++/GPUWorkLib
     python Python_test/vector_algebra/test_cholesky_inverter_rocm.py
-    PYTHONPATH=build/python pytest Python_test/vector_algebra/test_cholesky_inverter_rocm.py -v
+    PYTHONPATH=build/python python Python_test/vector_algebra/test_cholesky_inverter_rocm.py
 
 Требования:
     - ROCm (AMD Radeon 9070 или совместимое GPU)

@@ -7,8 +7,7 @@ Tests:
   2. IIR: scipy.signal.butter(sos) -> gpuworklib.IirFilter -> validate vs scipy.sosfilt
 
 Usage:
-  pytest Python_test/filters/test_filters_stage1.py -v
-  python Python_test/filters/test_filters_stage1.py  (standalone with plots)
+  python Python_test/filters/test_filters_stage1.py
 
 Author: Kodo (AI Assistant)
 Date: 2026-02-18

@@ -2,10 +2,10 @@
 runner.py — TestRunner + SkipTest
 ==================================
 
-Инфраструктура запуска тестов без pytest.
+Инфраструктура запуска тестов.
 
 Classes:
-    SkipTest   — исключение для пропуска теста (заменяет pytest.skip)
+    SkipTest   — исключение для пропуска теста
     TestRunner — Coordinator (GRASP): запускает методы test_* в объекте,
                  собирает TestResult, выводит сводку PASS/FAIL/SKIP.
 
@@ -20,7 +20,7 @@ from .result import TestResult, ValidationResult
 class SkipTest(Exception):
     """Пропуск теста — GPU недоступен или тест не применим.
 
-    Заменяет pytest.skip(). Бросается внутри setUp() или test_*().
+    Бросается внутри setUp() или test_*().
     TestRunner перехватывает и помечает тест как SKIP (не FAIL).
 
     Usage:
@@ -35,7 +35,7 @@ class TestRunner:
     """Запускает методы test_* в объекте, собирает TestResult.
 
     Coordinator (GRASP): координирует обнаружение и запуск тестов.
-    Заменяет pytest discovery — explicit лучше implicit.
+    Explicit лучше implicit.
 
     Обнаружение тестов:
         Все методы объекта чьё имя начинается с "test_"

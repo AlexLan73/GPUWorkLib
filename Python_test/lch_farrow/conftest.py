@@ -2,7 +2,7 @@
 conftest.py — фабричные функции для Python_test/lch_farrow/
 ============================================================
 
-Без pytest. Предоставляет factory functions для тестов LCH Farrow.
+Предоставляет factory functions для тестов LCH Farrow.
 """
 
 import os

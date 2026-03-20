@@ -38,7 +38,6 @@ Note:
 
 Usage:
   python Python_test/filters/test_kaufman_rocm.py
-  pytest Python_test/filters/test_kaufman_rocm.py -v
 
 Author: Kodo (AI Assistant)
 Date: 2026-03-04
