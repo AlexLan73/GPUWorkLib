@@ -89,4 +89,20 @@ struct MedianResult {
   float median_magnitude = 0.0f;  ///< Median of |z|
 };
 
+/**
+ * @brief Combined statistics + median result for one beam (ComputeAll output)
+ *
+ * Merges StatisticsResult (Welford) + MedianResult into a single struct.
+ * For float input path (ComputeAllFloat): mean is always {0, 0}.
+ */
+struct FullStatisticsResult {
+  uint32_t beam_id = 0;
+
+  std::complex<float> mean{0.0f, 0.0f};  ///< Complex mean (zero for float path)
+  float variance         = 0.0f;         ///< Variance of |z|
+  float std_dev          = 0.0f;         ///< Standard deviation of |z|
+  float mean_magnitude   = 0.0f;         ///< Mean of |z|
+  float median_magnitude = 0.0f;         ///< Median of |z|
+};
+
 }  // namespace statistics

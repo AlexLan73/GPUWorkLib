@@ -33,6 +33,7 @@
 
 #include "statistics_types.hpp"
 #include "interface/gpu_context.hpp"
+#include "services/profiling_types.hpp"
 
 // Op classes (Layer 5)
 #include "operations/mean_reduction_op.hpp"
@@ -49,6 +50,11 @@
 #include <cstdint>
 
 namespace statistics {
+
+/// ROCm profiling events for ComputeAll methods.
+/// Vector of (event_name, timing_data) pairs — same pattern as HeterodyneROCmProfEvents.
+using StatisticsROCmProfEvents =
+    std::vector<std::pair<const char*, drv_gpu_lib::ROCmProfilingData>>;
 
 class StatisticsProcessor {
 public:
@@ -105,6 +111,35 @@ public:
       const StatisticsParams& params);
 
   // =========================================================================
+  // Public API -- ComputeAll (Statistics + Median in one call)
+  // =========================================================================
+
+  /// CPU complex data: upload once → Welford + Median → FullStatisticsResult per beam.
+  /// Eliminates double upload vs calling ComputeStatistics + ComputeMedian separately.
+  std::vector<FullStatisticsResult> ComputeAll(
+      const std::vector<std::complex<float>>& data,
+      const StatisticsParams& params,
+      StatisticsROCmProfEvents* prof_events = nullptr);
+
+  /// GPU complex data (production path): D2D once → Welford + Median.
+  std::vector<FullStatisticsResult> ComputeAll(
+      void* gpu_data,
+      const StatisticsParams& params,
+      StatisticsROCmProfEvents* prof_events = nullptr);
+
+  /// GPU float magnitudes: kMagnitudes → WelfordFloat + Median.
+  /// Note: mean field is always {0, 0} (float path has no complex mean).
+  std::vector<FullStatisticsResult> ComputeAllFloat(
+      void* gpu_float_data,
+      const StatisticsParams& params,
+      StatisticsROCmProfEvents* prof_events = nullptr);
+
+  /// CPU float magnitudes: convenience wrapper, uploads then calls GPU overload.
+  std::vector<FullStatisticsResult> ComputeAllFloat(
+      const std::vector<float>& data,
+      const StatisticsParams& params);
+
+  // =========================================================================
   // Public API -- GPU float data (magnitudes already computed)
   // =========================================================================
 
@@ -153,6 +188,11 @@ private:
 
   /// Read MedianResult from kMediansCompact buffer
   std::vector<MedianResult> ReadMedianResults(uint32_t beam_count);
+
+  /// Merge StatisticsResult + MedianResult into FullStatisticsResult (1-to-1 by index)
+  std::vector<FullStatisticsResult> MergeResults(
+      const std::vector<StatisticsResult>& stats,
+      const std::vector<MedianResult>& medians);
 
   // ── Members ───────────────────────────────────────────────────────────
 

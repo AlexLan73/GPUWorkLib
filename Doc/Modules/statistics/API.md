@@ -57,6 +57,33 @@ struct MedianResult {
 
 ---
 
+### `FullStatisticsResult`
+
+```cpp
+// Результат ComputeAll / ComputeAllFloat — объединяет StatisticsResult + MedianResult
+struct FullStatisticsResult {
+    uint32_t beam_id = 0;
+    std::complex<float> mean{0.0f, 0.0f};  // {0,0} для float-пути (ComputeAllFloat)
+    float variance         = 0.0f;          // Var(|z|), ddof=0
+    float std_dev          = 0.0f;          // sqrt(Var(|z|))
+    float mean_magnitude   = 0.0f;          // E[|z|]
+    float median_magnitude = 0.0f;          // sorted_magnitudes[N/2]
+};
+```
+
+---
+
+### `StatisticsROCmProfEvents`
+
+```cpp
+// Тип для сбора ROCm profiling events из ComputeAll/ComputeAllFloat
+// Совместим с GpuBenchmarkBase::RecordROCmEvent(name, data)
+using StatisticsROCmProfEvents =
+    std::vector<std::pair<const char*, drv_gpu_lib::ROCmProfilingData>>;
+```
+
+---
+
 ### `StatisticsProcessor`
 
 ```cpp
@@ -121,6 +148,35 @@ public:
     std::vector<MedianResult> ComputeMedianFloat(
         void* gpu_float_data,
         const StatisticsParams& params);
+
+    // ──────────────────────────────────────────────────────────
+    // ComputeAll — статистика + медиана в одном GPU-вызове
+    // Устраняет двойной PCIe upload (CPU path) / D2D copy (GPU path)
+    // ──────────────────────────────────────────────────────────
+
+    // CPU path: Upload → welford_fused → radix_sort → extract_medians
+    std::vector<FullStatisticsResult> ComputeAll(
+        const std::vector<std::complex<float>>& data,
+        const StatisticsParams& params,
+        StatisticsROCmProfEvents* prof_events = nullptr);
+
+    // GPU path: D2D copy → welford_fused → radix_sort → extract_medians
+    std::vector<FullStatisticsResult> ComputeAll(
+        void* gpu_data,
+        const StatisticsParams& params,
+        StatisticsROCmProfEvents* prof_events = nullptr);
+
+    // Float GPU path: D2D copy → welford_float → sort → extract_medians
+    // ВАЖНО: mean.real() == 0, mean.imag() == 0 всегда
+    std::vector<FullStatisticsResult> ComputeAllFloat(
+        void* gpu_float_data,
+        const StatisticsParams& params,
+        StatisticsROCmProfEvents* prof_events = nullptr);
+
+    // Float CPU path (convenience): hipMalloc → delegate к GPU overload
+    std::vector<FullStatisticsResult> ComputeAllFloat(
+        const std::vector<float>& data,
+        const StatisticsParams& params);
 };
 
 }  // namespace statistics
@@ -137,6 +193,8 @@ public:
 | `ComputeMean(data, ...)` | data.size() != beam_count * n_point | `std::invalid_argument` |
 | `ComputeMedian(data, ...)` | data.size() != beam_count * n_point | `std::invalid_argument` |
 | `ComputeStatistics(data, ...)` | data.size() != beam_count * n_point | `std::invalid_argument` |
+| `ComputeAll(data, ...)` | data.size() != beam_count * n_point | `std::invalid_argument` |
+| `ComputeAllFloat(data, ...)` | data.size() != beam_count * n_point | `std::invalid_argument` |
 | GPU overloads | gpu_data == nullptr | `std::invalid_argument` |
 | `CompileKernels()` | hiprtc ошибка компиляции | `std::runtime_error` (с логом) |
 | `AllocateBuffers()` | hipMalloc failed | `std::runtime_error` |
@@ -174,6 +232,10 @@ proc = gpuworklib.StatisticsProcessor(ctx)
 proc.compute_mean(data, beam_count=1)
 proc.compute_median(data, beam_count=1)
 proc.compute_statistics(data, beam_count=1)
+proc.compute_all(data, beam_count=1)          # statistics + median, 1 GPU call
+proc.compute_all_float(data, beam_count=1)    # float magnitudes, mean_real/imag=0
+proc.compute_statistics_float(data, beam_count=1)
+proc.compute_median_float(data, beam_count=1)
 ```
 
 ### compute_mean
@@ -218,6 +280,41 @@ def compute_statistics(
 #   'variance':       float,   # Var(|z|), ddof=0
 #   'std_dev':        float,   # sqrt(variance)
 # }]
+```
+
+---
+
+### compute_all
+
+```python
+def compute_all(
+    data: np.ndarray,    # complex64, shape (B*N,) или (B,N)
+    beam_count: int = 1
+) -> list[dict]:
+    ...
+
+# Возврат:
+# list[{
+#   'beam_id':          int,
+#   'mean_real':        float,
+#   'mean_imag':        float,
+#   'variance':         float,   # Var(|z|), ddof=0
+#   'std_dev':          float,
+#   'mean_magnitude':   float,   # E[|z|]
+#   'median_magnitude': float,   # sorted[N/2]
+# }]
+```
+
+### compute_all_float
+
+```python
+def compute_all_float(
+    data: np.ndarray,    # float32, shape (B*N,) или (B,N) — уже вычисленные модули
+    beam_count: int = 1
+) -> list[dict]:
+    ...
+
+# Возврат: те же 7 ключей, но mean_real и mean_imag всегда 0.0
 ```
 
 ---
@@ -301,4 +398,4 @@ sg render -c "python3 my_script.py"
 
 ---
 
-*Обновлено: 2026-03-09*
+*Обновлено: 2026-03-20*

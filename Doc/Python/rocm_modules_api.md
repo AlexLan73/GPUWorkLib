@@ -309,9 +309,15 @@ medians = proc.compute_median(data, beam_count=4)
 
 | Метод | Аргументы | Возврат | Описание |
 |-------|-----------|---------|----------|
-| `compute_mean(data, beam_count)` | `np.complex64`, `int` | `list[dict]` | Комплексное среднее по каждому лучу |
-| `compute_median(data, beam_count)` | `np.complex64`, `int` | `list[dict]` | Медиана модулей (GPU radix sort) |
-| `compute_statistics(data, beam_count)` | `np.complex64`, `int` | `list[dict]` | Всё вместе: mean + variance + std |
+| `compute_all(data, beam_count)` | `np.complex64`, `int` | `list[dict]` | **Статистика + медиана** (1 GPU-вызов) ⭐ |
+| `compute_all_float(data, beam_count)` | `np.float32`, `int` | `list[dict]` | Статистика + медиана для float магнитуд |
+| `compute_statistics(data, beam_count)` | `np.complex64`, `int` | `list[dict]` | Статистика: mean + variance + std |
+| `compute_mean(data, beam_count)` | `np.complex64`, `int` | `list[dict]` | Только комплексное среднее |
+| `compute_median(data, beam_count)` | `np.complex64`, `int` | `list[dict]` | Только медиана модулей (GPU radix sort) |
+| `compute_statistics_float(data, beam_count)` | `np.float32`, `int` | `list[dict]` | Статистика для float магнитуд |
+| `compute_median_float(data, beam_count)` | `np.float32`, `int` | `list[dict]` | Медиана для float магнитуд |
+
+> 📄 Полное описание: [Doc/Python/statistics_api.md](statistics_api.md)
 
 ### Формат результата compute_statistics
 
@@ -371,7 +377,7 @@ for r in results:
 | `IirFilterROCm` | `(ctx)` | `set_sections()`, `process()` | `complex64 (N,)/(C,N)` |
 | `LchFarrowROCm` | `(ctx)` | `set_delays()`, `set_sample_rate()`, `set_noise()`, `process()` | `complex64 (N,)/(A,N)` |
 | `HeterodyneROCm` | `(ctx)` | `set_params()`, `dechirp()`, `correct()` | `complex64 (K×N,)` |
-| `StatisticsProcessor` | `(ctx)` | `compute_mean()`, `compute_median()`, `compute_statistics()` | `complex64 (B×N,)` |
+| `StatisticsProcessor` | `(ctx)` | `compute_all()` ⭐, `compute_statistics()`, `compute_mean()`, `compute_median()`, `compute_all_float()` | `complex64`/`float32 (B×N,)` |
 
 ---
 

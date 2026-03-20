@@ -772,6 +772,271 @@ inline bool test_histogram_vs_radix_benchmark(ConsoleOutput& con, int gpu_id) {
 }
 
 // =========================================================================
+// Test 12: ComputeAll -- verify all fields match separate calls
+// =========================================================================
+
+inline bool test_compute_all_cpu(ConsoleOutput& con, int gpu_id) {
+  try {
+    ROCmBackend backend;
+    backend.Initialize(gpu_id);
+    StatisticsProcessor stats(&backend);
+
+    const uint32_t beam_count = 4;
+    const uint32_t n_point    = 65536;
+
+    std::mt19937 rng(42);
+    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+    std::vector<std::complex<float>> data(beam_count * n_point);
+    for (auto& v : data) v = std::complex<float>(dist(rng), dist(rng));
+
+    StatisticsParams params;
+    params.beam_count = beam_count;
+    params.n_point    = n_point;
+
+    auto ref_stats   = stats.ComputeStatistics(data, params);
+    auto ref_medians = stats.ComputeMedian(data, params);
+    auto full        = stats.ComputeAll(data, params);
+
+    bool ok = (full.size() == beam_count);
+    float max_err = 0.0f;
+
+    for (uint32_t b = 0; b < beam_count && ok; ++b) {
+      float e_mean_re  = std::fabs(full[b].mean.real()       - ref_stats[b].mean.real());
+      float e_mean_im  = std::fabs(full[b].mean.imag()       - ref_stats[b].mean.imag());
+      float e_var      = std::fabs(full[b].variance          - ref_stats[b].variance);
+      float e_std      = std::fabs(full[b].std_dev           - ref_stats[b].std_dev);
+      float e_mean_mag = std::fabs(full[b].mean_magnitude    - ref_stats[b].mean_magnitude);
+      float e_median   = std::fabs(full[b].median_magnitude  - ref_medians[b].median_magnitude);
+
+      float beam_max = std::max({e_mean_re, e_mean_im, e_var, e_std, e_mean_mag, e_median});
+      max_err = std::max(max_err, beam_max);
+
+      if (beam_max > 1e-5f) {
+        ok = false;
+        con.Print(gpu_id, "Stats ROCm",
+                  "  Test 12 beam " + std::to_string(b) + " max_err=" +
+                  std::to_string(beam_max));
+      }
+    }
+
+    con.Print(gpu_id, "Stats ROCm",
+              "  ComputeAll CPU: max_err=" + std::to_string(max_err) + " (tol=1e-5)");
+    print_result(con, gpu_id, "ComputeAll CPU (4 beams x 65536)", ok);
+    return ok;
+  } catch (const std::exception& e) {
+    con.Print(gpu_id, "Stats ROCm", "[X] ComputeAll CPU EXCEPTION: " + std::string(e.what()));
+    return false;
+  }
+}
+
+// =========================================================================
+// Test 13: ComputeAll -- GPU data (void*) path
+// =========================================================================
+
+inline bool test_compute_all_gpu(ConsoleOutput& con, int gpu_id) {
+  try {
+    ROCmBackend backend;
+    backend.Initialize(gpu_id);
+    StatisticsProcessor stats(&backend);
+
+    const uint32_t beam_count = 2;
+    const uint32_t n_point    = 32768;
+
+    std::mt19937 rng(77);
+    std::uniform_real_distribution<float> dist(-2.0f, 2.0f);
+    std::vector<std::complex<float>> data(beam_count * n_point);
+    for (auto& v : data) v = std::complex<float>(dist(rng), dist(rng));
+
+    StatisticsParams params;
+    params.beam_count = beam_count;
+    params.n_point    = n_point;
+
+    // CPU reference via separate calls
+    auto ref_stats   = stats.ComputeStatistics(data, params);
+    auto ref_medians = stats.ComputeMedian(data, params);
+
+    // Manually upload to GPU
+    size_t bytes = data.size() * sizeof(std::complex<float>);
+    void* gpu_data = backend.Allocate(bytes);
+    backend.MemcpyHostToDevice(gpu_data, data.data(), bytes);
+
+    auto full = stats.ComputeAll(gpu_data, params);
+    backend.Free(gpu_data);
+
+    bool ok = (full.size() == beam_count);
+    float max_err = 0.0f;
+
+    for (uint32_t b = 0; b < beam_count && ok; ++b) {
+      float e_mean_re  = std::fabs(full[b].mean.real()       - ref_stats[b].mean.real());
+      float e_mean_im  = std::fabs(full[b].mean.imag()       - ref_stats[b].mean.imag());
+      float e_var      = std::fabs(full[b].variance          - ref_stats[b].variance);
+      float e_std      = std::fabs(full[b].std_dev           - ref_stats[b].std_dev);
+      float e_mean_mag = std::fabs(full[b].mean_magnitude    - ref_stats[b].mean_magnitude);
+      float e_median   = std::fabs(full[b].median_magnitude  - ref_medians[b].median_magnitude);
+      float beam_max   = std::max({e_mean_re, e_mean_im, e_var, e_std, e_mean_mag, e_median});
+      max_err = std::max(max_err, beam_max);
+
+      if (beam_max > 1e-5f) {
+        ok = false;
+        con.Print(gpu_id, "Stats ROCm",
+                  "  Test 13 beam " + std::to_string(b) +
+                  " e_re=" + std::to_string(e_mean_re) +
+                  " e_im=" + std::to_string(e_mean_im) +
+                  " e_var=" + std::to_string(e_var) +
+                  " e_std=" + std::to_string(e_std) +
+                  " e_mag=" + std::to_string(e_mean_mag) +
+                  " e_med=" + std::to_string(e_median));
+      }
+    }
+
+    con.Print(gpu_id, "Stats ROCm",
+              "  ComputeAll GPU: max_err=" + std::to_string(max_err) + " (tol=1e-5, 6 fields)");
+    print_result(con, gpu_id, "ComputeAll GPU void* (2 beams x 32768)", ok);
+    return ok;
+  } catch (const std::exception& e) {
+    con.Print(gpu_id, "Stats ROCm", "[X] ComputeAll GPU EXCEPTION: " + std::string(e.what()));
+    return false;
+  }
+}
+
+// =========================================================================
+// Test 14: ComputeAllFloat -- verify float path + mean == {0,0}
+// =========================================================================
+
+inline bool test_compute_all_float(ConsoleOutput& con, int gpu_id) {
+  try {
+    ROCmBackend backend;
+    backend.Initialize(gpu_id);
+    StatisticsProcessor stats(&backend);
+
+    const uint32_t beam_count = 2;
+    const uint32_t n_point    = 16384;
+
+    std::mt19937 rng(999);
+    std::uniform_real_distribution<float> dist(0.0f, 10.0f);
+    std::vector<float> magnitudes(beam_count * n_point);
+    for (auto& v : magnitudes) v = dist(rng);
+
+    StatisticsParams params;
+    params.beam_count = beam_count;
+    params.n_point    = n_point;
+
+    auto ref_stats   = stats.ComputeStatisticsFloat(magnitudes, params);
+    auto ref_medians = stats.ComputeMedianFloat(magnitudes, params);
+    auto full        = stats.ComputeAllFloat(magnitudes, params);
+
+    bool ok = (full.size() == beam_count);
+    float max_err = 0.0f;
+
+    for (uint32_t b = 0; b < beam_count && ok; ++b) {
+      // Verify mean == {0, 0} (float path has no complex mean)
+      if (std::fabs(full[b].mean.real()) > 1e-8f || std::fabs(full[b].mean.imag()) > 1e-8f) {
+        ok = false;
+        con.Print(gpu_id, "Stats ROCm",
+                  "  Test 14: mean != 0 for float path! beam=" + std::to_string(b) +
+                  " mean=(" + std::to_string(full[b].mean.real()) + "," +
+                  std::to_string(full[b].mean.imag()) + ")");
+      }
+
+      float e_mean_mag = std::fabs(full[b].mean_magnitude   - ref_stats[b].mean_magnitude);
+      float e_var      = std::fabs(full[b].variance         - ref_stats[b].variance);
+      float e_median   = std::fabs(full[b].median_magnitude - ref_medians[b].median_magnitude);
+      float beam_max   = std::max({e_mean_mag, e_var, e_median});
+      max_err = std::max(max_err, beam_max);
+
+      if (beam_max > 1e-5f) {
+        ok = false;
+        con.Print(gpu_id, "Stats ROCm",
+                  "  Test 14 beam " + std::to_string(b) + " err=" +
+                  std::to_string(beam_max));
+      }
+    }
+
+    con.Print(gpu_id, "Stats ROCm",
+              "  ComputeAllFloat: max_err=" + std::to_string(max_err) + " (tol=1e-5)");
+    print_result(con, gpu_id, "ComputeAllFloat (2 beams x 16384)", ok);
+    return ok;
+  } catch (const std::exception& e) {
+    con.Print(gpu_id, "Stats ROCm",
+              "[X] ComputeAllFloat EXCEPTION: " + std::string(e.what()));
+    return false;
+  }
+}
+
+// =========================================================================
+// Test 15: ComputeAll -- edge cases (beam_count=1, threshold boundary)
+// =========================================================================
+
+inline bool test_compute_all_edge_cases(ConsoleOutput& con, int gpu_id) {
+  try {
+    ROCmBackend backend;
+    backend.Initialize(gpu_id);
+    StatisticsProcessor stats(&backend);
+
+    bool all_ok = true;
+
+    // Case A: beam_count=1, n_point=100 (tiny → radix sort path)
+    {
+      const uint32_t bc = 1, np = 100;
+      std::mt19937 rng(1);
+      std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+      std::vector<std::complex<float>> data(bc * np);
+      for (auto& v : data) v = std::complex<float>(dist(rng), dist(rng));
+
+      StatisticsParams p; p.beam_count = bc; p.n_point = np;
+      auto ref_s = stats.ComputeStatistics(data, p);
+      auto ref_m = stats.ComputeMedian(data, p);
+      auto full  = stats.ComputeAll(data, p);
+
+      float err = std::max(
+          std::fabs(full[0].mean_magnitude  - ref_s[0].mean_magnitude),
+          std::fabs(full[0].median_magnitude - ref_m[0].median_magnitude));
+
+      if (err > 1e-5f || full.size() != bc) {
+        all_ok = false;
+        con.Print(gpu_id, "Stats ROCm",
+                  "  EdgeCase A (1 beam, n=100): err=" + std::to_string(err));
+      }
+    }
+
+    // Case B: beam_count=4, n_point=100000 (== kHistogramThreshold boundary)
+    {
+      const uint32_t bc = 4, np = 100000;
+      std::mt19937 rng(2);
+      std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+      std::vector<std::complex<float>> data(bc * np);
+      for (auto& v : data) v = std::complex<float>(dist(rng), dist(rng));
+
+      StatisticsParams p; p.beam_count = bc; p.n_point = np;
+      auto ref_s = stats.ComputeStatistics(data, p);
+      auto ref_m = stats.ComputeMedian(data, p);
+      auto full  = stats.ComputeAll(data, p);
+
+      float max_err = 0.0f;
+      for (uint32_t b = 0; b < bc; ++b) {
+        float err = std::max(
+            std::fabs(full[b].mean_magnitude  - ref_s[b].mean_magnitude),
+            std::fabs(full[b].median_magnitude - ref_m[b].median_magnitude));
+        max_err = std::max(max_err, err);
+      }
+
+      if (max_err > 1e-5f || full.size() != bc) {
+        all_ok = false;
+        con.Print(gpu_id, "Stats ROCm",
+                  "  EdgeCase B (4 beams, n=100000): max_err=" + std::to_string(max_err));
+      }
+    }
+
+    print_result(con, gpu_id, "ComputeAll EdgeCases (n=100, n=threshold)", all_ok);
+    return all_ok;
+  } catch (const std::exception& e) {
+    con.Print(gpu_id, "Stats ROCm",
+              "[X] ComputeAll EdgeCases EXCEPTION: " + std::string(e.what()));
+    return false;
+  }
+}
+
+// =========================================================================
 // Main test runner
 // =========================================================================
 
@@ -795,7 +1060,7 @@ inline void run() {
   }
 
   int passed = 0;
-  int total = 11;
+  int total = 15;
 
   if (test_mean_single_beam(con, gpu_id)) ++passed;
   if (test_mean_multi_beam(con, gpu_id)) ++passed;
@@ -808,6 +1073,10 @@ inline void run() {
   if (test_histogram_median_multi(con, gpu_id)) ++passed;
   if (test_histogram_median_float(con, gpu_id)) ++passed;
   if (test_histogram_vs_radix_benchmark(con, gpu_id)) ++passed;
+  if (test_compute_all_cpu(con, gpu_id)) ++passed;
+  if (test_compute_all_gpu(con, gpu_id)) ++passed;
+  if (test_compute_all_float(con, gpu_id)) ++passed;
+  if (test_compute_all_edge_cases(con, gpu_id)) ++passed;
 
   con.Print(gpu_id, "Stats ROCm", "");
   con.Print(gpu_id, "Stats ROCm", "Results: " + std::to_string(passed) + "/" +

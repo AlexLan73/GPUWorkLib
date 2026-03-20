@@ -510,6 +510,16 @@ struct MedianResult {
     uint32_t beam_id = 0;
     float median_magnitude = 0.0f;  // sorted[N/2]
 };
+
+// Результат ComputeAll / ComputeAllFloat — объединяет StatisticsResult + MedianResult
+struct FullStatisticsResult {
+    uint32_t beam_id = 0;
+    std::complex<float> mean{0.0f, 0.0f};  // комплексное среднее; {0,0} для float-пути
+    float variance         = 0.0f;          // Var(|z|)
+    float std_dev          = 0.0f;          // sqrt(Var(|z|))
+    float mean_magnitude   = 0.0f;          // E[|z|]
+    float median_magnitude = 0.0f;          // sorted[N/2]
+};
 ```
 
 ### C++ — полный пример
@@ -551,11 +561,26 @@ auto means = proc.ComputeMean(data, params);
 auto medians = proc.ComputeMedian(data, params);
 // medians[i].beam_id, medians[i].median_magnitude
 
+// 4d. ComputeAll — статистика + медиана за один GPU-вызов (CPU path)
+//     Устраняет двойной upload и двойную синхронизацию
+auto all = proc.ComputeAll(data, params);
+for (const auto& r : all) {
+    // r.beam_id, r.mean, r.mean_magnitude, r.variance, r.std_dev, r.median_magnitude
+}
+
+// 4e. ComputeAllFloat — то же, float input (модули уже вычислены)
+//     mean.real() == 0, mean.imag() == 0 всегда (документированное поведение)
+std::vector<float> magnitudes(beam_count * n_point);
+// ... заполнить magnitudes ...
+auto all_f = proc.ComputeAllFloat(magnitudes, params);
+
 // 5. GPU input — данные уже на устройстве (без лишнего PCIe round-trip)
 size_t sz = data.size() * sizeof(std::complex<float>);
 void* gpu_ptr = backend.Allocate(sz);
 backend.MemcpyHostToDevice(gpu_ptr, data.data(), sz);
 auto stats_gpu = proc.ComputeStatistics(gpu_ptr, params);
+// GPU path ComputeAll тоже поддерживается:
+auto all_gpu = proc.ComputeAll(gpu_ptr, params);
 backend.Free(gpu_ptr);
 
 // 6. Float input — модули уже вычислены (напр. |FFT| после FFTProcessor)
@@ -600,6 +625,17 @@ means = proc.compute_mean(data, beam_count=beam_count)
 medians = proc.compute_median(data, beam_count=beam_count)
 # [{'beam_id': 0, 'median_magnitude': ...}, ...]
 
+# 3d. ComputeAll — статистика + медиана за один GPU-вызов
+all_results = proc.compute_all(data, beam_count=beam_count)
+for r in all_results:
+    print(f"Beam {r['beam_id']}: std={r['std_dev']:.4f}, median={r['median_magnitude']:.4f}")
+# Ключи: beam_id, mean_real, mean_imag, variance, std_dev, mean_magnitude, median_magnitude
+
+# 3e. ComputeAllFloat — float magnitudes (пост-FFT pipeline)
+mags = np.abs(data).astype(np.float32)
+all_f = proc.compute_all_float(mags, beam_count=beam_count)
+# mean_real и mean_imag всегда 0.0 для float пути
+
 # 4. 2D input (beam_count, n_point) — тоже работает (C-contiguous)
 data_2d = data.reshape(beam_count, n_point)
 results_2d = proc.compute_statistics(data_2d, beam_count=beam_count)
@@ -619,6 +655,18 @@ results_2d = proc.compute_statistics(data_2d, beam_count=beam_count)
 | `variance` | `float` | Var(|z|), ddof=0 |
 | `std_dev` | `float` | sqrt(variance) |
 
+**Формат результата `compute_all` / `compute_all_float`** (расширяет `compute_statistics`):
+
+| Ключ | Тип | Описание |
+|------|-----|----------|
+| `beam_id` | `int` | Индекс луча |
+| `mean_real` | `float` | Re(среднего); всегда 0.0 для `compute_all_float` |
+| `mean_imag` | `float` | Im(среднего); всегда 0.0 для `compute_all_float` |
+| `mean_magnitude` | `float` | E[|z|] |
+| `variance` | `float` | Var(|z|), ddof=0 |
+| `std_dev` | `float` | sqrt(variance) |
+| `median_magnitude` | `float` | sorted_magnitudes[N/2] |
+
 ---
 
 ## 8. Тесты
@@ -627,7 +675,7 @@ results_2d = proc.compute_statistics(data_2d, beam_count=beam_count)
 
 **Namespace**: `test_statistics_rocm`
 **Вызов**: `statistics_all_test::run()` из `tests/all_test.hpp`
-**Итог**: 7 тестов (7/7 expected)
+**Итог**: 15 тестов (15/15 expected)
 
 | # | Функция | Входные данные | Почему эти данные | Ожидаемый результат | Что ловит | Порог |
 |---|---------|----------------|---------------------|---------------------|-----------|-------|
@@ -642,6 +690,13 @@ results_2d = proc.compute_statistics(data_2d, beam_count=beam_count)
 **Примечание к Test 3**: порог 1e-2 (не 1e-3) объясняется накоплением ошибок float32 при вычислении `sum_sq` для N=4096 точек. Теоретически variance=0, но float32 даёт ~1e-4 — хорошо укладывается в 1e-2.
 
 **Примечание к Test 6**: порог 1e-4 достижим только для константного сигнала (идеальное суммирование одинаковых значений). Для произвольного сигнала — 1e-3.
+
+| # | Функция | Входные данные | Почему эти данные | Ожидаемый результат | Что ловит | Порог |
+|---|---------|----------------|---------------------|---------------------|-----------|-------|
+| 12 | `test_compute_all_cpu` | 4 луча × 65536, random complex, seed=42 | Реалистичный объём, CPU path | Все поля ComputeAll совпадают с ComputeStatistics + ComputeMedian | Корректность объединённого вызова, устранение двойного upload | 1e-5f |
+| 13 | `test_compute_all_gpu` | 2 луча × 32768, GPU void* path | Данные уже на GPU (D2D path) | Поля совпадают с ComputeStatistics(gpu_ptr) + ComputeMedian(gpu_ptr) | GPU-input overload ComputeAll | 1e-5f |
+| 14 | `test_compute_all_float` | 2 луча × 16384, float magnitudes | Float path: mean должен быть {0,0} | mean.real()==0, mean.imag()==0; variance/std/median совпадают с ref | Документированное поведение: float-путь не вычисляет комплексное среднее | 1e-5f |
+| 15 | `test_compute_all_edge_cases` | Case A: 1 луч × 100 (radix sort); Case B: 4 луча × 100000 (граница kHistogramThreshold) | Граничные значения размеров | ComputeAll не падает, результаты разумны | Edge cases в выборе алгоритма медианы | 1e-4f |
 
 ---
 
@@ -661,6 +716,21 @@ results_2d = proc.compute_statistics(data_2d, beam_count=beam_count)
 
 **Тесты 1-5** работают без GPU (только NumPy). **Тесты 6-9** требуют бинарного файла `build/debian-radeon9070/GPUWorkLib`.
 
+---
+
+### Python тесты — `Python_test/statistics/test_compute_all.py`
+
+| # | Функция | Группа | Что проверяет | Порог |
+|---|---------|--------|---------------|-------|
+| 1 | `test_compute_all_matches_separate` | NumPy | ComputeAll == ComputeStatistics + ComputeMedian | DataValidator(1e-5, max_rel) |
+| 2 | `test_compute_all_float_matches` | NumPy | ComputeAllFloat == ComputeStatisticsFloat + ComputeMedianFloat | DataValidator(1e-5, max_rel) |
+| 3 | `test_compute_all_float_mean_is_zero` | NumPy | mean_real == 0.0, mean_imag == 0.0 для float-пути | exact 0.0 |
+| 4 | `test_compute_all_timing_reference` | NumPy | Сравнение времени CPU combined vs separate (информационный) | — |
+| 5 | `test_gpu_tests_all_pass` | GPU | C++ binary 15/15 тестов (Tests 12-15 включены) | 15/15 |
+| 6 | `test_gpu_compute_all_error` | GPU | ComputeAll max_err ≤ 1e-5 из вывода бинарника | ≤ 1e-5 |
+
+**Тесты 1-4** работают без GPU. **Тесты 5-6** требуют бинарника `build/debian-radeon9070/GPUWorkLib`.
+
 **Запуск**:
 ```bash
 # Только NumPy (без GPU):
@@ -672,6 +742,9 @@ sg render -c "pytest Python_test/statistics/ -v"
 # Генерация визуализации (4-panel plot):
 python Python_test/statistics/test_statistics_rocm.py
 # → Results/Plots/statistics/test_statistics_rocm_reference.png
+
+# ComputeAll тест standalone:
+python Python_test/statistics/test_compute_all.py
 ```
 
 ---
@@ -732,15 +805,19 @@ modules/statistics/
 │   ├── statistics_kernels.cl               # Копия kernel source (legacy/reference)
 │   └── manifest.json                       # HSACO disk cache manifest
 └── tests/
-    ├── all_test.hpp                         # statistics_all_test::run() — вызов из main.cpp
-    └── test_statistics_rocm.hpp             # 7 тестов (ROCm only, namespace test_statistics_rocm)
+    ├── all_test.hpp                                   # statistics_all_test::run() — вызов из main.cpp
+    ├── test_statistics_rocm.hpp                       # 15 тестов (7 base + 4 float + 4 ComputeAll)
+    ├── test_statistics_float_rocm.hpp                 # float API тесты (namespace test_statistics_float_rocm)
+    ├── statistics_compute_all_benchmark.hpp           # ComputeAllBenchmarkROCm (GpuBenchmarkBase)
+    └── test_statistics_compute_all_benchmark.hpp      # test runner (namespace test_statistics_compute_all_benchmark)
 
 python/
-└── py_statistics.hpp                       # PyStatisticsProcessor — pybind11 binding
+└── py_statistics.hpp                       # PyStatisticsProcessor — pybind11 binding (+ compute_all/compute_all_float)
 
 Python_test/statistics/
 ├── conftest.py                              # fixtures: stats_proc, random_matrix, real_matrix
-└── test_statistics_rocm.py                 # 9 тестов (5 NumPy + 4 GPU binary)
+├── test_statistics_rocm.py                 # 9 тестов (5 NumPy + 4 GPU binary)
+└── test_compute_all.py                     # 6 тестов ComputeAll (4 NumPy + 2 GPU binary)
 ```
 
 ---
@@ -767,6 +844,10 @@ Python_test/statistics/
 
 10. **Python binding**: требует `ROCmGPUContext`, не `GPUContext`. Конструктор: `gpuworklib.StatisticsProcessor(ctx)`, где `ctx = gpuworklib.ROCmGPUContext(0)`.
 
+11. **ComputeAll / ComputeAllFloat**: объединяют `ComputeStatistics` + `ComputeMedian` в одном GPU-вызове. Главный выигрыш — устранение двойного PCIe upload (CPU path) или двойного D2D copy (GPU path). Возвращают `FullStatisticsResult` (статистика + медиана на луч). Float-путь: `mean.real() == 0, mean.imag() == 0` — документированное поведение, проверяется тестом 14 и Python тестом 3.
+
+12. **ComputeAll профилирование**: оба `ComputeAll(vector<>&)` и `ComputeAll(void*)` принимают опциональный `StatisticsROCmProfEvents* prof_events` (default nullptr). При передании non-null записывают события `{"Upload"/"D2D_Copy", "Welford_Fused"/"Welford_Float", "Median"}` — совместимы с `GpuBenchmarkBase::RecordROCmEvent()`.
+
 ---
 
-*Обновлено: 2026-03-09*
+*Обновлено: 2026-03-20*

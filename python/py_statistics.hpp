@@ -118,6 +118,83 @@ public:
     return out;
   }
 
+  // ── ComputeAll API ───────────────────────────────────────────────────────
+
+  py::list compute_all(
+      py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> data,
+      uint32_t beam_count)
+  {
+    {
+      auto buf_check = data.request();
+      if (buf_check.ndim == 2 && beam_count == 0)
+        beam_count = static_cast<uint32_t>(buf_check.shape[0]);
+      if (beam_count == 0) beam_count = 1;
+    }
+    auto vec = to_vector(data, beam_count);
+    uint32_t n_point = static_cast<uint32_t>(vec.size() / beam_count);
+
+    statistics::StatisticsParams params;
+    params.beam_count = beam_count;
+    params.n_point    = n_point;
+
+    std::vector<statistics::FullStatisticsResult> results;
+    {
+      py::gil_scoped_release release;
+      results = proc_.ComputeAll(vec, params);
+    }
+
+    py::list out;
+    for (const auto& r : results) {
+      py::dict d;
+      d["beam_id"]          = r.beam_id;
+      d["mean_real"]        = r.mean.real();
+      d["mean_imag"]        = r.mean.imag();
+      d["variance"]         = r.variance;
+      d["std_dev"]          = r.std_dev;
+      d["mean_magnitude"]   = r.mean_magnitude;
+      d["median_magnitude"] = r.median_magnitude;
+      out.append(d);
+    }
+    return out;
+  }
+
+  py::list compute_all_float(
+      py::array_t<float, py::array::c_style | py::array::forcecast> data,
+      uint32_t beam_count)
+  {
+    auto buf = data.request();
+    if (buf.ndim == 2 && beam_count == 0)
+      beam_count = static_cast<uint32_t>(buf.shape[0]);
+    if (beam_count == 0) beam_count = 1;
+
+    auto vec = to_float_vector(data, beam_count);
+    uint32_t n_point = static_cast<uint32_t>(vec.size() / beam_count);
+
+    statistics::StatisticsParams params;
+    params.beam_count = beam_count;
+    params.n_point    = n_point;
+
+    std::vector<statistics::FullStatisticsResult> results;
+    {
+      py::gil_scoped_release release;
+      results = proc_.ComputeAllFloat(vec, params);
+    }
+
+    py::list out;
+    for (const auto& r : results) {
+      py::dict d;
+      d["beam_id"]          = r.beam_id;
+      d["mean_real"]        = r.mean.real();   // always 0.0 for float path
+      d["mean_imag"]        = r.mean.imag();   // always 0.0 for float path
+      d["variance"]         = r.variance;
+      d["std_dev"]          = r.std_dev;
+      d["mean_magnitude"]   = r.mean_magnitude;
+      d["median_magnitude"] = r.median_magnitude;
+      out.append(d);
+    }
+    return out;
+  }
+
   // ── Float magnitude API ──────────────────────────────────────────────────
 
   py::list compute_statistics_float(
@@ -240,9 +317,11 @@ inline void register_statistics(py::module& m) {
       "GPU statistics processor (ROCm).\n\n"
       "Computes per-beam statistics on complex float signal data.\n\n"
       "Methods:\n"
-      "  compute_mean       - complex mean per beam\n"
-      "  compute_median     - median of magnitudes per beam (radix sort)\n"
-      "  compute_statistics - full stats (mean+variance+std) per beam\n\n"
+      "  compute_mean         - complex mean per beam\n"
+      "  compute_median       - median of magnitudes per beam (radix sort)\n"
+      "  compute_statistics   - full stats (mean+variance+std) per beam\n"
+      "  compute_all          - statistics + median in one GPU call (faster)\n"
+      "  compute_all_float    - statistics + median on float magnitudes\n\n"
       "Usage:\n"
       "  proc = gpuworklib.StatisticsProcessor(ctx)\n"
       "  results = proc.compute_statistics(data, beam_count=4)\n"
@@ -277,6 +356,31 @@ inline void register_statistics(py::module& m) {
            "Returns:\n"
            "  list of dicts per beam:\n"
            "    beam_id, mean_real, mean_imag, variance, std_dev, mean_magnitude")
+
+      .def("compute_all", &PyStatisticsProcessor::compute_all,
+           py::arg("data"), py::arg("beam_count") = 1,
+           "Compute full statistics + median per beam in one GPU call.\n\n"
+           "Equivalent to compute_statistics() + compute_median() but eliminates\n"
+           "double upload and double sync — faster for CPU data path.\n\n"
+           "Args:\n"
+           "  data: numpy complex64 (beam_count * n_point,) or (beam_count, n_point)\n"
+           "  beam_count: number of beams (default 1)\n\n"
+           "Returns:\n"
+           "  list of dicts per beam:\n"
+           "    beam_id, mean_real, mean_imag, variance, std_dev,\n"
+           "    mean_magnitude, median_magnitude")
+
+      .def("compute_all_float", &PyStatisticsProcessor::compute_all_float,
+           py::arg("data"), py::arg("beam_count") = 1,
+           "Compute statistics + median on float magnitudes per beam.\n\n"
+           "Note: mean_real and mean_imag are always 0.0 for float input path.\n\n"
+           "Args:\n"
+           "  data: numpy float32 (beam_count * n_point,) or (beam_count, n_point)\n"
+           "  beam_count: number of beams (default 1)\n\n"
+           "Returns:\n"
+           "  list of dicts per beam:\n"
+           "    beam_id, mean_real(=0), mean_imag(=0), variance, std_dev,\n"
+           "    mean_magnitude, median_magnitude")
 
       .def("compute_statistics_float", &PyStatisticsProcessor::compute_statistics_float,
            py::arg("data"), py::arg("beam_count") = 1,

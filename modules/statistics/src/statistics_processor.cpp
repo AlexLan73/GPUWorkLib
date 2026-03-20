@@ -24,6 +24,31 @@
 
 namespace statistics {
 
+// =========================================================================
+// Profiling helper: hipEvent → ROCmProfilingData  (kind: 0=kernel, 1=copy)
+// Destroys both events after extracting elapsed time.
+// =========================================================================
+
+static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
+    hipEvent_t ev_start, hipEvent_t ev_end,
+    uint32_t kind, const char* op_string = "")
+{
+  hipEventSynchronize(ev_end);
+  float elapsed_ms = 0.0f;
+  hipEventElapsedTime(&elapsed_ms, ev_start, ev_end);
+  hipEventDestroy(ev_start);
+  hipEventDestroy(ev_end);
+
+  drv_gpu_lib::ROCmProfilingData d{};
+  uint64_t elapsed_ns = static_cast<uint64_t>(elapsed_ms * 1e6f);
+  d.start_ns    = 0;
+  d.end_ns      = elapsed_ns;
+  d.complete_ns = elapsed_ns;
+  d.kind        = kind;
+  d.op_string   = op_string;
+  return d;
+}
+
 // All kernel names used by statistics module
 static const std::vector<std::string> kKernelNames = {
   "compute_magnitudes",
@@ -448,6 +473,236 @@ std::vector<MedianResult> StatisticsProcessor::ComputeMedianFloat(
   }
 
   auto results = ComputeMedianFloat(gpu_ptr, params);
+  (void)hipFree(gpu_ptr);
+  return results;
+}
+
+// =========================================================================
+// Private helper — MergeResults
+// =========================================================================
+
+std::vector<FullStatisticsResult> StatisticsProcessor::MergeResults(
+    const std::vector<StatisticsResult>& stats,
+    const std::vector<MedianResult>& medians)
+{
+  std::vector<FullStatisticsResult> out;
+  out.reserve(stats.size());
+  for (size_t i = 0; i < stats.size(); ++i) {
+    FullStatisticsResult r;
+    r.beam_id          = stats[i].beam_id;
+    r.mean             = stats[i].mean;
+    r.variance         = stats[i].variance;
+    r.std_dev          = stats[i].std_dev;
+    r.mean_magnitude   = stats[i].mean_magnitude;
+    r.median_magnitude = medians[i].median_magnitude;
+    out.push_back(r);
+  }
+  return out;
+}
+
+// =========================================================================
+// Public API — ComputeAll (CPU complex data)
+// =========================================================================
+
+std::vector<FullStatisticsResult> StatisticsProcessor::ComputeAll(
+    const std::vector<std::complex<float>>& data,
+    const StatisticsParams& params,
+    StatisticsROCmProfEvents* prof_events)
+{
+  size_t expected = static_cast<size_t>(params.beam_count) * params.n_point;
+  if (data.size() != expected) {
+    throw std::invalid_argument("ComputeAll: input size " +
+                                std::to_string(data.size()) +
+                                " != expected " + std::to_string(expected));
+  }
+
+  EnsureCompiled();
+
+  hipEvent_t ev_up_s{},   ev_up_e{};
+  hipEvent_t ev_welf_s{}, ev_welf_e{};
+  hipEvent_t ev_med_s{},  ev_med_e{};
+  if (prof_events) {
+    hipEventCreate(&ev_up_s);   hipEventCreate(&ev_up_e);
+    hipEventCreate(&ev_welf_s); hipEventCreate(&ev_welf_e);
+    hipEventCreate(&ev_med_s);  hipEventCreate(&ev_med_e);
+  }
+
+  if (prof_events) hipEventRecord(ev_up_s, ctx_.stream());
+  UploadComplexData(data.data(), data.size());
+  if (prof_events) hipEventRecord(ev_up_e, ctx_.stream());
+
+  if (prof_events) hipEventRecord(ev_welf_s, ctx_.stream());
+  welford_fused_op_.Execute(params.beam_count, params.n_point);
+  if (prof_events) hipEventRecord(ev_welf_e, ctx_.stream());
+
+  if (prof_events) hipEventRecord(ev_med_s, ctx_.stream());
+  if (params.n_point > kHistogramThreshold) {
+    median_hist_complex_op_.Execute(params.beam_count, params.n_point);
+  } else {
+    median_sort_op_.Execute(params.beam_count, params.n_point);
+  }
+  if (prof_events) hipEventRecord(ev_med_e, ctx_.stream());
+
+  hipStreamSynchronize(ctx_.stream());
+
+  if (prof_events) {
+    prof_events->push_back({"Upload",
+        MakeROCmDataFromEvents(ev_up_s,   ev_up_e,   1, "H2D")});
+    prof_events->push_back({"Welford_Fused",
+        MakeROCmDataFromEvents(ev_welf_s, ev_welf_e, 0, "welford_fused")});
+    prof_events->push_back({"Median",
+        MakeROCmDataFromEvents(ev_med_s,  ev_med_e,  0, "median")});
+  }
+
+  auto stats   = ReadStatisticsResults(params.beam_count);
+  auto medians = ReadMedianResults(params.beam_count);
+  return MergeResults(stats, medians);
+}
+
+// =========================================================================
+// Public API — ComputeAll (GPU complex data)
+// =========================================================================
+
+std::vector<FullStatisticsResult> StatisticsProcessor::ComputeAll(
+    void* gpu_data,
+    const StatisticsParams& params,
+    StatisticsROCmProfEvents* prof_events)
+{
+  if (!gpu_data) throw std::invalid_argument("ComputeAll: gpu_data is null");
+
+  EnsureCompiled();
+  size_t count = static_cast<size_t>(params.beam_count) * params.n_point;
+
+  hipEvent_t ev_copy_s{}, ev_copy_e{};
+  hipEvent_t ev_welf_s{}, ev_welf_e{};
+  hipEvent_t ev_med_s{},  ev_med_e{};
+  if (prof_events) {
+    hipEventCreate(&ev_copy_s); hipEventCreate(&ev_copy_e);
+    hipEventCreate(&ev_welf_s); hipEventCreate(&ev_welf_e);
+    hipEventCreate(&ev_med_s);  hipEventCreate(&ev_med_e);
+  }
+
+  if (prof_events) hipEventRecord(ev_copy_s, ctx_.stream());
+  CopyComplexGpuData(gpu_data, count);
+  if (prof_events) hipEventRecord(ev_copy_e, ctx_.stream());
+
+  if (prof_events) hipEventRecord(ev_welf_s, ctx_.stream());
+  welford_fused_op_.Execute(params.beam_count, params.n_point);
+  if (prof_events) hipEventRecord(ev_welf_e, ctx_.stream());
+
+  if (prof_events) hipEventRecord(ev_med_s, ctx_.stream());
+  if (params.n_point > kHistogramThreshold) {
+    median_hist_complex_op_.Execute(params.beam_count, params.n_point);
+  } else {
+    median_sort_op_.Execute(params.beam_count, params.n_point);
+  }
+  if (prof_events) hipEventRecord(ev_med_e, ctx_.stream());
+
+  hipStreamSynchronize(ctx_.stream());
+
+  if (prof_events) {
+    prof_events->push_back({"D2D_Copy",
+        MakeROCmDataFromEvents(ev_copy_s, ev_copy_e, 1, "D2D")});
+    prof_events->push_back({"Welford_Fused",
+        MakeROCmDataFromEvents(ev_welf_s, ev_welf_e, 0, "welford_fused")});
+    prof_events->push_back({"Median",
+        MakeROCmDataFromEvents(ev_med_s,  ev_med_e,  0, "median")});
+  }
+
+  auto stats   = ReadStatisticsResults(params.beam_count);
+  auto medians = ReadMedianResults(params.beam_count);
+  return MergeResults(stats, medians);
+}
+
+// =========================================================================
+// Public API — ComputeAllFloat (GPU float data)
+// =========================================================================
+
+std::vector<FullStatisticsResult> StatisticsProcessor::ComputeAllFloat(
+    void* gpu_float_data,
+    const StatisticsParams& params,
+    StatisticsROCmProfEvents* prof_events)
+{
+  if (!gpu_float_data) throw std::invalid_argument("ComputeAllFloat: gpu_float_data is null");
+
+  EnsureCompiled();
+  size_t count = static_cast<size_t>(params.beam_count) * params.n_point;
+
+  hipEvent_t ev_copy_s{}, ev_copy_e{};
+  hipEvent_t ev_welf_s{}, ev_welf_e{};
+  hipEvent_t ev_med_s{},  ev_med_e{};
+  if (prof_events) {
+    hipEventCreate(&ev_copy_s); hipEventCreate(&ev_copy_e);
+    hipEventCreate(&ev_welf_s); hipEventCreate(&ev_welf_e);
+    hipEventCreate(&ev_med_s);  hipEventCreate(&ev_med_e);
+  }
+
+  if (prof_events) hipEventRecord(ev_copy_s, ctx_.stream());
+  CopyFloatGpuData(gpu_float_data, count);
+  if (prof_events) hipEventRecord(ev_copy_e, ctx_.stream());
+
+  // Welford on float magnitudes → kResult
+  if (prof_events) hipEventRecord(ev_welf_s, ctx_.stream());
+  welford_float_op_.Execute(params.beam_count, params.n_point);
+  if (prof_events) hipEventRecord(ev_welf_e, ctx_.stream());
+
+  // Median on float magnitudes → kMediansCompact
+  if (prof_events) hipEventRecord(ev_med_s, ctx_.stream());
+  if (params.n_point > kHistogramThreshold) {
+    median_hist_op_.Execute(params.beam_count, params.n_point);
+  } else {
+    median_sort_op_.ExecuteFloat(params.beam_count, params.n_point);
+  }
+  if (prof_events) hipEventRecord(ev_med_e, ctx_.stream());
+
+  hipStreamSynchronize(ctx_.stream());
+
+  if (prof_events) {
+    prof_events->push_back({"D2D_Copy",
+        MakeROCmDataFromEvents(ev_copy_s, ev_copy_e, 1, "D2D")});
+    prof_events->push_back({"Welford_Float",
+        MakeROCmDataFromEvents(ev_welf_s, ev_welf_e, 0, "welford_float")});
+    prof_events->push_back({"Median",
+        MakeROCmDataFromEvents(ev_med_s,  ev_med_e,  0, "median")});
+  }
+
+  // WelfordFloat writes mean_re=0, mean_im=0 — enforce explicitly
+  auto stats = ReadStatisticsResults(params.beam_count);
+  for (auto& r : stats) r.mean = std::complex<float>(0.0f, 0.0f);
+  auto medians = ReadMedianResults(params.beam_count);
+  return MergeResults(stats, medians);
+}
+
+// =========================================================================
+// Public API — ComputeAllFloat (CPU float data)
+// =========================================================================
+
+std::vector<FullStatisticsResult> StatisticsProcessor::ComputeAllFloat(
+    const std::vector<float>& data,
+    const StatisticsParams& params)
+{
+  size_t expected = static_cast<size_t>(params.beam_count) * params.n_point;
+  if (data.size() != expected) {
+    throw std::invalid_argument("ComputeAllFloat(vector): input size " +
+        std::to_string(data.size()) + " != expected " + std::to_string(expected));
+  }
+
+  void* gpu_ptr = nullptr;
+  size_t bytes = expected * sizeof(float);
+  hipError_t err = hipMalloc(&gpu_ptr, bytes);
+  if (err != hipSuccess) {
+    throw std::runtime_error("ComputeAllFloat: hipMalloc failed: " +
+                              std::string(hipGetErrorString(err)));
+  }
+
+  err = hipMemcpy(gpu_ptr, data.data(), bytes, hipMemcpyHostToDevice);
+  if (err != hipSuccess) {
+    (void)hipFree(gpu_ptr);
+    throw std::runtime_error("ComputeAllFloat: hipMemcpy H2D failed: " +
+                              std::string(hipGetErrorString(err)));
+  }
+
+  auto results = ComputeAllFloat(gpu_ptr, params);
   (void)hipFree(gpu_ptr);
   return results;
 }

@@ -16,6 +16,8 @@
 #if ENABLE_ROCM
 #include "test_statistics_rocm.hpp"
 #include "test_statistics_float_rocm.hpp"
+#include "statistics_compute_all_benchmark.hpp"
+#include "test_statistics_compute_all_benchmark.hpp"
 #endif
 
 namespace statistics_all_test {
@@ -26,6 +28,8 @@ inline void run() {
   test_statistics_rocm::run();
   // Statistics float API + ProcessMagnitude→Statistics pipeline
   test_statistics_float_rocm::run();
+  // ComputeAll benchmark (раскомментировать для профилирования):
+  // test_statistics_compute_all_benchmark::run();
 #endif
 }
 
