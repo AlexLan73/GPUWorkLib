@@ -56,6 +56,50 @@ class SignalConfig:
 
 
 @dataclass
+class HeterodyneConfig(SignalConfig):
+    """SignalConfig + вычисляемые LFM/dechirp свойства.
+
+    Маппинг полей:
+        f0_hz   = f_start (начальная частота ЛЧМ)
+        fdev_hz = bandwidth (f_end - f_start)
+        f_end   = f0_hz + fdev_hz  (вычисляемое)
+
+    Использование:
+        cfg = HeterodyneConfig(fs=12e6, f0_hz=0.0, fdev_hz=2e6,
+                               n_samples=8000, n_antennas=5)
+        print(cfg.chirp_rate)             # -> 3e9
+        print(cfg.fbeat_from_delay(1e-4)) # -> 300e3
+    """
+    n_antennas: int = 5
+    c_light: float = 3e8
+
+    @property
+    def f_start(self) -> float:
+        return self.f0_hz
+
+    @property
+    def f_end(self) -> float:
+        return self.f0_hz + self.fdev_hz
+
+    @property
+    def bandwidth(self) -> float:
+        return self.fdev_hz
+
+    @property
+    def chirp_rate(self) -> float:
+        """Скорость изменения частоты (Гц/с)."""
+        return self.fdev_hz / self.duration_s()
+
+    def range_from_delay(self, delay_s: float) -> float:
+        """Дальность из задержки (м)."""
+        return self.c_light * delay_s / 2.0
+
+    def fbeat_from_delay(self, delay_s: float) -> float:
+        """Частота биения из задержки (Гц)."""
+        return self.chirp_rate * delay_s
+
+
+@dataclass
 class FilterConfig:
     """Параметры GPU-фильтра.
 

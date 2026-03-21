@@ -2,7 +2,7 @@
 
 > **Фаза**: 1 (приоритет HIGH)
 > **Зависимости**: — (первый в цепочке)
-> **Статус**: ⬜ TODO
+> **Статус**: ✅ DONE 2026-03-21
 > **Оценка**: ~2 часа
 > **Паттерны**: GoF Adapter, GoF Factory Method (Registry), GRASP Creator, SOLID ISP, OCP
 

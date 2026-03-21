@@ -50,9 +50,9 @@ DataValidator = 3в1    →       common/validators/  (иерархия + Compos
 
 | # | Файл | Что делает | Фаза | Статус |
 |---|------|-----------|------|--------|
-| 01 | [TASK_PythonArch_01_core_generators.md](TASK_PythonArch_01_core_generators.md) | `Core/generators/` — ISignalGenerator + CW/LFM/Noise Adapters + Factory | 1 | ⬜ TODO |
-| 02 | [TASK_PythonArch_02_core_processing.md](TASK_PythonArch_02_core_processing.md) | `Core/processing/` — IProcessor + Statistics/Heterodyne/FFT Adapters | 1 | ⬜ TODO |
-| 03 | [TASK_PythonArch_03_references.md](TASK_PythonArch_03_references.md) | `common/references/` — SignalReferences, FilterReferences, FftReferences | 1 | ⬜ TODO |
+| 01 | [TASK_PythonArch_01_core_generators.md](TASK_PythonArch_01_core_generators.md) | `Core/generators/` — ISignalGenerator + CW/LFM/Noise Adapters + Factory | 1 | ✅ DONE 2026-03-21 |
+| 02 | [TASK_PythonArch_02_core_processing.md](TASK_PythonArch_02_core_processing.md) | `Core/processing/` — GpuProcessorMixin + Statistics/Heterodyne/FFT Adapters | 1 | ✅ DONE 2026-03-21 |
+| 03 | [TASK_PythonArch_03_references.md](TASK_PythonArch_03_references.md) | `common/references/` — SignalReferences, FilterReferences, FftReferences | 1 | ✅ DONE 2026-03-21 |
 | 04 | [TASK_PythonArch_04_validators.md](TASK_PythonArch_04_validators.md) | `common/validators/` — иерархия + Composite + Factory (backward compat!) | 2 | ⬜ TODO |
 | 05 | [TASK_PythonArch_05_io_store.md](TASK_PythonArch_05_io_store.md) | `common/io/` — IDataStore + NumpyStore + JsonStore + ResultStore | 2 | ⬜ TODO |
 | 06 | [TASK_PythonArch_06_plotting.md](TASK_PythonArch_06_plotting.md) | `common/plotting/` — PlotterFactory + SpectrumPlotter + TimePlotter | 3 | ⬜ TODO |
