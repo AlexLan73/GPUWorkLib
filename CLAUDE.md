@@ -346,6 +346,7 @@ src/main.cpp
   - `Doc_Addition/Info_*` — Исследования и документация API
   - `Doc_Addition/PLAN/` — Планы рефакторинга (Ref01, Ref02, ...)
   - [`Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md`](Doc_Addition/Info_ROCm_HIP_Optimization_Guide.md) — **Инструкция по оптимизации HIP/ROCm** (теория + наши проверенные паттерны + чеклист)
+  - [`Doc_Addition/Mermaid_DarkTheme_Guide.md`](Doc_Addition/Mermaid_DarkTheme_Guide.md) — **Mermaid диаграммы для VS Code Dark Theme** (шаблоны C4, flowchart, classDiagram, sequenceDiagram + палитра + чеклист)
 - **Python_test/**: Python тесты по модулям (`Python_test/{module}/test_*.py`)
 - **Results/Plots/{module}/**: Графики из Python тестов — путь `Results/Plots/[название_модуля]/` (fft_maxima, filters, signal_generators, lch_farrow, integration). Для signal_generators — подпапки FormSignal, DelayedFormSignal, LfmAnalyticalDelay.
 - **Results/JSON**: Результаты тестов (JSON)
