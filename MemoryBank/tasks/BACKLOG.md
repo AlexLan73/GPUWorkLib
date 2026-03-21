@@ -1,7 +1,25 @@
 # BACKLOG — Очередь задач
 
-> **Обновлено**: 2026-03-10
+> **Обновлено**: 2026-03-21
 > **Главный план**: `MemoryBank/tasks/MODULES_WORK_PLAN.md`
+
+---
+
+## 🏗️ C++ test_utils — Модуль общей тестовой инфраструктуры
+
+> **Индекс**: [`TASK_CppTest_INDEX.md`](TASK_CppTest_INDEX.md)
+> **Исследование**: [`research/cpp_test_utils_full_plan.md`](../research/cpp_test_utils_full_plan.md)
+> **Добавлено**: 2026-03-21
+
+| # | Файл | Фаза | Приоритет | Что |
+|---|------|------|-----------|-----|
+| CppTest-01 | [TASK_CppTest_01](TASK_CppTest_01_result_configs.md) | 0 | 🔴 HIGH | `test_result.hpp` + `test_configs.hpp` (Value Objects) |
+| CppTest-02 | [TASK_CppTest_02](TASK_CppTest_02_validators.md) | 0 | 🔴 HIGH | `validators/` — MaxRel, Abs, Rmse, Frequency, Composite |
+| CppTest-03 | [TASK_CppTest_03](TASK_CppTest_03_references.md) | 0 | 🔴 HIGH | `references/` — CPU-эталоны signals, statistics, fft |
+| CppTest-04 | [TASK_CppTest_04](TASK_CppTest_04_gpu_transfer.md) | 0 | 🔴 HIGH | `gpu_transfer.hpp` — ReadGpuBuffer (OpenCL + ROCm) |
+| CppTest-05 | [TASK_CppTest_05](TASK_CppTest_05_runner_base.md) | 0 | 🔴 HIGH | `test_runner.hpp` + `gpu_test_base.hpp` + `reporters.hpp` + master |
+
+**Порядок**: 01 → (02 ∥ 03 ∥ 04) → 05
 
 ---
 
