@@ -20,15 +20,17 @@ import sys
 import os
 import numpy as np
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(PROJECT_ROOT, 'build', 'debian-radeon9070', 'python'))
+_PT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PT_DIR not in sys.path:
+    sys.path.insert(0, _PT_DIR)
 
-try:
-    import gpuworklib
-    HAS_GPU = True
-except ImportError:
-    HAS_GPU = False
-    print("WARNING: gpuworklib not found. Skipping GPU tests.")
+from common.gpu_loader import GPULoader
+from common.runner import SkipTest
+
+gpuworklib = GPULoader.get()
+HAS_GPU = gpuworklib is not None
+if not HAS_GPU:
+    print(f"WARNING: gpuworklib not found. Skipping GPU tests. (searched: {GPULoader.loaded_from()})")
 
 try:
     import scipy.signal as ss

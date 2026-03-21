@@ -22,8 +22,8 @@ Usage:
             return f.process(data)
 
         def validate(self, result, params):
-            v = NumericValidator(tolerance=0.01)
-            vr = v.validate(result, scipy_reference)
+            v = DataValidator(tolerance=0.01, metric="max_rel")
+            vr = v.validate(result, scipy_reference, name="filter_check")
             tr = TestResult("my_test")
             return tr.add(vr)
 

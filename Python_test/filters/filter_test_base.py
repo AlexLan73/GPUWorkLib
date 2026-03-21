@@ -29,7 +29,7 @@ scipy-эталона, который используется в validate() по
 
         def validate(self, result, params):
             ref = self.compute_reference(self._last_data, params)
-            v = NumericValidator(tolerance=1e-4)
+            v = DataValidator(tolerance=1e-4, metric="max_rel")
             return TestResult(self.name).add(v.validate(result, ref))
 """
 
@@ -39,7 +39,7 @@ from typing import Optional
 
 from common.test_base import TestBase
 from common.result import TestResult, ValidationResult
-from common.validators import NumericValidator
+from common.validators import DataValidator
 from common.configs import FilterConfig
 
 
@@ -113,7 +113,7 @@ class FilterTestBase(TestBase):
 
     def _validate_with_scipy(self, gpu_output: np.ndarray, params,
                               tolerance: float = 1e-4) -> TestResult:
-        """Сравнить GPU-выход с scipy-эталоном используя NumericValidator.
+        """Сравнить GPU-выход с scipy-эталоном используя DataValidator.
 
         Convenience метод — чтобы не дублировать в каждом подклассе.
 
@@ -126,6 +126,6 @@ class FilterTestBase(TestBase):
             TestResult с результатом сравнения
         """
         reference = self.compute_reference(self._last_data, params)
-        validator = NumericValidator(tolerance=tolerance)
-        vr = validator.validate(gpu_output, reference)
+        validator = DataValidator(tolerance=tolerance, metric="max_rel")
+        vr = validator.validate(gpu_output, reference, name="gpu_vs_scipy")
         return TestResult(self.name).add(vr)

@@ -25,7 +25,7 @@ from abc import abstractmethod
 
 from common.test_base import TestBase
 from common.result import TestResult, ValidationResult
-from common.validators import NumericValidator, SpectralValidator
+from common.validators import DataValidator
 from heterodyne.conftest import DechirpParams
 
 

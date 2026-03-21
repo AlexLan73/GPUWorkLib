@@ -40,7 +40,7 @@ from typing import Optional
 
 from common.test_base import TestBase
 from common.result import TestResult
-from common.validators import NumericValidator
+from common.validators import DataValidator
 
 
 class SignalTestBase(TestBase):
@@ -108,8 +108,8 @@ class SignalTestBase(TestBase):
         Returns:
             TestResult с ValidationResult
         """
-        validator = NumericValidator(tolerance=tolerance)
-        vr = validator.validate(gpu_output, reference)
+        validator = DataValidator(tolerance=tolerance, metric="max_rel")
+        vr = validator.validate(gpu_output, reference, name="gpu_vs_numpy")
         return TestResult(self.name).add(vr)
 
     def _check_peak_frequency(self, signal: np.ndarray, fs: float,

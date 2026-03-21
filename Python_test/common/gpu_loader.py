@@ -10,11 +10,12 @@ Singleton (GoF) + Protected Variations (GRASP):
   0. GPUWORKLIB_BUILD_DIR (переменная окружения)  ← высший приоритет
   1. build/python/Release          ← MSVC Release
   2. build/python/Debug            ← MSVC Debug
-  3. build/debian-radeon9070/python ← Linux ROCm (Alex's workstation)
-  4. build/Release                 ← альтернатива
-  5. build/Debug
-  6. build/python                  ← общая сборка
-  7. build/**/gpuworklib.*         ← авто-поиск по всему build/
+  3. build/debian-radeon9070/python ← Linux ROCm (RDNA4, gfx1201)
+  4. build/debian-mi100/python     ← Linux ROCm (CDNA1, gfx908)
+  5. build/Release                 ← альтернатива
+  6. build/Debug
+  7. build/python                  ← общая сборка
+  8. build/**/gpuworklib.*         ← авто-поиск по всему build/
 
 Usage:
     gw = GPULoader.get()           # модуль gpuworklib или None
@@ -46,6 +47,7 @@ _SEARCH_PATHS = [
     "build/python/Release",
     "build/python/Debug",
     "build/debian-radeon9070/python",
+    "build/debian-mi100/python",
     "build/Release",
     "build/Debug",
     "build/python",

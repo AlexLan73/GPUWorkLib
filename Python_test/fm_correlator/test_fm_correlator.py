@@ -22,6 +22,7 @@ _PT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PT_DIR not in sys.path:
     sys.path.insert(0, _PT_DIR)
 from common.runner import SkipTest, TestRunner
+from common.gpu_loader import GPULoader
 
 
 # ============================================================================
@@ -162,15 +163,11 @@ class TestCorrelationNumpy:
 # Tests 6-8: gpuworklib.FMCorrelatorROCm (requires ROCm GPU)
 # ============================================================================
 
-# Пробуем импортировать gpuworklib.FMCorrelatorROCm
-# Если нет — пропускаем GPU тесты (нужна пересборка с ENABLE_ROCM=ON)
-try:
-    import sys
-    sys.path.insert(0, 'build/python')
-    import gpuworklib
-    HAS_FM_CORRELATOR = hasattr(gpuworklib, 'FMCorrelatorROCm')
-except ImportError:
-    HAS_FM_CORRELATOR = False
+# gpuworklib.FMCorrelatorROCm — используем GPULoader для кросс-платформенного поиска
+_gw = GPULoader.get()
+HAS_FM_CORRELATOR = _gw is not None and hasattr(_gw, 'FMCorrelatorROCm')
+if _gw is not None:
+    gpuworklib = _gw
 
 class TestFMCorrelatorROCm:
     """Тесты GPU-реализации через gpuworklib.FMCorrelatorROCm."""
