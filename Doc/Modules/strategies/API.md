@@ -674,25 +674,25 @@ restored = farrow.compensate_seconds(delayed,
 ### conftest.py fixtures
 
 ```python
-@pytest.fixture
+
 def farrow():
     return FarrowDelay()
 
-@pytest.fixture
+
 def scenario_8ant():
     """ULA 8 антенн, 1 цель @ 30°, f0=2МГц"""
     return make_single_target(n_ant=8, theta_deg=30, f0_hz=2e6)
 
-@pytest.fixture
+
 def scenario_multi():
     """ULA 8 антенн, 3 цели @ 15°/30°/45°"""
     return make_multi_target(n_ant=8, thetas=[15, 30, 45], f0_hz=2e6)
 
-@pytest.fixture
+
 def pipeline_runner(tmp_path):
     return PipelineRunner(output_dir=None)
 
-@pytest.fixture
+
 def strategy_plot_dir():
     return Path("Results/Plots/strategies")
 ```

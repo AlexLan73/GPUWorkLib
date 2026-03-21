@@ -239,7 +239,7 @@ result = het.process(rx_signal)
        ├─ cmake --build (incremental)
        ├─ build/GPUWorkLib filters        # C++ тесты
        └─ python3 scripts/run_agent_tests.py filters
-            └─ pytest Python_test/filters/ -v -s
+            └─ python run_tests.py -m filters -s
 ```
 
 ### Поведение по типу GPU

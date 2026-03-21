@@ -805,7 +805,7 @@ def test_mvdr_jammer_suppression():
 
 | Фаза | Критерий | Измерение |
 |------|----------|-----------|
-| **1** | 19 тестов `test_farrow_pipeline.py` pass | `pytest -v` — 0 failures |
+| **1** | 19 тестов `test_farrow_pipeline.py` pass | `python run_tests.py -v` — 0 failures |
 | **2** | Графики сохраняются в `Results/Plots/strategies/` | Файлы есть, визуально корректны |
 | **3 (GPU)** | Пики GPU == CPU ±1% по магнитуде | `test_gpu_verification.py` pass |
 | **3 (GPU)** | Пики GPU == CPU ±freq_res по частоте | `test_gpu_verification.py` pass |

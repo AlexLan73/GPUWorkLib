@@ -990,11 +990,11 @@ peaks = corr.run_test_pattern(config["shift_step"])
 ### 15.4. Python тест: `Python_test/fm_correlator/test_fm_correlator_rocm.py`
 
 ```python
-import pytest
+
 import numpy as np
 import gpuworklib
 
-@pytest.fixture
+
 def ctx():
     return gpuworklib.ROCmGPUContext(0)
 

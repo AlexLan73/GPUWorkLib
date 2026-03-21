@@ -286,7 +286,7 @@ if __name__ == "__main__":
 ## ❌ Что НЕ делать
 
 - НЕ создавать `proc` в каждом `test_vN_*` — только в `setUp()`!
-- НЕ использовать `import pytest` нигде
+- НЕ использовать `from common.runner import SkipTest` нигде
 - НЕ хардкодить пути к gpuworklib.so
 - НЕ делать FAIL если V5 → SkipTest — это ожидаемое поведение
-- НЕ добавлять `@pytest.fixture` / `@pytest.mark`
+- НЕ добавлять `` / `@pytest.mark`

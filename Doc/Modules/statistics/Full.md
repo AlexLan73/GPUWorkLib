@@ -702,7 +702,7 @@ results_2d = proc.compute_statistics(data_2d, beam_count=beam_count)
 
 ### Python тесты — `Python_test/statistics/test_statistics_rocm.py`
 
-| # | Функция pytest | Группа | Что проверяет | Порог |
+| # | Функция | Группа | Что проверяет | Порог |
 |---|----------------|--------|---------------|-------|
 | 1 | `test_numpy_mean_single_beam` | NumPy | Re/Im среднее синусоиды ≈ 0 (без GPU) | abs < 0.01 |
 | 2 | `test_numpy_mean_multi_beam` | NumPy | 4 луча, |mean| < 0.01 | abs < 0.01 |
@@ -734,10 +734,10 @@ results_2d = proc.compute_statistics(data_2d, beam_count=beam_count)
 **Запуск**:
 ```bash
 # Только NumPy (без GPU):
-pytest Python_test/statistics/ -k "numpy" -v
+python run_tests.py -m statistics/ -k "numpy" -v
 
 # Все тесты с GPU:
-sg render -c "pytest Python_test/statistics/ -v"
+sg render -c "python run_tests.py -m statistics"
 
 # Генерация визуализации (4-panel plot):
 python Python_test/statistics/test_statistics_rocm.py

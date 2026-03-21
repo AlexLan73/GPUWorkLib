@@ -956,7 +956,7 @@ find_all_maxima(
 
 Запуск:
 ```bash
-PYTHONPATH=build/debian-radeon9070/python pytest Python_test/fft_func/ -v
+PYTHONPATH=build/debian-radeon9070/python python run_tests.py -m fft_func
 ```
 
 **Python_test/integration/test_fft_integration.py** — интеграционные тесты FFT.

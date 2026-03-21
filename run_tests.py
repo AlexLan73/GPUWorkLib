@@ -4,13 +4,13 @@ run_tests.py — запуск Python-тестов GPUWorkLib
 ===============================================
 
 Работает на Windows и Linux без изменений.
+Запускает каждый test_*.py напрямую: python file.py
 
 Примеры:
     python run_tests.py                            # все тесты, авто-поиск build/
     python run_tests.py -m filters                 # только модуль filters
     python run_tests.py -b build/linux/python      # указать путь к .so/.pyd
-    python run_tests.py -v -m heterodyne           # verbose, один модуль
-    python run_tests.py -- -k "test_fir"           # передать аргументы pytest
+    python run_tests.py -v -m heterodyne           # verbose режим
 
 Linux ROCm пример:
     python run_tests.py -b build/debian-radeon9070/python
@@ -43,6 +43,25 @@ PROJECT_ROOT = Path(__file__).parent.resolve()
 PYTHON_TEST_DIR = PROJECT_ROOT / "Python_test"
 
 
+def find_test_files(test_dir: Path) -> list:
+    """Найти все test_*.py файлы в директории (не рекурсивно)."""
+    if not test_dir.exists():
+        return []
+    return sorted(test_dir.glob("test_*.py"))
+
+
+def run_test_file(test_file: Path, env: dict, verbose: bool) -> int:
+    """Запустить один test_*.py файл. Возвращает return code."""
+    if verbose:
+        print(f"    -> python {test_file.name}")
+    r = subprocess.run(
+        [sys.executable, str(test_file)],
+        cwd=str(PROJECT_ROOT),
+        env=env,
+    )
+    return r.returncode
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Запуск Python-тестов GPUWorkLib (Windows / Linux)",
@@ -64,18 +83,12 @@ def main() -> int:
     parser.add_argument(
         "--verbose", "-v",
         action="store_true",
-        help="Подробный вывод pytest (-v)",
+        help="Подробный вывод (показывать каждый запускаемый файл)",
     )
     parser.add_argument(
         "--list-modules",
         action="store_true",
         help="Показать список модулей и выйти",
-    )
-    # Всё после -- идёт напрямую в pytest
-    parser.add_argument(
-        "pytest_args",
-        nargs=argparse.REMAINDER,
-        help="Дополнительные аргументы pytest (после --)",
     )
     args = parser.parse_args()
 
@@ -98,22 +111,43 @@ def main() -> int:
         env["GPUWORKLIB_BUILD_DIR"] = str(build_path)
         print(f"[run_tests] GPUWORKLIB_BUILD_DIR = {build_path}")
 
-    # Сформировать команду pytest
-    test_target = str(PYTHON_TEST_DIR / args.module) if args.module else str(PYTHON_TEST_DIR)
+    # Собрать список модулей для запуска
+    if args.module:
+        modules_to_run = [args.module]
+    else:
+        modules_to_run = MODULES
 
-    cmd = [sys.executable, "-m", "pytest", test_target]
+    # Запустить тесты
+    total_files = 0
+    failed_files = []
 
-    if args.verbose:
-        cmd.append("-v")
+    for mod in modules_to_run:
+        test_dir = PYTHON_TEST_DIR / mod
+        test_files = find_test_files(test_dir)
+        if not test_files:
+            continue
 
-    # Убрать ведущий "--" если pytest_args начинается с него
-    extra = args.pytest_args
-    if extra and extra[0] == "--":
-        extra = extra[1:]
-    cmd.extend(extra)
+        print(f"\n[{mod}] {len(test_files)} test file(s):")
+        for test_file in test_files:
+            total_files += 1
+            rc = run_test_file(test_file, env, args.verbose)
+            if rc != 0:
+                failed_files.append(str(test_file.relative_to(PROJECT_ROOT)))
+                print(f"  [FAIL] {test_file.name}")
+            else:
+                if args.verbose:
+                    print(f"  [PASS] {test_file.name}")
 
-    print(f"[run_tests] {' '.join(cmd)}")
-    return subprocess.run(cmd, env=env).returncode
+    print(f"\n{'='*40}")
+    print(f"Total files: {total_files}")
+    if failed_files:
+        print(f"Failed ({len(failed_files)}):")
+        for f in failed_files:
+            print(f"  {f}")
+        return 1
+    else:
+        print("All passed!")
+        return 0
 
 
 if __name__ == "__main__":

@@ -581,11 +581,11 @@ modules/strategies/
     └── test_strategies_step_profiling.hpp  # Пошаговый профилировочный тест
 
 Python_test/strategies/
-├── conftest.py              # pytest fixtures (farrow, scenarios, runner)
+├── conftest.py              # хелпер-функцияs (farrow, scenarios, runner)
 ├── pipeline_runner.py       # PipelineRunner, PipelineA/B, PipelineBase(ABC)
 ├── scenario_builder.py      # ScenarioBuilder, ULAGeometry, EmitterSignal
 ├── farrow_delay.py          # FarrowDelay (Lagrange 48×5 numpy reference)
-├── test_farrow_pipeline.py  # 19 pytest тестов (FarrowDelay + PipelineA/B)
+├── test_farrow_pipeline.py  # 19 тестов (FarrowDelay + PipelineA/B)
 ├── test_strategies_step_by_step.py   # GPU step-by-step vs NumPy
 └── test_scenario_builder.py # NumPy-only unit тесты сценариев
 

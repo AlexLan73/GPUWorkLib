@@ -7,6 +7,7 @@ Usage: python run_agent_tests.py [all | <module> | --file <path>]
 import subprocess
 import sys
 import os
+from pathlib import Path
 
 # Order for "all" (matches create_agent_test.md)
 DEFAULT_ORDER = [
@@ -72,6 +73,14 @@ def read_modules_from_file(path):
     return modules
 
 
+def find_test_files(test_dir: str) -> list:
+    """Find all test_*.py files in directory (non-recursive)."""
+    p = Path(test_dir)
+    if not p.exists():
+        return []
+    return sorted(p.glob("test_*.py"))
+
+
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
@@ -117,18 +126,20 @@ def main():
             print(f"  [SKIP] {mod} (ROCm-only)")
             continue
 
+        test_files = find_test_files(py_dir)
+        if not test_files:
+            continue
+
         total += 1
-        print(f"  >>> {mod}")
+        print(f"  >>> {mod} ({len(test_files)} files)")
 
-        # fft_func: main branch (AMD/ROCm) — все тесты ROCm; nvidia branch — clFFT тесты
-        pytest_args = [py_dir, "-v", "-s"]
-
-        r = subprocess.run(
-            [sys.executable, "-m", "pytest"] + pytest_args,
-            cwd=project_root,
-        )
-        if r.returncode != 0:
-            failed.append(mod)
+        for test_file in test_files:
+            r = subprocess.run(
+                [sys.executable, str(test_file)],
+                cwd=project_root,
+            )
+            if r.returncode != 0:
+                failed.append(f"{mod}/{test_file.name}")
 
     if failed:
         print(f"\n  Failed: {failed}")

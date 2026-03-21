@@ -99,7 +99,7 @@ StrategyTestBase (Template Method GoF)
 | P4 | `run_all()` (debug steps) — T2 | Да |
 | P5 | `StrategiesProfilingBenchmark` — T3 | Да |
 | P6 | `TimingPerStepTest` — T4, JSON export | Да |
-| P7 | `pytest test_timing_analysis.py` — анализ JSON | Нет |
+| P7 | `python Python_test/strategies/test_timing_analysis.py` — анализ JSON | Нет |
 
 ---
 

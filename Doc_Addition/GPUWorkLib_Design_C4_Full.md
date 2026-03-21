@@ -123,7 +123,7 @@
 |-----------|-------|------------|
 | **main** | src/main.cpp | Точка входа |
 | **Tests** | modules/*/tests/all_test.hpp | C++ тесты модулей |
-| **Python Tests** | Python_test/test_*.py | pytest тесты |
+| **Python Tests** | Python_test/test_*.py | тесты |
 
 ---
 

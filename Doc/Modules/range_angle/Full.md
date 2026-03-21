@@ -623,7 +623,7 @@ modules/range_angle/
 
 python/py_range_angle_rocm.hpp            ← pybind11 биндинг
 Python_test/range_angle/
-  └── test_range_angle.py                 ← pytest тесты
+  └── test_range_angle.py                 ← тесты
 Doc/Modules/range_angle/                  ← документация
   ├── Full.md  ← этот файл
   ├── Quick.md
@@ -689,7 +689,7 @@ profiler.ExportJSON("Results/Profiler/range_angle.json");  // ✅
 [ ] Дальность: погрешность < 1 бин (15 м) на эталонных данных
 [ ] Углы: погрешность < 1 бин (7.2°) или < 0.5° с параболой
 [ ] GPUProfiler отчёт сохранён: Results/Profiler/range_angle_benchmark.json
-[ ] Python тест: pytest Python_test/range_angle/ PASSED
+[ ] Python тест: python run_tests.py -m range_angle/ PASSED
 [ ] Графики: Results/Plots/range_angle/
 [ ] Большой тест (16×16 × 1.3M) — выполняется без OOM
 ```

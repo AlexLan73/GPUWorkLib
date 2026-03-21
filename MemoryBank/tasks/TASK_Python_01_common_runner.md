@@ -12,7 +12,7 @@
 Создать минимальную инфраструктуру для запуска тестов **без pytest**.
 
 Два класса:
-1. `SkipTest` — исключение для пропуска теста (вместо `pytest.skip()`)
+1. `SkipTest` — исключение для пропуска теста (вместо `raise SkipTest()`)
 2. `TestRunner` — запускает методы `test_*` в классе, собирает результаты
 
 ---
@@ -42,7 +42,7 @@ Python_test/common/__init__.py ← добавить экспорт TestRunner и
 class SkipTest(Exception):
     """Пропуск теста — GPU недоступен или тест не применим.
 
-    Заменяет pytest.skip(). Бросается внутри setUp() или test_*().
+    Заменяет raise SkipTest(). Бросается внутри setUp() или test_*().
     TestRunner перехватывает и помечает тест как SKIP (не FAIL).
 
     Usage:

@@ -107,7 +107,7 @@ Container-уровень показывает основные развёрты�
 | 9 | **Vector Algebra** | C++17 / rocSOLVER (ROCm only) | `modules/vector_algebra/` | Cholesky POTRF/POTRI инверсия матриц |
 | 10 | **FM Correlator** | C++17 / HIP + hipFFT (ROCm only) | `modules/fm_correlator/` | ФМ-корреляция M-последовательностями (R2C/C2R) |
 | 11 | **Python Bindings** | pybind11 / NumPy | `python/` | Python API: `gpu_worklib.so` |
-| 12 | **Test Suite** | C++17 / pytest | `*/tests/`, `Python_test/` | C++ тесты (hpp) + Python тесты |
+| 12 | **Test Suite** | C++17 / TestRunner | `*/tests/`, `Python_test/` | C++ тесты (hpp) + Python тесты |
 
 ---
 

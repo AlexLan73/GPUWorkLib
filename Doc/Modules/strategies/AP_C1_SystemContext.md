@@ -27,7 +27,7 @@
  │  │                  │   │                  │   │                        │    │
  │  │ Интегрирует      │   │ Анализирует      │   │ Прогоняет тесты:       │    │
  │  │ AntennaProcessor │   │ результаты в     │   │ C++ (all_test.hpp)     │    │
- │  │ в C++ пайплайн  │   │ Python/NumPy     │   │ Python (pytest)        │    │
+ │  │ в C++ пайплайн  │   │ Python/NumPy     │   │ Python (TestRunner)        │    │
  │  └────────┬─────────┘   └───────┬──────────┘   └──────────┬─────────────┘    │
  └───────────┼───────────────────── ┼──────────────────────────┼─────────────────┘
              │                      │                          │
@@ -84,7 +84,7 @@
 |-------|------|----------------|
 | **C++ Engineer** | Разработчик системы ЦОС | `AntennaProcessor::process(S, W)` → `AntennaResult` |
 | **Python Scientist** | Анализ результатов | Python API (pybind11), numpy arrays |
-| **CI/CD Pipeline** | Тестирование | `cmake --build` + ctest + pytest |
+| **CI/CD Pipeline** | Тестирование | `cmake --build` + ctest + python run_tests.py |
 
 ### Входные данные
 
@@ -146,7 +146,7 @@ title AntennaProcessor — C1: System Context
 
 Person(cpp_eng, "C++ Engineer", "Интегрирует AntennaProcessor в C++ pipeline")
 Person(py_sci, "Python Scientist", "Анализирует результаты через Python API")
-Person(ci, "CI/CD Pipeline", "cmake build + ctest + pytest")
+Person(ci, "CI/CD Pipeline", "cmake build + ctest + python run_tests.py")
 
 System(ap, "AntennaProcessor", "GPU pipeline:\nDMA → GEMM → FFT → Branch\nBeamforming антенной матрицы")
 
@@ -160,7 +160,7 @@ System_Ext(fs, "Host FS", "Logs/GPU_XX/antenna_processor/\nC1..C4 checkpoint fil
 
 Rel(cpp_eng, ap, "C++ API", "AntennaProcessor::process()")
 Rel(py_sci, ap, "Python API", "pybind11")
-Rel(ci, ap, "Build & Test", "cmake + ctest + pytest")
+Rel(ci, ap, "Build & Test", "cmake + ctest + python run_tests.py")
 
 Rel(ap, drv, "GPU backend", "hipBLAS, hipFFT, streams, events")
 Rel(ap, stats, "Statistics", "welford_fused, radix_sort, medians")

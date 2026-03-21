@@ -149,7 +149,7 @@ run_new_module_tests(backend);
 
 **Python тест**: создай `Python_test/new_module/test_new_module.py`
 - Сравнение с NumPy/SciPy эталоном
-- Запуск: `PYTHONPATH=build/python pytest Python_test/new_module/`
+- Запуск: `PYTHONPATH=build/python python run_tests.py -m new_module/`
 
 **Результат**: `"Python bindings: [список методов], тест passed/failed"`
 

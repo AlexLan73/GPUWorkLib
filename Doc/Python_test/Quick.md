@@ -28,7 +28,7 @@ Python_test/
 │   └── ai_pipeline/         ← НОВЫЙ: разбивка монолита (964 строки → 4 файла)
 │       ├── llm_parser.py    ← LLMParser + Mock/Groq/OllamaParser (Strategy)
 │       ├── filter_designer.py  ← FilterDesigner (scipy FIR/IIR)
-│       └── test_ai_pipeline.py ← чистые pytest тесты (без matplotlib)
+│       └── test_ai_pipeline.py ← чистые тесты (без matplotlib)
 │
 ├── signal_generators/       # 4 файла + инфраструктура
 │   ├── conftest.py          ← fixtures: sig_gen, fft_proc, lfm_params
@@ -67,21 +67,21 @@ Python_test/
 cmake -B build -DBUILD_PYTHON=ON && cmake --build build --config Release
 ```
 
-### Запуск (pytest)
+### Запуск (TestRunner)
 
 ```bash
 # Все тесты (GPULoader найдёт .so автоматически)
-pytest Python_test/ -v
+python run_tests.py -v
 
 # Модуль целиком
-pytest Python_test/filters/ -v
-pytest Python_test/integration/ -v
+python run_tests.py -m filters
+python run_tests.py -m integration
 
 # Только тесты без GPU (не принимают gpu_ctx fixture)
-pytest Python_test/filters/ai_pipeline/ -v  # MockParser, FilterDesigner
+python run_tests.py -m filters/ai_pipeline  # MockParser, FilterDesigner
 
 # Один тест
-pytest Python_test/filters/ai_pipeline/test_ai_pipeline.py::TestMockParser -v
+python run_tests.py -m filters/ai_pipeline/test_ai_pipeline.py::TestMockParser -v
 
 # ROCm тесты (Linux)
 bash Python_test/run_all_rocm_tests.sh
@@ -111,7 +111,7 @@ from common.gpu_loader import GPULoader
 gw = GPULoader.get()   # None если не найден
 ```
 
-**Или через pytest fixture** (автоматически):
+**Или через хелпер-функция** (автоматически):
 ```python
 def test_something(gpu_ctx):    # fixture из root conftest.py
     f = gpuworklib.FirFilterROCm(gpu_ctx, coeffs)
@@ -230,7 +230,7 @@ result = PipelineB().run(scenario, steer_theta=30)
 ## Слои тестирования (разделение matplotlib)
 
 ```
-Слой 1: pytest тесты (test_*.py)
+Слой 1: тесты (test_*.py)
   → только assert, numpy, gpu_ctx fixture
   → НЕ импортируют matplotlib напрямую
   → запускаются в CI без дисплея
@@ -258,7 +258,7 @@ result = PipelineB().run(scenario, steer_theta=30)
 | numpy | ✅ | CPU reference |
 | scipy | ⚠️ рекомендуется | Фильтры, find_peaks, firwin/butter |
 | matplotlib | ⚠️ опционально | Графики (только в demo-скриптах) |
-| pytest | ⚠️ рекомендуется | Test runner |
+| ~~pytest~~ | ❌ Не используется | Заменён на TestRunner из common/runner.py |
 | groq / ollama | ❌ опционально | AI-pipeline (MockParser работает без них) |
 
 ---

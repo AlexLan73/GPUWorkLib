@@ -125,4 +125,4 @@ statistics
 | lch_farrow | Python_test/lch_farrow/ |
 | heterodyne | Python_test/heterodyne/ |
 
-Run: `pytest Python_test/{module}/ -v`
+Run: `python run_tests.py -m {module}/ -v`

@@ -273,7 +273,7 @@ print(inv.get_symmetrize_mode())  # SymmetrizeMode.Roundtrip
 ### Python тесты
 
 **Файл**: `Python_test/vector_algebra/test_cholesky_inverter_rocm.py`
-**Запуск**: `pytest Python_test/vector_algebra/test_cholesky_inverter_rocm.py -v`
+**Запуск**: `python Python_test/vector_algebra/test_cholesky_inverter_rocm.py`
 
 | # | Тест | Что проверяет | Порог |
 |---|------|---------------|-------|
@@ -432,7 +432,7 @@ modules/vector_algebra/
     └── test_stage_profiling.hpp            # GPUProfiler: стадии POTRF/POTRI/Sym
 
 Python_test/vector_algebra/
-└── test_cholesky_inverter_rocm.py          # 6 pytest (2 modes × операции)
+└── test_cholesky_inverter_rocm.py          # 6 тестов (2 modes × операции)
 
 Doc/Python/
 └── vector_algebra_api.md                  # Python API документация (полная)

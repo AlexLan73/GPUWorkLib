@@ -68,8 +68,8 @@ test_debug_steps.hpp          ← runner: DebugStepTest × 4 сигнала
 test_params.py                ← AntennaTestParams dataclass + SignalVariant
 signal_generators_strategy.py ← ISignalStrategy + 4 реализации + Factory
 strategy_test_base.py         ← StrategyTestBase (extends TestBase)
-test_base_pipeline.py         ← pytest T1: 4 варианта, без GPU ✅
-test_debug_steps.py           ← pytest T2: per-step validation, без GPU ✅
+test_base_pipeline.py         ← TestRunner T1: 4 варианта, без GPU ✅
+test_debug_steps.py           ← TestRunner T2: per-step validation, без GPU ✅
 test_timing_analysis.py       ← парсинг JSON + bar chart (после L7-9)
 ```
 
@@ -79,6 +79,6 @@ test_timing_analysis.py       ← парсинг JSON + bar chart (после L7
 
 - [ ] Non-square матрица 2500×100: добавить `n_beams` в `AntennaProcessorConfig`
 - [ ] Ref03-C Facade rewrite: `antenna_processor_v1.hpp+.cpp` → Pipeline delegation
-- [ ] Python pytest: P1-P7 можно запустить на Windows уже сейчас (без GPU)
+- [ ] Python TestRunner: P1-P7 можно запустить на Windows уже сейчас (без GPU)
 
 *Последнее обновление: 2026-03-15*

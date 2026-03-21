@@ -350,7 +350,7 @@ MVDR (Minimum Variance Distortionless Response):
 
 | ID | Задача | Описание |
 |----|--------|----------|
-| TASK-SB-01 | Запустить тесты | `pytest test_scenario_builder.py -v` — убедиться, что все pass |
+| TASK-SB-01 | Запустить тесты | `python Python_test/strategies/test_scenario_builder.py` — убедиться, что все pass |
 | TASK-SB-02 | JSON export/import | `builder.to_json(path)` / `ScenarioBuilder.from_json(path)` |
 
 ### P1 — Важные (фаза 2)

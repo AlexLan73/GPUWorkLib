@@ -104,7 +104,7 @@ DrvGPU: All tests PASSED (включая external context)
 
 #### Сборка и проверка
 - [ ] **T02-11**: `cmake --build` — проверить что компилируется
-- [ ] **T02-12**: `python3 -m pytest Python_test/fft_processor/ -v`
+- [ ] **T02-12**: `python3 -m python run_tests.py -m fft_processor`
 
 ### Критерий приёмки
 ```python
@@ -163,7 +163,7 @@ result = fft.process(signal)
 
 #### Сборка и проверка
 - [ ] **T03-11**: `cmake --build`
-- [ ] **T03-12**: `python3 -m pytest Python_test/fft_maxima/ -v`
+- [ ] **T03-12**: `python3 -m python run_tests.py -m fft_maxima`
 
 ### Критерий приёмки
 ```python
@@ -215,7 +215,7 @@ maxima = finder.find(spectrum_gpu_buffer)
 
 #### Сборка и проверка
 - [ ] **T04-7**: `cmake --build`
-- [ ] **T04-8**: `python3 -m pytest Python_test/signal_generators/test_form_signal_rocm.py -v`
+- [ ] **T04-8**: `python3 -m python Python_test/signal_generators/test_form_signal_rocm.py`
 
 ### Критерий приёмки
 ```python
@@ -272,7 +272,7 @@ Python binding `register_fm_correlator_rocm` зарегистрирован.
 ### Критерий приёмки
 ```
 ./GPUWorkLib fm_correlator → test_msequence PASSED, test_basic PASSED
-python3 -m pytest Python_test/fm_correlator/ -v → 3 тесты PASSED
+python3 -m python run_tests.py -m fm_correlator → 3 тесты PASSED
 Doc/Modules/fm_correlator/API.md создан
 ```
 
@@ -313,15 +313,15 @@ Doc/Modules/fm_correlator/API.md создан
 - [ ] **T06-7**: Запустить `./GPUWorkLib strategies` — проверить PASSED
 - [ ] **T06-8**: Запустить Python шаг за шагом:
   ```bash
-  python3 -m pytest Python_test/strategies/test_strategies_step_by_step.py -v
+  python3 -m python Python_test/strategies/test_strategies_step_by_step.py
   ```
 - [ ] **T06-9**: Запустить ScenarioBuilder тесты:
   ```bash
-  python3 -m pytest Python_test/strategies/test_scenario_builder.py -v
+  python3 -m python Python_test/strategies/test_scenario_builder.py
   ```
 - [ ] **T06-10**: Запустить FarrowPipeline тесты:
   ```bash
-  python3 -m pytest Python_test/strategies/test_farrow_pipeline.py -v
+  python3 -m python Python_test/strategies/test_farrow_pipeline.py
   ```
 - [ ] **T06-11**: Зафиксировать результаты — что прошло, что упало
 
@@ -358,12 +358,12 @@ set_external_weights работает в C++ и Python
 ### Задачи
 - [ ] **T07-1**: Запустить ScenarioBuilder тесты:
   ```bash
-  python3 -m pytest Python_test/strategies/test_scenario_builder.py -v
+  python3 -m python Python_test/strategies/test_scenario_builder.py
   ```
 - [ ] **T07-2**: Зафиксировать результат — что прошло
 - [ ] **T07-3**: Запустить FarrowPipeline тесты:
   ```bash
-  python3 -m pytest Python_test/strategies/test_farrow_pipeline.py -v
+  python3 -m python Python_test/strategies/test_farrow_pipeline.py
   ```
 - [ ] **T07-4**: Если тест падает — починить
 - [ ] **T07-5**: Создать визуализацию `plot_farrow_vs_phase.py`:

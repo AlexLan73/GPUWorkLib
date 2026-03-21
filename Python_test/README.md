@@ -43,12 +43,11 @@ cmake -B build -DBUILD_PYTHON=ON && cmake --build build
 
 Нажми **Run** (▶) или **Debug** (🐛).
 
-Если тест использует `pytest` — PyCharm покажет дерево тестов.
-Если нет — просто вывод в консоль.
+PyCharm покажет вывод в консоль.
 
 Альтернатива через терминал из корня проекта:
 ```bash
-pytest Python_test/strategies/test_base_pipeline.py -v
+python Python_test/strategies/test_base_pipeline.py
 ```
 
 ---
@@ -64,7 +63,7 @@ pytest Python_test/strategies/test_base_pipeline.py -v
 `gpuworklib.so` ищется автоматически через `GPULoader` — он сам перебирает пути:
 `build/python/Release` → `build/python/Debug` → `build/debian-radeon9070/python` → `build/python` → авто-поиск.
 
-Если модуль не найден → тест пропускается (`pytest.skip`), не падает.
+Если модуль не найден → тест пропускается (`SkipTest`), не падает.
 
 Можно явно указать путь через переменную окружения:
 ```
@@ -90,7 +89,7 @@ GPUWORKLIB_BUILD_DIR=build/debian-radeon9070/python
 
 | Модуль | Директория | Нужен GPU? | Тесты |
 |--------|------------|------------|-------|
-| **strategies** | `Python_test/strategies/` | `*_01.py` и NumPy тесты — без GPU; остальные — GPU опционален | `test_params.py` (конфиг), `test_base_pipeline.py`, `test_debug_steps.py`, `test_scenario_builder.py`, `test_farrow_pipeline.py`, `test_timing_analysis.py`, **`test_strategies_step_by_step_01.py`** (новый простой), `test_strategies_step_by_step.py` |
+| **strategies** | `Python_test/strategies/` | NumPy тесты — без GPU; остальные — GPU опционален | `test_params.py` (конфиг), `test_base_pipeline.py`, `test_debug_steps.py`, `test_scenario_builder.py`, `test_farrow_pipeline.py`, `test_timing_analysis.py`, `test_strategies_step_by_step.py`, `test_strategies_pipeline.py` |
 | **signal_generators** | `Python_test/signal_generators/` | Частично | `test_form_signal.py`, `test_form_signal_rocm.py`, `test_delayed_form_signal.py`, `test_lfm_analytical_delay.py`, `example_form_signal.py` |
 | **filters** | `Python_test/filters/` | Частично | `test_filters_stage1.py`, `test_ai_fir_demo.py`, `test_fir_filter_rocm.py`, `test_iir_filter_rocm.py`, `test_iir_plot.py`, `test_kalman_rocm.py`, `test_kaufman_rocm.py`, `test_moving_average_rocm.py`, `test_ai_filter_pipeline.py`, `plot_report_filters.py` |
 | **heterodyne** | `Python_test/heterodyne/` | Да (ROCm) | `test_heterodyne.py`, `test_heterodyne_rocm.py`, `test_heterodyne_step_by_step.py`, `test_heterodyne_comparison.py` |
@@ -123,8 +122,7 @@ Pipeline: S → GEMM → Hamming + FFT → peak finding. 4 варианта си
 | `test_scenario_builder.py` | ❌ нет | Физическая модель ULA: задержки, CW/LFM, шум, матрица W |
 | `test_farrow_pipeline.py` | ❌ нет | Pipeline A (фаза) vs Pipeline B (Farrow задержка) — когда нужен Farrow? |
 | `test_timing_analysis.py` | ❌ нет | Анализ timing JSON от C++ TimingPerStepTest — нужны файлы из `Results/strategies/` |
-| `test_strategies_step_by_step_01.py` | ⚡ GPU опц. | **ПРОСТОЙ** пошаговый тест: Шаг0→1→2→3→4 с print() и циклами. Читабельный! |
-| `test_strategies_step_by_step.py` | ⚡ GPU опц. | Детальный GPU vs NumPy по каждому шагу (pytest классы, fixtures) |
+| `test_strategies_step_by_step.py` | ⚡ GPU опц. | Детальный GPU vs NumPy по каждому шагу pipeline |
 
 Графики → `Results/Plots/strategies/`
 

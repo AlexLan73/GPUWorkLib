@@ -240,12 +240,12 @@ peaks2 = corr.process(signals)  # [5, 32, 2000]
 ./GPUWorkLib fm_correlator
 
 # Python (NumPy-only, без GPU)
-python3 -m pytest Python_test/fm_correlator/test_fm_correlator.py -v
+python3 -m python Python_test/fm_correlator/test_fm_correlator.py
 
 # Python (с GPU после пересборки)
 cmake .. -DENABLE_ROCM=ON -DBUILD_PYTHON=ON
 cmake --build . -j$(nproc)
-PYTHONPATH=build/python python3 -m pytest Python_test/fm_correlator/ -v
+PYTHONPATH=build/python python3 -m python run_tests.py -m fm_correlator
 ```
 
 ---

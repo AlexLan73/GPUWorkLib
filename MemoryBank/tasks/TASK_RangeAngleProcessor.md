@@ -52,7 +52,7 @@
 - [ ] Дальность совпадает с эталоном: погрешность < 1 бин (15 м)
 - [ ] Углы совпадают с эталоном: погрешность < 1 бин (7.2°) или < 0.5° с параболой
 - [ ] GPUProfiler отчёт сохранён в `Results/Profiler/range_angle_benchmark.json`
-- [ ] Python биндинги работают: `pytest Python_test/range_angle/test_range_angle.py`
+- [ ] Python биндинги работают: `python run_tests.py -m range_angle/test_range_angle.py`
 - [ ] Графики сохранены в `Results/Plots/range_angle/`
 
 ---
@@ -857,7 +857,7 @@ register_range_angle(m);
 ### 10.3 Python тест `Python_test/range_angle/test_range_angle.py`
 
 ```python
-import pytest, numpy as np, json
+import numpy as np, json
 from pathlib import Path
 import gpu_worklib as gw
 
@@ -972,7 +972,7 @@ def test_cube_visualization():
 
 Фаза 10 — Python:
   [ ] py_range_angle.hpp зарегистрирован
-  [ ] pytest test_range_angle.py PASSED
+  [ ] python Python_test/range_angle/test_range_angle.py  # PASSED
   [ ] Графики срезов куба сохранены
 ```
 

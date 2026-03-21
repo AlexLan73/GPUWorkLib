@@ -745,7 +745,7 @@ DrvGPU `FilterConfigService` — сохранение/загрузка коэф�
 ### 10.4 Python тесты (OpenCL)
 
 **Файл**: `Python_test/filters/test_filters_stage1.py`
-**Запуск**: `pytest Python_test/filters/test_filters_stage1.py -v`
+**Запуск**: `python Python_test/filters/test_filters_stage1.py`
 
 | # | Функция | Сигнал | Порог | Что проверяет и почему |
 |---|---------|--------|-------|------------------------|

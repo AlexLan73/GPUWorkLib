@@ -1118,7 +1118,7 @@ cmake .. -DBUILD_PYTHON=ON -DENABLE_ROCM=ON -DCMAKE_PREFIX_PATH=/opt/rocm
 make -j$(nproc)
 
 # Запуск тестов
-PYTHONPATH=build/python pytest Python_test/
+PYTHONPATH=build/python python run_tests.py -m 
 ```
 
 ### Как работает конвертация C++ → Python

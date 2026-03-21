@@ -53,6 +53,36 @@ MemoryBank/
 
 ## 🔧 Правила работы Кодо
 
+### 🚫 АБСОЛЮТНЫЙ ЗАПРЕТ — pytest (НАРУШАТЬ НЕЛЬЗЯ!)
+
+> ⚠️ **pytest ЗАПРЕЩЁН навсегда!** Нарушение = потеря 3 дней работы Alex.
+
+**ЗАПРЕЩЕНО** писать где-либо:
+- `pytest`, `import pytest`, `pytest.skip`, `@pytest.fixture`, `@pytest.mark`
+- `pytest Python_test/...`, `pytest file.py -v`
+- любое упоминание слова "pytest" в коде, README, docstring, комментариях
+
+**ПРАВИЛЬНАЯ замена:**
+```bash
+# Запуск тестов — ТОЛЬКО прямой вызов Python:
+python Python_test/module/test_xxx.py
+
+# Пропуск теста — ТОЛЬКО через SkipTest:
+from common.runner import SkipTest
+raise SkipTest("причина пропуска")
+
+# Инфраструктура тестов:
+from common.runner import TestRunner
+runner = TestRunner()
+results = runner.run(TestMyClass())
+runner.print_summary(results)
+```
+
+**Тест-классы** — обычные Python классы, методы `test_*`, без декораторов.
+**Запуск** — `if __name__ == "__main__"` с `TestRunner`.
+
+---
+
 ### 🚨 КРИТИЧЕСКОЕ ПРАВИЛО — Где писать файлы (НАРУШАТЬ НЕЛЬЗЯ!)
 
 > ⚠️ **Это правило ВЫШЕ всех остальных!** Нарушение = потеря работы Alex.

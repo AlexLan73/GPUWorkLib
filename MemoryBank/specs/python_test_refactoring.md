@@ -14,7 +14,7 @@
 |--------|-------|
 | Начинать с чего? | `common/runner.py` → потом `strategies/` |
 | Все модули? Порядок? | ВСЕ: fft_func → statistics → signal_generators → heterodyne → filters → vector_algebra → capon → range_angle |
-| pytest.skip()? | ТОЛЬКО свой `SkipTest` в `common/runner.py` |
+| raise SkipTest()? | ТОЛЬКО свой `SkipTest` в `common/runner.py` |
 | Данные шагов? | Через `AntennaProcessorTest.step_N()` → CPU. Флаг → запись на диск через Python |
 | Сигналы? | Через GPU SignalGenerator (тестируем 2 модуля сразу) |
 | ТЕСТ 2 с delay_and_sum? | Да! ТЕСТ 3 и 4 |
@@ -420,8 +420,8 @@ Python_test/
 
 ```
 Python_test/
-├── conftest.py                          ← убрать import pytest
-├── strategies/conftest.py               ← убрать import pytest
+├── conftest.py                          ← убрать from common.runner import SkipTest
+├── strategies/conftest.py               ← убрать from common.runner import SkipTest
 ├── strategies/test_debug_steps.py       ← → TestBase класс
 ├── strategies/test_base_pipeline.py     ← → TestBase класс
 ├── strategies/test_strategies_step_by_step.py ← → TestBase класс

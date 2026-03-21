@@ -29,7 +29,7 @@ DAP Proxy Monitor интересно
 Скрипт запускает:
 Сборку C++
 C++-тесты (./build/GPUWorkLib …)
-Python-тесты (pytest)
+Python-тесты (TestRunner)
 3. CLI для GPUWorkLib
 main.cpp поддерживает аргументы:
 all — все модули (порядок из config/tests_order.txt)
