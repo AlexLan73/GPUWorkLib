@@ -18,8 +18,6 @@
  * @date 2026-03-16
  */
 
-#if ENABLE_ROCM
-
 #include <complex>
 #include <cstdint>
 #include <vector>
@@ -53,19 +51,16 @@ struct CaponBeamResult {
   std::vector<std::complex<float>> output;  ///< n_directions × n_samples (row-major)
 };
 
-// ============================================================================
-// Индексы разделяемых буферов (GpuContext shared buffers)
-// ============================================================================
-
+// Индексы разделяемых буферов (GpuContext shared buffers) — только ROCm
+#if ENABLE_ROCM
 namespace shared_buf {
-  static constexpr size_t kSignal    = 0;  ///< Y: complex<float> [n_channels × n_samples]
-  static constexpr size_t kSteering  = 1;  ///< U: complex<float> [n_channels × n_directions]
-  static constexpr size_t kCovMatrix = 2;  ///< R: complex<float> [n_channels × n_channels]
-  static constexpr size_t kWeight    = 3;  ///< W = R^{-1}*U: complex<float> [n_channels × n_directions]
-  static constexpr size_t kOutput    = 4;  ///< выход: float[] (рельеф) или complex<float>[] (ДО)
-  static constexpr size_t kCount     = 5;  ///< всего слотов
+  static constexpr size_t kSignal    = 0;
+  static constexpr size_t kSteering  = 1;
+  static constexpr size_t kCovMatrix = 2;
+  static constexpr size_t kWeight    = 3;
+  static constexpr size_t kOutput    = 4;
+  static constexpr size_t kCount     = 5;
 }  // namespace shared_buf
+#endif  // ENABLE_ROCM
 
 }  // namespace capon
-
-#endif  // ENABLE_ROCM

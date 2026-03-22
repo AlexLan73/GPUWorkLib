@@ -16,6 +16,7 @@
 
 #include "fft_processor_rocm.hpp"
 #include "kernels/fft_processor_kernels_rocm.hpp"
+#include "rocm_profiling_helpers.hpp"
 #include "services/gpu_profiler.hpp"
 #include "config/gpu_config.hpp"
 #include "logger/logger.hpp"
@@ -25,6 +26,9 @@
 #include <cstring>
 #include <cmath>
 
+using fft_func_utils::MakeROCmDataFromEvents;
+using fft_func_utils::MakeROCmDataFromClock;
+
 namespace fft_processor {
 
 // All kernel names used by FFT module
@@ -32,39 +36,6 @@ static const std::vector<std::string> kKernelNames = {
   "pad_data",
   "complex_to_mag_phase"
 };
-
-// =========================================================================
-// Helper: hipEvent → ROCmProfilingData
-// =========================================================================
-
-static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
-    hipEvent_t ev_start, hipEvent_t ev_end, uint32_t kind,
-    const char* op_string = "") {
-  float elapsed_ms = 0.0f;
-  hipEventElapsedTime(&elapsed_ms, ev_start, ev_end);
-  hipEventDestroy(ev_start);
-  hipEventDestroy(ev_end);
-
-  drv_gpu_lib::ROCmProfilingData d;
-  uint64_t elapsed_ns = static_cast<uint64_t>(elapsed_ms * 1e6f);
-  d.queued_ns = 0; d.submit_ns = 0;
-  d.start_ns = 0; d.end_ns = elapsed_ns; d.complete_ns = elapsed_ns;
-  d.kind = kind; d.op_string = op_string;
-  return d;
-}
-
-static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromClock(
-    std::chrono::high_resolution_clock::time_point t_start,
-    std::chrono::high_resolution_clock::time_point t_end,
-    uint32_t kind, const char* op_string = "") {
-  uint64_t elapsed_ns = static_cast<uint64_t>(
-      std::chrono::duration_cast<std::chrono::nanoseconds>(t_end - t_start).count());
-  drv_gpu_lib::ROCmProfilingData d;
-  d.queued_ns = 0; d.submit_ns = 0;
-  d.start_ns = 0; d.end_ns = elapsed_ns; d.complete_ns = elapsed_ns;
-  d.kind = kind; d.op_string = op_string;
-  return d;
-}
 
 // =========================================================================
 // Constructor / Destructor / Move
@@ -155,8 +126,7 @@ void FFTProcessorROCm::AllocateBuffers(size_t batch_beam_count, FFTOutputMode mo
   size_t fft_size = batch_beam_count * nFFT_ * sizeof(std::complex<float>);
 
   bufs_.Require(kInputBuf, input_size);
-  bufs_.Require(kFftInput, fft_size);
-  bufs_.Require(kFftOutput, fft_size);
+  bufs_.Require(kFftBuf, fft_size);  // in-place: pad + FFT in same buffer
 
   if (mode != FFTOutputMode::COMPLEX) {
     size_t mp_size = batch_beam_count * nFFT_ * 2 * sizeof(float);
@@ -250,7 +220,7 @@ std::vector<FFTComplexResult> FFTProcessorROCm::ReadComplexResults(
   size_t total = beam_count * nFFT_;
   std::vector<std::complex<float>> raw(total);
 
-  hipError_t err = hipMemcpyDtoH(raw.data(), bufs_.Get(kFftOutput),
+  hipError_t err = hipMemcpyDtoH(raw.data(), bufs_.Get(kFftBuf),
                                    total * sizeof(std::complex<float>));
   if (err != hipSuccess) {
     throw std::runtime_error("ReadComplexResults: " + std::string(hipGetErrorString(err)));
@@ -355,15 +325,15 @@ std::vector<FFTComplexResult> FFTProcessorROCm::ProcessComplex(
     if (prof_events) hipEventRecord(ev_up_e, ctx_.stream());
 
     if (prof_events) hipEventRecord(ev_pad_s, ctx_.stream());
-    pad_op_.Execute(bufs_.Get(kInputBuf), bufs_.Get(kFftInput),
+    pad_op_.Execute(bufs_.Get(kInputBuf), bufs_.Get(kFftBuf),
                     batch.count, n_point_, nFFT_);
     if (prof_events) hipEventRecord(ev_pad_e, ctx_.stream());
 
     if (prof_events) hipEventRecord(ev_fft_s, ctx_.stream());
     hipfftResult fft_result = hipfftExecC2C(
         plan_,
-        static_cast<hipfftComplex*>(bufs_.Get(kFftInput)),
-        static_cast<hipfftComplex*>(bufs_.Get(kFftOutput)),
+        static_cast<hipfftComplex*>(bufs_.Get(kFftBuf)),
+        static_cast<hipfftComplex*>(bufs_.Get(kFftBuf)),
         HIPFFT_FORWARD);
     if (fft_result != HIPFFT_SUCCESS) {
       throw std::runtime_error("hipfftExecC2C failed: " +
@@ -419,13 +389,17 @@ std::vector<FFTComplexResult> FFTProcessorROCm::ProcessComplex(
     size_t src_offset = batch.start * params.n_point * sizeof(std::complex<float>);
     CopyGpuData(gpu_data, src_offset, batch.count * params.n_point);
 
-    pad_op_.Execute(bufs_.Get(kInputBuf), bufs_.Get(kFftInput),
+    pad_op_.Execute(bufs_.Get(kInputBuf), bufs_.Get(kFftBuf),
                     batch.count, n_point_, nFFT_);
 
-    hipfftExecC2C(plan_,
-                  static_cast<hipfftComplex*>(bufs_.Get(kFftInput)),
-                  static_cast<hipfftComplex*>(bufs_.Get(kFftOutput)),
+    hipfftResult fft_res = hipfftExecC2C(plan_,
+                  static_cast<hipfftComplex*>(bufs_.Get(kFftBuf)),
+                  static_cast<hipfftComplex*>(bufs_.Get(kFftBuf)),
                   HIPFFT_FORWARD);
+    if (fft_res != HIPFFT_SUCCESS) {
+      throw std::runtime_error("ProcessComplex(GPU): hipfftExecC2C failed: " +
+                                std::to_string(static_cast<int>(fft_res)));
+    }
     hipStreamSynchronize(ctx_.stream());
 
     auto batch_results = ReadComplexResults(batch.count, batch.start, params.sample_rate);
@@ -483,19 +457,23 @@ std::vector<FFTMagPhaseResult> FFTProcessorROCm::ProcessMagPhase(
     if (prof_events) hipEventRecord(ev_up_e, ctx_.stream());
 
     if (prof_events) hipEventRecord(ev_pad_s, ctx_.stream());
-    pad_op_.Execute(bufs_.Get(kInputBuf), bufs_.Get(kFftInput),
+    pad_op_.Execute(bufs_.Get(kInputBuf), bufs_.Get(kFftBuf),
                     batch.count, n_point_, nFFT_);
     if (prof_events) hipEventRecord(ev_pad_e, ctx_.stream());
 
     if (prof_events) hipEventRecord(ev_fft_s, ctx_.stream());
-    hipfftExecC2C(plan_,
-                  static_cast<hipfftComplex*>(bufs_.Get(kFftInput)),
-                  static_cast<hipfftComplex*>(bufs_.Get(kFftOutput)),
+    hipfftResult fft_res_mp = hipfftExecC2C(plan_,
+                  static_cast<hipfftComplex*>(bufs_.Get(kFftBuf)),
+                  static_cast<hipfftComplex*>(bufs_.Get(kFftBuf)),
                   HIPFFT_FORWARD);
+    if (fft_res_mp != HIPFFT_SUCCESS) {
+      throw std::runtime_error("ProcessMagPhase: hipfftExecC2C failed: " +
+                                std::to_string(static_cast<int>(fft_res_mp)));
+    }
     if (prof_events) hipEventRecord(ev_fft_e, ctx_.stream());
 
     if (prof_events) hipEventRecord(ev_mag_s, ctx_.stream());
-    mag_phase_op_.Execute(bufs_.Get(kFftOutput), bufs_.Get(kMagPhaseInterleaved),
+    mag_phase_op_.Execute(bufs_.Get(kFftBuf), bufs_.Get(kMagPhaseInterleaved),
                           batch.count * nFFT_);
     if (prof_events) hipEventRecord(ev_mag_e, ctx_.stream());
 
@@ -551,13 +529,17 @@ std::vector<FFTMagPhaseResult> FFTProcessorROCm::ProcessMagPhase(
     size_t src_offset = batch.start * params.n_point * sizeof(std::complex<float>);
     CopyGpuData(gpu_data, src_offset, batch.count * params.n_point);
 
-    pad_op_.Execute(bufs_.Get(kInputBuf), bufs_.Get(kFftInput),
+    pad_op_.Execute(bufs_.Get(kInputBuf), bufs_.Get(kFftBuf),
                     batch.count, n_point_, nFFT_);
-    hipfftExecC2C(plan_,
-                  static_cast<hipfftComplex*>(bufs_.Get(kFftInput)),
-                  static_cast<hipfftComplex*>(bufs_.Get(kFftOutput)),
+    hipfftResult fft_res = hipfftExecC2C(plan_,
+                  static_cast<hipfftComplex*>(bufs_.Get(kFftBuf)),
+                  static_cast<hipfftComplex*>(bufs_.Get(kFftBuf)),
                   HIPFFT_FORWARD);
-    mag_phase_op_.Execute(bufs_.Get(kFftOutput), bufs_.Get(kMagPhaseInterleaved),
+    if (fft_res != HIPFFT_SUCCESS) {
+      throw std::runtime_error("ProcessMagPhase(GPU): hipfftExecC2C failed: " +
+                                std::to_string(static_cast<int>(fft_res)));
+    }
+    mag_phase_op_.Execute(bufs_.Get(kFftBuf), bufs_.Get(kMagPhaseInterleaved),
                           batch.count * nFFT_);
     hipStreamSynchronize(ctx_.stream());
 
@@ -588,7 +570,8 @@ void FFTProcessorROCm::CalculateNFFT(const FFTProcessorParams& params) {
 
 size_t FFTProcessorROCm::CalculateBytesPerBeam(FFTOutputMode mode) const {
   size_t input_bytes = n_point_ * sizeof(std::complex<float>);
-  size_t fft_bytes = nFFT_ * sizeof(std::complex<float>) * 2 + input_bytes;
+  // In-place FFT: single buffer for pad + FFT result (was 2 buffers before)
+  size_t fft_bytes = nFFT_ * sizeof(std::complex<float>);
   size_t post_bytes = (mode != FFTOutputMode::COMPLEX)
       ? 2 * nFFT_ * sizeof(float)
       : 0;

@@ -27,6 +27,7 @@
 
 #include "services/console_output.hpp"
 #include "services/kernel_cache_service.hpp"
+#include "backends/rocm/rocm_backend.hpp"
 
 namespace vector_algebra {
 
@@ -91,8 +92,19 @@ void CholeskyInverterROCm::CompileKernels() {
         std::string(hiprtcGetErrorString(rtc_err)));
   }
 
-  const char* options[] = {"-O3"};
-  rtc_err = hiprtcCompileProgram(prog, 1, options);
+  // Получить целевую архитектуру для ISA-оптимизаций
+  std::string arch_name;
+  try {
+    auto* rocm = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
+    arch_name = rocm->GetCore().GetArchName();
+  } catch (...) {}
+  std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
+
+  std::vector<const char*> options = {"-O3"};
+  if (!arch_flag.empty()) options.push_back(arch_flag.c_str());
+
+  rtc_err = hiprtcCompileProgram(prog,
+      static_cast<int>(options.size()), options.data());
   if (rtc_err != HIPRTC_SUCCESS) {
     size_t log_size = 0;
     hiprtcGetProgramLogSize(prog, &log_size);

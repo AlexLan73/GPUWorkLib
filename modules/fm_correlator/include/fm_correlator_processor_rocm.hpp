@@ -18,12 +18,10 @@
 
 #include "fm_correlator_types.hpp"
 #include "interface/i_backend.hpp"
-#include "services/kernel_cache_service.hpp"
+#include "interface/gpu_context.hpp"
 
 #include <hip/hip_runtime.h>
-#include <hip/hiprtc.h>
 #include <hipfft/hipfft.h>
-#include <memory>
 
 namespace drv_gpu_lib {
 
@@ -39,6 +37,10 @@ public:
 
   FMCorrelatorProcessorROCm(const FMCorrelatorProcessorROCm&) = delete;
   FMCorrelatorProcessorROCm& operator=(const FMCorrelatorProcessorROCm&) = delete;
+
+  // Move semantics
+  FMCorrelatorProcessorROCm(FMCorrelatorProcessorROCm&& other) noexcept;
+  FMCorrelatorProcessorROCm& operator=(FMCorrelatorProcessorROCm&& other) noexcept;
 
   // Применить параметры: compile (первый раз), free старые буферы/планы,
   // allocate под новые размеры. Сбрасывает ref_prepared_ — эталон потеряется.
@@ -63,67 +65,79 @@ public:
   bool IsReferencePrepared() const { return ref_prepared_; }
 
 private:
-  // Hiprtc: compile один раз лениво при первом SetParams(). Загружает module_
-  // и извлекает 4 hipFunction_t по именам.
-  void CompileKernels();
+  void EnsureCompiled();
   void AllocateBuffers();
   void FreeBuffers();
   void CreatePlans();
   void DestroyPlans();
-  // Вызывается из деструктора: DestroyPlans → FreeBuffers → unload module → destroy streams.
   void ReleaseAll();
 
-  // Финальная часть пайплайна, общая для Process() и RunTestPattern():
-  // multiply_conj_fused → C2R IFFT → extract_magnitudes → D2H peaks.
   FMCorrelatorResult RunCorrelationPipeline();
-
-  // H2D(inp) из raw pointer без CPU-копии — используется из ProcessWithBatching
   FMCorrelatorResult ProcessFromPtr(const float* data, int num_signals);
 
-  IBackend* backend_;   ///< Не владеем — lifetime управляется снаружи
+  GpuContext ctx_;             ///< Ref03: compilation, disk cache (NOT stream — we use 2 own streams)
+  IBackend*  backend_;         ///< Non-owning, for hipMalloc
   FMCorrelatorParams params_;
+  bool compiled_ = false;
 
-  // stream0: ref-path (H2D ref, shifts, C2C FFT) + финальная корреляция
-  // stream1: inp-path (H2D inp или gen_test_inputs, R2C FFT) — параллельно stream0
-  // Синхронизируются перед multiply_conj_fused.
+  // 2-stream pipeline: ref on stream0, inp on stream1 (true GPU concurrency)
   hipStream_t stream0_ = nullptr;
   hipStream_t stream1_ = nullptr;
 
-  // hipFFT-планы создаются в SetParams() и живут до следующего SetParams()/деструктора.
-  // ВАЖНО: планы привязаны к потокам через hipfftSetStream() — без этого план
-  // выполнится на default stream и нарушит параллелизм ref/inp.
-  hipfftHandle plan_ref_  = 0;  ///< C2C Forward, batch=K (для эталонных сдвигов)
-  hipfftHandle plan_inp_  = 0;  ///< R2C Forward, batch=S (для входных сигналов)
-  hipfftHandle plan_corr_ = 0;  ///< C2R Inverse, batch=S*K (для корреляции)
+  // hipFFT plans (bound to streams via hipfftSetStream)
+  hipfftHandle plan_ref_  = 0;
+  hipfftHandle plan_inp_  = 0;
+  hipfftHandle plan_corr_ = 0;
   bool plans_created_ = false;
 
-  // GPU-буферы. Все выделяются в AllocateBuffers() при SetParams().
-  float*  d_ref_float_   = nullptr;  ///< [N] float  — исходный ref до apply_shifts
-  void*   d_ref_complex_ = nullptr;  ///< [K × N] float2 — сдвиги + их C2C FFT in-place
-  float*  d_inp_float_   = nullptr;  ///< [S × N] float  — входные сигналы (real)
-  void*   d_inp_fft_     = nullptr;  ///< [S × (N/2+1)] float2 — R2C результат (hermitian!)
-  void*   d_corr_fft_    = nullptr;  ///< [S × K × (N/2+1)] float2 — conj(ref)×inp спектры
-  float*  d_corr_time_   = nullptr;  ///< [S × K × N] float — C2R IFFT (вещественный)
-  float*  d_peaks_       = nullptr;  ///< [S × K × n_kg] float — финальные пики
+  // GPU buffers
+  float*  d_ref_float_   = nullptr;
+  void*   d_ref_complex_ = nullptr;
+  float*  d_inp_float_   = nullptr;
+  void*   d_inp_fft_     = nullptr;
+  void*   d_corr_fft_    = nullptr;
+  float*  d_corr_time_   = nullptr;
+  float*  d_peaks_       = nullptr;
 
-  // Один hipModule содержит все 4 кернела, компилируется hiprtc один раз.
-  hipModule_t   module_ = nullptr;
-  hipFunction_t fn_apply_shifts_    = nullptr;  ///< float[N] → float2[K×N] с циклическими сдвигами
-  hipFunction_t fn_multiply_conj_   = nullptr;  ///< conj(ref_fft[k]) × inp_fft[s]
-  hipFunction_t fn_extract_mag_     = nullptr;  ///< |corr_time[j]| / N → peaks
-  hipFunction_t fn_gen_test_inputs_ = nullptr;  ///< circshift(ref, s*step) → inp (тест без H2D)
-  bool kernels_compiled_ = false;
-
-  bool ref_prepared_ = false;       ///< true после успешного PrepareReference()
+  bool ref_prepared_ = false;
   bool buffers_allocated_ = false;
-  int  current_batch_S_ = 0;        ///< S для которого выделены текущие буферы/планы
+  int  current_batch_S_ = 0;
 
-  // Дисковый кеш HSACO-бинарей — ~1-5 мс загрузка вместо ~100-200 мс hiprtc-компиляции
-  std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
-
-  // 256 threads/block — оптимум для RDNA/CDNA: кратно warp_size=64 (4 варпа),
-  // достаточно для хорошего occupancy, не вызывает register spill для этих кернелов.
   static constexpr unsigned int kBlockSize = 256;
+};
+
+}  // namespace drv_gpu_lib
+
+#else  // !ENABLE_ROCM — Windows stub
+
+#include "fm_correlator_types.hpp"
+#include "interface/i_backend.hpp"
+#include <stdexcept>
+#include <vector>
+
+namespace drv_gpu_lib {
+
+class FMCorrelatorProcessorROCm {
+public:
+  explicit FMCorrelatorProcessorROCm(IBackend*) {}
+  ~FMCorrelatorProcessorROCm() = default;
+
+  void SetParams(const FMCorrelatorParams&) {
+    throw std::runtime_error("FMCorrelatorProcessorROCm: ROCm not enabled");
+  }
+  void PrepareReference(const std::vector<float>&) {
+    throw std::runtime_error("FMCorrelatorProcessorROCm: ROCm not enabled");
+  }
+  FMCorrelatorResult Process(const std::vector<float>&) {
+    throw std::runtime_error("FMCorrelatorProcessorROCm: ROCm not enabled");
+  }
+  FMCorrelatorResult RunTestPattern(int) {
+    throw std::runtime_error("FMCorrelatorProcessorROCm: ROCm not enabled");
+  }
+  FMCorrelatorResult ProcessWithBatching(const std::vector<float>&, int) {
+    throw std::runtime_error("FMCorrelatorProcessorROCm: ROCm not enabled");
+  }
+  bool IsReferencePrepared() const { return false; }
 };
 
 }  // namespace drv_gpu_lib

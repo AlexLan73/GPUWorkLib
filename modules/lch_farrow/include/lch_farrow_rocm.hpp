@@ -19,19 +19,16 @@
 
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
+#include "interface/gpu_context.hpp"
 #include "services/profiling_types.hpp"
 
 #include <hip/hip_runtime.h>
-#include <hip/hiprtc.h>
 
 #include <vector>
 #include <complex>
 #include <string>
 #include <cstdint>
 #include <utility>
-#include <memory>
-
-namespace drv_gpu_lib { class KernelCacheService; }
 
 namespace lch_farrow {
 
@@ -130,14 +127,11 @@ public:
   float GetSampleRate() const { return sample_rate_; }
 
 private:
-  void CompileKernel();
+  void EnsureCompiled();
   void UploadMatrix();
   void ReleaseGpuResources();
 
-  drv_gpu_lib::IBackend* backend_ = nullptr;
-
-  // HIP stream (from backend)
-  hipStream_t stream_ = nullptr;
+  drv_gpu_lib::GpuContext ctx_;  ///< Ref03: compilation, stream, disk cache
 
   // Parameters
   std::vector<float> delay_us_;
@@ -149,21 +143,14 @@ private:
   // Lagrange matrix 48x5 (240 floats)
   std::vector<float> lagrange_matrix_;
   bool matrix_loaded_ = false;
+  bool compiled_ = false;
 
-  // hiprtc compiled kernel
-  hipModule_t module_ = nullptr;
-  hipFunction_t kernel_ = nullptr;
-  bool kernel_compiled_ = false;
-
-  // GPU buffer for matrix (persistent)
+  // GPU buffer for matrix (persistent, small — 240 floats)
   void* matrix_buf_ = nullptr;
 
   // GPU buffer for delay_us (persistent, resized on demand)
   void* delay_buf_ = nullptr;
   size_t delay_buf_size_ = 0;
-
-  // HSACO disk cache (avoids hiprtc recompile ~100-200ms)
-  std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
 
   static constexpr unsigned int kBlockSize = 256;
 };

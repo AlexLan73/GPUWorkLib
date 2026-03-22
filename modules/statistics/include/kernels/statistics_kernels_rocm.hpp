@@ -47,6 +47,10 @@ inline const char* GetStatisticsKernelSource() {
 #define WARP_SIZE 32
 #endif
 
+#ifndef BLOCK_SIZE
+#define BLOCK_SIZE 256
+#endif
+
 struct float2_t {
     float x;
     float y;
@@ -102,8 +106,8 @@ extern "C" __global__ void mean_reduce_phase1(
     unsigned int n_point)
 {
     // P2-B: LDS with +1 padding per row to avoid bank conflicts
-    __shared__ float sdata_x[256 + 1];
-    __shared__ float sdata_y[256 + 1];
+    __shared__ float sdata_x[BLOCK_SIZE + 1];
+    __shared__ float sdata_y[BLOCK_SIZE + 1];
 
     unsigned int tid        = threadIdx.x;
     unsigned int block_size = blockDim.x;
@@ -166,8 +170,8 @@ extern "C" __global__ void mean_reduce_final(
     unsigned int n_point)
 {
     // P2-B: LDS with +1 padding to avoid bank conflicts
-    __shared__ float sdata_x[256 + 1];
-    __shared__ float sdata_y[256 + 1];
+    __shared__ float sdata_x[BLOCK_SIZE + 1];
+    __shared__ float sdata_y[BLOCK_SIZE + 1];
 
     unsigned int beam_id = blockIdx.x;
     unsigned int tid     = threadIdx.x;
@@ -213,11 +217,10 @@ extern "C" __global__ void mean_reduce_final(
 }
 
 // =========================================================================
-// Kernel 4: welford_stats   [TASK-4.1, 4.4, 4.5, P3-B, P3-C]
-// Optimized version of original kernel (kept for backward compat).
-// Reads both input + magnitudes (used internally if needed).
-// P3-B: LDS +1 padding to avoid bank conflicts in tree reduction.
-// P3-C: #pragma unroll 4 on grid-stride loop for ILP.
+// Kernel 4: welford_stats   [TRUE PARALLEL WELFORD — Bennett et al. 2009]
+// Reads complex input + pre-computed magnitudes (backward compat path).
+// Uses true Welford merge for numerically stable variance computation.
+// LDS: 5 arrays with +1 padding — sum_re, sum_im, mean_mag, M2, count.
 // =========================================================================
 __launch_bounds__(256)
 extern "C" __global__ void welford_stats(
@@ -233,59 +236,76 @@ extern "C" __global__ void welford_stats(
     unsigned int tid        = threadIdx.x;
     unsigned int block_size = blockDim.x;
 
-    // P3-B: +1 padding per array to avoid LDS bank conflicts
     extern __shared__ char shared_mem[];
-    float* s_sum_re  = (float*)shared_mem;
-    float* s_sum_im  = s_sum_re  + block_size + 1;
-    float* s_sum_mag = s_sum_im  + block_size + 1;
-    float* s_sum_sq  = s_sum_mag + block_size + 1;
+    float* s_sum_re   = (float*)shared_mem;
+    float* s_sum_im   = s_sum_re   + block_size + 1;
+    float* s_mean_mag = s_sum_im   + block_size + 1;
+    float* s_M2       = s_mean_mag + block_size + 1;
+    float* s_count    = s_M2       + block_size + 1;
 
-    float sum_re = 0.0f, sum_im = 0.0f, sum_mag = 0.0f, sum_sq = 0.0f;
+    float t_sum_re = 0.0f, t_sum_im = 0.0f;
+    float t_mean = 0.0f, t_M2 = 0.0f, t_cnt = 0.0f;
     unsigned int base = beam_id * n_point;
 
     #pragma unroll 4
     for (unsigned int i = tid; i < n_point; i += block_size) {
-        float2_t z  = input[base + i];
-        float mag   = magnitudes[base + i];
-        sum_re  += z.x;
-        sum_im  += z.y;
-        sum_mag += mag;
-        sum_sq  += mag * mag;
+        float2_t z = input[base + i];
+        float mag  = magnitudes[base + i];
+        t_sum_re += z.x;
+        t_sum_im += z.y;
+        t_cnt += 1.0f;
+        float delta = mag - t_mean;
+        t_mean += delta / t_cnt;
+        float delta2 = mag - t_mean;
+        t_M2 += delta * delta2;
     }
 
-    s_sum_re[tid]  = sum_re;
-    s_sum_im[tid]  = sum_im;
-    s_sum_mag[tid] = sum_mag;
-    s_sum_sq[tid]  = sum_sq;
+    s_sum_re[tid]   = t_sum_re;
+    s_sum_im[tid]   = t_sum_im;
+    s_mean_mag[tid] = t_mean;
+    s_M2[tid]       = t_M2;
+    s_count[tid]    = t_cnt;
     __syncthreads();
 
     for (unsigned int s = block_size / 2; s >= WARP_SIZE; s >>= 1) {
         if (tid < s) {
-            s_sum_re[tid]  += s_sum_re[tid + s];
-            s_sum_im[tid]  += s_sum_im[tid + s];
-            s_sum_mag[tid] += s_sum_mag[tid + s];
-            s_sum_sq[tid]  += s_sum_sq[tid + s];
+            s_sum_re[tid] += s_sum_re[tid + s];
+            s_sum_im[tid] += s_sum_im[tid + s];
+            float na = s_count[tid], nb = s_count[tid + s];
+            float nab = na + nb;
+            if (nab > 0.0f) {
+                float d = s_mean_mag[tid + s] - s_mean_mag[tid];
+                s_mean_mag[tid] = (s_mean_mag[tid] * na + s_mean_mag[tid + s] * nb) / nab;
+                s_M2[tid] = s_M2[tid] + s_M2[tid + s] + d * d * na * nb / nab;
+                s_count[tid] = nab;
+            }
         }
         __syncthreads();
     }
 
     if (tid < WARP_SIZE) {
         float vr = s_sum_re[tid], vi = s_sum_im[tid];
-        float vm = s_sum_mag[tid], vs = s_sum_sq[tid];
+        float vm = s_mean_mag[tid], vM2 = s_M2[tid], vc = s_count[tid];
         for (int off = WARP_SIZE / 2; off > 0; off >>= 1) {
-            vr += __shfl_down(vr, off);
-            vi += __shfl_down(vi, off);
-            vm += __shfl_down(vm, off);
-            vs += __shfl_down(vs, off);
+            float or_ = __shfl_down(vr, off), oi = __shfl_down(vi, off);
+            float om = __shfl_down(vm, off), oM2 = __shfl_down(vM2, off);
+            float oc = __shfl_down(vc, off);
+            vr += or_; vi += oi;
+            float nab = vc + oc;
+            if (nab > 0.0f) {
+                float d = om - vm;
+                vm = (vm * vc + om * oc) / nab;
+                vM2 = vM2 + oM2 + d * d * vc * oc / nab;
+                vc = nab;
+            }
         }
         if (tid == 0) {
             float inv_n = 1.0f / (float)n_point;
             WelfordResult r;
             r.mean_re  = vr * inv_n;
             r.mean_im  = vi * inv_n;
-            r.mean_mag = vm * inv_n;
-            float mean_sq = vs * inv_n;
-            r.variance = mean_sq - r.mean_mag * r.mean_mag;
+            r.mean_mag = vm;
+            r.variance = (vc > 1.0f) ? vM2 / vc : 0.0f;
             if (r.variance < 0.0f) r.variance = 0.0f;
             r.std_dev = __fsqrt_rn(r.variance);
             results[beam_id] = r;
@@ -294,15 +314,15 @@ extern "C" __global__ void welford_stats(
 }
 
 // =========================================================================
-// Kernel 5: welford_fused   [TASK-1, TASK-4.1, 4.4, 4.5, P3-B, P3-C]
+// Kernel 5: welford_fused   [TRUE PARALLEL WELFORD — Bennett et al. 2009]
 // Single pass: reads only input[], computes |z| on the fly.
+// Numerically stable: uses Welford per-thread accumulator + merge at reduction.
 // Eliminates separate compute_magnitudes call for ComputeStatistics path.
-// P3-B: LDS +1 padding to avoid bank conflicts in tree reduction.
-// P3-C: #pragma unroll 4 on grid-stride loop for ILP.
+// LDS: 5 arrays with +1 padding — sum_re, sum_im, mean_mag, M2, count.
 // =========================================================================
 __launch_bounds__(256)
 extern "C" __global__ void welford_fused(
-    const float2_t* __restrict__ input,   // only input buffer — no magnitudes!
+    const float2_t* __restrict__ input,
     WelfordResult* __restrict__ results,
     unsigned int beam_count,
     unsigned int n_point)
@@ -313,62 +333,81 @@ extern "C" __global__ void welford_fused(
     unsigned int tid        = threadIdx.x;
     unsigned int block_size = blockDim.x;
 
-    // P3-B: +1 padding per array to avoid LDS bank conflicts
     extern __shared__ char shared_mem[];
-    float* s_sum_re  = (float*)shared_mem;
-    float* s_sum_im  = s_sum_re  + block_size + 1;
-    float* s_sum_mag = s_sum_im  + block_size + 1;
-    float* s_sum_sq  = s_sum_mag + block_size + 1;
+    float* s_sum_re   = (float*)shared_mem;
+    float* s_sum_im   = s_sum_re   + block_size + 1;
+    float* s_mean_mag = s_sum_im   + block_size + 1;
+    float* s_M2       = s_mean_mag + block_size + 1;
+    float* s_count    = s_M2       + block_size + 1;
 
-    float sum_re = 0.0f, sum_im = 0.0f, sum_mag = 0.0f, sum_sq = 0.0f;
+    // Per-thread Welford accumulator for magnitudes + simple sum for complex mean
+    float t_sum_re = 0.0f, t_sum_im = 0.0f;
+    float t_mean = 0.0f, t_M2 = 0.0f, t_cnt = 0.0f;
     unsigned int base = beam_id * n_point;
 
-    // P3-C: unroll grid-stride loop for ILP (overlap sqrt with memory latency)
     #pragma unroll 4
     for (unsigned int i = tid; i < n_point; i += block_size) {
-        float2_t z   = input[base + i];
-        float mag    = __fsqrt_rn(z.x * z.x + z.y * z.y);  // TASK-4.5
-        sum_re  += z.x;
-        sum_im  += z.y;
-        sum_mag += mag;
-        sum_sq  += mag * mag;
+        float2_t z = input[base + i];
+        float mag  = __fsqrt_rn(z.x * z.x + z.y * z.y);
+        t_sum_re += z.x;
+        t_sum_im += z.y;
+        // Welford online update for magnitude statistics
+        t_cnt += 1.0f;
+        float delta = mag - t_mean;
+        t_mean += delta / t_cnt;
+        float delta2 = mag - t_mean;
+        t_M2 += delta * delta2;
     }
 
-    s_sum_re[tid]  = sum_re;
-    s_sum_im[tid]  = sum_im;
-    s_sum_mag[tid] = sum_mag;
-    s_sum_sq[tid]  = sum_sq;
+    s_sum_re[tid]   = t_sum_re;
+    s_sum_im[tid]   = t_sum_im;
+    s_mean_mag[tid] = t_mean;
+    s_M2[tid]       = t_M2;
+    s_count[tid]    = t_cnt;
     __syncthreads();
 
-    // LDS tree reduction
+    // LDS tree reduction: simple sum for complex, Welford merge for magnitude
     for (unsigned int s = block_size / 2; s >= WARP_SIZE; s >>= 1) {
         if (tid < s) {
-            s_sum_re[tid]  += s_sum_re[tid + s];
-            s_sum_im[tid]  += s_sum_im[tid + s];
-            s_sum_mag[tid] += s_sum_mag[tid + s];
-            s_sum_sq[tid]  += s_sum_sq[tid + s];
+            s_sum_re[tid] += s_sum_re[tid + s];
+            s_sum_im[tid] += s_sum_im[tid + s];
+            // Welford merge (Bennett et al. 2009)
+            float na = s_count[tid], nb = s_count[tid + s];
+            float nab = na + nb;
+            if (nab > 0.0f) {
+                float d = s_mean_mag[tid + s] - s_mean_mag[tid];
+                s_mean_mag[tid] = (s_mean_mag[tid] * na + s_mean_mag[tid + s] * nb) / nab;
+                s_M2[tid] = s_M2[tid] + s_M2[tid + s] + d * d * na * nb / nab;
+                s_count[tid] = nab;
+            }
         }
         __syncthreads();
     }
 
-    // Warp shuffle final stage (TASK-4.4)
+    // Warp shuffle: simple sum for complex, Welford merge for magnitude
     if (tid < WARP_SIZE) {
         float vr = s_sum_re[tid], vi = s_sum_im[tid];
-        float vm = s_sum_mag[tid], vs = s_sum_sq[tid];
+        float vm = s_mean_mag[tid], vM2 = s_M2[tid], vc = s_count[tid];
         for (int off = WARP_SIZE / 2; off > 0; off >>= 1) {
-            vr += __shfl_down(vr, off);
-            vi += __shfl_down(vi, off);
-            vm += __shfl_down(vm, off);
-            vs += __shfl_down(vs, off);
+            float or_ = __shfl_down(vr, off), oi = __shfl_down(vi, off);
+            float om = __shfl_down(vm, off), oM2 = __shfl_down(vM2, off);
+            float oc = __shfl_down(vc, off);
+            vr += or_; vi += oi;
+            float nab = vc + oc;
+            if (nab > 0.0f) {
+                float d = om - vm;
+                vm = (vm * vc + om * oc) / nab;
+                vM2 = vM2 + oM2 + d * d * vc * oc / nab;
+                vc = nab;
+            }
         }
         if (tid == 0) {
             float inv_n = 1.0f / (float)n_point;
             WelfordResult r;
             r.mean_re  = vr * inv_n;
             r.mean_im  = vi * inv_n;
-            r.mean_mag = vm * inv_n;
-            float mean_sq = vs * inv_n;
-            r.variance = mean_sq - r.mean_mag * r.mean_mag;
+            r.mean_mag = vm;  // Welford tracks running mean directly
+            r.variance = (vc > 1.0f) ? vM2 / vc : 0.0f;
             if (r.variance < 0.0f) r.variance = 0.0f;
             r.std_dev  = __fsqrt_rn(r.variance);
             results[beam_id] = r;
@@ -391,20 +430,25 @@ extern "C" __global__ void extract_medians(
 {
     unsigned int b = blockIdx.x * blockDim.x + threadIdx.x;
     if (b >= beam_count) return;
-    medians[b] = sorted[b * n_point + n_point / 2];
+
+    unsigned int mid = n_point / 2;
+    if (n_point % 2 == 0 && mid > 0) {
+        // Even count: average of two middle elements for correct median
+        medians[b] = (sorted[b * n_point + mid - 1] + sorted[b * n_point + mid]) * 0.5f;
+    } else {
+        medians[b] = sorted[b * n_point + mid];
+    }
 }
 
 // =========================================================================
-// Kernel 7: welford_float   [P3-B, P3-C]
+// Kernel 7: welford_float   [TRUE PARALLEL WELFORD — Bennett et al. 2009]
 // Welford stats for float input (magnitudes already computed).
-// Used by strategies module for post-FFT stats on |spectrum|.
-// Grid: (beam_count, 1, 1), Block: (256, 1, 1)
-// P3-B: LDS +1 padding to avoid bank conflicts in tree reduction.
-// P3-C: #pragma unroll 4 on grid-stride loop for ILP.
+// Numerically stable: per-thread Welford + merge at reduction.
+// LDS: 3 arrays with +1 padding — mean_mag, M2, count.
 // =========================================================================
 __launch_bounds__(256)
 extern "C" __global__ void welford_float(
-    const float* __restrict__ input,     // float magnitudes [beam_count x n_point]
+    const float* __restrict__ input,
     WelfordResult* __restrict__ results,
     unsigned int beam_count,
     unsigned int n_point)
@@ -415,47 +459,63 @@ extern "C" __global__ void welford_float(
     unsigned int tid        = threadIdx.x;
     unsigned int block_size = blockDim.x;
 
-    // P3-B: +1 padding per array to avoid LDS bank conflicts
     extern __shared__ char shared_mem[];
-    float* s_sum_mag = (float*)shared_mem;
-    float* s_sum_sq  = s_sum_mag + block_size + 1;
+    float* s_mean = (float*)shared_mem;
+    float* s_M2   = s_mean + block_size + 1;
+    float* s_cnt  = s_M2   + block_size + 1;
 
-    float sum_mag = 0.0f, sum_sq = 0.0f;
+    float t_mean = 0.0f, t_M2 = 0.0f, t_cnt = 0.0f;
     unsigned int base = beam_id * n_point;
 
     #pragma unroll 4
     for (unsigned int i = tid; i < n_point; i += block_size) {
         float val = input[base + i];
-        sum_mag += val;
-        sum_sq  += val * val;
+        t_cnt += 1.0f;
+        float delta = val - t_mean;
+        t_mean += delta / t_cnt;
+        float delta2 = val - t_mean;
+        t_M2 += delta * delta2;
     }
 
-    s_sum_mag[tid] = sum_mag;
-    s_sum_sq[tid]  = sum_sq;
+    s_mean[tid] = t_mean;
+    s_M2[tid]   = t_M2;
+    s_cnt[tid]  = t_cnt;
     __syncthreads();
 
     for (unsigned int s = block_size / 2; s >= WARP_SIZE; s >>= 1) {
         if (tid < s) {
-            s_sum_mag[tid] += s_sum_mag[tid + s];
-            s_sum_sq[tid]  += s_sum_sq[tid + s];
+            float na = s_cnt[tid], nb = s_cnt[tid + s];
+            float nab = na + nb;
+            if (nab > 0.0f) {
+                float d = s_mean[tid + s] - s_mean[tid];
+                s_mean[tid] = (s_mean[tid] * na + s_mean[tid + s] * nb) / nab;
+                s_M2[tid] = s_M2[tid] + s_M2[tid + s] + d * d * na * nb / nab;
+                s_cnt[tid] = nab;
+            }
         }
         __syncthreads();
     }
 
     if (tid < WARP_SIZE) {
-        float vm = s_sum_mag[tid], vs = s_sum_sq[tid];
+        float vm = s_mean[tid], vM2 = s_M2[tid], vc = s_cnt[tid];
         for (int off = WARP_SIZE / 2; off > 0; off >>= 1) {
-            vm += __shfl_down(vm, off);
-            vs += __shfl_down(vs, off);
+            float om = __shfl_down(vm, off);
+            float oM2 = __shfl_down(vM2, off);
+            float oc = __shfl_down(vc, off);
+            float nab = vc + oc;
+            if (nab > 0.0f) {
+                float d = om - vm;
+                vm = (vm * vc + om * oc) / nab;
+                vM2 = vM2 + oM2 + d * d * vc * oc / nab;
+                vc = nab;
+            }
         }
         if (tid == 0) {
-            float inv_n = 1.0f / (float)n_point;
             WelfordResult r;
             r.mean_re  = 0.0f;
             r.mean_im  = 0.0f;
-            r.mean_mag = vm * inv_n;
-            float mean_sq = vs * inv_n;
-            r.variance = mean_sq - r.mean_mag * r.mean_mag;
+            r.mean_mag = vm;
+            r.variance = (vc > 1.0f) ? vM2 / vc : 0.0f;
             if (r.variance < 0.0f) r.variance = 0.0f;
             r.std_dev  = __fsqrt_rn(r.variance);
             results[beam_id] = r;

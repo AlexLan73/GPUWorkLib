@@ -149,10 +149,11 @@ private:
   drv_gpu_lib::GpuContext ctx_;  ///< Per-module context (kernels, stream)
 
   // Pipeline GPU buffers
+  // In-place FFT: kFftBuf serves as both padded input AND FFT output
+  // (hipfftExecC2C supports idata == odata), saving one buffer allocation.
   enum PipelineBuf : size_t {
-    kInputBuf = 0,      ///< Raw input: batch × n_point × complex<float>
-    kFftInput,          ///< Zero-padded: batch × nFFT × complex<float>
-    kFftOutput,         ///< FFT result: batch × nFFT × complex<float>
+    kInputBuf = 0,        ///< Raw input: batch × n_point × complex<float>
+    kFftBuf,              ///< Zero-padded + in-place FFT result: batch × nFFT × complex<float>
     kMagPhaseInterleaved, ///< Interleaved {mag, phase}: batch × nFFT × float2
     kBufCount
   };

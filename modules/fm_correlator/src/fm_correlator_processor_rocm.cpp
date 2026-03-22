@@ -22,8 +22,6 @@
 #include "kernels/fm_kernels_rocm.hpp"
 #include "services/console_output.hpp"
 #include "services/batch_manager.hpp"
-#include "services/kernel_cache_service.hpp"
-#include "backends/rocm/rocm_backend.hpp"
 
 #include <stdexcept>
 #include <string>
@@ -31,6 +29,13 @@
 #include <cstring>
 
 namespace drv_gpu_lib {
+
+static const std::vector<std::string> kFMKernelNames = {
+  "apply_cyclic_shifts",
+  "multiply_conj_fused",
+  "extract_magnitudes_real",
+  "generate_test_inputs"
+};
 
 // ════════════════════════════════════════════════════════════════════════════
 // PART 1: Constructor, Destructor
@@ -45,12 +50,8 @@ namespace drv_gpu_lib {
  * Синхронизируются через hipStreamSynchronize перед multiply_conj_fused.
  */
 FMCorrelatorProcessorROCm::FMCorrelatorProcessorROCm(IBackend* backend)
-    : backend_(backend) {
-  if (!backend_ || !backend_->IsInitialized()) {
-    throw std::runtime_error(
-        "FMCorrelatorProcessorROCm: backend is null or not initialized");
-  }
-
+    : ctx_(backend, "FM_Corr", "modules/fm_correlator/kernels")
+    , backend_(backend) {
   hipError_t err;
   err = hipStreamCreate(&stream0_);
   if (err != hipSuccess)
@@ -64,6 +65,71 @@ FMCorrelatorProcessorROCm::FMCorrelatorProcessorROCm(IBackend* backend)
 
 FMCorrelatorProcessorROCm::~FMCorrelatorProcessorROCm() {
   ReleaseAll();
+}
+
+FMCorrelatorProcessorROCm::FMCorrelatorProcessorROCm(
+    FMCorrelatorProcessorROCm&& other) noexcept
+    : ctx_(std::move(other.ctx_))
+    , backend_(other.backend_)
+    , params_(other.params_)
+    , compiled_(other.compiled_)
+    , stream0_(other.stream0_)
+    , stream1_(other.stream1_)
+    , plan_ref_(other.plan_ref_)
+    , plan_inp_(other.plan_inp_)
+    , plan_corr_(other.plan_corr_)
+    , plans_created_(other.plans_created_)
+    , d_ref_float_(other.d_ref_float_)
+    , d_ref_complex_(other.d_ref_complex_)
+    , d_inp_float_(other.d_inp_float_)
+    , d_inp_fft_(other.d_inp_fft_)
+    , d_corr_fft_(other.d_corr_fft_)
+    , d_corr_time_(other.d_corr_time_)
+    , d_peaks_(other.d_peaks_)
+    , ref_prepared_(other.ref_prepared_)
+    , buffers_allocated_(other.buffers_allocated_)
+    , current_batch_S_(other.current_batch_S_) {
+  other.backend_ = nullptr;
+  other.compiled_ = false;
+  other.stream0_ = nullptr; other.stream1_ = nullptr;
+  other.plan_ref_ = 0; other.plan_inp_ = 0; other.plan_corr_ = 0;
+  other.plans_created_ = false;
+  other.d_ref_float_ = nullptr; other.d_ref_complex_ = nullptr;
+  other.d_inp_float_ = nullptr; other.d_inp_fft_ = nullptr;
+  other.d_corr_fft_ = nullptr; other.d_corr_time_ = nullptr;
+  other.d_peaks_ = nullptr;
+  other.buffers_allocated_ = false;
+  other.ref_prepared_ = false;
+}
+
+FMCorrelatorProcessorROCm& FMCorrelatorProcessorROCm::operator=(
+    FMCorrelatorProcessorROCm&& other) noexcept {
+  if (this != &other) {
+    ReleaseAll();
+    ctx_ = std::move(other.ctx_);
+    backend_ = other.backend_; params_ = other.params_;
+    compiled_ = other.compiled_;
+    stream0_ = other.stream0_; stream1_ = other.stream1_;
+    plan_ref_ = other.plan_ref_; plan_inp_ = other.plan_inp_;
+    plan_corr_ = other.plan_corr_; plans_created_ = other.plans_created_;
+    d_ref_float_ = other.d_ref_float_; d_ref_complex_ = other.d_ref_complex_;
+    d_inp_float_ = other.d_inp_float_; d_inp_fft_ = other.d_inp_fft_;
+    d_corr_fft_ = other.d_corr_fft_; d_corr_time_ = other.d_corr_time_;
+    d_peaks_ = other.d_peaks_;
+    ref_prepared_ = other.ref_prepared_;
+    buffers_allocated_ = other.buffers_allocated_;
+    current_batch_S_ = other.current_batch_S_;
+    other.backend_ = nullptr; other.compiled_ = false;
+    other.stream0_ = nullptr; other.stream1_ = nullptr;
+    other.plan_ref_ = 0; other.plan_inp_ = 0; other.plan_corr_ = 0;
+    other.plans_created_ = false;
+    other.d_ref_float_ = nullptr; other.d_ref_complex_ = nullptr;
+    other.d_inp_float_ = nullptr; other.d_inp_fft_ = nullptr;
+    other.d_corr_fft_ = nullptr; other.d_corr_time_ = nullptr;
+    other.d_peaks_ = nullptr;
+    other.buffers_allocated_ = false; other.ref_prepared_ = false;
+  }
+  return *this;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -95,9 +161,7 @@ void FMCorrelatorProcessorROCm::SetParams(const FMCorrelatorParams& params) {
   // Эталон становится невалидным — размер N мог измениться
   ref_prepared_ = false;
 
-  if (!kernels_compiled_) {
-    CompileKernels();
-  }
+  EnsureCompiled();
 
   // Пересоздаём буферы и планы под новые N/K/S: старые размеры несовместимы
   FreeBuffers();
@@ -153,7 +217,7 @@ void FMCorrelatorProcessorROCm::PrepareReference(
   unsigned int grid_x = (static_cast<unsigned int>(N) + kBlockSize - 1) / kBlockSize;
 
   err = hipModuleLaunchKernel(
-      fn_apply_shifts_,
+      ctx_.GetKernel("apply_cyclic_shifts"),
       grid_x, static_cast<unsigned int>(K), 1,
       kBlockSize, 1, 1,
       0, stream0_,
@@ -304,7 +368,7 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::RunCorrelationPipeline() {
   unsigned int grid_mul_x = (static_cast<unsigned int>(half_N) + kBlockSize - 1) / kBlockSize;
 
   err = hipModuleLaunchKernel(
-      fn_multiply_conj_,
+      ctx_.GetKernel("multiply_conj_fused"),
       grid_mul_x, static_cast<unsigned int>(K), static_cast<unsigned int>(S),
       kBlockSize, 1, 1,
       0, stream0_,
@@ -333,7 +397,7 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::RunCorrelationPipeline() {
   unsigned int grid_ext_x = (static_cast<unsigned int>(n_kg) + kBlockSize - 1) / kBlockSize;
 
   err = hipModuleLaunchKernel(
-      fn_extract_mag_,
+      ctx_.GetKernel("extract_magnitudes_real"),
       grid_ext_x, static_cast<unsigned int>(K), static_cast<unsigned int>(S),
       kBlockSize, 1, 1,
       0, stream0_,
@@ -391,7 +455,7 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::RunTestPattern(int shift_step) {
   unsigned int grid_gen_x = (static_cast<unsigned int>(N) + kBlockSize - 1) / kBlockSize;
 
   hipError_t err = hipModuleLaunchKernel(
-      fn_gen_test_inputs_,
+      ctx_.GetKernel("generate_test_inputs"),
       grid_gen_x, static_cast<unsigned int>(S), 1,
       kBlockSize, 1, 1,
       0, stream1_,
@@ -492,13 +556,22 @@ FMCorrelatorResult FMCorrelatorProcessorROCm::ProcessWithBatching(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// PART 7: CompileKernels
+// PART 7: Lazy compilation via GpuContext (Ref03)
 // ════════════════════════════════════════════════════════════════════════════
 
+void FMCorrelatorProcessorROCm::EnsureCompiled() {
+  if (compiled_) return;
+  ctx_.CompileModule(kernels::GetFMCorrelatorKernelSource(), kFMKernelNames);
+  compiled_ = true;
+}
+
+// Legacy CompileKernels replaced by EnsureCompiled() + GpuContext::CompileModule().
+// GpuContext handles: hiprtc compilation, disk cache (HSACO), arch detection, warp_size.
+// Kernels are launched on stream0_/stream1_ (not ctx_.stream()) for 2-stream pipeline.
+
+#if 0  // ════ REMOVED: legacy CompileKernels ═══════════════════════════════
 /**
- * @brief Компилирует 4 HIP кернела через hiprtc (lazy, один раз).
- *
- * Почему hiprtc, а не заранее скомпилированные .hsaco файлы:
+ * @brief (REMOVED) Компилирует 4 HIP кернела через hiprtc (lazy, один раз).
  * - нет зависимости от конкретной архитектуры GPU при сборке
  * - компиляция происходит на целевом устройстве → оптимальный код
  * - все 4 кернела в одном строковом литерале (GetFMCorrelatorKernelSource)
@@ -546,10 +619,10 @@ void FMCorrelatorProcessorROCm::CompileKernels() {
       }
     };
 
-    getFunc(&fn_apply_shifts_,    "apply_cyclic_shifts");
-    getFunc(&fn_multiply_conj_,   "multiply_conj_fused");
-    getFunc(&fn_extract_mag_,     "extract_magnitudes_real");
-    getFunc(&fn_gen_test_inputs_, "generate_test_inputs");
+    getFunc(&ctx_.GetKernel("apply_cyclic_shifts"),    "apply_cyclic_shifts");
+    getFunc(&ctx_.GetKernel("multiply_conj_fused"),   "multiply_conj_fused");
+    getFunc(&ctx_.GetKernel("extract_magnitudes_real"),     "extract_magnitudes_real");
+    getFunc(&ctx_.GetKernel("generate_test_inputs"), "generate_test_inputs");
   };
 
   // Шаг 1: попробовать загрузить из дискового кеша (~1-5 мс вместо ~100-200 мс)
@@ -585,11 +658,12 @@ void FMCorrelatorProcessorROCm::CompileKernels() {
     arch_name = "";
   }
 
-  // WARP_SIZE: RDNA (gfx10xx/11xx/12xx) = 32, CDNA/Vega (gfx9xx) = 64
+  // WARP_SIZE from hipDeviceProp_t (authoritative source)
   int warp_size = 32;
-  if (arch_name.find("gfx9") == 0) {
-    warp_size = 64;
-  }
+  try {
+    auto* rb = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
+    warp_size = rb->GetCore().GetWarpSize();
+  } catch (...) {}
 
   std::string warp_define = "-DWARP_SIZE=" + std::to_string(warp_size);
   std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
@@ -634,6 +708,7 @@ void FMCorrelatorProcessorROCm::CompileKernels() {
   con.Print(0, "FM_Corr[ROCm]",
       "HIP kernels compiled (4 kernels, arch=" + arch_name + ")");
 }
+#endif  // ════ END REMOVED legacy CompileKernels ═══════════════════════════
 
 // ════════════════════════════════════════════════════════════════════════════
 // PART 8: Buffer/Plan management
@@ -760,28 +835,10 @@ void FMCorrelatorProcessorROCm::DestroyPlans() {
   plans_created_ = false;
 }
 
-/**
- * @brief Полное освобождение всех GPU-ресурсов.
- *
- * Порядок важен: сначала планы и буферы (зависят от модуля),
- * потом модуль (зависит от потоков), потом потоки.
- * Нулим fn_* указатели после выгрузки модуля — они больше невалидны.
- */
 void FMCorrelatorProcessorROCm::ReleaseAll() {
   DestroyPlans();
   FreeBuffers();
-
-  if (module_) {
-    (void)hipModuleUnload(module_);
-    module_ = nullptr;
-    // После выгрузки модуля хэндлы кернелов невалидны — обнуляем явно
-    fn_apply_shifts_ = nullptr;
-    fn_multiply_conj_ = nullptr;
-    fn_extract_mag_ = nullptr;
-    fn_gen_test_inputs_ = nullptr;
-  }
-  kernels_compiled_ = false;
-
+  // GpuContext manages kernel module — no manual hipModuleUnload
   if (stream0_) { (void)hipStreamDestroy(stream0_); stream0_ = nullptr; }
   if (stream1_) { (void)hipStreamDestroy(stream1_); stream1_ = nullptr; }
 }

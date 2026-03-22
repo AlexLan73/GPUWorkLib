@@ -10,10 +10,12 @@
 
 #include "diagonal_load_regularizer.hpp"
 #include "kernels/diagonal_load_kernel_rocm.hpp"
+#include "backends/rocm/rocm_backend.hpp"
 
 #include <hip/hiprtc.h>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace vector_algebra {
 
@@ -74,8 +76,18 @@ void DiagonalLoadRegularizer::Compile(drv_gpu_lib::IBackend* backend) {
         std::to_string(static_cast<int>(rtc)) + ")");
   }
 
-  const char* opts[] = {"-O2", "-std=c++17"};
-  rtc = hiprtcCompileProgram(prog, 2, opts);
+  // --offload-arch для ISA-оптимизаций (как в symmetrize и всех модулях)
+  std::string arch_name;
+  try {
+    auto* rb = static_cast<drv_gpu_lib::ROCmBackend*>(backend);
+    arch_name = rb->GetCore().GetArchName();
+  } catch (...) {}
+  std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
+
+  std::vector<const char*> opts = {"-O2", "-std=c++17"};
+  if (!arch_flag.empty()) opts.push_back(arch_flag.c_str());
+
+  rtc = hiprtcCompileProgram(prog, static_cast<int>(opts.size()), opts.data());
   if (rtc != HIPRTC_SUCCESS) {
     size_t log_size = 0;
     hiprtcGetProgramLogSize(prog, &log_size);
@@ -112,7 +124,7 @@ void DiagonalLoadRegularizer::Compile(drv_gpu_lib::IBackend* backend) {
   module_   = static_cast<void*>(mod);
   function_ = static_cast<void*>(func);
 
-  (void)backend;  // stream_ уже взят из backend в конструкторе
+  // backend использован для arch_name выше; stream_ взят в конструкторе
 }
 
 // ════════════════════════════════════════════════════════════════════════════

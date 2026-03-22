@@ -1,20 +1,20 @@
 /**
  * @file form_signal_generator_rocm.cpp
- * @brief FormSignalGeneratorROCm implementation - multi-channel getX on GPU (ROCm/HIP)
+ * @brief FormSignalGeneratorROCm — Ref03 implementation (GpuContext)
  *
- * Port of form_signal_generator.cpp (OpenCL) to HIP/ROCm.
- * Uses hiprtc for runtime kernel compilation, hipModuleLaunchKernel for dispatch.
+ * Migrated from legacy hiprtc to Ref03 Unified Architecture.
+ * GpuContext handles: kernel compilation, disk cache, arch detection.
  *
  * @author Kodo (AI Assistant)
- * @date 2026-02-23
+ * @date 2026-02-23 (v1 legacy), 2026-03-22 (v2 Ref03)
  */
 
 #if ENABLE_ROCM
 
 #include "generators/form_signal_generator_rocm.hpp"
 #include "kernels/form_signal_kernels_rocm.hpp"
+#include "rocm_profiling_helpers.hpp"
 #include "services/console_output.hpp"
-#include "backends/rocm/rocm_backend.hpp"
 
 #include <stdexcept>
 #include <cmath>
@@ -22,85 +22,51 @@
 #include <cstring>
 #include <vector>
 
+using fft_func_utils::MakeROCmDataFromEvents;
+
 namespace signal_gen {
-namespace {
 
-/// Helper: hipEvent → elapsed → ROCmProfilingData (уничтожает events)
-drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
-    hipEvent_t ev_start, hipEvent_t ev_end,
-    uint32_t kind = 0, const char* op = "")
-{
-  hipEventSynchronize(ev_end);
-  float ms = 0.0f;
-  hipEventElapsedTime(&ms, ev_start, ev_end);
-  hipEventDestroy(ev_start);
-  hipEventDestroy(ev_end);
-  drv_gpu_lib::ROCmProfilingData d{};
-  uint64_t ns = static_cast<uint64_t>(ms * 1e6f);
-  d.start_ns = 0; d.end_ns = ns; d.complete_ns = ns;
-  d.kind = kind; d.op_string = op;
-  return d;
-}
-
-}  // namespace
+static const std::vector<std::string> kKernelNames = {
+  "generate_form_signal"
+};
 
 // ════════════════════════════════════════════════════════════════════════════
-// Constructor / Destructor
+// Constructor / Destructor / Move
 // ════════════════════════════════════════════════════════════════════════════
 
 FormSignalGeneratorROCm::FormSignalGeneratorROCm(drv_gpu_lib::IBackend* backend)
-    : backend_(backend) {
-
-  if (!backend_ || !backend_->IsInitialized()) {
-    throw std::runtime_error(
-        "FormSignalGeneratorROCm: backend is null or not initialized");
-  }
-
-  stream_ = static_cast<hipStream_t>(backend_->GetNativeQueue());
-  if (!stream_) {
-    throw std::runtime_error(
-        "FormSignalGeneratorROCm: failed to get HIP stream from backend");
-  }
-
-  CompileKernel();
+    : ctx_(backend, "FormSignal", "modules/signal_generators/kernels") {
 }
 
-FormSignalGeneratorROCm::~FormSignalGeneratorROCm() {
-  ReleaseGpuResources();
-}
+FormSignalGeneratorROCm::~FormSignalGeneratorROCm() = default;
 
 FormSignalGeneratorROCm::FormSignalGeneratorROCm(
     FormSignalGeneratorROCm&& other) noexcept
-    : backend_(other.backend_)
-    , stream_(other.stream_)
+    : ctx_(std::move(other.ctx_))
     , params_(other.params_)
-    , module_(other.module_)
-    , kernel_(other.kernel_)
-    , kernel_compiled_(other.kernel_compiled_) {
-  other.backend_ = nullptr;
-  other.stream_ = nullptr;
-  other.module_ = nullptr;
-  other.kernel_ = nullptr;
-  other.kernel_compiled_ = false;
+    , compiled_(other.compiled_) {
+  other.compiled_ = false;
 }
 
 FormSignalGeneratorROCm& FormSignalGeneratorROCm::operator=(
     FormSignalGeneratorROCm&& other) noexcept {
   if (this != &other) {
-    ReleaseGpuResources();
-    backend_ = other.backend_;
-    stream_ = other.stream_;
+    ctx_ = std::move(other.ctx_);
     params_ = other.params_;
-    module_ = other.module_;
-    kernel_ = other.kernel_;
-    kernel_compiled_ = other.kernel_compiled_;
-    other.backend_ = nullptr;
-    other.stream_ = nullptr;
-    other.module_ = nullptr;
-    other.kernel_ = nullptr;
-    other.kernel_compiled_ = false;
+    compiled_ = other.compiled_;
+    other.compiled_ = false;
   }
   return *this;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Lazy compilation via GpuContext
+// ════════════════════════════════════════════════════════════════════════════
+
+void FormSignalGeneratorROCm::EnsureCompiled() {
+  if (compiled_) return;
+  ctx_.CompileModule(kernels::GetFormSignalSource_rocm(), kKernelNames);
+  compiled_ = true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -113,19 +79,19 @@ drv_gpu_lib::InputData<void*> FormSignalGeneratorROCm::GenerateInputData() {
 
 drv_gpu_lib::InputData<void*>
 FormSignalGeneratorROCm::GenerateInputData(ROCmProfEvents* prof_events) {
+  EnsureCompiled();
+
   size_t total_points = GetTotalSamples();
   size_t buffer_size = total_points * sizeof(std::complex<float>);
 
-  // Allocate output buffer
   void* output_ptr = nullptr;
   hipError_t err = hipMalloc(&output_ptr, buffer_size);
   if (err != hipSuccess) {
     throw std::runtime_error(
-        "FormSignalGeneratorROCm::GenerateInputData: hipMalloc failed: " +
+        "FormSignalGeneratorROCm: hipMalloc failed: " +
         std::string(hipGetErrorString(err)));
   }
 
-  // Prepare kernel arguments
   unsigned int ant = params_.antennas;
   unsigned int pts = params_.points;
   float dt = static_cast<float>(params_.GetDt());
@@ -151,29 +117,12 @@ FormSignalGeneratorROCm::GenerateInputData(ROCmProfEvents* prof_events) {
 
   unsigned int tau_mode = static_cast<unsigned int>(params_.GetTauMode());
 
-  // hipModuleLaunchKernel args array: pointers to each argument
   void* args[] = {
-    &output_ptr,
-    &ant,
-    &pts,
-    &dt,
-    &ti,
-    &f0,
-    &amp,
-    &an,
-    &phi,
-    &fdev,
-    &norm_val,
-    &tau_base,
-    &tau_step,
-    &tau_min,
-    &tau_max,
-    &tau_seed,
-    &noise_seed,
-    &tau_mode
+    &output_ptr, &ant, &pts, &dt, &ti, &f0, &amp, &an, &phi,
+    &fdev, &norm_val, &tau_base, &tau_step, &tau_min, &tau_max,
+    &tau_seed, &noise_seed, &tau_mode
   };
 
-  // 2D grid: gridX = sample blocks, gridY = antennas (eliminates div/mod)
   unsigned int grid_x = static_cast<unsigned int>(
       (params_.points + kBlockSize - 1) / kBlockSize);
   unsigned int grid_y = params_.antennas;
@@ -182,29 +131,29 @@ FormSignalGeneratorROCm::GenerateInputData(ROCmProfEvents* prof_events) {
   if (prof_events) {
     hipEventCreate(&ev_k_s);
     hipEventCreate(&ev_k_e);
-    hipEventRecord(ev_k_s, stream_);
+    hipEventRecord(ev_k_s, ctx_.stream());
   }
 
   err = hipModuleLaunchKernel(
-      kernel_,
+      ctx_.GetKernel("generate_form_signal"),
       grid_x, grid_y, 1,
       kBlockSize, 1, 1,
-      0, stream_,
+      0, ctx_.stream(),
       args, nullptr);
 
   if (prof_events) {
-    hipEventRecord(ev_k_e, stream_);
+    hipEventRecord(ev_k_e, ctx_.stream());
   }
 
   if (err != hipSuccess) {
     if (ev_k_s) { hipEventDestroy(ev_k_s); hipEventDestroy(ev_k_e); }
     (void)hipFree(output_ptr);
     throw std::runtime_error(
-        "FormSignalGeneratorROCm::GenerateInputData: hipModuleLaunchKernel failed: " +
+        "FormSignalGeneratorROCm: kernel launch failed: " +
         std::string(hipGetErrorString(err)));
   }
 
-  (void)hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(ctx_.stream());
 
   if (prof_events) {
     prof_events->push_back({"Kernel",
@@ -243,7 +192,6 @@ FormSignalGeneratorROCm::GenerateToCpu() {
         std::string(hipGetErrorString(err)));
   }
 
-  // Split flat → vector<vector<complex>>
   std::vector<std::vector<std::complex<float>>> result(params_.antennas);
   for (uint32_t a = 0; a < params_.antennas; ++a) {
     size_t offset = static_cast<size_t>(a) * params_.points;
@@ -253,80 +201,6 @@ FormSignalGeneratorROCm::GenerateToCpu() {
   }
 
   return result;
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// GPU Internals
-// ════════════════════════════════════════════════════════════════════════════
-
-void FormSignalGeneratorROCm::CompileKernel() {
-  if (kernel_compiled_) return;
-
-  const char* source = kernels::GetFormSignalSource_rocm();
-
-  hiprtcProgram prog;
-  hiprtcResult rtcResult = hiprtcCreateProgram(
-      &prog, source, "form_signal_kernel.hip", 0, nullptr, nullptr);
-  if (rtcResult != HIPRTC_SUCCESS) {
-    throw std::runtime_error(
-        "FormSignalGeneratorROCm::CompileKernel: hiprtcCreateProgram failed: " +
-        std::string(hiprtcGetErrorString(rtcResult)));
-  }
-
-  // Get target arch from backend for architecture-specific optimizations
-  auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
-  std::string arch = rocm_backend->GetCore().GetArchName();
-  std::string arch_flag = "--offload-arch=" + arch;
-
-  const char* options[] = { "-O3", arch_flag.c_str(), "-std=c++17" };
-  rtcResult = hiprtcCompileProgram(prog, 3, options);
-  if (rtcResult != HIPRTC_SUCCESS) {
-    size_t logSize = 0;
-    hiprtcGetProgramLogSize(prog, &logSize);
-    std::string log(logSize, '\0');
-    hiprtcGetProgramLog(prog, &log[0]);
-
-    auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
-    con.PrintError(0, "FormSignal[ROCm]", "Kernel compile log:\n" + log);
-
-    (void)hiprtcDestroyProgram(&prog);
-    throw std::runtime_error(
-        "FormSignalGeneratorROCm::CompileKernel: compilation failed");
-  }
-
-  size_t codeSize = 0;
-  hiprtcGetCodeSize(prog, &codeSize);
-  std::vector<char> code(codeSize);
-  hiprtcGetCode(prog, code.data());
-  (void)hiprtcDestroyProgram(&prog);
-
-  hipError_t hipErr = hipModuleLoadData(&module_, code.data());
-  if (hipErr != hipSuccess) {
-    throw std::runtime_error(
-        "FormSignalGeneratorROCm::CompileKernel: hipModuleLoadData failed: " +
-        std::string(hipGetErrorString(hipErr)));
-  }
-
-  hipErr = hipModuleGetFunction(&kernel_, module_, "generate_form_signal");
-  if (hipErr != hipSuccess) {
-    throw std::runtime_error(
-        "FormSignalGeneratorROCm::CompileKernel: hipModuleGetFunction(generate_form_signal) failed: " +
-        std::string(hipGetErrorString(hipErr)));
-  }
-
-  kernel_compiled_ = true;
-
-  drv_gpu_lib::ConsoleOutput::GetInstance().Print(0, "FormSignal[ROCm]",
-      "HIP kernel compiled (generate_form_signal)");
-}
-
-void FormSignalGeneratorROCm::ReleaseGpuResources() {
-  if (module_) {
-    (void)hipModuleUnload(module_);
-    module_ = nullptr;
-    kernel_ = nullptr;
-    kernel_compiled_ = false;
-  }
 }
 
 }  // namespace signal_gen

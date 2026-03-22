@@ -15,6 +15,7 @@
 
 #include "statistics_processor.hpp"
 #include "kernels/statistics_kernels_rocm.hpp"
+#include "rocm_profiling_helpers.hpp"
 
 #include "services/console_output.hpp"
 
@@ -22,32 +23,7 @@
 #include <cstring>
 #include <complex>
 
-namespace statistics {
-
-// =========================================================================
-// Profiling helper: hipEvent → ROCmProfilingData  (kind: 0=kernel, 1=copy)
-// Destroys both events after extracting elapsed time.
-// =========================================================================
-
-static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
-    hipEvent_t ev_start, hipEvent_t ev_end,
-    uint32_t kind, const char* op_string = "")
-{
-  hipEventSynchronize(ev_end);
-  float elapsed_ms = 0.0f;
-  hipEventElapsedTime(&elapsed_ms, ev_start, ev_end);
-  hipEventDestroy(ev_start);
-  hipEventDestroy(ev_end);
-
-  drv_gpu_lib::ROCmProfilingData d{};
-  uint64_t elapsed_ns = static_cast<uint64_t>(elapsed_ms * 1e6f);
-  d.start_ns    = 0;
-  d.end_ns      = elapsed_ns;
-  d.complete_ns = elapsed_ns;
-  d.kind        = kind;
-  d.op_string   = op_string;
-  return d;
-}
+using fft_func_utils::MakeROCmDataFromEvents;
 
 // All kernel names used by statistics module
 static const std::vector<std::string> kKernelNames = {
@@ -169,6 +145,20 @@ void StatisticsProcessor::CopyComplexGpuData(void* src, size_t count) {
       src, bytes, ctx_.stream());
   if (err != hipSuccess) {
     throw std::runtime_error("StatisticsProcessor: D2D copy failed: " +
+                              std::string(hipGetErrorString(err)));
+  }
+}
+
+void StatisticsProcessor::UploadFloatData(const float* data, size_t count) {
+  size_t bytes = count * sizeof(float);
+  ctx_.RequireShared(statistics::shared_buf::kMagnitudes, bytes);
+
+  hipError_t err = hipMemcpyHtoDAsync(
+      ctx_.GetShared(statistics::shared_buf::kMagnitudes),
+      const_cast<float*>(data),
+      bytes, ctx_.stream());
+  if (err != hipSuccess) {
+    throw std::runtime_error("StatisticsProcessor: float upload failed: " +
                               std::string(hipGetErrorString(err)));
   }
 }
@@ -405,23 +395,14 @@ std::vector<StatisticsResult> StatisticsProcessor::ComputeStatisticsFloat(
         std::to_string(data.size()) + " != expected " + std::to_string(expected));
   }
 
-  void* gpu_ptr = nullptr;
-  size_t bytes = expected * sizeof(float);
-  hipError_t err = hipMalloc(&gpu_ptr, bytes);
-  if (err != hipSuccess) {
-    throw std::runtime_error("ComputeStatisticsFloat: hipMalloc failed: " +
-                              std::string(hipGetErrorString(err)));
-  }
+  EnsureCompiled();
+  // Upload directly to shared kMagnitudes buffer (reused, async, no hipMalloc/hipFree)
+  UploadFloatData(data.data(), expected);
+  welford_float_op_.Execute(params.beam_count, params.n_point);
+  hipStreamSynchronize(ctx_.stream());
 
-  err = hipMemcpy(gpu_ptr, data.data(), bytes, hipMemcpyHostToDevice);
-  if (err != hipSuccess) {
-    (void)hipFree(gpu_ptr);
-    throw std::runtime_error("ComputeStatisticsFloat: hipMemcpy H2D failed: " +
-                              std::string(hipGetErrorString(err)));
-  }
-
-  auto results = ComputeStatisticsFloat(gpu_ptr, params);
-  (void)hipFree(gpu_ptr);
+  auto results = ReadStatisticsResults(params.beam_count);
+  for (auto& r : results) r.mean = std::complex<float>(0.0f, 0.0f);
   return results;
 }
 
@@ -457,24 +438,17 @@ std::vector<MedianResult> StatisticsProcessor::ComputeMedianFloat(
         std::to_string(data.size()) + " != expected " + std::to_string(expected));
   }
 
-  void* gpu_ptr = nullptr;
-  size_t bytes = expected * sizeof(float);
-  hipError_t err = hipMalloc(&gpu_ptr, bytes);
-  if (err != hipSuccess) {
-    throw std::runtime_error("ComputeMedianFloat: hipMalloc failed: " +
-                              std::string(hipGetErrorString(err)));
+  EnsureCompiled();
+  UploadFloatData(data.data(), expected);
+
+  if (params.n_point > kHistogramThreshold) {
+    median_hist_op_.Execute(params.beam_count, params.n_point);
+  } else {
+    median_sort_op_.ExecuteFloat(params.beam_count, params.n_point);
   }
 
-  err = hipMemcpy(gpu_ptr, data.data(), bytes, hipMemcpyHostToDevice);
-  if (err != hipSuccess) {
-    (void)hipFree(gpu_ptr);
-    throw std::runtime_error("ComputeMedianFloat: hipMemcpy H2D failed: " +
-                              std::string(hipGetErrorString(err)));
-  }
-
-  auto results = ComputeMedianFloat(gpu_ptr, params);
-  (void)hipFree(gpu_ptr);
-  return results;
+  hipStreamSynchronize(ctx_.stream());
+  return ReadMedianResults(params.beam_count);
 }
 
 // =========================================================================
@@ -687,24 +661,26 @@ std::vector<FullStatisticsResult> StatisticsProcessor::ComputeAllFloat(
         std::to_string(data.size()) + " != expected " + std::to_string(expected));
   }
 
-  void* gpu_ptr = nullptr;
-  size_t bytes = expected * sizeof(float);
-  hipError_t err = hipMalloc(&gpu_ptr, bytes);
-  if (err != hipSuccess) {
-    throw std::runtime_error("ComputeAllFloat: hipMalloc failed: " +
-                              std::string(hipGetErrorString(err)));
+  EnsureCompiled();
+  // Upload directly to shared kMagnitudes (reused buffer, async H2D)
+  UploadFloatData(data.data(), expected);
+
+  // Welford on float magnitudes → kResult
+  welford_float_op_.Execute(params.beam_count, params.n_point);
+
+  // Median on float magnitudes → kMediansCompact
+  if (params.n_point > kHistogramThreshold) {
+    median_hist_op_.Execute(params.beam_count, params.n_point);
+  } else {
+    median_sort_op_.ExecuteFloat(params.beam_count, params.n_point);
   }
 
-  err = hipMemcpy(gpu_ptr, data.data(), bytes, hipMemcpyHostToDevice);
-  if (err != hipSuccess) {
-    (void)hipFree(gpu_ptr);
-    throw std::runtime_error("ComputeAllFloat: hipMemcpy H2D failed: " +
-                              std::string(hipGetErrorString(err)));
-  }
+  hipStreamSynchronize(ctx_.stream());
 
-  auto results = ComputeAllFloat(gpu_ptr, params);
-  (void)hipFree(gpu_ptr);
-  return results;
+  auto stats = ReadStatisticsResults(params.beam_count);
+  for (auto& r : stats) r.mean = std::complex<float>(0.0f, 0.0f);
+  auto medians = ReadMedianResults(params.beam_count);
+  return MergeResults(stats, medians);
 }
 
 }  // namespace statistics

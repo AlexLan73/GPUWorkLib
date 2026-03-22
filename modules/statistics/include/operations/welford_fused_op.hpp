@@ -52,8 +52,8 @@ public:
         shared_buf::kResult,
         beam_count * 5 * sizeof(float));
 
-    // 4 shared arrays × (kBlockSize+1) floats
-    size_t shared_mem = 4 * (kBlockSize + 1) * sizeof(float);
+    // 5 shared arrays × (kBlockSize+1) floats: sum_re, sum_im, mean_mag, M2, count
+    size_t shared_mem = 5 * (kBlockSize + 1) * sizeof(float);
 
     void* args[] = { &input_buf, &result_buf, &bc, &np };
 

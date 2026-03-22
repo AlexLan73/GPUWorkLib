@@ -125,14 +125,17 @@ void AllMaximaPipelineROCm::CompileKernels() {
 
     // Build compile options: -O3, --offload-arch, -DWARP_SIZE
     std::string arch_name;
+    int warp_size = 32;
     try {
         auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
         arch_name = rocm_backend->GetCore().GetArchName();
+        warp_size = rocm_backend->GetCore().GetWarpSize();
     } catch (...) {
         arch_name = "";
     }
+    std::string warp_define = "-DWARP_SIZE=" + std::to_string(warp_size);
     std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
-    std::vector<const char*> opts = {"-O3", "-DWARP_SIZE=32"};
+    std::vector<const char*> opts = {"-O3", warp_define.c_str()};
     if (!arch_flag.empty())
         opts.push_back(arch_flag.c_str());
 

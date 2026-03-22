@@ -175,4 +175,44 @@ private:
 
 }  // namespace vector_algebra
 
+#else  // !ENABLE_ROCM — Windows stub
+
+#include <complex>
+#include <vector>
+#include <stdexcept>
+#include "interface/i_backend.hpp"
+#include "interface/input_data.hpp"
+#include "vector_algebra_types.hpp"
+
+namespace vector_algebra {
+
+class CholeskyInverterROCm {
+public:
+  explicit CholeskyInverterROCm(drv_gpu_lib::IBackend*, SymmetrizeMode = SymmetrizeMode::GpuKernel) {}
+  ~CholeskyInverterROCm() = default;
+
+  CholeskyInverterROCm(const CholeskyInverterROCm&) = delete;
+  CholeskyInverterROCm& operator=(const CholeskyInverterROCm&) = delete;
+
+  void SetSymmetrizeMode(SymmetrizeMode) {}
+  SymmetrizeMode GetSymmetrizeMode() const { return SymmetrizeMode::GpuKernel; }
+  void CompileKernels() {}
+  void SetCheckInfo(bool) {}
+
+  CholeskyResult Invert(const drv_gpu_lib::InputData<std::vector<std::complex<float>>>&, int = 0) {
+    throw std::runtime_error("CholeskyInverterROCm: ROCm not enabled");
+  }
+  CholeskyResult Invert(const drv_gpu_lib::InputData<void*>&, int = 0) {
+    throw std::runtime_error("CholeskyInverterROCm: ROCm not enabled");
+  }
+  CholeskyResult InvertBatch(const drv_gpu_lib::InputData<std::vector<std::complex<float>>>&, int) {
+    throw std::runtime_error("CholeskyInverterROCm: ROCm not enabled");
+  }
+  CholeskyResult InvertBatch(const drv_gpu_lib::InputData<void*>&, int) {
+    throw std::runtime_error("CholeskyInverterROCm: ROCm not enabled");
+  }
+};
+
+}  // namespace vector_algebra
+
 #endif  // ENABLE_ROCM

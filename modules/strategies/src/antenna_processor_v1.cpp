@@ -7,9 +7,7 @@
 #include "pipelines/all_maxima_pipeline_rocm.hpp"
 #include "complex_to_mag_phase_rocm.hpp"
 #include "types/mag_phase_types.hpp"
-#include "backends/rocm/rocm_backend.hpp"
 #include "services/console_output.hpp"
-#include "services/kernel_cache_service.hpp"
 #include <stdexcept>
 #include <cmath>
 #include <cstring>
@@ -33,13 +31,14 @@
         throw std::runtime_error("hipFFT error: " + std::to_string(static_cast<int>(err))); \
 } while(0)
 
-#define HIPRTC_CHECK(call) do { \
-    hiprtcResult err = (call); \
-    if (err != HIPRTC_SUCCESS) \
-        throw std::runtime_error(std::string("hipRTC error: ") + hiprtcGetErrorString(err)); \
-} while(0)
-
 namespace strategies {
+
+static const std::vector<std::string> kStrategyKernelNames = {
+  "hamming_pad_fused",
+  "compute_magnitudes",
+  "global_minmax",
+  "one_max_no_phase"
+};
 
 // ============================================================================
 // Constructor / Destructor
@@ -49,6 +48,7 @@ AntennaProcessor_v1::AntennaProcessor_v1(
     drv_gpu_lib::IBackend* backend,
     const AntennaProcessorConfig& cfg)
     : backend_(backend), cfg_(cfg)
+    , ctx_(backend, "Strategies", "modules/strategies/kernels")
 {
   // Create streams
   HIP_CHECK(hipStreamCreate(&stream_main_));
@@ -73,15 +73,11 @@ AntennaProcessor_v1::AntennaProcessor_v1(
   // Compute nFFT
   nFFT_ = compute_nFFT(cfg_.n_samples);
 
-  // Initialize KernelCacheService (P2)
-  kernel_cache_ = std::make_unique<drv_gpu_lib::KernelCacheService>(
-      "modules/strategies/kernels", drv_gpu_lib::BackendType::ROCm);
-
   // Allocate GPU buffers (including pre-allocated result buffers P3)
   allocate_buffers();
 
-  // Compile kernels (with -O3, --offload-arch, cache — P1+P2)
-  compile_kernels();
+  // Compile kernels via GpuContext (Ref03: cache, arch detection, warp_size)
+  ensure_compiled();
 
   // Create FFT plan
   create_fft_plan();
@@ -111,9 +107,7 @@ AntennaProcessor_v1::~AntennaProcessor_v1() {
     hipblasDestroy(hipblas_handle_);
   }
 
-  if (kernel_module_) {
-    hipModuleUnload(kernel_module_);
-  }
+  // GpuContext manages kernel module — no manual hipModuleUnload
 
   if (event_gemm_done_) hipEventDestroy(event_gemm_done_);
   if (event_fft_done_)  hipEventDestroy(event_fft_done_);
@@ -213,103 +207,16 @@ void AntennaProcessor_v1::set_external_weights(
 }
 
 // ============================================================================
-// Kernel compilation — P1 (flags) + P2 (cache) + P12 (all functions)
+// Kernel compilation — Ref03 via GpuContext (replaces ~100 lines hiprtc+cache)
 // ============================================================================
 
-void AntennaProcessor_v1::compile_kernels() {
-  if (kernels_compiled_) return;
-
-  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
-  constexpr const char* kCacheName = "strategies_kernels";
-  const char* src = kernels::GetStrategiesHIPKernelSource();
-
-  // ── Try loading from disk cache (HSACO) — P2 ──
-  if (kernel_cache_) {
-    auto entry = kernel_cache_->Load(kCacheName);
-    if (entry && entry->has_binary()) {
-      hipError_t hip_err = hipModuleLoadData(&kernel_module_, entry->binary.data());
-      if (hip_err == hipSuccess) {
-        hip_err = hipModuleGetFunction(&hamming_pad_kernel_, kernel_module_, "hamming_pad_fused");
-        if (hip_err == hipSuccess)
-          hip_err = hipModuleGetFunction(&magnitudes_kernel_, kernel_module_, "compute_magnitudes");
-        if (hip_err == hipSuccess)
-          hip_err = hipModuleGetFunction(&minmax_kernel_, kernel_module_, "global_minmax");
-        if (hip_err == hipSuccess)
-          hip_err = hipModuleGetFunction(&one_max_kernel_, kernel_module_, "one_max_no_phase");
-        if (hip_err == hipSuccess) {
-          kernels_compiled_ = true;
-          con.Print(0, "Strategies",
-              "Kernels loaded from cache (HSACO)");
-          return;
-        }
-      }
-      // Cache hit but load failed — fall through to compile
-      if (kernel_module_) { hipModuleUnload(kernel_module_); kernel_module_ = nullptr; }
-    }
-  }
-
-  // ── Compile from source (hiprtc) — P1 ──
-  hiprtcProgram prog;
-  HIPRTC_CHECK(hiprtcCreateProgram(&prog, src, "strategies_kernels.hip",
-                                    0, nullptr, nullptr));
-
-  // Get arch from backend for --offload-arch
-  std::string arch_name;
-  try {
-    auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
-    arch_name = rocm_backend->GetCore().GetArchName();
-  } catch (...) {
-    arch_name = "";
-  }
-  std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
-
-  // Build compile options: -O3, --offload-arch, -DWARP_SIZE, -DBLOCK_SIZE
-  std::vector<const char*> opts = { "-O3", "-DWARP_SIZE=32", "-DBLOCK_SIZE=256" };
-  if (!arch_flag.empty())
-    opts.push_back(arch_flag.c_str());
-
-  hiprtcResult compileResult = hiprtcCompileProgram(
-      prog, static_cast<int>(opts.size()), opts.data());
-
-  if (compileResult != HIPRTC_SUCCESS) {
-    size_t log_size = 0;
-    hiprtcGetProgramLogSize(prog, &log_size);
-    std::string log(log_size, '\0');
-    hiprtcGetProgramLog(prog, log.data());
-    hiprtcDestroyProgram(&prog);
-    throw std::runtime_error("strategies kernel compile error:\n" + log);
-  }
-
-  size_t code_size = 0;
-  HIPRTC_CHECK(hiprtcGetCodeSize(prog, &code_size));
-  std::vector<char> code(code_size);
-  HIPRTC_CHECK(hiprtcGetCode(prog, code.data()));
-  HIPRTC_CHECK(hiprtcDestroyProgram(&prog));
-
-  HIP_CHECK(hipModuleLoadData(&kernel_module_, code.data()));
-
-  // Get ALL kernel functions here (P12 — not in hot path)
-  HIP_CHECK(hipModuleGetFunction(&hamming_pad_kernel_, kernel_module_, "hamming_pad_fused"));
-  HIP_CHECK(hipModuleGetFunction(&magnitudes_kernel_,  kernel_module_, "compute_magnitudes"));
-  HIP_CHECK(hipModuleGetFunction(&minmax_kernel_,      kernel_module_, "global_minmax"));
-  HIP_CHECK(hipModuleGetFunction(&one_max_kernel_,     kernel_module_, "one_max_no_phase"));
-
-  kernels_compiled_ = true;
-
-  // ── Save to cache for next run — P2 ──
-  if (kernel_cache_) {
-    try {
-      std::vector<uint8_t> binary(code.begin(), code.end());
-      kernel_cache_->Save(kCacheName, std::string(src), binary,
-                           arch_name, "strategies: hamming_pad + magnitudes + minmax + one_max");
-    } catch (...) {
-      // Non-critical
-    }
-  }
-
-  con.Print(0, "Strategies",
-      "Kernels compiled (hiprtc, " + std::to_string(code_size) + " bytes HSACO)" +
-      (arch_name.empty() ? "" : " [" + arch_name + "]"));
+void AntennaProcessor_v1::ensure_compiled() {
+  if (compiled_) return;
+  ctx_.CompileModule(
+      kernels::GetStrategiesHIPKernelSource(),
+      kStrategyKernelNames,
+      {"-DBLOCK_SIZE=256"});
+  compiled_ = true;
 }
 
 // ============================================================================
@@ -465,7 +372,7 @@ void AntennaProcessor_v1::do_window_fft() {
     unsigned int grid_y = n_ant;
     void* args[] = { &d_X_, &d_fft_input_, &d_hamming_window_, &n_ant, &n_samples, &nFFT_ };
     HIP_CHECK(hipModuleLaunchKernel(
-        hamming_pad_kernel_,
+        ctx_.GetKernel("hamming_pad_fused"),
         grid_x, grid_y, 1,      // 2D grid
         kBlockSize, 1, 1,
         0, stream_main_,
@@ -513,13 +420,13 @@ void AntennaProcessor_v1::do_run_post_fft_scenarios(AntennaResult& result) {
   const auto mode = cfg_.scenario_mode;
 
   // Step2.1: OneMax + Parabola (no phase)
-  // Uses pre-allocated d_one_max_results_ (P3) and cached one_max_kernel_ (P12)
+  // Uses pre-allocated d_one_max_results_ (P3) and cached ctx_.GetKernel("one_max_no_phase") (P12)
   if (mode == PostFftScenarioMode::ALL_REQUIRED ||
       mode == PostFftScenarioMode::ONE_MAX_PARABOLA) {
     // 2D grid: Y=beam, X=1 block per beam (P6)
     void* args[] = { &d_magnitudes_, &d_spectrum_, &d_one_max_results_, &n_ant, &nFFT_, &sr };
     HIP_CHECK(hipModuleLaunchKernel(
-        one_max_kernel_,
+        ctx_.GetKernel("one_max_no_phase"),
         1, n_ant, 1,             // grid: 1 block X, n_ant blocks Y
         kBlockSize, 1, 1,
         0, stream_debug3_,
@@ -556,7 +463,7 @@ void AntennaProcessor_v1::do_run_post_fft_scenarios(AntennaResult& result) {
     // 2D grid: Y=beam (P6)
     void* args[] = { &d_magnitudes_, &d_minmax_results_, &n_ant, &nFFT_, &sr };
     HIP_CHECK(hipModuleLaunchKernel(
-        minmax_kernel_,
+        ctx_.GetKernel("global_minmax"),
         1, n_ant, 1,             // grid: 1 block X, n_ant blocks Y
         kBlockSize, 1, 1,
         0, stream_debug3_,
@@ -586,7 +493,7 @@ void AntennaProcessor_v1::do_run_post_fft_parallel(AntennaResult& result) {
       mode == PostFftScenarioMode::ONE_MAX_PARABOLA) {
     void* args[] = { &d_magnitudes_, &d_spectrum_, &d_one_max_results_, &n_ant, &nFFT_, &sr };
     HIP_CHECK(hipModuleLaunchKernel(
-        one_max_kernel_,
+        ctx_.GetKernel("one_max_no_phase"),
         1, n_ant, 1,
         kBlockSize, 1, 1,
         0, stream_bench3a_,
@@ -598,7 +505,7 @@ void AntennaProcessor_v1::do_run_post_fft_parallel(AntennaResult& result) {
       mode == PostFftScenarioMode::GLOBAL_MINMAX) {
     void* args[] = { &d_magnitudes_, &d_minmax_results_, &n_ant, &nFFT_, &sr };
     HIP_CHECK(hipModuleLaunchKernel(
-        minmax_kernel_,
+        ctx_.GetKernel("global_minmax"),
         1, n_ant, 1,
         kBlockSize, 1, 1,
         0, stream_bench3c_,

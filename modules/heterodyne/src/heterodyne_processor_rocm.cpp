@@ -30,9 +30,8 @@
 
 #include "processors/heterodyne_processor_rocm.hpp"
 #include "kernels/heterodyne_kernels_rocm.hpp"
+#include "rocm_profiling_helpers.hpp"
 #include "services/console_output.hpp"
-#include "services/kernel_cache_service.hpp"
-#include "backends/rocm/rocm_backend.hpp"
 
 #include <stdexcept>
 #include <cstring>
@@ -44,50 +43,23 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+using fft_func_utils::MakeROCmDataFromEvents;
+
 namespace drv_gpu_lib {
-
-// ════════════════════════════════════════════════════════════════════════════
-// Profiling helper: hipEvent → ROCmProfilingData (kind: 0=kernel, 1=copy)
-// ════════════════════════════════════════════════════════════════════════════
-
-static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
-    hipEvent_t ev_start, hipEvent_t ev_end,
-    uint32_t kind, const char* op_string = "")
-{
-  hipEventSynchronize(ev_end);
-  float elapsed_ms = 0.0f;
-  hipEventElapsedTime(&elapsed_ms, ev_start, ev_end);
-  hipEventDestroy(ev_start);
-  hipEventDestroy(ev_end);
-  drv_gpu_lib::ROCmProfilingData d{};
-  uint64_t elapsed_ns = static_cast<uint64_t>(elapsed_ms * 1e6f);
-  d.start_ns    = 0;
-  d.end_ns      = elapsed_ns;
-  d.complete_ns = elapsed_ns;
-  d.kind        = kind;
-  d.op_string   = op_string;
-  return d;
-}
 
 // ════════════════════════════════════════════════════════════════════════════
 // PART 1: Constructor, Destructor, Move
 // ════════════════════════════════════════════════════════════════════════════
 
+static const std::vector<std::string> kHetKernelNames = {
+  "dechirp_multiply",
+  "dechirp_correct"
+};
+
 HeterodyneProcessorROCm::HeterodyneProcessorROCm(IBackend* backend)
-    : backend_(backend) {
-
-  if (!backend_ || !backend_->IsInitialized()) {
-    throw std::runtime_error(
-        "HeterodyneProcessorROCm: backend is null or not initialized");
-  }
-
-  stream_ = static_cast<hipStream_t>(backend_->GetNativeQueue());
-  if (!stream_) {
-    throw std::runtime_error(
-        "HeterodyneProcessorROCm: failed to get HIP stream from backend");
-  }
-
-  CompileKernels();
+    : ctx_(backend, "Heterodyne", "modules/heterodyne/kernels")
+    , backend_(backend) {
+  EnsureCompiled();
 }
 
 HeterodyneProcessorROCm::~HeterodyneProcessorROCm() {
@@ -96,13 +68,9 @@ HeterodyneProcessorROCm::~HeterodyneProcessorROCm() {
 
 HeterodyneProcessorROCm::HeterodyneProcessorROCm(
     HeterodyneProcessorROCm&& other) noexcept
-    : backend_(other.backend_)
-    , stream_(other.stream_)
-    , module_(other.module_)
-    , kernel_multiply_(other.kernel_multiply_)
-    , kernel_correct_(other.kernel_correct_)
-    , kernels_compiled_(other.kernels_compiled_)
-    , kernel_cache_(std::move(other.kernel_cache_))
+    : ctx_(std::move(other.ctx_))
+    , backend_(other.backend_)
+    , compiled_(other.compiled_)
     , buf_rx_(other.buf_rx_)
     , buf_ref_(other.buf_ref_)
     , buf_dc_(other.buf_dc_)
@@ -112,11 +80,7 @@ HeterodyneProcessorROCm::HeterodyneProcessorROCm(
     , cached_samples_(other.cached_samples_)
     , cached_antennas_(other.cached_antennas_) {
   other.backend_ = nullptr;
-  other.stream_ = nullptr;
-  other.module_ = nullptr;
-  other.kernel_multiply_ = nullptr;
-  other.kernel_correct_ = nullptr;
-  other.kernels_compiled_ = false;
+  other.compiled_ = false;
   other.buf_rx_ = nullptr;
   other.buf_ref_ = nullptr;
   other.buf_dc_ = nullptr;
@@ -131,13 +95,9 @@ HeterodyneProcessorROCm& HeterodyneProcessorROCm::operator=(
     HeterodyneProcessorROCm&& other) noexcept {
   if (this != &other) {
     ReleaseGpuResources();
+    ctx_ = std::move(other.ctx_);
     backend_ = other.backend_;
-    stream_ = other.stream_;
-    module_ = other.module_;
-    kernel_multiply_ = other.kernel_multiply_;
-    kernel_correct_ = other.kernel_correct_;
-    kernels_compiled_ = other.kernels_compiled_;
-    kernel_cache_ = std::move(other.kernel_cache_);
+    compiled_ = other.compiled_;
     buf_rx_ = other.buf_rx_;
     buf_ref_ = other.buf_ref_;
     buf_dc_ = other.buf_dc_;
@@ -147,11 +107,7 @@ HeterodyneProcessorROCm& HeterodyneProcessorROCm::operator=(
     cached_samples_ = other.cached_samples_;
     cached_antennas_ = other.cached_antennas_;
     other.backend_ = nullptr;
-    other.stream_ = nullptr;
-    other.module_ = nullptr;
-    other.kernel_multiply_ = nullptr;
-    other.kernel_correct_ = nullptr;
-    other.kernels_compiled_ = false;
+    other.compiled_ = false;
     other.buf_rx_ = nullptr;
     other.buf_ref_ = nullptr;
     other.buf_dc_ = nullptr;
@@ -260,27 +216,27 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::Dechirp(
   hipEvent_t ev_rx_s = nullptr, ev_rx_e = nullptr;
   if (prof_events) {
     hipEventCreate(&ev_rx_s); hipEventCreate(&ev_rx_e);
-    hipEventRecord(ev_rx_s, stream_);
+    hipEventRecord(ev_rx_s, ctx_.stream());
   }
   err = hipMemcpyHtoDAsync(buf_rx_, const_cast<std::complex<float>*>(rx_data.data()),
-                            rx_bytes, stream_);
+                            rx_bytes, ctx_.stream());
   if (err != hipSuccess)
     throw std::runtime_error("Dechirp: rx upload failed: " +
         std::string(hipGetErrorString(err)));
-  if (prof_events) hipEventRecord(ev_rx_e, stream_);
+  if (prof_events) hipEventRecord(ev_rx_e, ctx_.stream());
 
   // Upload ref
   hipEvent_t ev_ref_s = nullptr, ev_ref_e = nullptr;
   if (prof_events) {
     hipEventCreate(&ev_ref_s); hipEventCreate(&ev_ref_e);
-    hipEventRecord(ev_ref_s, stream_);
+    hipEventRecord(ev_ref_s, ctx_.stream());
   }
   err = hipMemcpyHtoDAsync(buf_ref_, const_cast<std::complex<float>*>(ref_data.data()),
-                            ref_bytes, stream_);
+                            ref_bytes, ctx_.stream());
   if (err != hipSuccess)
     throw std::runtime_error("Dechirp: ref upload failed: " +
         std::string(hipGetErrorString(err)));
-  if (prof_events) hipEventRecord(ev_ref_e, stream_);
+  if (prof_events) hipEventRecord(ev_ref_e, ctx_.stream());
 
   // OPT-1: Use cached kernel, OPT-5: 2D grid (x=sample, y=antenna)
   int n_pts = params.num_samples;
@@ -294,33 +250,33 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::Dechirp(
   hipEvent_t ev_k_s = nullptr, ev_k_e = nullptr;
   if (prof_events) {
     hipEventCreate(&ev_k_s); hipEventCreate(&ev_k_e);
-    hipEventRecord(ev_k_s, stream_);
+    hipEventRecord(ev_k_s, ctx_.stream());
   }
   err = hipModuleLaunchKernel(
-      kernel_multiply_,
+      ctx_.GetKernel("dechirp_multiply"),
       grid_x, grid_y, 1,
       kBlockSize, 1, 1,
-      0, stream_,
+      0, ctx_.stream(),
       args, nullptr);
   if (err != hipSuccess)
     throw std::runtime_error("Dechirp: kernel launch failed: " +
         std::string(hipGetErrorString(err)));
-  if (prof_events) hipEventRecord(ev_k_e, stream_);
+  if (prof_events) hipEventRecord(ev_k_e, ctx_.stream());
 
   // Download result
   std::vector<std::complex<float>> result(total);
   hipEvent_t ev_dl_s = nullptr, ev_dl_e = nullptr;
   if (prof_events) {
     hipEventCreate(&ev_dl_s); hipEventCreate(&ev_dl_e);
-    hipEventRecord(ev_dl_s, stream_);
+    hipEventRecord(ev_dl_s, ctx_.stream());
   }
-  err = hipMemcpyDtoHAsync(result.data(), buf_dc_, rx_bytes, stream_);
+  err = hipMemcpyDtoHAsync(result.data(), buf_dc_, rx_bytes, ctx_.stream());
   if (err != hipSuccess)
     throw std::runtime_error("Dechirp: read failed: " +
         std::string(hipGetErrorString(err)));
-  if (prof_events) hipEventRecord(ev_dl_e, stream_);
+  if (prof_events) hipEventRecord(ev_dl_e, ctx_.stream());
 
-  hipStreamSynchronize(stream_);
+  hipStreamSynchronize(ctx_.stream());
 
   if (prof_events) {
     prof_events->push_back({"Upload_Rx",
@@ -365,14 +321,14 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::Correct(
   hipEvent_t ev_dc_s = nullptr, ev_dc_e = nullptr;
   if (prof_events) {
     hipEventCreate(&ev_dc_s); hipEventCreate(&ev_dc_e);
-    hipEventRecord(ev_dc_s, stream_);
+    hipEventRecord(ev_dc_s, ctx_.stream());
   }
   err = hipMemcpyHtoDAsync(buf_dc_, const_cast<std::complex<float>*>(dc_data.data()),
-                            data_bytes, stream_);
+                            data_bytes, ctx_.stream());
   if (err != hipSuccess)
     throw std::runtime_error("Correct: dc upload failed: " +
         std::string(hipGetErrorString(err)));
-  if (prof_events) hipEventRecord(ev_dc_e, stream_);
+  if (prof_events) hipEventRecord(ev_dc_e, ctx_.stream());
 
   // OPT-6: Precompute phase_step on CPU: phase_step[ant] = -2*pi*f_beat/fs
   std::vector<float> phase_step(params.num_antennas);
@@ -384,13 +340,13 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::Correct(
   hipEvent_t ev_ps_s = nullptr, ev_ps_e = nullptr;
   if (prof_events) {
     hipEventCreate(&ev_ps_s); hipEventCreate(&ev_ps_e);
-    hipEventRecord(ev_ps_s, stream_);
+    hipEventRecord(ev_ps_s, ctx_.stream());
   }
-  err = hipMemcpyHtoDAsync(buf_freq_, phase_step.data(), freq_bytes, stream_);
+  err = hipMemcpyHtoDAsync(buf_freq_, phase_step.data(), freq_bytes, ctx_.stream());
   if (err != hipSuccess)
     throw std::runtime_error("Correct: phase_step upload failed: " +
         std::string(hipGetErrorString(err)));
-  if (prof_events) hipEventRecord(ev_ps_e, stream_);
+  if (prof_events) hipEventRecord(ev_ps_e, ctx_.stream());
 
   // OPT-1: Use cached kernel, OPT-5: 2D grid (x=sample, y=antenna)
   int n_pts = params.num_samples;
@@ -404,32 +360,32 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::Correct(
   hipEvent_t ev_k_s = nullptr, ev_k_e = nullptr;
   if (prof_events) {
     hipEventCreate(&ev_k_s); hipEventCreate(&ev_k_e);
-    hipEventRecord(ev_k_s, stream_);
+    hipEventRecord(ev_k_s, ctx_.stream());
   }
   err = hipModuleLaunchKernel(
-      kernel_correct_,
+      ctx_.GetKernel("dechirp_correct"),
       grid_x, grid_y, 1,
       kBlockSize, 1, 1,
-      0, stream_,
+      0, ctx_.stream(),
       args, nullptr);
   if (err != hipSuccess)
     throw std::runtime_error("Correct: kernel launch failed: " +
         std::string(hipGetErrorString(err)));
-  if (prof_events) hipEventRecord(ev_k_e, stream_);
+  if (prof_events) hipEventRecord(ev_k_e, ctx_.stream());
 
   std::vector<std::complex<float>> result(total);
   hipEvent_t ev_dl_s = nullptr, ev_dl_e = nullptr;
   if (prof_events) {
     hipEventCreate(&ev_dl_s); hipEventCreate(&ev_dl_e);
-    hipEventRecord(ev_dl_s, stream_);
+    hipEventRecord(ev_dl_s, ctx_.stream());
   }
-  err = hipMemcpyDtoHAsync(result.data(), buf_corr_, data_bytes, stream_);
+  err = hipMemcpyDtoHAsync(result.data(), buf_corr_, data_bytes, ctx_.stream());
   if (err != hipSuccess)
     throw std::runtime_error("Correct: read failed: " +
         std::string(hipGetErrorString(err)));
-  if (prof_events) hipEventRecord(ev_dl_e, stream_);
+  if (prof_events) hipEventRecord(ev_dl_e, ctx_.stream());
 
-  hipStreamSynchronize(stream_);
+  hipStreamSynchronize(ctx_.stream());
 
   if (prof_events) {
     prof_events->push_back({"Upload_DC",
@@ -477,14 +433,14 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::DechirpFromGPU(
   hipEvent_t ev_ref_s = nullptr, ev_ref_e = nullptr;
   if (prof_events) {
     hipEventCreate(&ev_ref_s); hipEventCreate(&ev_ref_e);
-    hipEventRecord(ev_ref_s, stream_);
+    hipEventRecord(ev_ref_s, ctx_.stream());
   }
   err = hipMemcpyHtoDAsync(buf_ref_, const_cast<std::complex<float>*>(ref_data.data()),
-                            ref_bytes, stream_);
+                            ref_bytes, ctx_.stream());
   if (err != hipSuccess)
     throw std::runtime_error("DechirpFromGPU: ref upload failed: " +
         std::string(hipGetErrorString(err)));
-  if (prof_events) hipEventRecord(ev_ref_e, stream_);
+  if (prof_events) hipEventRecord(ev_ref_e, ctx_.stream());
 
   int n_pts = params.num_samples;
   int n_ant = params.num_antennas;
@@ -498,32 +454,32 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::DechirpFromGPU(
   hipEvent_t ev_k_s = nullptr, ev_k_e = nullptr;
   if (prof_events) {
     hipEventCreate(&ev_k_s); hipEventCreate(&ev_k_e);
-    hipEventRecord(ev_k_s, stream_);
+    hipEventRecord(ev_k_s, ctx_.stream());
   }
   err = hipModuleLaunchKernel(
-      kernel_multiply_,
+      ctx_.GetKernel("dechirp_multiply"),
       grid_x, grid_y, 1,
       kBlockSize, 1, 1,
-      0, stream_,
+      0, ctx_.stream(),
       args, nullptr);
   if (err != hipSuccess)
     throw std::runtime_error("DechirpFromGPU: kernel launch failed: " +
         std::string(hipGetErrorString(err)));
-  if (prof_events) hipEventRecord(ev_k_e, stream_);
+  if (prof_events) hipEventRecord(ev_k_e, ctx_.stream());
 
   std::vector<std::complex<float>> result(total);
   hipEvent_t ev_dl_s = nullptr, ev_dl_e = nullptr;
   if (prof_events) {
     hipEventCreate(&ev_dl_s); hipEventCreate(&ev_dl_e);
-    hipEventRecord(ev_dl_s, stream_);
+    hipEventRecord(ev_dl_s, ctx_.stream());
   }
-  err = hipMemcpyDtoHAsync(result.data(), buf_dc_, rx_bytes, stream_);
+  err = hipMemcpyDtoHAsync(result.data(), buf_dc_, rx_bytes, ctx_.stream());
   if (err != hipSuccess)
     throw std::runtime_error("DechirpFromGPU: read failed: " +
         std::string(hipGetErrorString(err)));
-  if (prof_events) hipEventRecord(ev_dl_e, stream_);
+  if (prof_events) hipEventRecord(ev_dl_e, ctx_.stream());
 
-  hipStreamSynchronize(stream_);
+  hipStreamSynchronize(ctx_.stream());
 
   if (prof_events) {
     prof_events->push_back({"Upload_Ref",
@@ -567,32 +523,32 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::DechirpWithGPURef(
   hipEvent_t ev_k_s = nullptr, ev_k_e = nullptr;
   if (prof_events) {
     hipEventCreate(&ev_k_s); hipEventCreate(&ev_k_e);
-    hipEventRecord(ev_k_s, stream_);
+    hipEventRecord(ev_k_s, ctx_.stream());
   }
   hipError_t err = hipModuleLaunchKernel(
-      kernel_multiply_,
+      ctx_.GetKernel("dechirp_multiply"),
       grid_x, grid_y, 1,
       kBlockSize, 1, 1,
-      0, stream_,
+      0, ctx_.stream(),
       args, nullptr);
   if (err != hipSuccess)
     throw std::runtime_error("DechirpWithGPURef: kernel launch failed: " +
         std::string(hipGetErrorString(err)));
-  if (prof_events) hipEventRecord(ev_k_e, stream_);
+  if (prof_events) hipEventRecord(ev_k_e, ctx_.stream());
 
   std::vector<std::complex<float>> result(total);
   hipEvent_t ev_dl_s = nullptr, ev_dl_e = nullptr;
   if (prof_events) {
     hipEventCreate(&ev_dl_s); hipEventCreate(&ev_dl_e);
-    hipEventRecord(ev_dl_s, stream_);
+    hipEventRecord(ev_dl_s, ctx_.stream());
   }
-  err = hipMemcpyDtoHAsync(result.data(), buf_dc_, rx_bytes, stream_);
+  err = hipMemcpyDtoHAsync(result.data(), buf_dc_, rx_bytes, ctx_.stream());
   if (err != hipSuccess)
     throw std::runtime_error("DechirpWithGPURef: read failed: " +
         std::string(hipGetErrorString(err)));
-  if (prof_events) hipEventRecord(ev_dl_e, stream_);
+  if (prof_events) hipEventRecord(ev_dl_e, ctx_.stream());
 
-  hipStreamSynchronize(stream_);
+  hipStreamSynchronize(ctx_.stream());
 
   if (prof_events) {
     prof_events->push_back({"Kernel_Multiply",
@@ -605,127 +561,13 @@ std::vector<std::complex<float>> HeterodyneProcessorROCm::DechirpWithGPURef(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// PART 7: CompileKernels — hiprtc compilation (OPT-1: cached)
+// PART 7: Lazy compilation via GpuContext (Ref03)
 // ════════════════════════════════════════════════════════════════════════════
 
-void HeterodyneProcessorROCm::CompileKernels() {
-  if (kernels_compiled_) return;
-
-  auto& con = ConsoleOutput::GetInstance();
-
-  // Инициализация кеша (lazy, один раз)
-  if (!kernel_cache_) {
-    kernel_cache_ = std::make_unique<drv_gpu_lib::KernelCacheService>(
-        "modules/heterodyne/kernels", drv_gpu_lib::BackendType::ROCm);
-  }
-
-  static constexpr const char* kKernelName = "heterodyne_kernels";
-
-  // Загрузка модуля + извлечение двух функций
-  auto loadModuleAndFunctions = [&](const void* data, size_t size) {
-    hipError_t hipErr = hipModuleLoadData(&module_, data);
-    if (hipErr != hipSuccess)
-      throw std::runtime_error(
-          "CompileKernels: hipModuleLoadData failed: " +
-          std::string(hipGetErrorString(hipErr)));
-
-    auto getFunc = [&](hipFunction_t* fn, const char* name) {
-      hipErr = hipModuleGetFunction(fn, module_, name);
-      if (hipErr != hipSuccess) {
-        (void)hipModuleUnload(module_);
-        module_ = nullptr;
-        kernel_multiply_ = nullptr;
-        kernel_correct_ = nullptr;
-        throw std::runtime_error(
-            std::string("CompileKernels: hipModuleGetFunction(") +
-            name + ") failed: " + hipGetErrorString(hipErr));
-      }
-    };
-
-    getFunc(&kernel_multiply_, "dechirp_multiply");
-    getFunc(&kernel_correct_,  "dechirp_correct");
-  };
-
-  // Шаг 1: попробовать загрузить из дискового кеша (~1-5 мс)
-  if (kernel_cache_) {
-    auto entry = kernel_cache_->Load(kKernelName);
-    if (entry && entry->has_binary()) {
-      loadModuleAndFunctions(entry->binary.data(), entry->binary.size());
-      kernels_compiled_ = true;
-      con.Print(0, "Heterodyne[ROCm]",
-          "HIP kernels loaded from cache (multiply, correct)");
-      return;
-    }
-  }
-
-  // Шаг 2: компиляция из исходника через hiprtc (один модуль на оба ядра)
-  const char* source = kernels::GetHeterodyneKernelSource_rocm();
-
-  hiprtcProgram prog;
-  hiprtcResult rtcResult = hiprtcCreateProgram(
-      &prog, source, "heterodyne_kernels.hip", 0, nullptr, nullptr);
-  if (rtcResult != HIPRTC_SUCCESS) {
-    throw std::runtime_error(
-        "CompileKernels: hiprtcCreateProgram failed: " +
-        std::string(hiprtcGetErrorString(rtcResult)));
-  }
-
-  // Получить целевую архитектуру GPU
-  std::string arch_name;
-  try {
-    auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
-    arch_name = rocm_backend->GetCore().GetArchName();
-  } catch (...) {
-    arch_name = "";
-  }
-
-  int warp_size = 32;
-  if (arch_name.find("gfx9") == 0) {
-    warp_size = 64;
-  }
-
-  std::string warp_define = "-DWARP_SIZE=" + std::to_string(warp_size);
-  std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
-
-  std::vector<const char*> opts = { "-O3", warp_define.c_str() };
-  if (!arch_flag.empty()) {
-    opts.push_back(arch_flag.c_str());
-  }
-
-  rtcResult = hiprtcCompileProgram(prog,
-      static_cast<int>(opts.size()), opts.data());
-  if (rtcResult != HIPRTC_SUCCESS) {
-    size_t logSize = 0;
-    hiprtcGetProgramLogSize(prog, &logSize);
-    std::string log(logSize, '\0');
-    hiprtcGetProgramLog(prog, &log[0]);
-    con.PrintError(0, "Heterodyne[ROCm]", "Kernel compile log:\n" + log);
-    (void)hiprtcDestroyProgram(&prog);
-    throw std::runtime_error("CompileKernels: compilation failed");
-  }
-
-  size_t codeSize = 0;
-  hiprtcGetCodeSize(prog, &codeSize);
-  std::vector<char> code(codeSize);
-  hiprtcGetCode(prog, code.data());
-  (void)hiprtcDestroyProgram(&prog);
-
-  loadModuleAndFunctions(code.data(), code.size());
-
-  // Шаг 3: сохранить бинарь в кеш
-  if (kernel_cache_) {
-    try {
-      std::vector<uint8_t> binary(code.begin(), code.end());
-      kernel_cache_->Save(kKernelName, std::string(source),
-                          binary, arch_name, "heterodyne");
-    } catch (...) {
-      // Не критично
-    }
-  }
-
-  kernels_compiled_ = true;
-  con.Print(0, "Heterodyne[ROCm]",
-      "HIP kernels compiled (multiply+correct, arch=" + arch_name + ")");
+void HeterodyneProcessorROCm::EnsureCompiled() {
+  if (compiled_) return;
+  ctx_.CompileModule(kernels::GetHeterodyneKernelSource_rocm(), kHetKernelNames);
+  compiled_ = true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -733,16 +575,7 @@ void HeterodyneProcessorROCm::CompileKernels() {
 // ════════════════════════════════════════════════════════════════════════════
 
 void HeterodyneProcessorROCm::ReleaseGpuResources() {
-  // OPT-1/10: Release single cached module (both kernels invalidated)
-  if (module_) {
-    (void)hipModuleUnload(module_);
-    module_ = nullptr;
-    kernel_multiply_ = nullptr;
-    kernel_correct_ = nullptr;
-  }
-  kernels_compiled_ = false;
-
-  // OPT-2: Release cached buffers
+  // GpuContext manages kernel module — no manual hipModuleUnload
   if (buf_rx_)   { (void)hipFree(buf_rx_);   buf_rx_ = nullptr; }
   if (buf_ref_)  { (void)hipFree(buf_ref_);  buf_ref_ = nullptr; }
   if (buf_dc_)   { (void)hipFree(buf_dc_);   buf_dc_ = nullptr; }

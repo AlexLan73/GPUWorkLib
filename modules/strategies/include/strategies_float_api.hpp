@@ -283,8 +283,14 @@ private:
       arch_name = rb->GetCore().GetArchName();
     } catch (...) {}
 
+    int warp_size = 32;
+    try {
+      auto* rwb = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
+      warp_size = rwb->GetCore().GetWarpSize();
+    } catch (...) {}
+    std::string warp_define = "-DWARP_SIZE=" + std::to_string(warp_size);
     std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
-    std::vector<const char*> opts = { "-O3", "-DWARP_SIZE=32", "-DBLOCK_SIZE=256" };
+    std::vector<const char*> opts = { "-O3", warp_define.c_str(), "-DBLOCK_SIZE=256" };
     if (!arch_flag.empty()) opts.push_back(arch_flag.c_str());
 
     hiprtcResult res = hiprtcCompileProgram(prog, static_cast<int>(opts.size()), opts.data());

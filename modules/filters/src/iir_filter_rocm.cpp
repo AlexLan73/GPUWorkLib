@@ -13,6 +13,7 @@
 
 #include "filters/iir_filter_rocm.hpp"
 #include "kernels/iir_kernels_rocm.hpp"
+#include "rocm_profiling_helpers.hpp"
 #include "services/console_output.hpp"
 #include "backends/rocm/rocm_backend.hpp"
 #include "services/kernel_cache_service.hpp"
@@ -21,26 +22,7 @@
 #include <cstring>
 #include <algorithm>
 
-namespace {
-
-/// Helper: hipEvent -> elapsed -> ROCmProfilingData
-drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
-    hipEvent_t ev_start, hipEvent_t ev_end,
-    uint32_t kind = 0, const char* op = "")
-{
-    hipEventSynchronize(ev_end);
-    float ms = 0.0f;
-    hipEventElapsedTime(&ms, ev_start, ev_end);
-    hipEventDestroy(ev_start);
-    hipEventDestroy(ev_end);
-    drv_gpu_lib::ROCmProfilingData d{};
-    uint64_t ns = static_cast<uint64_t>(ms * 1e6f);
-    d.start_ns = 0; d.end_ns = ns; d.complete_ns = ns;
-    d.kind = kind; d.op_string = op;
-    return d;
-}
-
-}  // namespace
+using fft_func_utils::MakeROCmDataFromEvents;
 
 namespace filters {
 

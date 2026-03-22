@@ -170,4 +170,16 @@ private:
 
 }  // namespace vector_algebra
 
+#else  // !ENABLE_ROCM — Windows stub
+
+namespace vector_algebra {
+class MatrixOpsROCm {
+public:
+  MatrixOpsROCm() = default;
+  void CovarianceMatrix(const void*, int, int, void*) {}
+  void Multiply(const void*, const void*, void*, int, int, int) {}
+  void MultiplyConjTransA(const void*, const void*, void*, int, int, int) {}
+};
+}  // namespace vector_algebra
+
 #endif  // ENABLE_ROCM

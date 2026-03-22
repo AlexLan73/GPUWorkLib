@@ -64,4 +64,24 @@ struct CholeskyResult {
 
 }  // namespace vector_algebra
 
+#else  // !ENABLE_ROCM — minimal stub types for Windows compilation
+
+namespace vector_algebra {
+
+enum class SymmetrizeMode { Roundtrip, GpuKernel };
+
+struct CholeskyResult {
+  void* d_data = nullptr;
+  int matrix_size = 0;
+  int batch_count = 0;
+  ~CholeskyResult() = default;
+  CholeskyResult() = default;
+  CholeskyResult(CholeskyResult&&) noexcept = default;
+  CholeskyResult& operator=(CholeskyResult&&) noexcept = default;
+  CholeskyResult(const CholeskyResult&) = delete;
+  CholeskyResult& operator=(const CholeskyResult&) = delete;
+};
+
+}  // namespace vector_algebra
+
 #endif  // ENABLE_ROCM

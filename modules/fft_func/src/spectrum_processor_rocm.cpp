@@ -30,13 +30,12 @@
 #include "processors/spectrum_processor_rocm.hpp"
 #include "kernels/fft_kernel_sources_rocm.hpp"
 #include "kernels/all_maxima_kernel_sources_rocm.hpp"
+#include "rocm_profiling_helpers.hpp"
 #include "services/console_output.hpp"
 #include "services/gpu_profiler.hpp"
 #include "services/batch_manager.hpp"
 #include "interface/i_backend.hpp"
 #include "services/profiling_types.hpp"
-#include "services/kernel_cache_service.hpp"
-#include "backends/rocm/rocm_backend.hpp"
 
 #include <stdexcept>
 #include <cstring>
@@ -44,39 +43,8 @@
 #include <algorithm>
 #include <chrono>
 
-namespace {
-
-/// Helper: hipEvent pair → ROCmProfilingData (для GPU-операций через hipStream)
-drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
-    hipEvent_t ev_start, hipEvent_t ev_end, uint32_t kind, const char* op = "")
-{
-    hipEventSynchronize(ev_end);
-    float ms = 0.0f;
-    hipEventElapsedTime(&ms, ev_start, ev_end);
-    hipEventDestroy(ev_start);
-    hipEventDestroy(ev_end);
-    drv_gpu_lib::ROCmProfilingData d{};
-    uint64_t ns = static_cast<uint64_t>(ms * 1e6f);
-    d.start_ns = 0; d.end_ns = ns; d.complete_ns = ns;
-    d.kind = kind; d.op_string = op;
-    return d;
-}
-
-/// Helper: wall-clock pair → ROCmProfilingData (для синхронных D2H операций)
-drv_gpu_lib::ROCmProfilingData MakeROCmDataFromClock(
-    std::chrono::high_resolution_clock::time_point t0,
-    std::chrono::high_resolution_clock::time_point t1,
-    uint32_t kind, const char* op = "")
-{
-    uint64_t ns = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
-    drv_gpu_lib::ROCmProfilingData d{};
-    d.start_ns = 0; d.end_ns = ns; d.complete_ns = ns;
-    d.kind = kind; d.op_string = op;
-    return d;
-}
-
-}  // namespace
+using fft_func_utils::MakeROCmDataFromEvents;
+using fft_func_utils::MakeROCmDataFromClock;
 
 namespace antenna_fft {
 
@@ -87,10 +55,10 @@ namespace antenna_fft {
 /**
  * @brief Конструктор — получить HIP stream из backend и создать pipeline
  *
- * stream_ берётся из backend_->GetNativeQueue() — backend владеет очередью,
+ * ctx_.stream() берётся из backend_->GetNativeQueue() — backend владеет очередью,
  * мы только используем её (не закрываем в деструкторе).
  *
- * pipeline_ = AllMaximaPipelineROCm(stream_, backend_) создаётся сразу —
+ * pipeline_ = AllMaximaPipelineROCm(ctx_.stream(), backend_) создаётся сразу —
  * lazy CompileKernels внутри pipeline произойдёт при первом вызове FindAllMaxima.
  *
  * Ключевое отличие от OpenCL: нет cl_context/cl_queue, только hipStream_t.
@@ -99,23 +67,19 @@ namespace antenna_fft {
  * @throws std::invalid_argument если backend == nullptr
  * @throws std::runtime_error если backend не инициализирован или нет HIP stream
  */
+static const std::vector<std::string> kSpectrumKernelNames = {
+    "pad_data",
+    "compute_magnitudes",
+    "post_kernel_one_peak",
+    "post_kernel_two_peaks"
+};
+
 SpectrumProcessorROCm::SpectrumProcessorROCm(drv_gpu_lib::IBackend* backend)
-    : backend_(backend) {
+    : backend_(backend)
+    , ctx_(backend, "SpectrumMaxima", "modules/fft_func/kernels") {
 
-    if (!backend_) {
-        throw std::invalid_argument("SpectrumProcessorROCm: backend cannot be null");
-    }
-
-    if (!backend_->IsInitialized()) {
-        throw std::runtime_error("SpectrumProcessorROCm: backend is not initialized");
-    }
-
-    stream_ = static_cast<hipStream_t>(backend_->GetNativeQueue());
-    if (!stream_) {
-        throw std::runtime_error("SpectrumProcessorROCm: failed to get HIP stream from backend");
-    }
-
-    pipeline_ = std::make_unique<AllMaximaPipelineROCm>(stream_, backend_);
+    hipStream_t stream = ctx_.stream();
+    pipeline_ = std::make_unique<AllMaximaPipelineROCm>(stream, backend_);
 }
 
 /**
@@ -123,7 +87,7 @@ SpectrumProcessorROCm::SpectrumProcessorROCm(drv_gpu_lib::IBackend* backend)
  *
  * Порядок освобождения в ReleaseResources() критичен:
  * pipeline_.reset() → allmax_plan → plan_ → буферы → hiprtc module.
- * stream_ НЕ закрывается — он принадлежит backend_.
+ * ctx_.stream() НЕ закрывается — он принадлежит backend_.
  */
 SpectrumProcessorROCm::~SpectrumProcessorROCm() {
     ReleaseResources();
@@ -198,8 +162,8 @@ void SpectrumProcessorROCm::Initialize(const SpectrumParams& params) {
  * @brief Обработать один batch CPU-данных: Upload → Pad → FFT → Post → Sync → ReadResults
  *
  * ROCm версия использует stream-ordered execution без явных cl_event:
- * - Порядок операций гарантирован одним hipStream_t (stream_)
- * - Синхронизация: hipStreamSynchronize(stream_) перед ReadResults
+ * - Порядок операций гарантирован одним hipStream_t (ctx_.stream())
+ * - Синхронизация: hipStreamSynchronize(ctx_.stream()) перед ReadResults
  *
  * Профилирование через hipEvent (если prof_events != nullptr):
  *   5 операций: Upload(H2D) | PadKernel | FFT | PostKernel | Download(D2H wall-clock)
@@ -229,39 +193,39 @@ std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessBatch(
     hipEvent_t ev_up_s = nullptr, ev_up_e = nullptr;
     if (prof_events) {
         hipEventCreate(&ev_up_s); hipEventCreate(&ev_up_e);
-        hipEventRecord(ev_up_s, stream_);
+        hipEventRecord(ev_up_s, ctx_.stream());
     }
     UploadData(input_data.data() + offset, count);
-    if (prof_events) hipEventRecord(ev_up_e, stream_);
+    if (prof_events) hipEventRecord(ev_up_e, ctx_.stream());
 
     // ── PadKernel ────────────────────────────────────────────────────────────
     hipEvent_t ev_pad_s = nullptr, ev_pad_e = nullptr;
     if (prof_events) {
         hipEventCreate(&ev_pad_s); hipEventCreate(&ev_pad_e);
-        hipEventRecord(ev_pad_s, stream_);
+        hipEventRecord(ev_pad_s, ctx_.stream());
     }
     ExecutePadKernel(batch_antenna_count);
-    if (prof_events) hipEventRecord(ev_pad_e, stream_);
+    if (prof_events) hipEventRecord(ev_pad_e, ctx_.stream());
 
     // ── FFT ──────────────────────────────────────────────────────────────────
     hipEvent_t ev_fft_s = nullptr, ev_fft_e = nullptr;
     if (prof_events) {
         hipEventCreate(&ev_fft_s); hipEventCreate(&ev_fft_e);
-        hipEventRecord(ev_fft_s, stream_);
+        hipEventRecord(ev_fft_s, ctx_.stream());
     }
     ExecuteFFT();
-    if (prof_events) hipEventRecord(ev_fft_e, stream_);
+    if (prof_events) hipEventRecord(ev_fft_e, ctx_.stream());
 
     // ── PostKernel ───────────────────────────────────────────────────────────
     hipEvent_t ev_post_s = nullptr, ev_post_e = nullptr;
     if (prof_events) {
         hipEventCreate(&ev_post_s); hipEventCreate(&ev_post_e);
-        hipEventRecord(ev_post_s, stream_);
+        hipEventRecord(ev_post_s, ctx_.stream());
     }
     ExecutePostKernel(batch_antenna_count);
-    if (prof_events) hipEventRecord(ev_post_e, stream_);
+    if (prof_events) hipEventRecord(ev_post_e, ctx_.stream());
 
-    hipStreamSynchronize(stream_);
+    hipStreamSynchronize(ctx_.stream());
 
     // ── Download (D2H sync — wall-clock) ─────────────────────────────────────
     auto t_dl_s = std::chrono::high_resolution_clock::now();
@@ -369,12 +333,10 @@ std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessFromGPU(
     if (params_.nFFT == 0) {
         CalculateFFTSize();
     }
-    if (!kernels_compiled_) {
+    if (!compiled_) {
         CompileKernels();
     }
-    if (!post_kernel_) {
-        CompilePostKernel();
-    }
+    CompilePostKernel();
 
     size_t bytes_per_antenna = CalculateBytesPerAntenna();
     size_t external_memory = (gpu_memory_bytes > 0)
@@ -396,7 +358,7 @@ std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessFromGPU(
         ExecutePadKernel(antenna_count);
         ExecuteFFT();
         ExecutePostKernel(antenna_count);
-        hipStreamSynchronize(stream_);
+        hipStreamSynchronize(ctx_.stream());
 
         return ReadResults(antenna_count);
     }
@@ -444,7 +406,7 @@ std::vector<SpectrumResult> SpectrumProcessorROCm::ProcessBatchFromGPU(
     ExecutePadKernel(batch_antenna_count);
     ExecuteFFT();
     ExecutePostKernel(batch_antenna_count);
-    hipStreamSynchronize(stream_);
+    hipStreamSynchronize(ctx_.stream());
 
     auto results = ReadResults(batch_antenna_count);
 
@@ -511,7 +473,7 @@ AllMaximaResult SpectrumProcessorROCm::FindAllMaximaFromCPU(
     actual_batch_size_ = params_.antenna_count;
     CreateAllMaximaFFTPlan(params_.antenna_count);
 
-    if (!kernels_compiled_) CompileKernels();
+    if (!compiled_) CompileKernels();
 
     size_t total_elements = static_cast<size_t>(params_.antenna_count) * params_.nFFT;
 
@@ -519,56 +481,56 @@ AllMaximaResult SpectrumProcessorROCm::FindAllMaximaFromCPU(
     hipEvent_t ev_up_s = nullptr, ev_up_e = nullptr;
     if (prof_events) {
         hipEventCreate(&ev_up_s); hipEventCreate(&ev_up_e);
-        hipEventRecord(ev_up_s, stream_);
+        hipEventRecord(ev_up_s, ctx_.stream());
     }
     UploadData(data.data(), data.size());
-    if (prof_events) hipEventRecord(ev_up_e, stream_);
+    if (prof_events) hipEventRecord(ev_up_e, ctx_.stream());
 
     // ── PadKernel ────────────────────────────────────────────────────────────
     hipEvent_t ev_pad_s = nullptr, ev_pad_e = nullptr;
     if (prof_events) {
         hipEventCreate(&ev_pad_s); hipEventCreate(&ev_pad_e);
-        hipEventRecord(ev_pad_s, stream_);
+        hipEventRecord(ev_pad_s, ctx_.stream());
     }
     ExecutePadKernel(params_.antenna_count);
-    if (prof_events) hipEventRecord(ev_pad_e, stream_);
+    if (prof_events) hipEventRecord(ev_pad_e, ctx_.stream());
 
     // ── FFT ──────────────────────────────────────────────────────────────────
     hipEvent_t ev_fft_s = nullptr, ev_fft_e = nullptr;
     if (prof_events) {
         hipEventCreate(&ev_fft_s); hipEventCreate(&ev_fft_e);
-        hipEventRecord(ev_fft_s, stream_);
+        hipEventRecord(ev_fft_s, ctx_.stream());
     }
     ExecuteFFT();
-    if (prof_events) hipEventRecord(ev_fft_e, stream_);
+    if (prof_events) hipEventRecord(ev_fft_e, ctx_.stream());
 
     // ── ComputeMagnitudes ────────────────────────────────────────────────────
     hipEvent_t ev_mag_s = nullptr, ev_mag_e = nullptr;
     if (prof_events) {
         hipEventCreate(&ev_mag_s); hipEventCreate(&ev_mag_e);
-        hipEventRecord(ev_mag_s, stream_);
+        hipEventRecord(ev_mag_s, ctx_.stream());
     }
     ExecuteComputeMagnitudes(total_elements);
-    if (prof_events) hipEventRecord(ev_mag_e, stream_);
+    if (prof_events) hipEventRecord(ev_mag_e, ctx_.stream());
 
     // ── Pipeline (Detect+Scan+Compact) ───────────────────────────────────────
     hipEvent_t ev_pipe_s = nullptr, ev_pipe_e = nullptr;
     if (prof_events) {
         hipEventCreate(&ev_pipe_s); hipEventCreate(&ev_pipe_e);
-        hipEventRecord(ev_pipe_s, stream_);
+        hipEventRecord(ev_pipe_s, ctx_.stream());
     }
-    hipStreamSynchronize(stream_);
+    hipStreamSynchronize(ctx_.stream());
 
     AllMaximaResult result = pipeline_->Execute(
         magnitudes_buffer_, fft_output_,
         params_.antenna_count, params_.nFFT, params_.sample_rate,
         dest, search_start, search_end);
 
-    if (prof_events) hipEventRecord(ev_pipe_e, stream_);
+    if (prof_events) hipEventRecord(ev_pipe_e, ctx_.stream());
 
     // ── Собрать события ──────────────────────────────────────────────────────
     if (prof_events) {
-        hipStreamSynchronize(stream_);
+        hipStreamSynchronize(ctx_.stream());
         prof_events->push_back({"Upload",            MakeROCmDataFromEvents(ev_up_s,   ev_up_e,   1, "H2D")});
         prof_events->push_back({"PadKernel",         MakeROCmDataFromEvents(ev_pad_s,  ev_pad_e,  0, "pad_kernel")});
         prof_events->push_back({"FFT",               MakeROCmDataFromEvents(ev_fft_s,  ev_fft_e,  0, "hipfftExecC2C")});
@@ -610,7 +572,7 @@ AllMaximaResult SpectrumProcessorROCm::FindAllMaximaFromGPUPipeline(
         std::to_string(antenna_count) + " beams, n_point=" + std::to_string(n_point));
 
     if (params_.nFFT == 0) CalculateFFTSize();
-    if (!kernels_compiled_) CompileKernels();
+    if (!compiled_) CompileKernels();
 
     size_t bytes_per_antenna = CalculateBytesPerAntenna();
     size_t external_memory = (gpu_memory_bytes > 0)
@@ -636,7 +598,7 @@ AllMaximaResult SpectrumProcessorROCm::FindAllMaximaFromGPUPipeline(
 
     size_t total_elements = antenna_count * params_.nFFT;
     ExecuteComputeMagnitudes(total_elements);
-    hipStreamSynchronize(stream_);
+    hipStreamSynchronize(ctx_.stream());
 
     return pipeline_->Execute(
         magnitudes_buffer_, fft_output_,
@@ -680,7 +642,7 @@ AllMaximaResult SpectrumProcessorROCm::AllMaximaFromCPU(
     con.Print(0, "AllMaxima[ROCm]", "AllMaximaFromCPU: " +
         std::to_string(beam_count) + " beams, nFFT=" + std::to_string(nFFT));
 
-    if (!kernels_compiled_) CompileKernels();
+    if (!compiled_) CompileKernels();
 
     // Upload FFT data to GPU
     size_t data_bytes = expected_size * sizeof(std::complex<float>);
@@ -691,13 +653,13 @@ AllMaximaResult SpectrumProcessorROCm::AllMaximaFromCPU(
         throw std::runtime_error("AllMaximaFromCPU: hipMalloc failed");
 
     err = hipMemcpyHtoDAsync(gpu_fft, const_cast<std::complex<float>*>(fft_data.data()),
-                              data_bytes, stream_);
+                              data_bytes, ctx_.stream());
     if (err != hipSuccess) {
         (void)hipFree(gpu_fft);
         throw std::runtime_error("AllMaximaFromCPU: hipMemcpyHtoDAsync failed");
     }
 
-    hipStreamSynchronize(stream_);
+    hipStreamSynchronize(ctx_.stream());
 
     AllMaximaResult result = FindAllMaxima(gpu_fft, beam_count, nFFT,
                                             sample_rate, dest, search_start, search_end);
@@ -747,14 +709,14 @@ AllMaximaResult SpectrumProcessorROCm::FindAllMaxima(
         + " range=[" + std::to_string(search_start) + "," + std::to_string(search_end) + ")"
         + " Fs=" + std::to_string(static_cast<int>(sample_rate)) + "Hz");
 
-    if (!kernels_compiled_) CompileKernels();
+    if (!compiled_) CompileKernels();
 
     const size_t total_elements = static_cast<size_t>(beam_count) * nFFT;
     EnsureMagnitudesBuffer(total_elements);
 
     // Compute magnitudes: fft_data → magnitudes_buffer_
     ExecuteComputeMagnitudes(total_elements);
-    hipStreamSynchronize(stream_);
+    hipStreamSynchronize(ctx_.stream());
 
     // We need to pass fft_data to compute_magnitudes, but the function uses fft_output_
     // Actually, we need a local magnitude compute since fft_data might not be fft_output_.
@@ -769,16 +731,16 @@ AllMaximaResult SpectrumProcessorROCm::FindAllMaxima(
         unsigned int block_x = 256;
 
         hipError_t hip_err = hipModuleLaunchKernel(
-            compute_mag_kernel_,
+            ctx_.GetKernel("compute_magnitudes"),
             grid_x, 1, 1,
             block_x, 1, 1,
-            0, stream_,
+            0, ctx_.stream(),
             args, nullptr);
         if (hip_err != hipSuccess) {
             throw std::runtime_error("FindAllMaxima: compute_magnitudes launch failed: " +
                                       std::string(hipGetErrorString(hip_err)));
         }
-        hipStreamSynchronize(stream_);
+        hipStreamSynchronize(ctx_.stream());
     }
 
     return pipeline_->Execute(
@@ -839,7 +801,7 @@ void SpectrumProcessorROCm::AllocateBuffers() {
 /**
  * @brief Создать hipFFT план для ProcessBatch (Process режим)
  *
- * hipfftPlan1d(nFFT, C2C, batch_count) → привязка к stream_ через hipfftSetStream.
+ * hipfftPlan1d(nFFT, C2C, batch_count) → привязка к ctx_.stream() через hipfftSetStream.
  * Guard: повторный вызов с тем же batch_count — ничего не делает.
  * При изменении batch_count — старый план уничтожается.
  *
@@ -867,7 +829,7 @@ void SpectrumProcessorROCm::CreateFFTPlan(size_t batch_count) {
                                   std::to_string(static_cast<int>(result)));
     }
 
-    result = hipfftSetStream(plan_, stream_);
+    result = hipfftSetStream(plan_, ctx_.stream());
     if (result != HIPFFT_SUCCESS) {
         hipfftDestroy(plan_);
         throw std::runtime_error("CreateFFTPlan: hipfftSetStream failed");
@@ -909,7 +871,7 @@ void SpectrumProcessorROCm::CreateAllMaximaFFTPlan(size_t batch_count) {
         throw std::runtime_error("CreateAllMaximaFFTPlan: hipfftPlan1d failed");
     }
 
-    result = hipfftSetStream(allmax_plan_, stream_);
+    result = hipfftSetStream(allmax_plan_, ctx_.stream());
     if (result != HIPFFT_SUCCESS) {
         hipfftDestroy(allmax_plan_);
         throw std::runtime_error("CreateAllMaximaFFTPlan: hipfftSetStream failed");
@@ -926,149 +888,28 @@ void SpectrumProcessorROCm::CreateAllMaximaFFTPlan(size_t batch_count) {
  *  - pad_data: zero-padding [n_point → nFFT] для всех лучей
  *  - compute_magnitudes: |z|² = re² + im² (complex→float)
  *
- * post_kernel_one_peak / post_kernel_two_peaks компилируются отдельно в CompilePostKernel()
- * из того же module_ (kernel source содержит все kernels).
+ * All 4 kernels compiled in one GpuContext::CompileModule() call.
+ * post_kernel selection (ONE_PEAK/TWO_PEAKS) happens at Execute time via ctx_.GetKernel().
  *
  * При ошибке компиляции → print лог через ConsoleOutput (не PrintError) + throw.
  *
  * @throws std::runtime_error если hiprtcCreateProgram / Compile / ModuleLoadData неудача
  */
 void SpectrumProcessorROCm::CompileKernels() {
-    if (kernels_compiled_) return;
-
-    auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
-    constexpr const char* kCacheName = "spectrum_kernels";
-    const char* src = kernels::GetSpectrumHIPKernelSource();
-
-    // ── Try loading from disk cache (HSACO) ──
-    drv_gpu_lib::KernelCacheService cache(
-        "modules/fft_func/kernels", drv_gpu_lib::BackendType::ROCm);
-    {
-        auto entry = cache.Load(kCacheName);
-        if (entry && entry->has_binary()) {
-            hipError_t hip_err = hipModuleLoadData(&module_, entry->binary.data());
-            if (hip_err == hipSuccess) {
-                hip_err = hipModuleGetFunction(&pad_kernel_, module_, "pad_data");
-                if (hip_err == hipSuccess)
-                    hip_err = hipModuleGetFunction(&compute_mag_kernel_, module_, "compute_magnitudes");
-                if (hip_err == hipSuccess) {
-                    kernels_compiled_ = true;
-                    con.Print(0, "SpectrumMaxima[ROCm]",
-                        "HIP kernels loaded from cache (HSACO)");
-                    return;
-                }
-            }
-            // Cache binary invalid — fall through to compile
-            if (module_) { hipModuleUnload(module_); module_ = nullptr; }
-        }
-    }
-
-    // ── Compile from source (hiprtc) ──
-    hiprtcProgram prog;
-    hiprtcResult rtc_err = hiprtcCreateProgram(&prog, src, "spectrum_kernels.hip",
-                                                0, nullptr, nullptr);
-    if (rtc_err != HIPRTC_SUCCESS) {
-        throw std::runtime_error("CompileKernels: hiprtcCreateProgram failed: " +
-                                  std::string(hiprtcGetErrorString(rtc_err)));
-    }
-
-    // Build compile options: -O3, --offload-arch, -DWARP_SIZE
-    std::string arch_name;
-    try {
-        auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
-        arch_name = rocm_backend->GetCore().GetArchName();
-    } catch (...) {
-        arch_name = "";
-    }
-    std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
-    std::vector<const char*> opts = {"-O3", "-DWARP_SIZE=32"};
-    if (!arch_flag.empty())
-        opts.push_back(arch_flag.c_str());
-
-    rtc_err = hiprtcCompileProgram(prog,
-        static_cast<int>(opts.size()), opts.data());
-    if (rtc_err != HIPRTC_SUCCESS) {
-        size_t log_size = 0;
-        hiprtcGetProgramLogSize(prog, &log_size);
-        std::string log(log_size, '\0');
-        hiprtcGetProgramLog(prog, log.data());
-
-        con.PrintError(0, "SpectrumMaxima[ROCm]", "Kernel compile log:\n" + log);
-
-        (void)hiprtcDestroyProgram(&prog);
-        throw std::runtime_error("CompileKernels: hiprtcCompileProgram failed");
-    }
-
-    size_t code_size = 0;
-    hiprtcGetCodeSize(prog, &code_size);
-    std::vector<char> code(code_size);
-    hiprtcGetCode(prog, code.data());
-    (void)hiprtcDestroyProgram(&prog);
-
-    hipError_t hip_err = hipModuleLoadData(&module_, code.data());
-    if (hip_err != hipSuccess) {
-        throw std::runtime_error("CompileKernels: hipModuleLoadData failed: " +
-                                  std::string(hipGetErrorString(hip_err)));
-    }
-
-    hip_err = hipModuleGetFunction(&pad_kernel_, module_, "pad_data");
-    if (hip_err != hipSuccess)
-        throw std::runtime_error("CompileKernels: get pad_data failed");
-
-    hip_err = hipModuleGetFunction(&compute_mag_kernel_, module_, "compute_magnitudes");
-    if (hip_err != hipSuccess)
-        throw std::runtime_error("CompileKernels: get compute_magnitudes failed");
-
-    kernels_compiled_ = true;
-
-    // ── Save to cache for next run ──
-    try {
-        std::vector<uint8_t> binary(code.begin(), code.end());
-        cache.Save(kCacheName, std::string(src), binary,
-                   arch_name, "spectrum_kernels: pad_data + compute_magnitudes");
-    } catch (...) {
-        // Non-critical: cache save failure
-    }
-
-    con.Print(0, "SpectrumMaxima[ROCm]",
-        "HIP kernels compiled (pad + compute_magnitudes)" +
-        (arch_name.empty() ? "" : " [" + arch_name + "]"));
+    if (compiled_) return;
+    ctx_.CompileModule(kernels::GetSpectrumHIPKernelSource(), kSpectrumKernelNames);
+    pad_op_.Initialize(ctx_);
+    mag_op_.Initialize(ctx_);
+    post_op_.Initialize(ctx_);
+    compiled_ = true;
 }
 
-/**
- * @brief Получить post_kernel из уже скомпилированного hiprtc module_
- *
- * Выбирает kernel по params_.peak_mode:
- *  - ONE_PEAK  → "post_kernel_one_peak"  → 4 MaxValue/beam
- *  - TWO_PEAKS → "post_kernel_two_peaks" → 8 MaxValue/beam
- *
- * Важно: CompileKernels() должен быть вызван первым (module_ должен существовать).
- * Если module_ уже загружен (kernels_compiled_=true), просто извлекаем функцию.
- *
- * @throws std::runtime_error если hipModuleGetFunction неудача
- */
+// Legacy CompileKernels body removed (2026-03-22): was ~140 lines of manual hiprtc.
+
 void SpectrumProcessorROCm::CompilePostKernel() {
-    if (post_kernel_) return;
-
-    if (!kernels_compiled_) CompileKernels();
-
-    const char* kernel_name;
-    if (params_.peak_mode == PeakSearchMode::ONE_PEAK) {
-        kernel_name = "post_kernel_one_peak";
-        drv_gpu_lib::ConsoleOutput::GetInstance().Print(0, "SpectrumMaxima[ROCm]",
-            "Peak mode: ONE_PEAK (4 MaxValue/beam)");
-    } else {
-        kernel_name = "post_kernel_two_peaks";
-        drv_gpu_lib::ConsoleOutput::GetInstance().Print(0, "SpectrumMaxima[ROCm]",
-            "Peak mode: TWO_PEAKS (8 MaxValue/beam)");
-    }
-
-    hipError_t hip_err = hipModuleGetFunction(&post_kernel_, module_, kernel_name);
-    if (hip_err != hipSuccess) {
-        throw std::runtime_error("CompilePostKernel: hipModuleGetFunction(" +
-                                  std::string(kernel_name) + ") failed: " +
-                                  std::string(hipGetErrorString(hip_err)));
-    }
+    if (!compiled_) CompileKernels();
+    // post_kernel извлекается через ctx_.GetKernel() при каждом Execute
+    // (выбор ONE_PEAK / TWO_PEAKS по params_.peak_mode делается в ExecutePostKernel)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1078,7 +919,7 @@ void SpectrumProcessorROCm::CompilePostKernel() {
 /**
  * @brief Асинхронный upload CPU→GPU (H2D) в input_buffer_
  *
- * hipMemcpyHtoDAsync в stream_ — не блокирует CPU до hipStreamSynchronize.
+ * hipMemcpyHtoDAsync в ctx_.stream() — не блокирует CPU до hipStreamSynchronize.
  * Отличие от OpenCL версии: нет Pinned Memory (нет CL_MEM_ALLOC_HOST_PTR),
  * hipMemcpyHtoDAsync сам оптимизирует transfer через DMA если данные page-locked.
  *
@@ -1091,7 +932,7 @@ void SpectrumProcessorROCm::UploadData(const std::complex<float>* data, size_t e
 
     hipError_t err = hipMemcpyHtoDAsync(input_buffer_,
                                          const_cast<std::complex<float>*>(data),
-                                         data_size, stream_);
+                                         data_size, ctx_.stream());
     if (err != hipSuccess) {
         throw std::runtime_error("UploadData: hipMemcpyHtoDAsync failed: " +
                                   std::string(hipGetErrorString(err)));
@@ -1101,7 +942,7 @@ void SpectrumProcessorROCm::UploadData(const std::complex<float>* data, size_t e
 /**
  * @brief Асинхронный D2D copy из внешнего GPU буфера в input_buffer_
  *
- * hipMemcpyDtoDAsync(dst=input_buffer_, src=src+offset, count, stream_).
+ * hipMemcpyDtoDAsync(dst=input_buffer_, src=src+offset, count, ctx_.stream()).
  * Используется в ProcessFromGPU и FindAllMaximaFromGPUPipeline для batch обработки
  * где src_offset_bytes указывает на начало текущего batch в исходном буфере.
  *
@@ -1114,7 +955,7 @@ void SpectrumProcessorROCm::CopyGpuData(void* src, size_t src_offset_bytes, size
     size_t data_size = element_count * sizeof(std::complex<float>);
     char* src_ptr = static_cast<char*>(src) + src_offset_bytes;
 
-    hipError_t err = hipMemcpyDtoDAsync(input_buffer_, src_ptr, data_size, stream_);
+    hipError_t err = hipMemcpyDtoDAsync(input_buffer_, src_ptr, data_size, ctx_.stream());
     if (err != hipSuccess) {
         throw std::runtime_error("CopyGpuData: hipMemcpyDtoDAsync failed: " +
                                   std::string(hipGetErrorString(err)));
@@ -1138,35 +979,9 @@ void SpectrumProcessorROCm::CopyGpuData(void* src, size_t src_offset_bytes, size
  * @throws std::runtime_error если hipModuleLaunchKernel неудача
  */
 void SpectrumProcessorROCm::ExecutePadKernel(size_t beam_count, size_t beam_offset) {
-    unsigned int bc = static_cast<unsigned int>(beam_count);
-    unsigned int np = params_.n_point;
-    unsigned int nfft = params_.nFFT;
-    unsigned int bo = static_cast<unsigned int>(beam_offset);
-
-    // Pre-zero output buffer — kernel only copies valid data, no else-branch
-    size_t total_bytes = beam_count * params_.nFFT * sizeof(float) * 2;  // float2_t = 8 bytes
-    hipMemsetAsync(fft_input_, 0, total_bytes, stream_);
-
-    // 2D grid: X = nFFT positions, Y = beam index (no div/mod in kernel)
-    unsigned int grid_x = static_cast<unsigned int>((params_.nFFT + 255) / 256);
-    unsigned int grid_y = bc;
-    unsigned int block_x = 256;
-
-    void* args[] = {
-        &input_buffer_, &fft_input_,
-        &bc, &np, &nfft, &bo
-    };
-
-    hipError_t err = hipModuleLaunchKernel(
-        pad_kernel_,
-        grid_x, grid_y, 1,
-        block_x, 1, 1,
-        0, stream_,
-        args, nullptr);
-    if (err != hipSuccess) {
-        throw std::runtime_error("ExecutePadKernel: launch failed: " +
-                                  std::string(hipGetErrorString(err)));
-    }
+    pad_op_.Execute(input_buffer_, fft_input_,
+                    beam_count, params_.n_point, params_.nFFT,
+                    static_cast<uint32_t>(beam_offset));
 }
 
 /**
@@ -1176,7 +991,7 @@ void SpectrumProcessorROCm::ExecutePadKernel(size_t beam_count, size_t beam_offs
  * Это позволяет использовать один метод как для Process, так и для AllMaxima pipeline,
  * избегая дублирования кода.
  *
- * hipfftSetStream(plan_, stream_) при создании плана — FFT выполняется в stream_.
+ * hipfftSetStream(plan_, ctx_.stream()) при создании плана — FFT выполняется в ctx_.stream().
  * Результат: fft_output_[beam × nFFT] — комплексный спектр каждого луча.
  *
  * @throws std::runtime_error если hipfftExecC2C неудача
@@ -1212,30 +1027,10 @@ void SpectrumProcessorROCm::ExecuteFFT() {
  * @throws std::runtime_error если hipModuleLaunchKernel неудача
  */
 void SpectrumProcessorROCm::ExecutePostKernel(size_t beam_count, size_t beam_offset) {
-    unsigned int bc = static_cast<unsigned int>(beam_count);
-    unsigned int nfft = params_.nFFT;
-    unsigned int search_range = params_.search_range;
-    float sample_rate = params_.sample_rate;
-
-    void* args[] = {
-        &fft_output_, &maxima_output_,
-        &bc, &nfft, &search_range, &sample_rate
-    };
-
-    // One work-group per beam (LOCAL_SIZE threads)
-    unsigned int grid_x = static_cast<unsigned int>(beam_count);
-    unsigned int block_x = static_cast<unsigned int>(LOCAL_SIZE);
-
-    hipError_t err = hipModuleLaunchKernel(
-        post_kernel_,
-        grid_x, 1, 1,
-        block_x, 1, 1,
-        0, stream_,
-        args, nullptr);
-    if (err != hipSuccess) {
-        throw std::runtime_error("ExecutePostKernel: launch failed: " +
-                                  std::string(hipGetErrorString(err)));
-    }
+    post_op_.Execute(fft_output_, maxima_output_,
+                     static_cast<uint32_t>(beam_count), params_.nFFT,
+                     params_.search_range, params_.sample_rate,
+                     params_.peak_mode);
 }
 
 /**
@@ -1252,33 +1047,14 @@ void SpectrumProcessorROCm::ExecutePostKernel(size_t beam_count, size_t beam_off
  * @throws std::runtime_error если hipModuleLaunchKernel неудача
  */
 void SpectrumProcessorROCm::ExecuteComputeMagnitudes(size_t total_elements) {
-    if (!compute_mag_kernel_) {
-        if (!kernels_compiled_) CompileKernels();
-    }
-
-    unsigned int total_size = static_cast<unsigned int>(total_elements);
-
-    void* args[] = { &fft_output_, &magnitudes_buffer_, &total_size };
-
-    unsigned int grid_x = static_cast<unsigned int>((total_elements + 255) / 256);
-    unsigned int block_x = 256;
-
-    hipError_t err = hipModuleLaunchKernel(
-        compute_mag_kernel_,
-        grid_x, 1, 1,
-        block_x, 1, 1,
-        0, stream_,
-        args, nullptr);
-    if (err != hipSuccess) {
-        throw std::runtime_error("ExecuteComputeMagnitudes: launch failed: " +
-                                  std::string(hipGetErrorString(err)));
-    }
+    if (!compiled_) CompileKernels();
+    mag_op_.Execute(fft_output_, magnitudes_buffer_, total_elements);
 }
 
 /**
  * @brief Синхронный D2H download результатов из maxima_output_ → SpectrumResult[]
  *
- * hipMemcpyDtoH (блокирующий!) — поэтому вызывается ПОСЛЕ hipStreamSynchronize(stream_)
+ * hipMemcpyDtoH (блокирующий!) — поэтому вызывается ПОСЛЕ hipStreamSynchronize(ctx_.stream())
  * в ProcessBatch/ProcessFromGPU/ProcessBatchFromGPU.
  *
  * Формат maxima_output_:
@@ -1496,7 +1272,7 @@ void SpectrumProcessorROCm::ReallocateBuffersForBatch(size_t batch_antenna_count
         CreateFFTPlan(batch_antenna_count);
     }
 
-    if (!kernels_compiled_) CompileKernels();
+    if (!compiled_) CompileKernels();
 }
 
 /**
@@ -1534,7 +1310,7 @@ void SpectrumProcessorROCm::ReleaseAllMaximaResources() {
  *  4. hipModuleUnload(module_) — hiprtc модуль (все kernels) последним
  *     ⚠️ Если освободить module_ до kernels→UB при следующем запуске
  *
- * stream_ НЕ закрывается — принадлежит backend_.
+ * ctx_.stream() НЕ закрывается — принадлежит backend_.
  * Флаги сбрасываются: initialized_=false, kernels_compiled_=false, etc.
  */
 void SpectrumProcessorROCm::ReleaseResources() {
@@ -1554,15 +1330,7 @@ void SpectrumProcessorROCm::ReleaseResources() {
     if (fft_output_)      { (void)hipFree(fft_output_);      fft_output_ = nullptr; }
     if (maxima_output_)   { (void)hipFree(maxima_output_);   maxima_output_ = nullptr; }
 
-    // hiprtc module
-    if (module_) {
-        (void)hipModuleUnload(module_);
-        module_ = nullptr;
-        pad_kernel_ = nullptr;
-        compute_mag_kernel_ = nullptr;
-        post_kernel_ = nullptr;
-        kernels_compiled_ = false;
-    }
+    // GpuContext manages kernel module — no manual hipModuleUnload
 
     current_batch_size_ = 0;
     actual_batch_size_ = 0;

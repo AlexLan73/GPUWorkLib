@@ -204,4 +204,42 @@ private:
 
 }  // namespace capon
 
+#else  // !ENABLE_ROCM — Windows stub
+
+#include "capon_types.hpp"
+#include "interface/i_backend.hpp"
+#include <stdexcept>
+#include <complex>
+#include <vector>
+
+namespace capon {
+
+class CaponProcessor {
+public:
+  explicit CaponProcessor(drv_gpu_lib::IBackend*) {}
+  ~CaponProcessor() = default;
+
+  CaponProcessor(const CaponProcessor&) = delete;
+  CaponProcessor& operator=(const CaponProcessor&) = delete;
+  CaponProcessor(CaponProcessor&&) noexcept = default;
+  CaponProcessor& operator=(CaponProcessor&&) noexcept = default;
+
+  CaponReliefResult ComputeRelief(const std::vector<std::complex<float>>&,
+      const std::vector<std::complex<float>>&, const CaponParams&) {
+    throw std::runtime_error("CaponProcessor: ROCm not enabled");
+  }
+  CaponBeamResult AdaptiveBeamform(const std::vector<std::complex<float>>&,
+      const std::vector<std::complex<float>>&, const CaponParams&) {
+    throw std::runtime_error("CaponProcessor: ROCm not enabled");
+  }
+  CaponReliefResult ComputeRelief(void*, void*, const CaponParams&) {
+    throw std::runtime_error("CaponProcessor: ROCm not enabled");
+  }
+  CaponBeamResult AdaptiveBeamform(void*, void*, const CaponParams&) {
+    throw std::runtime_error("CaponProcessor: ROCm not enabled");
+  }
+};
+
+}  // namespace capon
+
 #endif  // ENABLE_ROCM

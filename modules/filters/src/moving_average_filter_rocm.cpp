@@ -216,9 +216,12 @@ void MovingAverageFilterROCm::CompileKernels(uint32_t sma_window) {
     arch_name = "";
   }
   std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
+  int warp_sz = 32;
+  try { warp_sz = static_cast<drv_gpu_lib::ROCmBackend*>(backend_)->GetCore().GetWarpSize(); } catch (...) {}
+  std::string warp_def = "-DWARP_SIZE=" + std::to_string(warp_sz);
   std::string block_size_def = "-DBLOCK_SIZE=" + std::to_string(block_size_);
   std::string n_window_def   = "-DN_WINDOW="   + std::to_string(sma_window);
-  std::vector<const char*> opts = {"-O3", "-DWARP_SIZE=32", block_size_def.c_str(), n_window_def.c_str()};
+  std::vector<const char*> opts = {"-O3", warp_def.c_str(), block_size_def.c_str(), n_window_def.c_str()};
   if (!arch_flag.empty())
     opts.push_back(arch_flag.c_str());
 

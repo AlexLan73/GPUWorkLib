@@ -27,10 +27,9 @@
 
 #include "lch_farrow_rocm.hpp"
 #include "kernels/lch_farrow_kernels_rocm.hpp"
+#include "rocm_profiling_helpers.hpp"
 #include "services/console_output.hpp"
 #include "services/profiling_types.hpp"
-#include "services/kernel_cache_service.hpp"
-#include "backends/rocm/rocm_backend.hpp"
 
 #include <stdexcept>
 #include <cmath>
@@ -152,30 +151,18 @@ static const float kBuiltinLagrangeMatrix[48 * 5] = {
 // PART 2: Constructor, Destructor, Move Semantics
 // ═══════════════════════════════════════════════════════════════════════════
 
+static const std::vector<std::string> kKernelNames = {
+  "lch_farrow_delay"
+};
+
 LchFarrowROCm::LchFarrowROCm(drv_gpu_lib::IBackend* backend)
-    : backend_(backend) {
-
-  if (!backend_ || !backend_->IsInitialized()) {
-    throw std::runtime_error(
-        "LchFarrowROCm: backend is null or not initialized");
-  }
-
-  stream_ = static_cast<hipStream_t>(backend_->GetNativeQueue());
-  if (!stream_) {
-    throw std::runtime_error(
-        "LchFarrowROCm: failed to get HIP stream from backend");
-  }
-
+    : ctx_(backend, "LchFarrow", "modules/lch_farrow/kernels") {
   // Load built-in matrix
   lagrange_matrix_.assign(kBuiltinLagrangeMatrix,
                           kBuiltinLagrangeMatrix + 48 * 5);
   matrix_loaded_ = true;
 
-  // HSACO disk cache (cold start ~100-200ms → ~1-5ms hot)
-  kernel_cache_ = std::make_unique<drv_gpu_lib::KernelCacheService>(
-      "modules/lch_farrow/kernels", drv_gpu_lib::BackendType::ROCm);
-
-  CompileKernel();
+  EnsureCompiled();
   UploadMatrix();
 }
 
@@ -184,8 +171,7 @@ LchFarrowROCm::~LchFarrowROCm() {
 }
 
 LchFarrowROCm::LchFarrowROCm(LchFarrowROCm&& other) noexcept
-    : backend_(other.backend_)
-    , stream_(other.stream_)
+    : ctx_(std::move(other.ctx_))
     , delay_us_(std::move(other.delay_us_))
     , sample_rate_(other.sample_rate_)
     , noise_amplitude_(other.noise_amplitude_)
@@ -193,17 +179,11 @@ LchFarrowROCm::LchFarrowROCm(LchFarrowROCm&& other) noexcept
     , noise_seed_(other.noise_seed_)
     , lagrange_matrix_(std::move(other.lagrange_matrix_))
     , matrix_loaded_(other.matrix_loaded_)
-    , module_(other.module_)
-    , kernel_(other.kernel_)
-    , kernel_compiled_(other.kernel_compiled_)
+    , compiled_(other.compiled_)
     , matrix_buf_(other.matrix_buf_)
     , delay_buf_(other.delay_buf_)
     , delay_buf_size_(other.delay_buf_size_) {
-  other.backend_ = nullptr;
-  other.stream_ = nullptr;
-  other.module_ = nullptr;
-  other.kernel_ = nullptr;
-  other.kernel_compiled_ = false;
+  other.compiled_ = false;
   other.matrix_buf_ = nullptr;
   other.delay_buf_ = nullptr;
   other.delay_buf_size_ = 0;
@@ -212,8 +192,7 @@ LchFarrowROCm::LchFarrowROCm(LchFarrowROCm&& other) noexcept
 LchFarrowROCm& LchFarrowROCm::operator=(LchFarrowROCm&& other) noexcept {
   if (this != &other) {
     ReleaseGpuResources();
-    backend_ = other.backend_;
-    stream_ = other.stream_;
+    ctx_ = std::move(other.ctx_);
     delay_us_ = std::move(other.delay_us_);
     sample_rate_ = other.sample_rate_;
     noise_amplitude_ = other.noise_amplitude_;
@@ -221,17 +200,11 @@ LchFarrowROCm& LchFarrowROCm::operator=(LchFarrowROCm&& other) noexcept {
     noise_seed_ = other.noise_seed_;
     lagrange_matrix_ = std::move(other.lagrange_matrix_);
     matrix_loaded_ = other.matrix_loaded_;
-    module_ = other.module_;
-    kernel_ = other.kernel_;
-    kernel_compiled_ = other.kernel_compiled_;
+    compiled_ = other.compiled_;
     matrix_buf_ = other.matrix_buf_;
     delay_buf_ = other.delay_buf_;
     delay_buf_size_ = other.delay_buf_size_;
-    other.backend_ = nullptr;
-    other.stream_ = nullptr;
-    other.module_ = nullptr;
-    other.kernel_ = nullptr;
-    other.kernel_compiled_ = false;
+    other.compiled_ = false;
     other.matrix_buf_ = nullptr;
     other.delay_buf_ = nullptr;
     other.delay_buf_size_ = 0;
@@ -310,46 +283,8 @@ void LchFarrowROCm::LoadMatrix(const std::string& json_path) {
 // PART 4: GPU Processing
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Helper A: для async GPU операций (hipEvent → hipEventElapsedTime)
-// kind: 0=kernel, 1=copy, 2=barrier
-static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromEvents(
-    hipEvent_t ev_start, hipEvent_t ev_end,
-    uint32_t kind, const char* op_string = "")
-{
-  hipEventSynchronize(ev_end);
-  float elapsed_ms = 0.0f;
-  hipEventElapsedTime(&elapsed_ms, ev_start, ev_end);
-  hipEventDestroy(ev_start);
-  hipEventDestroy(ev_end);
-
-  drv_gpu_lib::ROCmProfilingData d{};
-  uint64_t elapsed_ns = static_cast<uint64_t>(elapsed_ms * 1e6f);
-  d.start_ns    = 0;
-  d.end_ns      = elapsed_ns;
-  d.complete_ns = elapsed_ns;
-  d.kind        = kind;
-  d.op_string   = op_string;
-  return d;
-}
-
-// Helper B: для sync CPU/GPU операций (wall-clock через std::chrono)
-static drv_gpu_lib::ROCmProfilingData MakeROCmDataFromClock(
-    std::chrono::high_resolution_clock::time_point t_start,
-    std::chrono::high_resolution_clock::time_point t_end,
-    uint32_t kind, const char* op_string = "")
-{
-  uint64_t elapsed_ns = static_cast<uint64_t>(
-      std::chrono::duration_cast<std::chrono::nanoseconds>(
-          t_end - t_start).count());
-
-  drv_gpu_lib::ROCmProfilingData d{};
-  d.start_ns    = 0;
-  d.end_ns      = elapsed_ns;
-  d.complete_ns = elapsed_ns;
-  d.kind        = kind;
-  d.op_string   = op_string;
-  return d;
-}
+using fft_func_utils::MakeROCmDataFromEvents;
+using fft_func_utils::MakeROCmDataFromClock;
 
 drv_gpu_lib::InputData<void*>
 LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points,
@@ -408,10 +343,10 @@ LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points,
   if (prof_events) {
     hipEventCreate(&ev_up_start);
     hipEventCreate(&ev_up_end);
-    hipEventRecord(ev_up_start, stream_);
+    hipEventRecord(ev_up_start, ctx_.stream());
   }
 
-  err = hipMemcpyHtoDAsync(delay_buf_, delay_us_.data(), delay_size, stream_);
+  err = hipMemcpyHtoDAsync(delay_buf_, delay_us_.data(), delay_size, ctx_.stream());
   if (err != hipSuccess) {
     if (ev_up_start) { hipEventDestroy(ev_up_start); hipEventDestroy(ev_up_end); }
     (void)hipFree(output_ptr);
@@ -420,7 +355,7 @@ LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points,
   }
 
   if (prof_events) {
-    hipEventRecord(ev_up_end, stream_);
+    hipEventRecord(ev_up_end, ctx_.stream());
   }
 
   // ── Kernel arguments ──────────────────────────────────────────────
@@ -454,7 +389,7 @@ LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points,
   if (prof_events) {
     hipEventCreate(&ev_k_start);
     hipEventCreate(&ev_k_end);
-    hipEventRecord(ev_k_start, stream_);
+    hipEventRecord(ev_k_start, ctx_.stream());
   }
 
   // 2D grid: X=samples (ceil), Y=antennas — eliminates div/mod in kernel
@@ -463,10 +398,10 @@ LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points,
   unsigned int grid_y = antennas;
 
   err = hipModuleLaunchKernel(
-      kernel_,
+      ctx_.GetKernel("lch_farrow_delay"),
       grid_x, grid_y, 1,
       kBlockSize, 1, 1,
-      0, stream_,
+      0, ctx_.stream(),
       args, nullptr);
 
   if (err != hipSuccess) {
@@ -480,10 +415,10 @@ LchFarrowROCm::Process(void* input_ptr, uint32_t antennas, uint32_t points,
   }
 
   if (prof_events) {
-    hipEventRecord(ev_k_end, stream_);
+    hipEventRecord(ev_k_end, ctx_.stream());
   }
 
-  (void)hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(ctx_.stream());
 
   // delay_buf_ is persistent — no free here
 
@@ -532,12 +467,12 @@ LchFarrowROCm::ProcessFromCPU(
   if (prof_events) {
     hipEventCreate(&ev_in_start);
     hipEventCreate(&ev_in_end);
-    hipEventRecord(ev_in_start, stream_);
+    hipEventRecord(ev_in_start, ctx_.stream());
   }
 
   err = hipMemcpyHtoDAsync(input_ptr,
                             const_cast<std::complex<float>*>(data.data()),
-                            data_size, stream_);
+                            data_size, ctx_.stream());
   if (err != hipSuccess) {
     if (ev_in_start) { hipEventDestroy(ev_in_start); hipEventDestroy(ev_in_end); }
     (void)hipFree(input_ptr);
@@ -546,12 +481,12 @@ LchFarrowROCm::ProcessFromCPU(
   }
 
   if (prof_events) {
-    hipEventRecord(ev_in_end, stream_);
+    hipEventRecord(ev_in_end, ctx_.stream());
   }
 
   // Process on GPU (Upload_delay + Kernel — добавляются в prof_events через Process)
   auto result = Process(input_ptr, antennas, points, prof_events);
-  // Process() вызывает hipStreamSynchronize(stream_) — stream синхронизирован
+  // Process() вызывает hipStreamSynchronize(ctx_.stream()) — stream синхронизирован
 
   // ── Собрать Upload_input (stream уже синхронизирован Process'ом) ──
   if (prof_events) {
@@ -615,112 +550,10 @@ LchFarrowROCm::ProcessCpu(
 // PART 6: GPU Internals
 // ═══════════════════════════════════════════════════════════════════════════
 
-void LchFarrowROCm::CompileKernel() {
-  if (kernel_compiled_) return;
-
-  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
-  constexpr const char* kKernelName = "lch_farrow_delay";
-
-  // ─── Try loading from disk cache (HSACO) ────────────────────────────
-  if (kernel_cache_) {
-    auto entry = kernel_cache_->Load(kKernelName);
-    if (entry && entry->has_binary()) {
-      hipError_t hipErr = hipModuleLoadData(
-          &module_, entry->binary.data());
-      if (hipErr == hipSuccess) {
-        hipErr = hipModuleGetFunction(&kernel_, module_, kKernelName);
-        if (hipErr == hipSuccess) {
-          kernel_compiled_ = true;
-          con.Print(0, "LchFarrow[ROCm]",
-              "HIP kernel loaded from cache (HSACO)");
-          return;
-        }
-      }
-      // Cache binary incompatible — fall through to recompile
-      if (module_) { hipModuleUnload(module_); module_ = nullptr; }
-    }
-  }
-
-  // ─── Compile via hiprtc with --offload-arch ─────────────────────────
-  const char* source = kernels::GetLchFarrowKernelSource();
-
-  hiprtcProgram prog;
-  hiprtcResult rtcResult = hiprtcCreateProgram(
-      &prog, source, "lch_farrow_kernel.hip", 0, nullptr, nullptr);
-  if (rtcResult != HIPRTC_SUCCESS) {
-    throw std::runtime_error(
-        "LchFarrowROCm::CompileKernel: hiprtcCreateProgram failed: " +
-        std::string(hiprtcGetErrorString(rtcResult)));
-  }
-
-  // -O3, --offload-arch=gfxXXXX
-  std::string arch_name;
-  try {
-    auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
-    arch_name = rocm_backend->GetCore().GetArchName();
-  } catch (...) {
-    arch_name = "";
-  }
-  std::string arch_flag = arch_name.empty()
-      ? "" : ("--offload-arch=" + arch_name);
-  std::vector<const char*> opts = {"-O3"};
-  if (!arch_flag.empty())
-    opts.push_back(arch_flag.c_str());
-
-  rtcResult = hiprtcCompileProgram(prog,
-      static_cast<int>(opts.size()), opts.data());
-  if (rtcResult != HIPRTC_SUCCESS) {
-    size_t logSize = 0;
-    hiprtcGetProgramLogSize(prog, &logSize);
-    std::string log(logSize, '\0');
-    hiprtcGetProgramLog(prog, &log[0]);
-
-    con.PrintError(0, "LchFarrow[ROCm]", "Kernel compile log:\n" + log);
-
-    (void)hiprtcDestroyProgram(&prog);
-    throw std::runtime_error(
-        "LchFarrowROCm::CompileKernel: compilation failed");
-  }
-
-  size_t codeSize = 0;
-  hiprtcGetCodeSize(prog, &codeSize);
-  std::vector<char> code(codeSize);
-  hiprtcGetCode(prog, code.data());
-  (void)hiprtcDestroyProgram(&prog);
-
-  hipError_t hipErr = hipModuleLoadData(&module_, code.data());
-  if (hipErr != hipSuccess) {
-    throw std::runtime_error(
-        "LchFarrowROCm::CompileKernel: hipModuleLoadData failed: " +
-        std::string(hipGetErrorString(hipErr)));
-  }
-
-  hipErr = hipModuleGetFunction(&kernel_, module_, kKernelName);
-  if (hipErr != hipSuccess) {
-    throw std::runtime_error(
-        "LchFarrowROCm::CompileKernel: hipModuleGetFunction failed: " +
-        std::string(hipGetErrorString(hipErr)));
-  }
-
-  kernel_compiled_ = true;
-
-  con.Print(0, "LchFarrow[ROCm]",
-      "HIP kernel compiled (hiprtc, " + std::to_string(codeSize) +
-      " bytes HSACO, arch=" + (arch_name.empty() ? "default" : arch_name) + ")");
-
-  // ─── Save to disk cache for next run ────────────────────────────────
-  if (kernel_cache_) {
-    try {
-      std::vector<uint8_t> binary(code.begin(), code.end());
-      kernel_cache_->Save(kKernelName, source, binary,
-                           "", "lch_farrow_delay hiprtc kernel");
-      con.Print(0, "LchFarrow[ROCm]",
-          "Kernel saved to cache");
-    } catch (const std::exception& e) {
-      con.Print(0, "LchFarrow[ROCm]",
-          "Cache save failed: " + std::string(e.what()));
-    }
-  }
+void LchFarrowROCm::EnsureCompiled() {
+  if (compiled_) return;
+  ctx_.CompileModule(kernels::GetLchFarrowKernelSource(), kKernelNames);
+  compiled_ = true;
 }
 
 void LchFarrowROCm::UploadMatrix() {
@@ -738,23 +571,18 @@ void LchFarrowROCm::UploadMatrix() {
   }
 
   err = hipMemcpyHtoDAsync(matrix_buf_, lagrange_matrix_.data(),
-                            matrix_size, stream_);
+                            matrix_size, ctx_.stream());
   if (err != hipSuccess) {
     (void)hipFree(matrix_buf_);
     matrix_buf_ = nullptr;
     throw std::runtime_error(
         "LchFarrowROCm::UploadMatrix: hipMemcpyHtoDAsync failed");
   }
-  (void)hipStreamSynchronize(stream_);
+  (void)hipStreamSynchronize(ctx_.stream());
 }
 
 void LchFarrowROCm::ReleaseGpuResources() {
-  if (module_) {
-    (void)hipModuleUnload(module_);
-    module_ = nullptr;
-    kernel_ = nullptr;
-    kernel_compiled_ = false;
-  }
+  // GpuContext manages kernel module — no manual hipModuleUnload needed
   if (matrix_buf_) {
     (void)hipFree(matrix_buf_);
     matrix_buf_ = nullptr;

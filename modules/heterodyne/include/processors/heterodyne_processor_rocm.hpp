@@ -26,12 +26,10 @@
 
 #include "../i_heterodyne_processor.hpp"
 #include "interface/i_backend.hpp"
+#include "interface/gpu_context.hpp"
 #include "services/profiling_types.hpp"
-#include "services/kernel_cache_service.hpp"
 
 #include <hip/hip_runtime.h>
-#include <hip/hiprtc.h>
-#include <memory>
 #include <utility>
 #include <vector>
 
@@ -110,33 +108,25 @@ public:
       HeterodyneROCmProfEvents* prof_events);
 
 private:
-  void CompileKernels();
+  void EnsureCompiled();
   void ReleaseGpuResources();
 
   /** OPT-2: Allocate/reuse GPU buffers when size changes */
   void EnsureBuffers(int total_samples, int num_samples);
 
-  IBackend*    backend_ = nullptr;
-  hipStream_t  stream_  = nullptr;
+  GpuContext ctx_;  ///< Ref03: compilation, stream, disk cache
+  IBackend*  backend_ = nullptr;  ///< Non-owning, for EnsureBuffers (hipMalloc)
+  bool       compiled_ = false;
 
-  // OPT-1/10: Single hiprtc module with both kernels (compiled once)
-  hipModule_t   module_          = nullptr;
-  hipFunction_t kernel_multiply_ = nullptr;
-  hipFunction_t kernel_correct_  = nullptr;
-  bool          kernels_compiled_ = false;
-
-  // Дисковый кеш HSACO-бинарей — ~1-5 мс загрузка вместо ~200 мс hiprtc-компиляции
-  std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
-
-  // OPT-2: Cached GPU buffers (reused across calls)
-  void*  buf_rx_   = nullptr;   // [antennas * samples] complex
-  void*  buf_ref_  = nullptr;   // [samples] complex
-  void*  buf_dc_   = nullptr;   // [antennas * samples] complex (dechirp output)
-  void*  buf_corr_ = nullptr;   // [antennas * samples] complex (correct output)
-  void*  buf_freq_ = nullptr;   // [antennas] float (phase_step)
-  int    cached_total_    = 0;  // antennas * samples
-  int    cached_samples_  = 0;  // samples only (for ref)
-  int    cached_antennas_ = 0;  // antennas only (for freq buf)
+  // OPT-2: Cached GPU buffers (reused across calls, size-dependent)
+  void*  buf_rx_   = nullptr;
+  void*  buf_ref_  = nullptr;
+  void*  buf_dc_   = nullptr;
+  void*  buf_corr_ = nullptr;
+  void*  buf_freq_ = nullptr;
+  int    cached_total_    = 0;
+  int    cached_samples_  = 0;
+  int    cached_antennas_ = 0;
 
   static constexpr unsigned int kBlockSize = 256;
 };

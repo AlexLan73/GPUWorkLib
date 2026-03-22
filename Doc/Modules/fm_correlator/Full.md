@@ -10,6 +10,15 @@
 
 📖 **Справочник API**: [API.md](API.md) | [Quick.md](Quick.md)
 
+### статьи
+GPU-Accelerated Signal Processing for Passive Bistatic Radar
+Efficient GPU-accelerated parallel cross-correlation 
+
+https://www.mdpi.com/2072-4292/15/22/5421
+https://www.sciencedirect.com/science/article/abs/pii/S0743731525000218
+
+
+
 ---
 
 ## 1. Назначение

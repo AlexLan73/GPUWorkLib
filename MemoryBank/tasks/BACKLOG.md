@@ -1,6 +1,6 @@
 # BACKLOG — Очередь задач
 
-> **Обновлено**: 2026-03-21
+> **Обновлено**: 2026-03-22
 > **Главный план**: `MemoryBank/tasks/MODULES_WORK_PLAN.md`
 
 ---
@@ -85,6 +85,13 @@
 **Полный план**: `.claude/plans/memoized-wiggling-ritchie.md`
 
 
+
+### TASK-fft-ref03 — fft_func: SpectrumProcessorROCm → Ref03 + namespace unification
+- **Документ**: [`TASK_fft_func_ref03_remaining.md`](TASK_fft_func_ref03_remaining.md)
+- **Добавлено**: 2026-03-22 (по результатам code review)
+- **Задача A**: SpectrumProcessorROCm → GpuContext + BufferSet + Ops (~600 строк, 3 этапа)
+- **Задача B**: Namespace `antenna_fft` → `fft_processor` (30 файлов, cross-module)
+- Задача A не зависит от B. B лучше делать после A.
 
 ### TASK-02 — fft_processor: Python Binding
 - Нет `py_fft_processor.hpp` и `py_fft_processor_rocm.hpp`

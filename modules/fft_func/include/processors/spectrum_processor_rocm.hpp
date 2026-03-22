@@ -21,12 +21,17 @@
 #include "interface/i_spectrum_processor.hpp"
 #include "interface/spectrum_maxima_types.h"
 #include "interface/i_backend.hpp"
+#include "interface/gpu_context.hpp"
 #include "pipelines/all_maxima_pipeline_rocm.hpp"
 #include "services/profiling_types.hpp"
 
+// Op classes (Layer 5)
+#include "operations/spectrum_pad_op.hpp"
+#include "operations/compute_magnitudes_op.hpp"
+#include "operations/spectrum_post_op.hpp"
+
 #include <hip/hip_runtime.h>
 #include <hipfft/hipfft.h>
-#include <hip/hiprtc.h>
 
 #include <complex>
 #include <vector>
@@ -183,41 +188,31 @@ private:
     bool initialized_ = false;
     drv_gpu_lib::IBackend* backend_ = nullptr;
 
-    // HIP stream (from backend)
-    hipStream_t stream_ = nullptr;
+    // Ref03: GpuContext for kernel compilation (replaces manual hiprtc + cache)
+    drv_gpu_lib::GpuContext ctx_;
+    bool compiled_ = false;
 
-    // =========================================================================
+    // Op instances (Layer 5) — initialized in CompileKernels()
+    SpectrumPadOp         pad_op_;
+    ComputeMagnitudesOp   mag_op_;
+    SpectrumPostOp        post_op_;
+
     // hipFFT (Process mode)
-    // =========================================================================
-
     hipfftHandle plan_ = 0;
     bool plan_created_ = false;
     size_t plan_batch_size_ = 0;
 
-    // hipFFT for AllMaxima (separate plan, no pre-callback)
+    // hipFFT for AllMaxima (separate plan)
     hipfftHandle allmax_plan_ = 0;
     bool allmax_plan_created_ = false;
     size_t allmax_plan_batch_size_ = 0;
 
-    // =========================================================================
-    // GPU buffers (device pointers, void*)
-    // =========================================================================
-
-    void* input_buffer_ = nullptr;       ///< Raw input: batch * n_point * sizeof(complex)
-    void* fft_input_ = nullptr;          ///< Padded:    batch * nFFT * sizeof(complex)
-    void* fft_output_ = nullptr;         ///< FFT out:   batch * nFFT * sizeof(complex)
-    void* maxima_output_ = nullptr;      ///< MaxValue[]: batch * maxima_per_beam * sizeof(MaxValue)
-    void* magnitudes_buffer_ = nullptr;  ///< |FFT|:     batch * nFFT * sizeof(float)
-
-    // =========================================================================
-    // hiprtc compiled kernels
-    // =========================================================================
-
-    hipModule_t module_ = nullptr;
-    hipFunction_t pad_kernel_ = nullptr;
-    hipFunction_t compute_mag_kernel_ = nullptr;
-    hipFunction_t post_kernel_ = nullptr;       ///< ONE_PEAK or TWO_PEAKS
-    bool kernels_compiled_ = false;
+    // GPU buffers (raw — migrate to BufferSet in future)
+    void* input_buffer_ = nullptr;
+    void* fft_input_ = nullptr;
+    void* fft_output_ = nullptr;
+    void* maxima_output_ = nullptr;
+    void* magnitudes_buffer_ = nullptr;
 
     // =========================================================================
     // Sizes and batch tracking

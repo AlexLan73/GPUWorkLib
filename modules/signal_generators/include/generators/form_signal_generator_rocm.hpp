@@ -32,10 +32,10 @@
 #include "../params/form_params.hpp"
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
+#include "interface/gpu_context.hpp"
+#include "services/profiling_types.hpp"
 
 #include <hip/hip_runtime.h>
-#include <hip/hiprtc.h>
-#include "services/profiling_types.hpp"
 
 #include <vector>
 #include <complex>
@@ -106,17 +106,11 @@ public:
   }
 
 private:
-  void CompileKernel();
-  void ReleaseGpuResources();
+  void EnsureCompiled();
 
-  drv_gpu_lib::IBackend* backend_ = nullptr;
-  hipStream_t stream_ = nullptr;
+  drv_gpu_lib::GpuContext ctx_;
   FormParams params_;
-
-  // hiprtc compiled kernel
-  hipModule_t module_ = nullptr;
-  hipFunction_t kernel_ = nullptr;
-  bool kernel_compiled_ = false;
+  bool compiled_ = false;
 
   static constexpr unsigned int kBlockSize = 256;
 };

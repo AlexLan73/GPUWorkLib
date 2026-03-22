@@ -33,19 +33,18 @@
 
 #include "types/mag_phase_types.hpp"
 #include "interface/i_backend.hpp"
+#include "interface/gpu_context.hpp"
+#include "services/buffer_set.hpp"
 #include "services/batch_manager.hpp"
+#include "operations/mag_phase_op.hpp"
+#include "operations/magnitude_op.hpp"
 
 #include <hip/hip_runtime.h>
-#include <hip/hiprtc.h>
 
 #include <complex>
-#include <memory>
 #include <vector>
 #include <cstdint>
 #include <string>
-
-// Forward declaration -- full header included in .cpp only
-namespace drv_gpu_lib { class KernelCacheService; }
 
 namespace fft_processor {
 
@@ -198,33 +197,17 @@ private:
     // Internal methods
     // =========================================================================
 
-    /// Compile HIP kernel via hiprtc
-    void CompileKernels();
+    /// Ensure kernels compiled (lazy, one-time via GpuContext)
+    void EnsureCompiled();
 
-    /// Allocate/reuse internal GPU buffers for batch_beam_count beams
+    /// Allocate/reuse internal GPU buffers
     void AllocateBuffers(size_t batch_beam_count);
 
-    /// Release all GPU resources
-    void ReleaseResources();
-
-    /// Upload CPU data to input_buffer_ (H2D async)
+    /// Upload CPU data to input buffer (H2D async)
     void UploadData(const std::complex<float>* data, size_t count);
 
-    /// Copy GPU data to input_buffer_ (D2D async)
+    /// Copy GPU data to input buffer (D2D async)
     void CopyGpuData(void* src, size_t offset_bytes, size_t count);
-
-    /// Launch complex_to_mag_phase kernel
-    void ExecuteKernel(size_t total_elements);
-
-    /// Execute kernel with custom input/output pointers (for ProcessToGPU)
-    void ExecuteKernelDirect(void* input_ptr, void* output_ptr, size_t total_elements);
-
-    /// Launch complex_to_magnitude kernel (magnitude-only, no phase)
-    void ExecuteMagnitudeKernel(void* input_ptr, void* output_ptr,
-                                 size_t total_elements, float inv_n);
-
-    /// Compile magnitude-only kernel (lazy, after mag_phase kernel)
-    void CompileMagnitudeKernel();
 
     /// Read interleaved results from GPU and split into per-beam MagPhaseResult
     std::vector<MagPhaseResult> ReadResults(size_t beam_count, size_t start_beam);
@@ -232,33 +215,26 @@ private:
     /// Calculate GPU memory required per beam (input + output)
     size_t CalculateBytesPerBeam() const;
 
+    /// Compute inv_n from MagPhaseParams::norm_coeff
+    static float ComputeInvN(const MagPhaseParams& params);
+
     // =========================================================================
-    // Members
+    // Members — Ref03
     // =========================================================================
 
-    // Backend
-    drv_gpu_lib::IBackend* backend_ = nullptr;
-    hipStream_t stream_ = nullptr;
+    drv_gpu_lib::GpuContext ctx_;  ///< Per-module context (compilation, stream, cache)
 
-    // hiprtc compiled kernels
-    hipModule_t module_ = nullptr;             ///< module for complex_to_mag_phase
-    hipModule_t mag_module_ = nullptr;         ///< module for complex_to_magnitude
-    hipFunction_t kernel_ = nullptr;          ///< complex_to_mag_phase (interleaved output)
-    hipFunction_t magnitude_kernel_ = nullptr; ///< complex_to_magnitude (float-only output)
-    bool kernels_compiled_ = false;
-    bool magnitude_kernel_compiled_ = false;
+    // Internal GPU buffers (for CPU→CPU and GPU→CPU paths)
+    enum Buf : size_t { kInput = 0, kOutput, kMagOnly, kBufCount };
+    drv_gpu_lib::BufferSet<kBufCount> bufs_;
 
-    // HSACO kernel cache (disk)
-    std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
-
-    // GPU buffers (internal, for batched CPU->CPU / GPU->CPU processing)
-    void* input_buffer_ = nullptr;    ///< Complex input: batch * n_point * sizeof(complex<float>)
-    void* output_buffer_ = nullptr;   ///< Interleaved {mag,phase}: batch * n_point * 2 * sizeof(float)
-    void* mag_only_buffer_ = nullptr; ///< Magnitude-only output: batch * n_point * sizeof(float)
+    // Op instances (Layer 5)
+    MagPhaseOp mag_phase_op_;
+    MagnitudeOp magnitude_op_;
+    bool compiled_ = false;
 
     // State
     uint32_t n_point_ = 0;
-    size_t current_buffer_beams_ = 0;
 };
 
 }  // namespace fft_processor

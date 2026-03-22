@@ -27,8 +27,8 @@
 #include "checkpoint/null_checkpoint_save.hpp"
 
 #if ENABLE_ROCM
+#include "interface/gpu_context.hpp"
 #include <hip/hip_runtime.h>
-#include <hip/hiprtc.h>
 #include <hipblas/hipblas.h>
 #include <hipfft/hipfft.h>
 #endif
@@ -38,7 +38,7 @@
 #include <complex>
 
 // Forward declarations
-namespace drv_gpu_lib   { class IBackend; class KernelCacheService; }
+namespace drv_gpu_lib   { class IBackend; }
 namespace statistics    { class StatisticsProcessor; }
 namespace antenna_fft   { class AllMaximaPipelineROCm; }
 namespace fft_processor { class ComplexToMagPhaseROCm; }
@@ -104,7 +104,7 @@ protected:
 private:
   void allocate_buffers();
   void release_buffers();
-  void compile_kernels();
+  void ensure_compiled();
   void create_fft_plan();
   uint32_t compute_nFFT(uint32_t n_samples) const;
 
@@ -113,17 +113,20 @@ private:
   AntennaProcessorConfig cfg_;
 
 #if ENABLE_ROCM
-  // HIP streams
-  hipStream_t stream_main_    = nullptr;  ///< Stream 2: GEMM -> Window+FFT
-  hipStream_t stream_debug1_  = nullptr;  ///< Stream 1: debug 2.1 (stats d_S)
-  hipStream_t stream_debug2_  = nullptr;  ///< Stream 3: debug 2.2 (stats d_X)
-  hipStream_t stream_debug3_  = nullptr;  ///< Stream 4: debug 2.3 + post-FFT
-  // Extra streams for parallel post-FFT benchmark (3.6)
-  hipStream_t stream_bench3a_ = nullptr;  ///< OneMax stream (parallel scenario)
-  hipStream_t stream_bench3b_ = nullptr;  ///< AllMaxima stream (parallel scenario)
-  hipStream_t stream_bench3c_ = nullptr;  ///< GlobalMinMax stream (parallel scenario)
+  // Ref03: GpuContext for kernel compilation (replaces manual hiprtc + KernelCacheService)
+  drv_gpu_lib::GpuContext ctx_;
+  bool compiled_ = false;
 
-  // HIP events
+  // HIP streams (7 for multi-stream pipeline)
+  hipStream_t stream_main_    = nullptr;
+  hipStream_t stream_debug1_  = nullptr;
+  hipStream_t stream_debug2_  = nullptr;
+  hipStream_t stream_debug3_  = nullptr;
+  hipStream_t stream_bench3a_ = nullptr;
+  hipStream_t stream_bench3b_ = nullptr;
+  hipStream_t stream_bench3c_ = nullptr;
+
+  // HIP events (inter-stream sync)
   hipEvent_t event_gemm_done_ = nullptr;
   hipEvent_t event_fft_done_  = nullptr;
   hipEvent_t event_c1_done_   = nullptr;
@@ -136,24 +139,14 @@ private:
   hipfftHandle fft_plan_ = 0;
   bool fft_plan_created_ = false;
 
-  // GPU buffers
-  void* d_X_          = nullptr;  ///< [n_ant x n_samples] GEMM output
-  void* d_fft_input_  = nullptr;  ///< [n_ant x nFFT] zero-padded for FFT
-  void* d_spectrum_   = nullptr;  ///< [n_ant x nFFT] FFT output (shared by all post-FFT)
-  void* d_magnitudes_ = nullptr;  ///< [n_ant x nFFT] float |spectrum|
-  void* d_hamming_window_ = nullptr;  ///< [n_samples] precomputed Hamming window (float)
-
-  // Pre-allocated result buffers (avoid Allocate/Free in hot path — P3)
-  void* d_one_max_results_ = nullptr;  ///< [n_ant] OneMaxParabolaLite
-  void* d_minmax_results_  = nullptr;  ///< [n_ant] MinMaxResult
-
-  // hiprtc kernels
-  hipModule_t   kernel_module_ = nullptr;
-  hipFunction_t hamming_pad_kernel_  = nullptr;  ///< fused hamming+pad
-  hipFunction_t magnitudes_kernel_   = nullptr;
-  hipFunction_t minmax_kernel_       = nullptr;
-  hipFunction_t one_max_kernel_      = nullptr;  ///< moved from hot path (P12)
-  bool kernels_compiled_ = false;
+  // GPU buffers (raw — migrated to BufferSet later)
+  void* d_X_          = nullptr;
+  void* d_fft_input_  = nullptr;
+  void* d_spectrum_   = nullptr;
+  void* d_magnitudes_ = nullptr;
+  void* d_hamming_window_ = nullptr;
+  void* d_one_max_results_ = nullptr;
+  void* d_minmax_results_  = nullptr;
 #endif
 
   // Externally supplied weight matrix (managed GPU buffer — freed by release_buffers)
@@ -167,7 +160,6 @@ private:
   std::unique_ptr<antenna_fft::AllMaximaPipelineROCm> all_maxima_pipeline_;
   std::unique_ptr<fft_processor::ComplexToMagPhaseROCm> complex_to_mag_;
   std::unique_ptr<ICheckpointSave> checkpoint_;
-  std::unique_ptr<drv_gpu_lib::KernelCacheService> kernel_cache_;
 
   static constexpr uint32_t kBlockSize = 256;
 };

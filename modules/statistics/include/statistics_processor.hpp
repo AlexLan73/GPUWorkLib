@@ -180,6 +180,9 @@ private:
   /// Copy GPU float data to shared kMagnitudes buffer (D2D)
   void CopyFloatGpuData(void* src, size_t count);
 
+  /// Upload CPU float data to shared kMagnitudes buffer (H2D async, reuses buffer)
+  void UploadFloatData(const float* data, size_t count);
+
   /// Read MeanResult from kResult buffer
   std::vector<MeanResult> ReadMeanResults(uint32_t beam_count);
 
