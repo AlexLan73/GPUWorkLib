@@ -38,7 +38,7 @@ class TestCwFftIntegration:
         gw = GPULoader.get()
         if gw is None:
             raise SkipTest("gpuworklib не найден")
-        ctx = GPUContextManager.get_rocm() or GPUContextManager.get_opencl()
+        ctx = GPUContextManager.get_rocm()
         if ctx is None:
             raise SkipTest("GPU context недоступен")
         self._sig_gen = make_sig_gen(gw, ctx)
@@ -97,7 +97,7 @@ class TestLfmFftIntegration:
         gw = GPULoader.get()
         if gw is None:
             raise SkipTest("gpuworklib не найден")
-        ctx = GPUContextManager.get_rocm() or GPUContextManager.get_opencl()
+        ctx = GPUContextManager.get_rocm()
         if ctx is None:
             raise SkipTest("GPU context недоступен")
         self._sig_gen = make_sig_gen(gw, ctx)
@@ -145,7 +145,7 @@ class TestNoiseFftIntegration:
         gw = GPULoader.get()
         if gw is None:
             raise SkipTest("gpuworklib не найден")
-        ctx = GPUContextManager.get_rocm() or GPUContextManager.get_opencl()
+        ctx = GPUContextManager.get_rocm()
         if ctx is None:
             raise SkipTest("GPU context недоступен")
         self._sig_gen = make_sig_gen(gw, ctx)
