@@ -80,6 +80,33 @@ void generate_lfm_real(
     output[gid] = out;
 }
 
+// Conjugate LFM: s_ref*(t) = exp(-j[pi*mu*t^2 + 2*pi*f_start*t])
+// Used as reference for dechirp: s_dc = s_rx * s_ref*
+// Difference from generate_lfm: negative phase sign (conjugate)
+extern "C" __global__ __launch_bounds__(256)
+void generate_lfm_conjugate(
+    float2_t* __restrict__ output,
+    const unsigned int n_point,
+    const float sample_rate,
+    const float f_start,
+    const float chirp_rate)
+{
+    const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n_point) return;
+
+    const float t = (float)i / sample_rate;
+    // Negative phase → conjugate of LFM
+    const float phase = -(M_PI_F * chirp_rate * t * t + 2.0f * M_PI_F * f_start * t);
+
+    float cos_val, sin_val;
+    __sincosf(phase, &sin_val, &cos_val);
+
+    float2_t out;
+    out.x = cos_val;  // amplitude = 1.0 for reference signal
+    out.y = sin_val;
+    output[i] = out;
+}
+
 )HIP";
 }
 

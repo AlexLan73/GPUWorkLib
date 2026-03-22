@@ -17,58 +17,38 @@ message(STATUS "Configuring module: ${MODULE_NAME}")
 # Dependencies
 # ════════════════════════════════════════════════════════════════════════════
 
-find_package(OpenCL REQUIRED)
+# ════════════════════════════════════════════════════════════════════════════
+# Library (ROCm-only: OpenCL generators removed from main branch)
+# ════════════════════════════════════════════════════════════════════════════
 
-# ════════════════════════════════════════════════════════════════════════════
-# Library
-# ════════════════════════════════════════════════════════════════════════════
+if(NOT ROCM_ENABLED)
+    message(STATUS "⏭️  ${MODULE_NAME}: skipped (ROCm disabled)")
+    return()
+endif()
 
 add_library(${MODULE_NAME} STATIC
-    src/cw_generator.cpp
-    src/lfm_generator.cpp
-    src/noise_generator.cpp
-    src/script_generator.cpp
-    src/form_signal_generator.cpp
-    src/form_script_generator.cpp
-    src/delayed_form_signal_generator.cpp
-    src/lfm_generator_analytical_delay.cpp
-    src/lfm_conjugate_generator.cpp
     src/signal_generator_factory.cpp
-    src/signal_service.cpp
+    src/form_signal_generator_rocm.cpp
+    src/cw_generator_rocm.cpp
+    src/lfm_generator_rocm.cpp
+    src/noise_generator_rocm.cpp
+    src/lfm_conjugate_generator_rocm.cpp
 )
 
-# ════════════════════════════════════════════════════════════════════════════
-# ROCm/HIP support (conditional)
-# ════════════════════════════════════════════════════════════════════════════
-
-if(ROCM_ENABLED)
-    target_sources(${MODULE_NAME} PRIVATE
-        src/form_signal_generator_rocm.cpp
-    )
-    target_compile_definitions(${MODULE_NAME} PUBLIC ENABLE_ROCM=1)
-    message(STATUS "  ${MODULE_NAME}: ROCm support enabled (FormSignalGeneratorROCm)")
-endif()
+target_compile_definitions(${MODULE_NAME} PUBLIC ENABLE_ROCM=1)
 
 target_include_directories(${MODULE_NAME}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/DrvGPU
-    PRIVATE
-        ${OpenCL_INCLUDE_DIRS}
 )
 
 target_link_libraries(${MODULE_NAME}
     PUBLIC
         drvgpu
-        OpenCL::OpenCL
-    PRIVATE
-        lch_farrow
+        hip::host
 )
-
-if(ROCM_ENABLED)
-    target_link_libraries(${MODULE_NAME} PUBLIC hip::host)
-endif()
 
 # stdc++fs нужна только на GCC < 9 (не MSVC, не Clang с libc++)
 if(NOT MSVC AND NOT APPLE)

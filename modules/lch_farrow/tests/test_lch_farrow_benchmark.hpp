@@ -104,7 +104,7 @@ inline int run() {
       auto device_info = backend->GetDeviceInfo();
       drv_gpu_lib::GPUReportInfo gpu_info;
       gpu_info.gpu_name = device_info.name.empty() ? "Unknown" : device_info.name;
-      gpu_info.backend_type = drv_gpu_lib::BackendType::OPENCL;
+      gpu_info.backend_type = drv_gpu_lib::BackendType::ROCm;
       gpu_info.global_mem_mb = static_cast<uint64_t>(
           device_info.global_memory_size / (1024 * 1024));
       std::map<std::string, std::string> driver_map;

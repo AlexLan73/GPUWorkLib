@@ -15,53 +15,35 @@ set(MODULE_NAME filters)
 message(STATUS "Configuring module: ${MODULE_NAME}")
 
 # ════════════════════════════════════════════════════════════════════════════
-# Dependencies
+# ════════════════════════════════════════════════════════════════════════════
+# Library (ROCm-only: OpenCL filters removed from main branch)
 # ════════════════════════════════════════════════════════════════════════════
 
-find_package(OpenCL REQUIRED)
-
-# ════════════════════════════════════════════════════════════════════════════
-# Library
-# ════════════════════════════════════════════════════════════════════════════
-
-set(MODULE_SOURCES
-    src/fir_filter.cpp
-    src/iir_filter.cpp
-)
-
-# ROCm support (conditional)
-if(ROCM_ENABLED)
-    list(APPEND MODULE_SOURCES
-        src/fir_filter_rocm.cpp
-        src/iir_filter_rocm.cpp
-        src/moving_average_filter_rocm.cpp
-        src/kalman_filter_rocm.cpp
-        src/kaufman_filter_rocm.cpp
-    )
-    message(STATUS "  ${MODULE_NAME}: ROCm support ENABLED")
+if(NOT ROCM_ENABLED)
+    message(STATUS "⏭️  ${MODULE_NAME}: skipped (ROCm disabled)")
+    return()
 endif()
 
-add_library(${MODULE_NAME} STATIC ${MODULE_SOURCES})
+add_library(${MODULE_NAME} STATIC
+    src/fir_filter_rocm.cpp
+    src/iir_filter_rocm.cpp
+    src/moving_average_filter_rocm.cpp
+    src/kalman_filter_rocm.cpp
+    src/kaufman_filter_rocm.cpp
+)
 
 target_include_directories(${MODULE_NAME}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/DrvGPU
-    PRIVATE
-        ${OpenCL_INCLUDE_DIRS}
 )
 
 target_link_libraries(${MODULE_NAME}
     PUBLIC
         drvgpu
-        OpenCL::OpenCL
+        hip::host
 )
-
-# ROCm linkage
-if(ROCM_ENABLED)
-    target_link_libraries(${MODULE_NAME} PUBLIC hip::host)
-endif()
 
 target_compile_features(${MODULE_NAME} PUBLIC cxx_std_17)
 

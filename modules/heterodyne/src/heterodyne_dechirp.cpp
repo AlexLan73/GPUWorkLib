@@ -67,40 +67,14 @@ void HeterodyneDechirp::SetParams(const HeterodyneParams& params) {
   params_dirty_ = true;  // OPT-4: signal to rebuild conj_gen_
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// CPU-only LFM conjugate (for ROCm when LfmConjugateGenerator needs OpenCL)
-// ════════════════════════════════════════════════════════════════════════════
-
-namespace {
-std::vector<std::complex<float>> GenerateConjugateLfmCpu(
-    float f_start, float f_end, float sample_rate, size_t num_samples) {
-  if (num_samples == 0) return {};
-  double duration = static_cast<double>(num_samples) / sample_rate;
-  double chirp_rate = (f_end - f_start) / duration;
-  std::vector<std::complex<float>> result(num_samples);
-  for (size_t n = 0; n < num_samples; ++n) {
-    double t = static_cast<double>(n) / sample_rate;
-    double phase = -(M_PI * chirp_rate * t * t + 2.0 * M_PI * f_start * t);
-    result[n] = std::complex<float>(
-        static_cast<float>(std::cos(phase)),
-        static_cast<float>(std::sin(phase)));
-  }
-  return result;
-}
-}  // namespace
+// CPU LFM conjugate fallback removed — now using LfmConjugateGeneratorROCm
 
 // ════════════════════════════════════════════════════════════════════════════
 // OPT-4: Lazy-init conjugate generator (rebuild only when params change)
 // ════════════════════════════════════════════════════════════════════════════
 
 void HeterodyneDechirp::EnsureConjugateGenerator() {
-  if (!params_dirty_ && (conj_gen_ || compute_backend_ == BackendType::ROCm)) return;
-
-  if (compute_backend_ == BackendType::ROCm) {
-    conj_gen_.reset();
-    params_dirty_ = false;
-    return;
-  }
+  if (!params_dirty_ && conj_gen_) return;
 
   signal_gen::LfmParams lfm_p;
   lfm_p.f_start = params_.f_start;
@@ -112,7 +86,7 @@ void HeterodyneDechirp::EnsureConjugateGenerator() {
   sys.fs = params_.sample_rate;
   sys.length = static_cast<size_t>(params_.num_samples);
 
-  conj_gen_ = std::make_unique<signal_gen::LfmConjugateGenerator>(backend_, lfm_p);
+  conj_gen_ = std::make_unique<signal_gen::LfmConjugateGeneratorROCm>(backend_, lfm_p);
   conj_gen_->SetSampling(sys);
   params_dirty_ = false;
 }
@@ -127,14 +101,8 @@ HeterodyneResult HeterodyneDechirp::Process(
   try {
     EnsureConjugateGenerator();
 
-    std::vector<std::complex<float>> ref_cpu;
-    if (compute_backend_ == BackendType::ROCm) {
-      ref_cpu = GenerateConjugateLfmCpu(
-          params_.f_start, params_.f_end, params_.sample_rate,
-          static_cast<size_t>(params_.num_samples));
-    } else {
-      ref_cpu = conj_gen_->GenerateToCpu();
-    }
+    // Generate conjugate LFM reference via ROCm (or CPU fallback)
+    auto ref_cpu = conj_gen_->GenerateToCpu();
     auto dc_data = processor_->Dechirp(rx_data, ref_cpu, params_);
 
     // Build result: FFT + peak finding + range + SNR
@@ -171,9 +139,7 @@ HeterodyneResult HeterodyneDechirp::ProcessExternal(
     // OPT-4: Reuse cached conj generator
     EnsureConjugateGenerator();
 
-    auto ref_cpu = GenerateConjugateLfmCpu(
-        params.f_start, params.f_end, params.sample_rate,
-        static_cast<size_t>(params.num_samples));
+    auto ref_cpu = conj_gen_->GenerateToCpu();
     auto dc_data = processor_->DechirpFromGPU(rx_gpu_ptr, ref_cpu, params);
 
     // Build result

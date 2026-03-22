@@ -24,8 +24,8 @@ namespace example_drv_gpu_singl
       // 1. Создать и инициализировать DrvGPU
       // ═══════════════════════════════════════════════════════════════
 
-      std::cout << "Initializing DrvGPU with OpenCL backend...\n";
-      DrvGPU gpu(BackendType::OPENCL, 0); // GPU #0
+      std::cout << "Initializing DrvGPU with ROCm backend...\n";
+      DrvGPU gpu(BackendType::ROCm, 0); // GPU #0
       gpu.Initialize();
 
       // ═══════════════════════════════════════════════════════════════

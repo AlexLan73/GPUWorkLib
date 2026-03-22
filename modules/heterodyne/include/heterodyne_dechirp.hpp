@@ -29,7 +29,7 @@
 #include "i_heterodyne_processor.hpp"
 #include "heterodyne_params.hpp"
 #include "common/backend_type.hpp"
-#include "generators/lfm_conjugate_generator.hpp"
+#include "generators/lfm_conjugate_generator_rocm.hpp"
 #include "params/signal_request.hpp"
 #include "params/system_sampling.hpp"
 #include <memory>
@@ -93,12 +93,12 @@ private:
 
   std::unique_ptr<IHeterodyneProcessor> processor_;
   IBackend*                             backend_ = nullptr;
-  BackendType                           compute_backend_ = BackendType::OPENCL;
+  BackendType                           compute_backend_ = BackendType::ROCm;
   HeterodyneParams                      params_;
   HeterodyneResult                      last_result_;
 
   // OPT-4: Cached conjugate LFM generator (rebuilt only on SetParams)
-  std::unique_ptr<signal_gen::LfmConjugateGenerator> conj_gen_;
+  std::unique_ptr<signal_gen::LfmConjugateGeneratorROCm> conj_gen_;
   bool params_dirty_ = true;  // true = need to rebuild conj_gen_
 };
 
