@@ -28,11 +28,11 @@
 
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
+#include "interface/gpu_context.hpp"
 #include "types/filter_params.hpp"
 #include "services/profiling_types.hpp"
 
 #include <hip/hip_runtime.h>
-#include <hip/hiprtc.h>
 
 #include <vector>
 #include <complex>
@@ -104,19 +104,13 @@ public:
   bool IsReady() const { return kernel_compiled_ && !coefficients_.empty(); }
 
 private:
-  void CompileKernel();
+  void EnsureCompiled();
   void UploadCoefficients();
   void ReleaseGpuResources();
 
-  drv_gpu_lib::IBackend* backend_ = nullptr;
-  hipStream_t stream_ = nullptr;
-
+  drv_gpu_lib::GpuContext ctx_;
   std::vector<float> coefficients_;
-
-  // hiprtc compiled kernel
-  hipModule_t module_ = nullptr;
-  hipFunction_t kernel_ = nullptr;
-  bool kernel_compiled_ = false;
+  bool compiled_ = false;
 
   // GPU buffer for coefficients (persistent)
   void* coeff_buf_ = nullptr;
