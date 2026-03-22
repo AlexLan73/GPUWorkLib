@@ -167,18 +167,15 @@ void OpenCLCore::InitializeOpenCL() {
 // ════════════════════════════════════════════════════════════════════════════
 
 void OpenCLCore::Cleanup() {
-    // ✅ FIX: Проверяем сначала без блокировки, чтобы избежать проблем
+    std::lock_guard<std::mutex> lock(mutex_);
+
     if (!initialized_) {
         return;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    if (initialized_) {
-        ReleaseResources();
-        initialized_ = false;
-        DRVGPU_LOG_DEBUG_GPU(device_index_, "OpenCLCore", "Device " + std::to_string(device_index_) + " cleaned up");
-    }
+    ReleaseResources();
+    initialized_ = false;
+    DRVGPU_LOG_DEBUG_GPU(device_index_, "OpenCLCore", "Device " + std::to_string(device_index_) + " cleaned up");
 }
 
 void OpenCLCore::ReleaseResources() {

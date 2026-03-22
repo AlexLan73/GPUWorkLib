@@ -346,8 +346,12 @@ void* OpenCLBackend::Allocate(size_t size_bytes, unsigned int flags) {
     if (flags & 2) mem_flags |= CL_MEM_HOST_WRITE_ONLY;
     if (flags & 4) mem_flags |= CL_MEM_HOST_NO_ACCESS;
 
-    cl_mem mem = clCreateBuffer(context_, mem_flags, size_bytes, nullptr, nullptr);
-    if (!mem) {
+    cl_int err = CL_SUCCESS;
+    cl_mem mem = clCreateBuffer(context_, mem_flags, size_bytes, nullptr, &err);
+    if (err != CL_SUCCESS || !mem) {
+        DRVGPU_LOG_ERROR_GPU(device_index_, "OpenCLBackend",
+            "clCreateBuffer failed: " + std::to_string(err) +
+            " (requested " + std::to_string(size_bytes) + " bytes)");
         return nullptr;
     }
 
@@ -429,7 +433,11 @@ void OpenCLBackend::MemcpyDeviceToDevice(void* dst, const void* src, size_t size
 
     if (err != CL_SUCCESS) {
         DRVGPU_LOG_ERROR_GPU(device_index_, "OpenCLBackend", "MemcpyDeviceToDevice error: " + std::to_string(err));
+        return;
     }
+
+    // Синхронизация для консистентности с HtoD (CL_TRUE) и ROCm backend (hipStreamSynchronize)
+    clFinish(queue_);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -457,10 +465,19 @@ bool OpenCLBackend::SupportsSVM() const {
 }
 
 bool OpenCLBackend::SupportsDoublePrecision() const {
-    if (!core_ || !core_->IsInitialized()) {
+    if (!device_) return false;
+
+    // Проверяем cl_khr_fp64 через расширения устройства
+    size_t ext_size = 0;
+    if (clGetDeviceInfo(device_, CL_DEVICE_EXTENSIONS, 0, nullptr, &ext_size) != CL_SUCCESS || ext_size == 0) {
         return false;
     }
-    return false;  // TODO: проверить cl_khr_fp64
+    std::vector<char> ext_buf(ext_size);
+    if (clGetDeviceInfo(device_, CL_DEVICE_EXTENSIONS, ext_size, ext_buf.data(), nullptr) != CL_SUCCESS) {
+        return false;
+    }
+    std::string extensions(ext_buf.data());
+    return extensions.find("cl_khr_fp64") != std::string::npos;
 }
 
 size_t OpenCLBackend::GetMaxWorkGroupSize() const {
@@ -592,30 +609,7 @@ const SVMCapabilities& OpenCLBackend::GetSVMCapabilities() const {
 
 void OpenCLBackend::InitializeCommandQueuePool(size_t num_queues) {
     (void)num_queues;
-    // TODO: реализовать если есть CommandQueuePool
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Приватные методы
-// ════════════════════════════════════════════════════════════════════════════
-
-void OpenCLBackend::InitializeOpenCLCore() {
-    // Теперь инициализация в Initialize()
-}
-
-void OpenCLBackend::InitializeMemoryManager() {
-    // Инициализация в Initialize()
-}
-
-void OpenCLBackend::InitializeSVMCapabilities() {
-    if (!device_) {
-        svm_capabilities_ = std::make_unique<SVMCapabilities>();
-        return;
-    }
-
-    svm_capabilities_ = std::make_unique<SVMCapabilities>(
-        SVMCapabilities::Query(device_)
-    );
+    // TODO: интегрировать CommandQueuePool (command_queue_pool.hpp)
 }
 
 GPUDeviceInfo OpenCLBackend::QueryDeviceInfo() const {

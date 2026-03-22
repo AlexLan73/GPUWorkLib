@@ -17,6 +17,7 @@
 #include "backends/hybrid/hybrid_backend.hpp"
 #endif
 #include "logger/logger.hpp"
+#include "services/console_output.hpp"
 #include <iostream>
 #include <sstream>
 
@@ -436,17 +437,13 @@ void DrvGPU::Flush() {
  * @brief Вывести статистику в консоль
  */
 void DrvGPU::PrintStatistics() const {
-    const char separator = static_cast<char>(205);  // ═
-    std::cout << "\n" << std::string(50, separator) << "\n";
-    std::cout << "DrvGPU Statistics\n";
-    std::cout << std::string(50, separator) << "\n";
-    std::cout << "Device Index:  " << device_index_ << "\n";
-    std::cout << "Backend Type:  " << static_cast<int>(backend_type_) << "\n";
-    std::cout << "Initialized:   " << (initialized_ ? "Yes" : "No") << "\n";
+    auto& con = ConsoleOutput::GetInstance();
+    std::string stats = "Backend=" + std::to_string(static_cast<int>(backend_type_))
+                      + ", Initialized=" + (initialized_ ? "Yes" : "No");
     if (memory_manager_) {
-        memory_manager_->PrintStatistics();
+        stats += "\n" + memory_manager_->GetStatistics();
     }
-    std::cout << std::string(50, separator) << "\n\n";
+    con.Print(device_index_, "DrvGPU", stats);
 }
 
 /**

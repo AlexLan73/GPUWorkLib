@@ -119,6 +119,7 @@ public:
   int GetComputeUnits() const;          // multiProcessorCount (CU count)
   size_t GetMaxWorkGroupSize() const;   // maxThreadsPerBlock — hard limit для kernel launch
   size_t GetMaxClockFrequency() const;  // clockRate / 1000: kHz → MHz
+  int GetWarpSize() const;              // warpSize из hipDeviceProp_t — авторитетный источник (64 для CDNA/Vega, 32 для RDNA)
   // device_props_.arch.hasDoubles: gfx900+ = 1, некоторые APU (gfx902) = 0 (SW emulation).
   bool SupportsDoublePrecision() const;
 

@@ -287,10 +287,6 @@ private:
     // Приватные методы
     // ═══════════════════════════════════════════════════════════════
     
-    void InitializeOpenCLCore();
-    void InitializeMemoryManager();
-    void InitializeSVMCapabilities();
-    
     GPUDeviceInfo QueryDeviceInfo() const;
 };
 

@@ -8,6 +8,7 @@
  */
 
 #include "memory/memory_manager.hpp"
+#include "logger/logger.hpp"
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -32,8 +33,9 @@ MemoryManager::MemoryManager(IBackend* backend)
     , total_allocations_(0)
     , total_frees_(0)
     , current_allocations_(0)
+    , current_bytes_(0)
     , total_bytes_allocated_(0)
-    , peak_bytes_allocated_(0)
+    , peak_bytes_(0)
 {
     if (!backend_) {
         throw std::invalid_argument("MemoryManager: backend cannot be null");
@@ -57,8 +59,10 @@ MemoryManager::MemoryManager(MemoryManager&& other) noexcept
     , total_allocations_(other.total_allocations_)
     , total_frees_(other.total_frees_)
     , current_allocations_(other.current_allocations_)
+    , current_bytes_(other.current_bytes_)
     , total_bytes_allocated_(other.total_bytes_allocated_)
-    , peak_bytes_allocated_(other.peak_bytes_allocated_)
+    , peak_bytes_(other.peak_bytes_)
+    , allocation_map_(std::move(other.allocation_map_))
 {
     other.backend_ = nullptr;
 }
@@ -70,14 +74,16 @@ MemoryManager::MemoryManager(MemoryManager&& other) noexcept
 MemoryManager& MemoryManager::operator=(MemoryManager&& other) noexcept {
     if (this != &other) {
         Cleanup();
-        
+
         backend_ = other.backend_;
         total_allocations_ = other.total_allocations_;
         total_frees_ = other.total_frees_;
         current_allocations_ = other.current_allocations_;
+        current_bytes_ = other.current_bytes_;
         total_bytes_allocated_ = other.total_bytes_allocated_;
-        peak_bytes_allocated_ = other.peak_bytes_allocated_;
-        
+        peak_bytes_ = other.peak_bytes_;
+        allocation_map_ = std::move(other.allocation_map_);
+
         other.backend_ = nullptr;
     }
     return *this;
@@ -102,23 +108,22 @@ void* MemoryManager::Allocate(size_t size_bytes, unsigned int flags) {
     if (!backend_) {
         throw std::runtime_error("MemoryManager: backend is null");
     }
-    
+
     void* ptr = backend_->Allocate(size_bytes, flags);
-    
+
     if (ptr) {
         std::lock_guard<std::mutex> lock(mutex_);
+        allocation_map_[ptr] = size_bytes;
         TrackAllocation(size_bytes);
     }
-    
+
     return ptr;
 }
 
 /**
- * @brief Освобождает GPU память через backend
+ * @brief Освобождает GPU память через backend и обновляет статистику
  *
- * TrackFree() здесь НЕ вызывается — для этого нужен map<void*, size_t>
- * (размер не передаётся в Free). В текущей реализации current_allocations_
- * отслеживает только аллокации, но не освобождения (недостаток статистики).
+ * Ищет ptr в allocation_map_ для определения размера, вызывает TrackFree().
  * GPUBuffer освобождает память через свой деструктор, вызывая этот метод.
  *
  * @param ptr Указатель на GPU память (nullptr — безопасно игнорируется)
@@ -126,9 +131,15 @@ void* MemoryManager::Allocate(size_t size_bytes, unsigned int flags) {
 void MemoryManager::Free(void* ptr) {
     if (!ptr) return;
 
-    // TODO: Если нужна статистика Free, храните map<void*, size_t>
-    // и вызывайте TrackFree(size_bytes) здесь
-    
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = allocation_map_.find(ptr);
+        if (it != allocation_map_.end()) {
+            TrackFree(it->second);
+            allocation_map_.erase(it);
+        }
+    }
+
     if (backend_) {
         backend_->Free(ptr);
     }
@@ -172,25 +183,28 @@ void MemoryManager::PrintStatistics() const {
  */
 std::string MemoryManager::GetStatistics() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
     std::ostringstream oss;
     oss << "\n" << std::string(60, '=') << "\n";
     oss << "MemoryManager Statistics\n";
     oss << std::string(60, '=') << "\n";
-    oss << std::left << std::setw(30) << "Total Allocations:" 
+    oss << std::left << std::setw(30) << "Total Allocations:"
         << total_allocations_ << "\n";
-    oss << std::left << std::setw(30) << "Total Frees:" 
+    oss << std::left << std::setw(30) << "Total Frees:"
         << total_frees_ << "\n";
-    oss << std::left << std::setw(30) << "Current Allocations:" 
+    oss << std::left << std::setw(30) << "Current Allocations:"
         << current_allocations_ << "\n";
-    oss << std::left << std::setw(30) << "Total Allocated:" 
+    oss << std::left << std::setw(30) << "Current Allocated:"
+        << std::fixed << std::setprecision(2)
+        << (current_bytes_ / (1024.0 * 1024.0)) << " MB\n";
+    oss << std::left << std::setw(30) << "Total Allocated (lifetime):"
         << std::fixed << std::setprecision(2)
         << (total_bytes_allocated_ / (1024.0 * 1024.0)) << " MB\n";
-    oss << std::left << std::setw(30) << "Peak Allocated:" 
+    oss << std::left << std::setw(30) << "Peak Allocated:"
         << std::fixed << std::setprecision(2)
-        << (peak_bytes_allocated_ / (1024.0 * 1024.0)) << " MB\n";
+        << (peak_bytes_ / (1024.0 * 1024.0)) << " MB\n";
     oss << std::string(60, '=') << "\n";
-    
+
     return oss.str();
 }
 
@@ -200,12 +214,14 @@ std::string MemoryManager::GetStatistics() const {
  */
 void MemoryManager::ResetStatistics() {
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
     total_allocations_ = 0;
     total_frees_ = 0;
     current_allocations_ = 0;
+    current_bytes_ = 0;
     total_bytes_allocated_ = 0;
-    peak_bytes_allocated_ = 0;
+    peak_bytes_ = 0;
+    // allocation_map_ НЕ очищаем — он отслеживает реальные аллокации, не статистику
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -221,14 +237,14 @@ void MemoryManager::ResetStatistics() {
  */
 void MemoryManager::Cleanup() {
     std::lock_guard<std::mutex> lock(mutex_);
-    
-    // Буферы управляются через shared_ptr и освобождаются автоматически
-    // Здесь можно добавить логирование, если остались неосвобождённые буферы
-    
+
     if (current_allocations_ > 0) {
-        std::cerr << "[MemoryManager] WARNING: " << current_allocations_ 
-                  << " allocations still active during cleanup!\n";
+        DRVGPU_LOG_WARNING("MemoryManager",
+            std::to_string(current_allocations_) + " allocations still active during cleanup (" +
+            std::to_string(current_bytes_ / 1024) + " KB)");
     }
+
+    allocation_map_.clear();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -250,30 +266,34 @@ void MemoryManager::Cleanup() {
 void MemoryManager::TrackAllocation(size_t size_bytes) {
     // ⚠️ DEADLOCK FIX: НЕ добавляем std::lock_guard!
     // Этот метод вызывается ТОЛЬКО под уже захваченным mutex_
-    
+
     total_allocations_++;
     current_allocations_++;
+    current_bytes_ += size_bytes;
     total_bytes_allocated_ += size_bytes;
-    
-    if (total_bytes_allocated_ > peak_bytes_allocated_) {
-        peak_bytes_allocated_ = total_bytes_allocated_;
+
+    if (current_bytes_ > peak_bytes_) {
+        peak_bytes_ = current_bytes_;
     }
 }
 
 /**
  * @brief Отслеживать освобождение памяти (внутренний метод)
  * @param size_bytes Размер освобождённой памяти
- * 
- * ⚠️ КРИТИЧЕСКИЙ МОМЕНТ (DEADLOCK FIX):
- * Этот метод НЕ захватывает mutex_!
- * Вызывается только под уже захваченным lock.
+ *
+ * ⚠️ DEADLOCK FIX: НЕ добавляем std::lock_guard!
+ * Вызывается ТОЛЬКО под уже захваченным mutex_ (из Free()).
  */
 void MemoryManager::TrackFree(size_t size_bytes) {
     // ⚠️ DEADLOCK FIX: НЕ добавляем std::lock_guard!
-    
+
     total_frees_++;
-    current_allocations_--;
-    total_bytes_allocated_ -= size_bytes;
+    if (current_allocations_ > 0) current_allocations_--;
+    if (current_bytes_ >= size_bytes) {
+        current_bytes_ -= size_bytes;
+    } else {
+        current_bytes_ = 0;
+    }
 }
 
 } // namespace drv_gpu_lib

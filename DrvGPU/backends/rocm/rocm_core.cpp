@@ -226,21 +226,16 @@ void ROCmCore::InitializeHIP() {
  * Вторая под mutex_ — защита от гонки двух потоков, прошедших первую проверку одновременно.
  */
 void ROCmCore::Cleanup() {
-  // Двойная проверка (до и после мьютекса) — стандартный паттерн для деструкторов.
-  // Первая проверка (без mutex_) — быстрый выход чтобы не захватывать мьютекс зря.
-  // Вторая проверка (под mutex_) — гарантия от гонки: два потока могут пройти первую.
+  std::lock_guard<std::mutex> lock(mutex_);
+
   if (!initialized_) {
     return;
   }
 
-  std::lock_guard<std::mutex> lock(mutex_);
-
-  if (initialized_) {
-    ReleaseResources();
-    initialized_ = false;
-    DRVGPU_LOG_DEBUG_GPU(device_index_, "ROCmCore",
-                         "Device " + std::to_string(device_index_) + " cleaned up");
-  }
+  ReleaseResources();
+  initialized_ = false;
+  DRVGPU_LOG_DEBUG_GPU(device_index_, "ROCmCore",
+                       "Device " + std::to_string(device_index_) + " cleaned up");
 }
 
 /**
@@ -372,9 +367,13 @@ size_t ROCmCore::GetGlobalMemorySize() const {
 size_t ROCmCore::GetFreeMemorySize() const {
   if (!initialized_) return 0;
 
+  // hipMemGetInfo возвращает данные для ТЕКУЩЕГО устройства (thread-local hipSetDevice).
+  // В multi-GPU системе (10+ GPU) другой поток мог переключить device →
+  // без hipSetDevice можем получить free memory не того GPU.
+  hipSetDevice(device_index_);
+
   size_t free_mem = 0;
   size_t total_mem = 0;
-  // hipMemGetInfo возвращает реальный объём свободной VRAM — самый точный способ.
   hipError_t err = hipMemGetInfo(&free_mem, &total_mem);
   if (err == hipSuccess) {
     return free_mem;
@@ -423,6 +422,20 @@ size_t ROCmCore::GetMaxWorkGroupSize() const {
 size_t ROCmCore::GetMaxClockFrequency() const {
   if (!initialized_) return 0;
   return static_cast<size_t>(device_props_.clockRate / 1000);  // kHz -> MHz
+}
+
+/**
+ * @brief Warp (wavefront) size из hipDeviceProp_t — авторитетный источник
+ *
+ * CDNA / Vega (gfx900-gfx942) → 64 wavefront width
+ * RDNA (gfx10xx, gfx11xx, gfx12xx) → 32 wavefront width
+ * Не используем строковую эвристику — hipDeviceProp_t.warpSize точнее.
+ *
+ * @return warpSize из device_props_; 32 по умолчанию если не инициализирован
+ */
+int ROCmCore::GetWarpSize() const {
+  if (!initialized_) return 32;
+  return device_props_.warpSize;
 }
 
 /**

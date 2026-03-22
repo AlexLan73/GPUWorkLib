@@ -19,6 +19,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 
 namespace drv_gpu_lib {
 
@@ -172,10 +173,14 @@ private:
 
     // Статистика: обновляется под mutex_ в TrackAllocation/TrackFree
     size_t total_allocations_;    ///< Сумма всех Allocate() вызовов (монотонно растёт)
-    size_t total_frees_;          ///< Сумма всех TrackFree() вызовов (сейчас не используется — нет size map)
+    size_t total_frees_;          ///< Сумма всех Free() вызовов
     size_t current_allocations_;  ///< Активные аллокации (total_allocations_ - total_frees_)
-    size_t total_bytes_allocated_; ///< Суммарно выделено байт (накапливается, не уменьшается при Free)
-    size_t peak_bytes_allocated_;  ///< Максимум total_bytes_allocated_ за всё время — для диагностики
+    size_t current_bytes_;        ///< Текущий объём выделенной памяти (увеличивается при Allocate, уменьшается при Free)
+    size_t total_bytes_allocated_; ///< Суммарно выделено байт за всё время (монотонно растёт)
+    size_t peak_bytes_;           ///< Максимум current_bytes_ за всё время — для диагностики пиковой нагрузки
+
+    // Карта ptr → size для отслеживания освобождений (нужна чтобы Free знал размер)
+    std::unordered_map<void*, size_t> allocation_map_;
 
     // Thread-safety
     mutable std::mutex mutex_;  ///< Защита всех счётчиков статистики; mutable → const-методы тоже блокируют
@@ -196,16 +201,19 @@ private:
 
 template<typename T>
 std::shared_ptr<GPUBuffer<T>> MemoryManager::CreateBuffer(
-    size_t num_elements, 
+    size_t num_elements,
     unsigned int flags)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    
+
     size_t size_bytes = num_elements * sizeof(T);
     void* ptr = backend_->Allocate(size_bytes, flags);
-    
-    TrackAllocation(size_bytes);  // ✅ Вызывается под lock - безопасно
-    
+
+    if (ptr) {
+        allocation_map_[ptr] = size_bytes;
+        TrackAllocation(size_bytes);  // Вызывается под lock — deadlock-safe
+    }
+
     return std::make_shared<GPUBuffer<T>>(ptr, num_elements, backend_);
 }
 

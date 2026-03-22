@@ -50,16 +50,15 @@ GpuContext::GpuContext(IBackend* backend,
         std::string("GpuContext[") + module_name_ + "]: failed to get HIP stream");
   }
 
-  // Determine GPU architecture and warp size
+  // Determine GPU architecture and warp size from hipDeviceProp_t (авторитетный источник)
   try {
     auto* rocm_backend = static_cast<ROCmBackend*>(backend_);
     arch_name_ = rocm_backend->GetCore().GetArchName();
+    warp_size_ = rocm_backend->GetCore().GetWarpSize();
   } catch (...) {
     arch_name_ = "";
+    warp_size_ = 32;
   }
-
-  // CDNA / Vega (gfx900..gfx942) → 64, RDNA (gfx10xx, gfx11xx, gfx12xx) → 32
-  warp_size_ = (arch_name_.find("gfx9") == 0) ? 64 : 32;
 
   // Disk cache for compiled HSACO
   if (!cache_dir.empty()) {
