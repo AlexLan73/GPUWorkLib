@@ -12,6 +12,7 @@
  */
 
 #if ENABLE_ROCM
+#include "test_signal_generators_rocm_basic.hpp"
 #include "test_form_signal_rocm.hpp"
 #include "test_signal_generators_benchmark_rocm.hpp"
 #endif
@@ -20,7 +21,10 @@ namespace signal_generators_all_test {
 
 inline void run() {
 #if ENABLE_ROCM
-    // FormSignalGeneratorROCm: getX on HIP (Linux + AMD GPU only)
+    // CW, LFM, Noise, LfmConjugate: GPU vs CPU
+    test_signal_generators_rocm_basic::run();
+
+    // FormSignalGeneratorROCm: getX on HIP
     test_form_signal_rocm::run();
 
     // ROCm Benchmarks (GpuBenchmarkBase)
