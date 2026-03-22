@@ -31,11 +31,11 @@
 
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
+#include "interface/gpu_context.hpp"
 #include "types/filter_params.hpp"
 #include "services/profiling_types.hpp"
 
 #include <hip/hip_runtime.h>
-#include <hip/hiprtc.h>
 
 #include <vector>
 #include <complex>
@@ -104,22 +104,16 @@ public:
 
   uint32_t GetNumSections() const { return static_cast<uint32_t>(sections_.size()); }
   const std::vector<BiquadSection>& GetSections() const { return sections_; }
-  bool IsReady() const { return kernel_compiled_ && !sections_.empty(); }
+  bool IsReady() const { return compiled_ && !sections_.empty(); }
 
 private:
-  void CompileKernel();
+  void EnsureCompiled();
   void UploadSosMatrix();
   void ReleaseGpuResources();
 
-  drv_gpu_lib::IBackend* backend_ = nullptr;
-  hipStream_t stream_ = nullptr;
-
+  drv_gpu_lib::GpuContext ctx_;
   std::vector<BiquadSection> sections_;
-
-  // hiprtc compiled kernel
-  hipModule_t module_ = nullptr;
-  hipFunction_t kernel_ = nullptr;
-  bool kernel_compiled_ = false;
+  bool compiled_ = false;
 
   // GPU buffer for SOS matrix (persistent)
   void* sos_buf_ = nullptr;

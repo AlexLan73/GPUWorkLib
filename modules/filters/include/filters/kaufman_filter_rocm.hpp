@@ -19,10 +19,10 @@
 
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
+#include "interface/gpu_context.hpp"
 #include "types/filter_params.hpp"
 
 #include <hip/hip_runtime.h>
-#include <hip/hiprtc.h>
 
 #include <vector>
 #include <complex>
@@ -72,19 +72,14 @@ public:
   // ════════════════════════════════════════════════════════════════════════
 
   const KaufmanParams& GetParams() const { return params_; }
-  bool IsReady() const { return kernel_compiled_; }
+  bool IsReady() const { return compiled_; }
 
 private:
   void EnsureKernel();
-  void CompileKernel(uint32_t n_window);
   void ReleaseGpuResources();
 
-  drv_gpu_lib::IBackend* backend_ = nullptr;
-  hipStream_t stream_ = nullptr;
-
-  hipModule_t   module_ = nullptr;
-  hipFunction_t kernel_ = nullptr;
-  bool          kernel_compiled_ = false;
+  drv_gpu_lib::GpuContext ctx_;
+  bool compiled_ = false;
 
   KaufmanParams params_;  ///< er_period, fast_period, slow_period
   // fast_sc_ и slow_sc_ — предельные EMA-константы для SC-интерполяции:
@@ -98,7 +93,7 @@ private:
   size_t cached_input_size_ = 0;        ///< Размер cached_input_buf_ в байтах
 
   unsigned int block_size_         = 256;  ///< Threads per block (1 thread per channel)
-  uint32_t     compiled_window_size_ = 0;  ///< N_WINDOW used in last CompileKernel(); 0 = not compiled
+  uint32_t     compiled_window_size_ = 0;  ///< N_WINDOW used in last EnsureKernel(); 0 = not compiled
 };
 
 }  // namespace filters

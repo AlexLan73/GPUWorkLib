@@ -10,14 +10,14 @@
 
 #include "filters/kalman_filter_rocm.hpp"
 #include "kernels/kalman_kernels_rocm.hpp"
-#include "console_output.hpp"
-#include "backends/rocm/rocm_backend.hpp"
-#include "services/kernel_cache_service.hpp"
+#include "services/console_output.hpp"
 
 #include <stdexcept>
 #include <cstring>
 
 namespace filters {
+
+static const std::vector<std::string> kKalmanKernelNames = { "kalman_kernel" };
 
 // ════════════════════════════════════════════════════════════════════════════
 // Constructor / Destructor
@@ -25,15 +25,9 @@ namespace filters {
 
 KalmanFilterROCm::KalmanFilterROCm(
     drv_gpu_lib::IBackend* backend, unsigned int block_size)
-    : backend_(backend), block_size_(block_size) {
-  if (!backend_ || !backend_->IsInitialized())
-    throw std::runtime_error("KalmanFilterROCm: backend is null or not initialized");
-
-  stream_ = static_cast<hipStream_t>(backend_->GetNativeQueue());
-  if (!stream_)
-    throw std::runtime_error("KalmanFilterROCm: failed to get HIP stream");
-
-  CompileKernel();
+    : ctx_(backend, "Kalman", "modules/filters/kernels")
+    , block_size_(block_size) {
+  EnsureCompiled();
 }
 
 KalmanFilterROCm::~KalmanFilterROCm() {
@@ -45,18 +39,13 @@ KalmanFilterROCm::~KalmanFilterROCm() {
 // ════════════════════════════════════════════════════════════════════════════
 
 KalmanFilterROCm::KalmanFilterROCm(KalmanFilterROCm&& other) noexcept
-    : backend_(other.backend_), stream_(other.stream_),
-      module_(other.module_), kernel_(other.kernel_),
-      kernel_compiled_(other.kernel_compiled_),
-      params_(other.params_),
-      cached_input_buf_(other.cached_input_buf_),
-      cached_input_size_(other.cached_input_size_),
-      block_size_(other.block_size_) {
-  other.backend_ = nullptr;
-  other.stream_ = nullptr;
-  other.module_ = nullptr;
-  other.kernel_ = nullptr;
-  other.kernel_compiled_ = false;
+    : ctx_(std::move(other.ctx_))
+    , compiled_(other.compiled_)
+    , params_(other.params_)
+    , cached_input_buf_(other.cached_input_buf_)
+    , cached_input_size_(other.cached_input_size_)
+    , block_size_(other.block_size_) {
+  other.compiled_ = false;
   other.cached_input_buf_ = nullptr;
   other.cached_input_size_ = 0;
 }
@@ -65,21 +54,14 @@ KalmanFilterROCm& KalmanFilterROCm::operator=(
     KalmanFilterROCm&& other) noexcept {
   if (this != &other) {
     ReleaseGpuResources();
-    backend_ = other.backend_;
-    stream_ = other.stream_;
-    module_ = other.module_;
-    kernel_ = other.kernel_;
-    kernel_compiled_ = other.kernel_compiled_;
+    ctx_ = std::move(other.ctx_);
+    compiled_ = other.compiled_;
     params_ = other.params_;
     cached_input_buf_ = other.cached_input_buf_;
     cached_input_size_ = other.cached_input_size_;
     block_size_ = other.block_size_;
 
-    other.backend_ = nullptr;
-    other.stream_ = nullptr;
-    other.module_ = nullptr;
-    other.kernel_ = nullptr;
-    other.kernel_compiled_ = false;
+    other.compiled_ = false;
     other.cached_input_buf_ = nullptr;
     other.cached_input_size_ = 0;
   }
@@ -94,11 +76,11 @@ KalmanFilterROCm& KalmanFilterROCm::operator=(
  * @brief Устанавливает параметры фильтра Калмана
  *
  * Q (process noise) и R (measurement noise) должны быть > 0:
- * при Q=0 фильтр полностью "замирает" (K→0, игнорирует измерения),
- * при R=0 фильтр полностью доверяет измерениям (K→1, нет сглаживания).
+ * при Q=0 фильтр полностью "замирает" (K->0, игнорирует измерения),
+ * при R=0 фильтр полностью доверяет измерениям (K->1, нет сглаживания).
  * P0 = начальная неопределённость; обычно P0 = R (мы не знаем начального состояния).
  *
- * Практика настройки: Q/R = 0.01 → сильное сглаживание; Q/R = 1.0 → быстрая реакция.
+ * Практика настройки: Q/R = 0.01 -> сильное сглаживание; Q/R = 1.0 -> быстрая реакция.
  *
  * @param params Q, R, x0, P0 — все должны быть > 0
  */
@@ -120,102 +102,12 @@ void KalmanFilterROCm::SetParams(float Q, float R, float x0, float P0) {
 // Kernel compilation
 // ════════════════════════════════════════════════════════════════════════════
 
-void KalmanFilterROCm::CompileKernel() {
-  if (kernel_compiled_) return;
-
-  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
-  const std::string cache_name = "kalman_kernel_rocm";
-
-  // ── Try loading from KernelCacheService (HSACO fast path) ──
-  {
-    drv_gpu_lib::KernelCacheService cache(
-        FILTERS_KERNELS_DIR, drv_gpu_lib::BackendType::ROCm);
-    auto entry = cache.Load(cache_name);
-    if (entry && entry->has_binary()) {
-      hipError_t hipErr = hipModuleLoadData(
-          &module_, entry->binary.data());
-      if (hipErr == hipSuccess) {
-        hipErr = hipModuleGetFunction(&kernel_, module_, "kalman_kernel");
-        if (hipErr == hipSuccess) {
-          kernel_compiled_ = true;
-          con.Print(0, "Kalman[ROCm]",
-              "HIP kernel loaded from cache (kalman_kernel)");
-          return;
-        }
-      }
-    }
-  }
-
-  // ── Compile from source (hiprtc) ──
-  const char* source = kernels::GetKalmanSource_rocm();
-
-  hiprtcProgram prog;
-  hiprtcResult rtcResult = hiprtcCreateProgram(
-      &prog, source, "kalman_kernel.hip", 0, nullptr, nullptr);
-  if (rtcResult != HIPRTC_SUCCESS)
-    throw std::runtime_error("KalmanFilterROCm: hiprtcCreateProgram failed");
-
-  // Build compile options: -O3, --offload-arch, -DWARP_SIZE
-  std::string arch_name;
-  try {
-    auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
-    arch_name = rocm_backend->GetCore().GetArchName();
-  } catch (...) {
-    arch_name = "";
-  }
-  std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
-  int warp_sz = 32;
-  try { warp_sz = static_cast<drv_gpu_lib::ROCmBackend*>(backend_)->GetCore().GetWarpSize(); } catch (...) {}
-  std::string warp_def = "-DWARP_SIZE=" + std::to_string(warp_sz);
+void KalmanFilterROCm::EnsureCompiled() {
+  if (compiled_) return;
   std::string block_size_def = "-DBLOCK_SIZE=" + std::to_string(block_size_);
-  std::vector<const char*> opts = {"-O3", warp_def.c_str(), block_size_def.c_str()};
-  if (!arch_flag.empty())
-    opts.push_back(arch_flag.c_str());
-
-  rtcResult = hiprtcCompileProgram(prog,
-      static_cast<int>(opts.size()), opts.data());
-  if (rtcResult != HIPRTC_SUCCESS) {
-    size_t logSize = 0;
-    hiprtcGetProgramLogSize(prog, &logSize);
-    std::string log(logSize, '\0');
-    hiprtcGetProgramLog(prog, &log[0]);
-
-    con.PrintError(0, "Kalman[ROCm]", "Compile log:\n" + log);
-
-    hiprtcDestroyProgram(&prog);
-    throw std::runtime_error("KalmanFilterROCm: compilation failed");
-  }
-
-  size_t codeSize = 0;
-  hiprtcGetCodeSize(prog, &codeSize);
-  std::vector<char> code(codeSize);
-  hiprtcGetCode(prog, code.data());
-  hiprtcDestroyProgram(&prog);
-
-  hipError_t hipErr = hipModuleLoadData(&module_, code.data());
-  if (hipErr != hipSuccess)
-    throw std::runtime_error("KalmanFilterROCm: hipModuleLoadData failed");
-
-  hipErr = hipModuleGetFunction(&kernel_, module_, "kalman_kernel");
-  if (hipErr != hipSuccess)
-    throw std::runtime_error("KalmanFilterROCm: hipModuleGetFunction(kalman_kernel) failed");
-
-  kernel_compiled_ = true;
-
-  // ── Save to cache for next time ──
-  try {
-    drv_gpu_lib::KernelCacheService cache(
-        FILTERS_KERNELS_DIR, drv_gpu_lib::BackendType::ROCm);
-    std::vector<uint8_t> binary(code.begin(), code.end());
-    cache.Save(cache_name, std::string(source), binary,
-               arch_name, "1D scalar Kalman filter");
-  } catch (...) {
-    // Non-critical: cache save failure
-  }
-
-  con.Print(0, "Kalman[ROCm]",
-      "HIP kernel compiled (kalman_kernel)" +
-      (arch_name.empty() ? "" : " [" + arch_name + "]"));
+  ctx_.CompileModule(kernels::GetKalmanSource_rocm(), kKalmanKernelNames,
+                     {block_size_def});
+  compiled_ = true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -226,7 +118,7 @@ drv_gpu_lib::InputData<void*>
 KalmanFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points) {
   if (!input_ptr || channels == 0 || points == 0)
     throw std::runtime_error("KalmanFilterROCm::Process: invalid arguments");
-  if (!kernel_compiled_)
+  if (!compiled_)
     throw std::runtime_error("KalmanFilterROCm::Process: kernel not compiled");
 
   size_t total = static_cast<size_t>(channels) * points;
@@ -254,10 +146,10 @@ KalmanFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points) {
   unsigned int grid_x = (channels + block_size_ - 1) / block_size_;
 
   err = hipModuleLaunchKernel(
-      kernel_,
+      ctx_.GetKernel("kalman_kernel"),
       grid_x, 1, 1,
       block_size_, 1, 1,
-      0, stream_,
+      0, ctx_.stream(),
       args, nullptr);
 
   if (err != hipSuccess) {
@@ -266,7 +158,7 @@ KalmanFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t points) {
         std::string(hipGetErrorString(err)));
   }
 
-  hipStreamSynchronize(stream_);
+  hipStreamSynchronize(ctx_.stream());
 
   drv_gpu_lib::InputData<void*> result;
   result.antenna_count = channels;
@@ -296,7 +188,7 @@ KalmanFilterROCm::ProcessFromCPU(
     cached_input_size_ = buffer_size;
   }
 
-  hipMemcpyHtoDAsync(cached_input_buf_, data.data(), buffer_size, stream_);
+  hipMemcpyHtoDAsync(cached_input_buf_, data.data(), buffer_size, ctx_.stream());
   return Process(cached_input_buf_, channels, points);
 }
 
@@ -316,7 +208,7 @@ KalmanFilterROCm::ProcessCpu(
 
     // Re и Im фильтруются независимо (2 отдельных скалярных фильтра).
     // ПОЧЕМУ: предполагаем AWGN-шум — Re и Im не коррелированы.
-    // Для коррелированного шума нужен полноценный 2D Kalman, но он в 4× дороже.
+    // Для коррелированного шума нужен полноценный 2D Kalman, но он в 4x дороже.
     float x_re = params_.x0, x_im = params_.x0;
     float P_re = params_.P0, P_im = params_.P0;
 
@@ -348,9 +240,7 @@ KalmanFilterROCm::ProcessCpu(
 void KalmanFilterROCm::ReleaseGpuResources() {
   if (cached_input_buf_) { hipFree(cached_input_buf_); cached_input_buf_ = nullptr; }
   cached_input_size_ = 0;
-  if (module_) { hipModuleUnload(module_); module_ = nullptr; }
-  kernel_ = nullptr;
-  kernel_compiled_ = false;
+  // GpuContext manages kernel module
 }
 
 }  // namespace filters

@@ -16,10 +16,10 @@
 
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
+#include "interface/gpu_context.hpp"
 #include "types/filter_params.hpp"
 
 #include <hip/hip_runtime.h>
-#include <hip/hiprtc.h>
 
 #include <vector>
 #include <complex>
@@ -69,25 +69,14 @@ public:
 
   MAType   GetType()       const { return ma_type_; }
   uint32_t GetWindowSize() const { return window_size_; }
-  bool     IsReady()       const { return kernel_compiled_; }
+  bool     IsReady()       const { return compiled_; }
 
 private:
   void EnsureKernels();
-  void CompileKernels(uint32_t sma_window);
-  void LoadKernelFunctions();
   void ReleaseGpuResources();
 
-  drv_gpu_lib::IBackend* backend_ = nullptr;
-  hipStream_t stream_ = nullptr;
-
-  // hiprtc compiled module + 5 kernel functions
-  hipModule_t   module_       = nullptr;
-  hipFunction_t kernel_sma_   = nullptr;
-  hipFunction_t kernel_ema_   = nullptr;
-  hipFunction_t kernel_mma_   = nullptr;
-  hipFunction_t kernel_dema_  = nullptr;
-  hipFunction_t kernel_tema_  = nullptr;
-  bool          kernel_compiled_ = false;
+  drv_gpu_lib::GpuContext ctx_;
+  bool compiled_ = false;
 
   MAType   ma_type_     = MAType::EMA;  ///< Текущий тип скользящей средней
   uint32_t window_size_ = 10;           ///< N — размер окна (для SMA: max 128)
@@ -99,7 +88,7 @@ private:
   size_t cached_input_size_ = 0;        ///< Текущий размер cached_input_buf_ в байтах
 
   unsigned int block_size_          = 256;  ///< Threads per block для hipModuleLaunchKernel (1 thread per channel)
-  uint32_t     compiled_sma_window_ = 0;   ///< N_WINDOW used in last CompileKernels(); 0 = not compiled
+  uint32_t     compiled_sma_window_ = 0;   ///< N_WINDOW used in last EnsureKernels(); 0 = not compiled
 };
 
 }  // namespace filters

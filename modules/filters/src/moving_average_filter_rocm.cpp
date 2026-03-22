@@ -10,14 +10,16 @@
 
 #include "filters/moving_average_filter_rocm.hpp"
 #include "kernels/moving_average_kernels_rocm.hpp"
-#include "console_output.hpp"
-#include "backends/rocm/rocm_backend.hpp"
-#include "services/kernel_cache_service.hpp"
+#include "services/console_output.hpp"
 
 #include <stdexcept>
 #include <cstring>
 
 namespace filters {
+
+static const std::vector<std::string> kSmaKernelNames = {
+  "sma_kernel", "ema_kernel", "mma_kernel", "dema_kernel", "tema_kernel"
+};
 
 // ════════════════════════════════════════════════════════════════════════════
 // Constructor / Destructor
@@ -25,14 +27,8 @@ namespace filters {
 
 MovingAverageFilterROCm::MovingAverageFilterROCm(
     drv_gpu_lib::IBackend* backend, unsigned int block_size)
-    : backend_(backend), block_size_(block_size) {
-  if (!backend_ || !backend_->IsInitialized())
-    throw std::runtime_error("MovingAverageFilterROCm: backend is null or not initialized");
-
-  stream_ = static_cast<hipStream_t>(backend_->GetNativeQueue());
-  if (!stream_)
-    throw std::runtime_error("MovingAverageFilterROCm: failed to get HIP stream");
-
+    : ctx_(backend, "SMA", "modules/filters/kernels")
+    , block_size_(block_size) {
   // Kernels compiled lazily in EnsureKernels() — SMA requires window_size from SetParams()
 }
 
@@ -46,27 +42,15 @@ MovingAverageFilterROCm::~MovingAverageFilterROCm() {
 
 MovingAverageFilterROCm::MovingAverageFilterROCm(
     MovingAverageFilterROCm&& other) noexcept
-    : backend_(other.backend_), stream_(other.stream_),
-      module_(other.module_),
-      kernel_sma_(other.kernel_sma_), kernel_ema_(other.kernel_ema_),
-      kernel_mma_(other.kernel_mma_), kernel_dema_(other.kernel_dema_),
-      kernel_tema_(other.kernel_tema_),
-      kernel_compiled_(other.kernel_compiled_),
-      ma_type_(other.ma_type_), window_size_(other.window_size_),
-      alpha_(other.alpha_),
-      cached_input_buf_(other.cached_input_buf_),
-      cached_input_size_(other.cached_input_size_),
-      block_size_(other.block_size_),
-      compiled_sma_window_(other.compiled_sma_window_) {
-  other.backend_ = nullptr;
-  other.stream_ = nullptr;
-  other.module_ = nullptr;
-  other.kernel_sma_ = nullptr;
-  other.kernel_ema_ = nullptr;
-  other.kernel_mma_ = nullptr;
-  other.kernel_dema_ = nullptr;
-  other.kernel_tema_ = nullptr;
-  other.kernel_compiled_ = false;
+    : ctx_(std::move(other.ctx_))
+    , compiled_(other.compiled_)
+    , ma_type_(other.ma_type_), window_size_(other.window_size_)
+    , alpha_(other.alpha_)
+    , cached_input_buf_(other.cached_input_buf_)
+    , cached_input_size_(other.cached_input_size_)
+    , block_size_(other.block_size_)
+    , compiled_sma_window_(other.compiled_sma_window_) {
+  other.compiled_ = false;
   other.cached_input_buf_ = nullptr;
   other.cached_input_size_ = 0;
   other.compiled_sma_window_ = 0;
@@ -76,15 +60,8 @@ MovingAverageFilterROCm& MovingAverageFilterROCm::operator=(
     MovingAverageFilterROCm&& other) noexcept {
   if (this != &other) {
     ReleaseGpuResources();
-    backend_ = other.backend_;
-    stream_ = other.stream_;
-    module_ = other.module_;
-    kernel_sma_ = other.kernel_sma_;
-    kernel_ema_ = other.kernel_ema_;
-    kernel_mma_ = other.kernel_mma_;
-    kernel_dema_ = other.kernel_dema_;
-    kernel_tema_ = other.kernel_tema_;
-    kernel_compiled_ = other.kernel_compiled_;
+    ctx_ = std::move(other.ctx_);
+    compiled_ = other.compiled_;
     ma_type_ = other.ma_type_;
     window_size_ = other.window_size_;
     alpha_ = other.alpha_;
@@ -93,15 +70,7 @@ MovingAverageFilterROCm& MovingAverageFilterROCm::operator=(
     block_size_ = other.block_size_;
     compiled_sma_window_ = other.compiled_sma_window_;
 
-    other.backend_ = nullptr;
-    other.stream_ = nullptr;
-    other.module_ = nullptr;
-    other.kernel_sma_ = nullptr;
-    other.kernel_ema_ = nullptr;
-    other.kernel_mma_ = nullptr;
-    other.kernel_dema_ = nullptr;
-    other.kernel_tema_ = nullptr;
-    other.kernel_compiled_ = false;
+    other.compiled_ = false;
     other.cached_input_buf_ = nullptr;
     other.cached_input_size_ = 0;
     other.compiled_sma_window_ = 0;
@@ -162,134 +131,21 @@ void MovingAverageFilterROCm::EnsureKernels() {
   // For EMA/MMA/DEMA/TEMA: compile once with any N_WINDOW (not used by those kernels).
   bool sma_window_changed = (ma_type_ == MAType::SMA &&
                               compiled_sma_window_ != window_size_);
-  if (kernel_compiled_ && !sma_window_changed) return;
+  if (compiled_ && !sma_window_changed) return;
 
-  if (kernel_compiled_) {
-    hipModuleUnload(module_);
-    module_ = nullptr;
-    kernel_sma_ = kernel_ema_ = kernel_mma_ = kernel_dema_ = kernel_tema_ = nullptr;
-    kernel_compiled_ = false;
-  }
-  // Pass actual window_size for SMA; for non-SMA pass window_size_ anyway
-  // (EMA/MMA/DEMA/TEMA don't use N_WINDOW — it just lives in the compiled module unused)
-  CompileKernels(window_size_);
-  compiled_sma_window_ = window_size_;
-}
-
-void MovingAverageFilterROCm::CompileKernels(uint32_t sma_window) {
-  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
-  const std::string cache_name = "moving_average_kernels_rocm_N" + std::to_string(sma_window);
-
-  // ── Try loading from KernelCacheService (HSACO fast path) ──
-  {
-    drv_gpu_lib::KernelCacheService cache(
-        FILTERS_KERNELS_DIR, drv_gpu_lib::BackendType::ROCm);
-    auto entry = cache.Load(cache_name);
-    if (entry && entry->has_binary()) {
-      hipError_t hipErr = hipModuleLoadData(
-          &module_, entry->binary.data());
-      if (hipErr == hipSuccess) {
-        LoadKernelFunctions();
-        kernel_compiled_ = true;
-        con.Print(0, "MAFilter[ROCm]",
-            "HIP kernels loaded from cache (sma/ema/mma/dema/tema)");
-        return;
-      }
-    }
+  if (compiled_) {
+    // N_WINDOW changed — need to recompile. Reconstruct GpuContext to reset module.
+    auto* backend = ctx_.backend();
+    ctx_ = drv_gpu_lib::GpuContext(backend, "SMA", "modules/filters/kernels");
+    compiled_ = false;
   }
 
-  // ── Compile from source (hiprtc) ──
-  const char* source = kernels::GetMovingAverageSource_rocm();
-
-  hiprtcProgram prog;
-  hiprtcResult rtcResult = hiprtcCreateProgram(
-      &prog, source, "moving_average_kernels.hip", 0, nullptr, nullptr);
-  if (rtcResult != HIPRTC_SUCCESS)
-    throw std::runtime_error("MovingAverageFilterROCm: hiprtcCreateProgram failed");
-
-  // Build compile options: -O3, --offload-arch, -DWARP_SIZE
-  std::string arch_name;
-  try {
-    auto* rocm_backend = static_cast<drv_gpu_lib::ROCmBackend*>(backend_);
-    arch_name = rocm_backend->GetCore().GetArchName();
-  } catch (...) {
-    arch_name = "";
-  }
-  std::string arch_flag = arch_name.empty() ? "" : ("--offload-arch=" + arch_name);
-  int warp_sz = 32;
-  try { warp_sz = static_cast<drv_gpu_lib::ROCmBackend*>(backend_)->GetCore().GetWarpSize(); } catch (...) {}
-  std::string warp_def = "-DWARP_SIZE=" + std::to_string(warp_sz);
   std::string block_size_def = "-DBLOCK_SIZE=" + std::to_string(block_size_);
-  std::string n_window_def   = "-DN_WINDOW="   + std::to_string(sma_window);
-  std::vector<const char*> opts = {"-O3", warp_def.c_str(), block_size_def.c_str(), n_window_def.c_str()};
-  if (!arch_flag.empty())
-    opts.push_back(arch_flag.c_str());
-
-  rtcResult = hiprtcCompileProgram(prog,
-      static_cast<int>(opts.size()), opts.data());
-  if (rtcResult != HIPRTC_SUCCESS) {
-    size_t logSize = 0;
-    hiprtcGetProgramLogSize(prog, &logSize);
-    std::string log(logSize, '\0');
-    hiprtcGetProgramLog(prog, &log[0]);
-
-    con.PrintError(0, "MAFilter[ROCm]", "Compile log:\n" + log);
-
-    hiprtcDestroyProgram(&prog);
-    throw std::runtime_error("MovingAverageFilterROCm: compilation failed");
-  }
-
-  size_t codeSize = 0;
-  hiprtcGetCodeSize(prog, &codeSize);
-  std::vector<char> code(codeSize);
-  hiprtcGetCode(prog, code.data());
-  hiprtcDestroyProgram(&prog);
-
-  hipError_t hipErr = hipModuleLoadData(&module_, code.data());
-  if (hipErr != hipSuccess)
-    throw std::runtime_error("MovingAverageFilterROCm: hipModuleLoadData failed");
-
-  LoadKernelFunctions();
-  kernel_compiled_ = true;
-
-  // ── Save to cache for next time ──
-  try {
-    drv_gpu_lib::KernelCacheService cache(
-        FILTERS_KERNELS_DIR, drv_gpu_lib::BackendType::ROCm);
-    std::vector<uint8_t> binary(code.begin(), code.end());
-    cache.Save(cache_name, std::string(source), binary,
-               arch_name, "MA filters: SMA/EMA/MMA/DEMA/TEMA");
-  } catch (...) {
-    // Non-critical: cache save failure
-  }
-
-  con.Print(0, "MAFilter[ROCm]",
-      "HIP kernels compiled (sma/ema/mma/dema/tema)" +
-      (arch_name.empty() ? "" : " [" + arch_name + "]"));
-}
-
-void MovingAverageFilterROCm::LoadKernelFunctions() {
-  hipError_t hipErr;
-
-  hipErr = hipModuleGetFunction(&kernel_sma_,  module_, "sma_kernel");
-  if (hipErr != hipSuccess)
-    throw std::runtime_error("MovingAverageFilterROCm: hipModuleGetFunction(sma_kernel) failed");
-
-  hipErr = hipModuleGetFunction(&kernel_ema_,  module_, "ema_kernel");
-  if (hipErr != hipSuccess)
-    throw std::runtime_error("MovingAverageFilterROCm: hipModuleGetFunction(ema_kernel) failed");
-
-  hipErr = hipModuleGetFunction(&kernel_mma_,  module_, "mma_kernel");
-  if (hipErr != hipSuccess)
-    throw std::runtime_error("MovingAverageFilterROCm: hipModuleGetFunction(mma_kernel) failed");
-
-  hipErr = hipModuleGetFunction(&kernel_dema_, module_, "dema_kernel");
-  if (hipErr != hipSuccess)
-    throw std::runtime_error("MovingAverageFilterROCm: hipModuleGetFunction(dema_kernel) failed");
-
-  hipErr = hipModuleGetFunction(&kernel_tema_, module_, "tema_kernel");
-  if (hipErr != hipSuccess)
-    throw std::runtime_error("MovingAverageFilterROCm: hipModuleGetFunction(tema_kernel) failed");
+  std::string n_window_def   = "-DN_WINDOW="   + std::to_string(window_size_);
+  ctx_.CompileModule(kernels::GetMovingAverageSource_rocm(), kSmaKernelNames,
+                     {block_size_def, n_window_def});
+  compiled_ = true;
+  compiled_sma_window_ = window_size_;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -327,7 +183,7 @@ MovingAverageFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t po
   void* args[7];
 
   if (ma_type_ == MAType::SMA) {
-    kernel = kernel_sma_;
+    kernel = ctx_.GetKernel("sma_kernel");
     args[0] = &input_ptr;
     args[1] = &output_ptr;
     args[2] = &ch;
@@ -337,10 +193,10 @@ MovingAverageFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t po
   } else {
     // EMA, MMA, DEMA, TEMA — единая сигнатура с alpha
     switch (ma_type_) {
-      case MAType::EMA:  kernel = kernel_ema_;  break;
-      case MAType::MMA:  kernel = kernel_mma_;  break;
-      case MAType::DEMA: kernel = kernel_dema_; break;
-      case MAType::TEMA: kernel = kernel_tema_; break;
+      case MAType::EMA:  kernel = ctx_.GetKernel("ema_kernel");  break;
+      case MAType::MMA:  kernel = ctx_.GetKernel("mma_kernel");  break;
+      case MAType::DEMA: kernel = ctx_.GetKernel("dema_kernel"); break;
+      case MAType::TEMA: kernel = ctx_.GetKernel("tema_kernel"); break;
       default: break;
     }
     args[0] = &input_ptr;
@@ -357,7 +213,7 @@ MovingAverageFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t po
       kernel,
       grid_x, 1, 1,
       block_size_, 1, 1,
-      0, stream_,
+      0, ctx_.stream(),
       args, nullptr);
 
   if (err != hipSuccess) {
@@ -366,7 +222,7 @@ MovingAverageFilterROCm::Process(void* input_ptr, uint32_t channels, uint32_t po
         std::string(hipGetErrorString(err)));
   }
 
-  hipStreamSynchronize(stream_);
+  hipStreamSynchronize(ctx_.stream());
 
   drv_gpu_lib::InputData<void*> result;
   result.antenna_count = channels;
@@ -397,7 +253,7 @@ MovingAverageFilterROCm::ProcessFromCPU(
     cached_input_size_ = buffer_size;
   }
 
-  hipMemcpyHtoDAsync(cached_input_buf_, data.data(), buffer_size, stream_);
+  hipMemcpyHtoDAsync(cached_input_buf_, data.data(), buffer_size, ctx_.stream());
   return Process(cached_input_buf_, channels, points);
 }
 
@@ -508,13 +364,7 @@ MovingAverageFilterROCm::ProcessCpu(
 void MovingAverageFilterROCm::ReleaseGpuResources() {
   if (cached_input_buf_) { hipFree(cached_input_buf_); cached_input_buf_ = nullptr; }
   cached_input_size_ = 0;
-  if (module_) { hipModuleUnload(module_); module_ = nullptr; }
-  kernel_sma_ = nullptr;
-  kernel_ema_ = nullptr;
-  kernel_mma_ = nullptr;
-  kernel_dema_ = nullptr;
-  kernel_tema_ = nullptr;
-  kernel_compiled_ = false;
+  // GpuContext manages kernel module
 }
 
 }  // namespace filters

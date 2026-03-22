@@ -18,10 +18,10 @@
 
 #include "interface/i_backend.hpp"
 #include "interface/input_data.hpp"
+#include "interface/gpu_context.hpp"
 #include "types/filter_params.hpp"
 
 #include <hip/hip_runtime.h>
-#include <hip/hiprtc.h>
 
 #include <vector>
 #include <complex>
@@ -70,18 +70,14 @@ public:
   // ════════════════════════════════════════════════════════════════════════
 
   const KalmanParams& GetParams() const { return params_; }
-  bool IsReady() const { return kernel_compiled_; }
+  bool IsReady() const { return compiled_; }
 
 private:
-  void CompileKernel();
+  void EnsureCompiled();
   void ReleaseGpuResources();
 
-  drv_gpu_lib::IBackend* backend_ = nullptr;
-  hipStream_t stream_ = nullptr;
-
-  hipModule_t   module_ = nullptr;
-  hipFunction_t kernel_ = nullptr;
-  bool          kernel_compiled_ = false;
+  drv_gpu_lib::GpuContext ctx_;
+  bool compiled_ = false;
 
   KalmanParams params_;  ///< Текущие параметры Q, R, x0, P0
 
