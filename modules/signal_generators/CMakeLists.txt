@@ -28,11 +28,15 @@ endif()
 
 add_library(${MODULE_NAME} STATIC
     src/signal_generator_factory.cpp
-    src/form_signal_generator_rocm.cpp
     src/cw_generator_rocm.cpp
     src/lfm_generator_rocm.cpp
     src/noise_generator_rocm.cpp
     src/lfm_conjugate_generator_rocm.cpp
+    src/lfm_generator_analytical_delay_rocm.cpp
+    src/form_signal_generator_rocm.cpp
+    src/delayed_form_signal_generator_rocm.cpp
+    src/script_generator_rocm.cpp
+    src/form_script_generator_rocm.cpp
 )
 
 target_compile_definitions(${MODULE_NAME} PUBLIC ENABLE_ROCM=1)
