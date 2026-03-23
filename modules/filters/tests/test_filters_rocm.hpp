@@ -4,46 +4,46 @@
  * @file test_filters_rocm.hpp
  * @brief ROCm tests for FirFilterROCm and IirFilterROCm
  *
- * Tests:
- *   1. FIR basic: 64-tap LP, GPU vs CPU reference (8ch x 4096pts)
- *   2. FIR large: 256-tap LP, multichannel (16ch x 8192pts)
- *   3. FIR from CPU: ProcessFromCPU convenience method
- *   4. IIR basic: Butterworth 2nd order, GPU vs CPU (8ch x 4096pts)
- *   5. IIR multi-section: 4th order (2 sections), GPU vs CPU
- *   6. IIR from CPU: ProcessFromCPU convenience method
+ * MIGRATED to test_utils (2026-03-23)
  *
- * NOT RUN on Windows — compile-only check.
- * Will be tested on Linux + AMD GPU (Radeon 9070 / MI100).
+ * Tests:
+ *   1. fir_basic: 64-tap LP, GPU vs CPU reference (8ch x 4096pts)
+ *   2. fir_large: 256-tap LP, multichannel (16ch x 8192pts)
+ *   3. fir_gpu_ptr: Process(void*) direct GPU pointer
+ *   4. iir_basic: Butterworth 2nd order, GPU vs CPU (8ch x 4096pts)
+ *   5. iir_multi_section: 4th order (2 sections), GPU vs CPU
+ *   6. iir_gpu_ptr: Process(void*) direct GPU pointer
+ *
+ * IMPORTANT: Compiles ONLY with ENABLE_ROCM=1.
  *
  * @author Kodo (AI Assistant)
- * @date 2026-02-23
+ * @date 2026-02-23 (migrated 2026-03-23)
  */
 
-#include <iostream>
 #include <vector>
 #include <complex>
 #include <cmath>
-#include <sstream>
-#include <iomanip>
-#include <algorithm>
+#include <string>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
 #if ENABLE_ROCM
+
 #include "filters/fir_filter_rocm.hpp"
 #include "filters/iir_filter_rocm.hpp"
 #include "backends/rocm/rocm_backend.hpp"
-#include "services/console_output.hpp"
-#endif
+#include "backends/rocm/rocm_core.hpp"
+
+// test_utils — unified test infrastructure
+#include "modules/test_utils/test_utils.hpp"
 
 namespace test_filters_rocm {
 
-#if ENABLE_ROCM
-
 using namespace filters;
 using namespace drv_gpu_lib;
+using namespace gpu_test_utils;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Pre-computed coefficients
@@ -95,72 +95,51 @@ inline std::vector<std::complex<float>> generate_test_signal(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Test 1: FIR basic — 64 taps, 8ch x 4096pts, GPU vs CPU
+// run() — TestRunner (functional style)
 // ═══════════════════════════════════════════════════════════════════════════
 
-inline bool test_fir_basic(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
+inline void run() {
+  int gpu_id = 0;
 
-    FirFilterROCm fir(&backend);
+  // Check for ROCm devices
+  int device_count = ROCmCore::GetAvailableDeviceCount();
+  if (device_count == 0) {
+    auto& con = ConsoleOutput::GetInstance();
+    con.Print(gpu_id, "Filters[ROCm]", "[!] No ROCm devices found -- skipping tests");
+    return;
+  }
+
+  ROCmBackend backend;
+  backend.Initialize(gpu_id);
+
+  FirFilterROCm fir(&backend);
+  IirFilterROCm iir(&backend);
+
+  TestRunner runner(&backend, "Filters[ROCm]", gpu_id);
+
+  // ── Test 1: FIR basic — 64 taps, 8ch x 4096pts ─────────────────
+
+  runner.test("fir_basic", [&]() {
     fir.SetCoefficients(kTestFirCoeffs64);
 
     const uint32_t channels    = 8;
     const uint32_t points      = 4096;
-    const float    sample_rate = 50000.0f;
     const size_t   total       = static_cast<size_t>(channels) * points;
 
-    auto signal = generate_test_signal(channels, points, sample_rate);
-
-    // CPU reference
+    auto signal = generate_test_signal(channels, points, 50000.0f);
     auto cpu_result = fir.ProcessCpu(signal, channels, points);
-
-    // GPU via ProcessFromCPU
     auto gpu_result = fir.ProcessFromCPU(signal, channels, points);
 
-    // Readback
-    std::vector<std::complex<float>> gpu_data(total);
-    hipError_t err = hipMemcpyDtoH(gpu_data.data(), gpu_result.data,
-                                     total * sizeof(std::complex<float>));
-    hipFree(gpu_result.data);
+    auto gpu_data = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_result.data, total);
 
-    if (err != hipSuccess) {
-      con.Print(gpu_id, "Filters[ROCm]", "[X] FIR Basic: hipMemcpyDtoH failed");
-      return false;
-    }
+    return AbsError(gpu_data.data(), cpu_result.data(), total,
+                    tolerance::kFilter, "fir_64tap_8ch");
+  });
 
-    // Compare
-    float max_error = 0.0f;
-    for (size_t i = 0; i < total; ++i) {
-      float err_re = std::abs(gpu_data[i].real() - cpu_result[i].real());
-      float err_im = std::abs(gpu_data[i].imag() - cpu_result[i].imag());
-      max_error = std::max(max_error, std::max(err_re, err_im));
-    }
+  // ── Test 2: FIR large — 256 taps, 16ch x 8192pts ───────────────
 
-    bool passed = (max_error < 1e-3f);
-    std::ostringstream oss;
-    oss << "Test 1 (FIR 64-tap 8ch): max_err = " << std::scientific
-        << std::setprecision(2) << max_error
-        << (passed ? " PASSED" : " FAILED (expected < 1e-3)");
-    con.Print(gpu_id, "Filters[ROCm]", oss.str());
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "Filters[ROCm]",
-              "[X] FIR Basic EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 2: FIR large — 256 taps, 16ch x 8192pts
-// ═══════════════════════════════════════════════════════════════════════════
-
-inline bool test_fir_large(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
-
+  runner.test("fir_large", [&]() {
     // Generate simple 256-tap LP coefficients (sinc * hamming)
     const uint32_t num_taps = 256;
     std::vector<float> coeffs(num_taps);
@@ -180,54 +159,26 @@ inline bool test_fir_large(ConsoleOutput& con, int gpu_id) {
       coeffs[i] *= w;
     }
 
-    FirFilterROCm fir(&backend);
     fir.SetCoefficients(coeffs);
 
     const uint32_t channels    = 16;
     const uint32_t points      = 8192;
-    const float    sample_rate = 50000.0f;
     const size_t   total       = static_cast<size_t>(channels) * points;
 
-    auto signal = generate_test_signal(channels, points, sample_rate);
+    auto signal = generate_test_signal(channels, points, 50000.0f);
     auto cpu_result = fir.ProcessCpu(signal, channels, points);
     auto gpu_result = fir.ProcessFromCPU(signal, channels, points);
 
-    std::vector<std::complex<float>> gpu_data(total);
-    hipMemcpyDtoH(gpu_data.data(), gpu_result.data,
-                    total * sizeof(std::complex<float>));
-    hipFree(gpu_result.data);
+    auto gpu_data = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_result.data, total);
 
-    float max_error = 0.0f;
-    for (size_t i = 0; i < total; ++i) {
-      float err_re = std::abs(gpu_data[i].real() - cpu_result[i].real());
-      float err_im = std::abs(gpu_data[i].imag() - cpu_result[i].imag());
-      max_error = std::max(max_error, std::max(err_re, err_im));
-    }
+    return AbsError(gpu_data.data(), cpu_result.data(), total,
+                    tolerance::kFilter, "fir_256tap_16ch");
+  });
 
-    bool passed = (max_error < 1e-3f);
-    std::ostringstream oss;
-    oss << "Test 2 (FIR 256-tap 16ch): max_err = " << std::scientific
-        << std::setprecision(2) << max_error
-        << (passed ? " PASSED" : " FAILED (expected < 1e-3)");
-    con.Print(gpu_id, "Filters[ROCm]", oss.str());
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "Filters[ROCm]",
-              "[X] FIR Large EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
-}
+  // ── Test 3: FIR Process (void* input) — direct GPU pointer ──────
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 3: FIR Process (void* input) — direct GPU pointer
-// ═══════════════════════════════════════════════════════════════════════════
-
-inline bool test_fir_gpu_ptr(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
-
-    FirFilterROCm fir(&backend);
+  runner.test("fir_gpu_ptr", [&]() {
     fir.SetCoefficients(kTestFirCoeffs64);
 
     const uint32_t channels = 4;
@@ -251,43 +202,16 @@ inline bool test_fir_gpu_ptr(ConsoleOutput& con, int gpu_id) {
     auto gpu_result = fir.Process(input_ptr, channels, points);
     hipFree(input_ptr);
 
-    std::vector<std::complex<float>> gpu_data(total);
-    hipMemcpyDtoH(gpu_data.data(), gpu_result.data,
-                    total * sizeof(std::complex<float>));
-    hipFree(gpu_result.data);
+    auto gpu_data = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_result.data, total);
 
-    float max_error = 0.0f;
-    for (size_t i = 0; i < total; ++i) {
-      float err_re = std::abs(gpu_data[i].real() - cpu_result[i].real());
-      float err_im = std::abs(gpu_data[i].imag() - cpu_result[i].imag());
-      max_error = std::max(max_error, std::max(err_re, err_im));
-    }
+    return AbsError(gpu_data.data(), cpu_result.data(), total,
+                    tolerance::kFilter, "fir_void_ptr");
+  });
 
-    bool passed = (max_error < 1e-3f);
-    std::ostringstream oss;
-    oss << "Test 3 (FIR void* input): max_err = " << std::scientific
-        << std::setprecision(2) << max_error
-        << (passed ? " PASSED" : " FAILED (expected < 1e-3)");
-    con.Print(gpu_id, "Filters[ROCm]", oss.str());
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "Filters[ROCm]",
-              "[X] FIR GPU ptr EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
-}
+  // ── Test 4: IIR basic — Butterworth 2nd order (1 section) ───────
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 4: IIR basic — Butterworth 2nd order (1 section)
-// ═══════════════════════════════════════════════════════════════════════════
-
-inline bool test_iir_basic(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
-
-    IirFilterROCm iir(&backend);
-
+  runner.test("iir_basic", [&]() {
     // Butterworth 2nd order LP, fc=0.1: butter(2, 0.1, output='sos')
     BiquadSection sec0;
     sec0.b0 = 0.02008337f;
@@ -299,55 +223,22 @@ inline bool test_iir_basic(ConsoleOutput& con, int gpu_id) {
 
     const uint32_t channels    = 8;
     const uint32_t points      = 4096;
-    const float    sample_rate = 50000.0f;
     const size_t   total       = static_cast<size_t>(channels) * points;
 
-    auto signal = generate_test_signal(channels, points, sample_rate);
+    auto signal = generate_test_signal(channels, points, 50000.0f);
     auto cpu_result = iir.ProcessCpu(signal, channels, points);
     auto gpu_result = iir.ProcessFromCPU(signal, channels, points);
 
-    std::vector<std::complex<float>> gpu_data(total);
-    hipError_t err = hipMemcpyDtoH(gpu_data.data(), gpu_result.data,
-                                     total * sizeof(std::complex<float>));
-    hipFree(gpu_result.data);
+    auto gpu_data = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_result.data, total);
 
-    if (err != hipSuccess) {
-      con.Print(gpu_id, "Filters[ROCm]", "[X] IIR Basic: hipMemcpyDtoH failed");
-      return false;
-    }
+    return AbsError(gpu_data.data(), cpu_result.data(), total,
+                    tolerance::kFilter, "iir_1sec_8ch");
+  });
 
-    float max_error = 0.0f;
-    for (size_t i = 0; i < total; ++i) {
-      float err_re = std::abs(gpu_data[i].real() - cpu_result[i].real());
-      float err_im = std::abs(gpu_data[i].imag() - cpu_result[i].imag());
-      max_error = std::max(max_error, std::max(err_re, err_im));
-    }
+  // ── Test 5: IIR multi-section — 4th order Butterworth ───────────
 
-    bool passed = (max_error < 1e-3f);
-    std::ostringstream oss;
-    oss << "Test 4 (IIR 1-sec 8ch): max_err = " << std::scientific
-        << std::setprecision(2) << max_error
-        << (passed ? " PASSED" : " FAILED (expected < 1e-3)");
-    con.Print(gpu_id, "Filters[ROCm]", oss.str());
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "Filters[ROCm]",
-              "[X] IIR Basic EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 5: IIR multi-section — 4th order Butterworth (2 sections)
-// ═══════════════════════════════════════════════════════════════════════════
-
-inline bool test_iir_multi_section(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
-
-    IirFilterROCm iir(&backend);
-
+  runner.test("iir_multi_section", [&]() {
     // Butterworth 4th order LP, fc=0.1: butter(4, 0.1, output='sos')
     BiquadSection sec0;
     sec0.b0 = 0.00482434f;
@@ -367,50 +258,22 @@ inline bool test_iir_multi_section(ConsoleOutput& con, int gpu_id) {
 
     const uint32_t channels    = 8;
     const uint32_t points      = 4096;
-    const float    sample_rate = 50000.0f;
     const size_t   total       = static_cast<size_t>(channels) * points;
 
-    auto signal = generate_test_signal(channels, points, sample_rate);
+    auto signal = generate_test_signal(channels, points, 50000.0f);
     auto cpu_result = iir.ProcessCpu(signal, channels, points);
     auto gpu_result = iir.ProcessFromCPU(signal, channels, points);
 
-    std::vector<std::complex<float>> gpu_data(total);
-    hipMemcpyDtoH(gpu_data.data(), gpu_result.data,
-                    total * sizeof(std::complex<float>));
-    hipFree(gpu_result.data);
+    auto gpu_data = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_result.data, total);
 
-    float max_error = 0.0f;
-    for (size_t i = 0; i < total; ++i) {
-      float err_re = std::abs(gpu_data[i].real() - cpu_result[i].real());
-      float err_im = std::abs(gpu_data[i].imag() - cpu_result[i].imag());
-      max_error = std::max(max_error, std::max(err_re, err_im));
-    }
+    return AbsError(gpu_data.data(), cpu_result.data(), total,
+                    tolerance::kFilter, "iir_2sec_8ch");
+  });
 
-    bool passed = (max_error < 1e-3f);
-    std::ostringstream oss;
-    oss << "Test 5 (IIR 2-sec 8ch): max_err = " << std::scientific
-        << std::setprecision(2) << max_error
-        << (passed ? " PASSED" : " FAILED (expected < 1e-3)");
-    con.Print(gpu_id, "Filters[ROCm]", oss.str());
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "Filters[ROCm]",
-              "[X] IIR Multi-Section EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
-}
+  // ── Test 6: IIR Process (void* input) — direct GPU pointer ──────
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 6: IIR Process (void* input) — direct GPU pointer
-// ═══════════════════════════════════════════════════════════════════════════
-
-inline bool test_iir_gpu_ptr(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
-
-    IirFilterROCm iir(&backend);
-
+  runner.test("iir_gpu_ptr", [&]() {
     BiquadSection sec0;
     sec0.b0 = 0.02008337f;
     sec0.b1 = 0.04016673f;
@@ -439,68 +302,28 @@ inline bool test_iir_gpu_ptr(ConsoleOutput& con, int gpu_id) {
     auto gpu_result = iir.Process(input_ptr, channels, points);
     hipFree(input_ptr);
 
-    std::vector<std::complex<float>> gpu_data(total);
-    hipMemcpyDtoH(gpu_data.data(), gpu_result.data,
-                    total * sizeof(std::complex<float>));
-    hipFree(gpu_result.data);
+    auto gpu_data = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_result.data, total);
 
-    float max_error = 0.0f;
-    for (size_t i = 0; i < total; ++i) {
-      float err_re = std::abs(gpu_data[i].real() - cpu_result[i].real());
-      float err_im = std::abs(gpu_data[i].imag() - cpu_result[i].imag());
-      max_error = std::max(max_error, std::max(err_re, err_im));
-    }
+    return AbsError(gpu_data.data(), cpu_result.data(), total,
+                    tolerance::kFilter, "iir_void_ptr");
+  });
 
-    bool passed = (max_error < 1e-3f);
-    std::ostringstream oss;
-    oss << "Test 6 (IIR void* input): max_err = " << std::scientific
-        << std::setprecision(2) << max_error
-        << (passed ? " PASSED" : " FAILED (expected < 1e-3)");
-    con.Print(gpu_id, "Filters[ROCm]", oss.str());
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "Filters[ROCm]",
-              "[X] IIR GPU ptr EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
+  // ── Summary ─────────────────────────────────────────────────────
+
+  runner.print_summary();
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Main entry point
-// ═══════════════════════════════════════════════════════════════════════════
-
-inline void run() {
-  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
-  int gpu_id = 0;
-
-  con.Print(gpu_id, "Filters[ROCm]", "");
-  con.Print(gpu_id, "Filters[ROCm]", "============================================");
-  con.Print(gpu_id, "Filters[ROCm]", "  FIR/IIR Filter ROCm Tests (HIP)");
-  con.Print(gpu_id, "Filters[ROCm]", "============================================");
-
-  int passed = 0;
-  int total = 6;
-
-  if (test_fir_basic(con, gpu_id))         ++passed;
-  if (test_fir_large(con, gpu_id))         ++passed;
-  if (test_fir_gpu_ptr(con, gpu_id))       ++passed;
-  if (test_iir_basic(con, gpu_id))         ++passed;
-  if (test_iir_multi_section(con, gpu_id)) ++passed;
-  if (test_iir_gpu_ptr(con, gpu_id))       ++passed;
-
-  con.Print(gpu_id, "Filters[ROCm]",
-            "Results: " + std::to_string(passed) + "/" +
-            std::to_string(total) + " passed");
-  con.Print(gpu_id, "Filters[ROCm]", "============================================");
-  con.Print(gpu_id, "Filters[ROCm]", "");
-}
+}  // namespace test_filters_rocm
 
 #else  // !ENABLE_ROCM
 
+namespace test_filters_rocm {
+
 inline void run() {
-  std::cout << "\n[test_filters_rocm] SKIPPED: ENABLE_ROCM not defined\n";
+  // SKIPPED: ENABLE_ROCM not defined
 }
 
-#endif  // ENABLE_ROCM
-
 }  // namespace test_filters_rocm
+
+#endif  // ENABLE_ROCM

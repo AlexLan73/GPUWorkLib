@@ -4,27 +4,25 @@
  * @file test_kaufman_rocm.hpp
  * @brief ROCm tests for KaufmanFilterROCm (KAMA)
  *
- * Tests:
- *   1. GPU vs CPU (8ch x 4096pts, random signal)
- *   2. Trend signal — ER~1, fast tracking
- *   3. Noise signal — ER~0, slow/frozen KAMA
- *   4. Adaptive transition (trend -> noise -> step)
- *   5. Step + trend-noise-trend demo (120pts, table output)
+ * MIGRATED to test_utils (2026-03-23)
  *
- * NOT RUN on Windows - compile-only check.
- * Will be tested on Linux + AMD GPU (Radeon 9070 / MI100).
+ * Tests:
+ *   1. gpu_vs_cpu: 8ch x 4096pts, random signal
+ *   2. trend: ER~1, fast tracking
+ *   3. noise: ER~0, slow/frozen KAMA
+ *   4. adaptive_transition: trend -> noise -> trend
+ *   5. step_demo: step + trend-noise-step demo (120pts, table output)
+ *
+ * IMPORTANT: Compiles ONLY with ENABLE_ROCM=1.
  *
  * @author Kodo (AI Assistant)
- * @date 2026-03-01
+ * @date 2026-03-01 (migrated 2026-03-23)
  */
 
-#include <iostream>
 #include <vector>
 #include <complex>
 #include <cmath>
-#include <sstream>
-#include <iomanip>
-#include <algorithm>
+#include <string>
 #include <random>
 #include <cstdio>
 
@@ -33,28 +31,45 @@
 #endif
 
 #if ENABLE_ROCM
+
 #include "filters/kaufman_filter_rocm.hpp"
 #include "backends/rocm/rocm_backend.hpp"
-#include "services/console_output.hpp"
-#endif
+#include "backends/rocm/rocm_core.hpp"
+
+// test_utils — unified test infrastructure
+#include "modules/test_utils/test_utils.hpp"
 
 namespace test_kaufman_rocm {
 
-#if ENABLE_ROCM
-
 using namespace filters;
 using namespace drv_gpu_lib;
+using namespace gpu_test_utils;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Test 1: GPU vs CPU — random complex signal
+// run() — TestRunner (functional style)
 // ═══════════════════════════════════════════════════════════════════════════
 
-inline bool test_gpu_vs_cpu(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
+inline void run() {
+  int gpu_id = 0;
 
-    KaufmanFilterROCm kauf(&backend);
+  // Check for ROCm devices
+  int device_count = ROCmCore::GetAvailableDeviceCount();
+  if (device_count == 0) {
+    auto& con = ConsoleOutput::GetInstance();
+    con.Print(gpu_id, "KAMA[ROCm]", "[!] No ROCm devices found -- skipping tests");
+    return;
+  }
+
+  ROCmBackend backend;
+  backend.Initialize(gpu_id);
+
+  KaufmanFilterROCm kauf(&backend);
+
+  TestRunner runner(&backend, "KAMA[ROCm]", gpu_id);
+
+  // ── Test 1: GPU vs CPU — random complex signal ────────────────────
+
+  runner.test("gpu_vs_cpu", [&]() {
     kauf.SetParams(10, 2, 30);
 
     const uint32_t channels = 8;
@@ -70,47 +85,16 @@ inline bool test_gpu_vs_cpu(ConsoleOutput& con, int gpu_id) {
     auto cpu_result = kauf.ProcessCpu(signal, channels, points);
     auto gpu_result = kauf.ProcessFromCPU(signal, channels, points);
 
-    std::vector<std::complex<float>> gpu_data(total);
-    hipError_t err = hipMemcpyDtoH(gpu_data.data(), gpu_result.data,
-                                     total * sizeof(std::complex<float>));
-    hipFree(gpu_result.data);
+    auto gpu_data = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_result.data, total);
 
-    if (err != hipSuccess) {
-      con.Print(gpu_id, "KAMA[ROCm]", "[X] Test 1: hipMemcpyDtoH failed");
-      return false;
-    }
+    return AbsError(gpu_data.data(), cpu_result.data(), total,
+                    tolerance::kFilter, "kama_8ch");
+  });
 
-    float max_error = 0.0f;
-    for (size_t i = 0; i < total; ++i) {
-      float err_re = std::abs(gpu_data[i].real() - cpu_result[i].real());
-      float err_im = std::abs(gpu_data[i].imag() - cpu_result[i].imag());
-      max_error = std::max(max_error, std::max(err_re, err_im));
-    }
+  // ── Test 2: Trend signal — ER~1, fast tracking ───────────────────
 
-    bool passed = (max_error < 1e-4f);
-    std::ostringstream oss;
-    oss << "Test 1 (GPU vs CPU 8ch): max_err = " << std::scientific
-        << std::setprecision(2) << max_error
-        << (passed ? " PASSED" : " FAILED");
-    con.Print(gpu_id, "KAMA[ROCm]", oss.str());
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "KAMA[ROCm]",
-              "[X] Test 1 EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 2: Trend signal — ER~1, fast tracking
-// ═══════════════════════════════════════════════════════════════════════════
-
-inline bool test_trend(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
-
-    KaufmanFilterROCm kauf(&backend);
+  runner.test("trend", [&]() {
     kauf.SetParams(10, 2, 30);
 
     const uint32_t channels = 1;
@@ -130,30 +114,12 @@ inline bool test_trend(ConsoleOutput& con, int gpu_id) {
       max_lag = std::max(max_lag, lag);
     }
 
-    bool passed = (max_lag < 2.0f);
-    char buf[128];
-    std::snprintf(buf, sizeof(buf),
-        "Test 2 (trend tracking): max_lag = %.4f %s",
-        max_lag, passed ? "PASSED" : "FAILED (>2.0)");
-    con.Print(gpu_id, "KAMA[ROCm]", std::string(buf));
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "KAMA[ROCm]",
-              "[X] Test 2 EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
-}
+    return ScalarAbsError(max_lag, 0.0f, 2.0, "max_lag");
+  });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 3: Noise signal — ER~0, KAMA almost frozen
-// ═══════════════════════════════════════════════════════════════════════════
+  // ── Test 3: Noise signal — ER~0, KAMA almost frozen ──────────────
 
-inline bool test_noise(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
-
-    KaufmanFilterROCm kauf(&backend);
+  runner.test("noise", [&]() -> TestResult {
     kauf.SetParams(10, 2, 30);
 
     const uint32_t channels = 1;
@@ -190,32 +156,19 @@ inline bool test_noise(ConsoleOutput& con, int gpu_id) {
     float std_kama = std::sqrt(var_kama / count);
 
     float ratio = std_kama / (std_sig + 1e-10f);
-    bool passed = (ratio < 0.2f);
 
-    char buf[128];
-    std::snprintf(buf, sizeof(buf),
-        "Test 3 (noise suppression): std_sig=%.3f std_kama=%.3f ratio=%.3f %s",
-        std_sig, std_kama, ratio,
-        passed ? "PASSED" : "FAILED (ratio>0.2)");
-    con.Print(gpu_id, "KAMA[ROCm]", std::string(buf));
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "KAMA[ROCm]",
-              "[X] Test 3 EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
-}
+    TestResult tr{"noise"};
+    tr.add(ratio < 0.2f
+        ? PassResult("std_ratio", ratio, 0.2,
+                      "std_sig=" + std::to_string(std_sig) + " std_kama=" + std::to_string(std_kama))
+        : FailResult("std_ratio", ratio, 0.2,
+                      "ratio>0.2, std_sig=" + std::to_string(std_sig) + " std_kama=" + std::to_string(std_kama)));
+    return tr;
+  });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 4: Adaptive transition — trend -> noise -> trend
-// ═══════════════════════════════════════════════════════════════════════════
+  // ── Test 4: Adaptive transition — trend -> noise -> trend ────────
 
-inline bool test_adaptive_transition(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
-
-    KaufmanFilterROCm kauf(&backend);
+  runner.test("adaptive_transition", [&]() -> TestResult {
     kauf.SetParams(10, 2, 30);
 
     const uint32_t channels = 1;
@@ -243,42 +196,24 @@ inline bool test_adaptive_transition(ConsoleOutput& con, int gpu_id) {
     // Check Phase 1 (end): KAMA tracks trend
     float val_500 = result[500].real();
     float exp_500 = 500.0f * 0.01f;
-    bool track_ok = (std::abs(val_500 - exp_500) < 0.5f);
 
     // Check Phase 2: KAMA is stable (small variation during noise)
     float delta_noise = std::abs(result[1020].real() - result[520].real());
-    bool noise_ok = (delta_noise < 3.0f);
 
     // Check Phase 3 (end): KAMA recovers tracking
     float val_2040 = result[2040].real();
     float exp_2040 = (2040.0f - 1024.0f) * 0.01f + 5.0f;
-    bool recover_ok = (std::abs(val_2040 - exp_2040) < 1.0f);
 
-    bool passed = track_ok && noise_ok && recover_ok;
-    char buf[160];
-    std::snprintf(buf, sizeof(buf),
-        "Test 4 (adaptive): trend_err=%.3f noise_delta=%.3f recover_err=%.3f %s",
-        std::abs(val_500 - exp_500), delta_noise,
-        std::abs(val_2040 - exp_2040),
-        passed ? "PASSED" : "FAILED");
-    con.Print(gpu_id, "KAMA[ROCm]", std::string(buf));
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "KAMA[ROCm]",
-              "[X] Test 4 EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
-}
+    TestResult tr{"adaptive_transition"};
+    tr.add(ScalarAbsError(val_500, exp_500, 0.5, "trend_track"));
+    tr.add(ScalarAbsError(delta_noise, 0.0f, 3.0, "noise_stability"));
+    tr.add(ScalarAbsError(val_2040, exp_2040, 1.0, "trend_recovery"));
+    return tr;
+  });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 5: Step + trend-noise-trend demo (120pts, table output)
-// ═══════════════════════════════════════════════════════════════════════════
+  // ── Test 5: Step + trend-noise-step demo (120pts, table output) ──
 
-inline bool test_step_kama_demo(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
-
+  runner.test("step_demo", [&]() -> TestResult {
     const uint32_t channels = 1;
     const uint32_t points   = 120;
 
@@ -287,10 +222,12 @@ inline bool test_step_kama_demo(ConsoleOutput& con, int gpu_id) {
     for (uint32_t i = 20; i < 70; ++i)
       sig_step[i] = {1.0f, 0.0f};
 
-    KaufmanFilterROCm kauf(&backend);
     kauf.SetParams(10, 2, 30);
 
     auto out_step = kauf.ProcessCpu(sig_step, channels, points);
+
+    auto& con = ConsoleOutput::GetInstance();
+    char buf[128];
 
     // ── Print step table ──
     con.Print(gpu_id, "KAMA[ROCm]", "");
@@ -301,7 +238,6 @@ inline bool test_step_kama_demo(ConsoleOutput& con, int gpu_id) {
     con.Print(gpu_id, "KAMA[ROCm]",
         " ----+-------+----------+-----------------");
 
-    char buf[128];
     uint32_t sample_t[] = {0,5,10,15,20,22,25,28,30,35,40,50,65,
                            70,72,75,80,90,110,119};
     for (uint32_t i = 0; i < sizeof(sample_t)/sizeof(uint32_t); ++i) {
@@ -363,97 +299,44 @@ inline bool test_step_kama_demo(ConsoleOutput& con, int gpu_id) {
     }
 
     // ── Checks ──
-    bool passed = true;
+    TestResult tr{"step_demo"};
 
     // Step plateau: KAMA should reach ~1.0 at t=55
-    if (std::abs(out_step[55].real() - 1.0f) > 0.01f) {
-      con.Print(gpu_id, "KAMA[ROCm]",
-          "[X] step plateau t=55 not ~1.0");
-      passed = false;
-    }
+    tr.add(ScalarAbsError(out_step[55].real(), 1.0f, 0.01, "step_plateau_t55"));
 
     // Trend tracking at t=38
-    if (std::abs(out_tnt[38].real() - 0.950f) > 0.1f) {
-      con.Print(gpu_id, "KAMA[ROCm]",
-          "[X] trend tracking at t=38 failed");
-      passed = false;
-    }
+    tr.add(ScalarAbsError(out_tnt[38].real(), 0.950f, 0.1, "trend_t38"));
 
     // Noise stability: KAMA variation within noise phase (t=55..79) should be small
     float delta_noise = std::abs(out_tnt[79].real() - out_tnt[55].real());
-    if (delta_noise > 0.5f) {
-      std::snprintf(buf, sizeof(buf),
-          "[X] noise stability: delta=%.3f (>0.5)", delta_noise);
-      con.Print(gpu_id, "KAMA[ROCm]", std::string(buf));
-      passed = false;
-    }
+    tr.add(ScalarAbsError(delta_noise, 0.0f, 0.5, "noise_delta"));
 
     // GPU vs CPU (step signal)
     auto gpu_result = kauf.ProcessFromCPU(sig_step, channels, points);
-    std::vector<std::complex<float>> gpu_data(points);
-    hipMemcpyDtoH(gpu_data.data(), gpu_result.data,
-                    points * sizeof(std::complex<float>));
-    hipFree(gpu_result.data);
+    auto gpu_data = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_result.data, points);
 
-    float max_err = 0.0f;
-    for (uint32_t i = 0; i < points; ++i) {
-      float e = std::abs(gpu_data[i].real() - out_step[i].real());
-      max_err = std::max(max_err, e);
-    }
-    if (max_err > 1e-4f) {
-      std::snprintf(buf, sizeof(buf),
-          "[X] GPU vs CPU step max_err=%.2e (>1e-4)", max_err);
-      con.Print(gpu_id, "KAMA[ROCm]", std::string(buf));
-      passed = false;
-    }
+    tr.add(AbsError(gpu_data.data(), out_step.data(), points,
+                    tolerance::kFilter, "gpu_vs_cpu_step"));
 
-    con.Print(gpu_id, "KAMA[ROCm]",
-        std::string("Test 5 (step+adaptive demo): ") +
-        (passed ? "PASSED" : "FAILED"));
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "KAMA[ROCm]",
-              "[X] Test 5 EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
+    return tr;
+  });
+
+  // ── Summary ─────────────────────────────────────────────────────
+
+  runner.print_summary();
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Main entry point
-// ═══════════════════════════════════════════════════════════════════════════
-
-inline void run() {
-  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
-  int gpu_id = 0;
-
-  con.Print(gpu_id, "KAMA[ROCm]", "");
-  con.Print(gpu_id, "KAMA[ROCm]", "============================================");
-  con.Print(gpu_id, "KAMA[ROCm]", "  Kaufman (KAMA) Filter ROCm Tests (HIP)");
-  con.Print(gpu_id, "KAMA[ROCm]", "  Adaptive MA: ER->SC->alpha");
-  con.Print(gpu_id, "KAMA[ROCm]", "============================================");
-
-  int passed = 0;
-  int total = 5;
-
-  if (test_gpu_vs_cpu(con, gpu_id))              ++passed;
-  if (test_trend(con, gpu_id))                   ++passed;
-  if (test_noise(con, gpu_id))                   ++passed;
-  if (test_adaptive_transition(con, gpu_id))     ++passed;
-  if (test_step_kama_demo(con, gpu_id))          ++passed;
-
-  con.Print(gpu_id, "KAMA[ROCm]",
-            "Results: " + std::to_string(passed) + "/" +
-            std::to_string(total) + " passed");
-  con.Print(gpu_id, "KAMA[ROCm]", "============================================");
-  con.Print(gpu_id, "KAMA[ROCm]", "");
-}
+}  // namespace test_kaufman_rocm
 
 #else  // !ENABLE_ROCM
 
+namespace test_kaufman_rocm {
+
 inline void run() {
-  std::cout << "\n[test_kaufman_rocm] SKIPPED: ENABLE_ROCM not defined\n";
+  // SKIPPED: ENABLE_ROCM not defined
 }
 
-#endif  // ENABLE_ROCM
-
 }  // namespace test_kaufman_rocm
+
+#endif  // ENABLE_ROCM

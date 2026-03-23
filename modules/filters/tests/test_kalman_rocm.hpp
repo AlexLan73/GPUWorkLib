@@ -4,27 +4,25 @@
  * @file test_kalman_rocm.hpp
  * @brief ROCm tests for KalmanFilterROCm (1D scalar Kalman)
  *
- * Tests:
- *   1. GPU vs CPU (8ch x 4096pts, random signal)
- *   2. Constant signal + noise (convergence test)
- *   3. Channel independence (256ch, unique constants)
- *   4. Step response (step at n=512)
- *   5. LFM radar demo — 5 targets, beat signal + AWGN + Kalman
+ * MIGRATED to test_utils (2026-03-23)
  *
- * NOT RUN on Windows - compile-only check.
- * Will be tested on Linux + AMD GPU (Radeon 9070 / MI100).
+ * Tests:
+ *   1. gpu_vs_cpu: 8ch x 4096pts, random signal
+ *   2. const_signal: constant + noise, convergence test
+ *   3. channel_independence: 256ch, unique constants
+ *   4. step_response: step at n=512
+ *   5. lfm_radar_demo: 5 targets, beat signal + AWGN + Kalman
+ *
+ * IMPORTANT: Compiles ONLY with ENABLE_ROCM=1.
  *
  * @author Kodo (AI Assistant)
- * @date 2026-03-01
+ * @date 2026-03-01 (migrated 2026-03-23)
  */
 
-#include <iostream>
 #include <vector>
 #include <complex>
 #include <cmath>
-#include <sstream>
-#include <iomanip>
-#include <algorithm>
+#include <string>
 #include <random>
 #include <cstdio>
 
@@ -33,28 +31,45 @@
 #endif
 
 #if ENABLE_ROCM
+
 #include "filters/kalman_filter_rocm.hpp"
 #include "backends/rocm/rocm_backend.hpp"
-#include "services/console_output.hpp"
-#endif
+#include "backends/rocm/rocm_core.hpp"
+
+// test_utils — unified test infrastructure
+#include "modules/test_utils/test_utils.hpp"
 
 namespace test_kalman_rocm {
 
-#if ENABLE_ROCM
-
 using namespace filters;
 using namespace drv_gpu_lib;
+using namespace gpu_test_utils;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Test 1: GPU vs CPU — random complex signal
+// run() — TestRunner (functional style)
 // ═══════════════════════════════════════════════════════════════════════════
 
-inline bool test_gpu_vs_cpu(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
+inline void run() {
+  int gpu_id = 0;
 
-    KalmanFilterROCm kalman(&backend);
+  // Check for ROCm devices
+  int device_count = ROCmCore::GetAvailableDeviceCount();
+  if (device_count == 0) {
+    auto& con = ConsoleOutput::GetInstance();
+    con.Print(gpu_id, "Kalman[ROCm]", "[!] No ROCm devices found -- skipping tests");
+    return;
+  }
+
+  ROCmBackend backend;
+  backend.Initialize(gpu_id);
+
+  KalmanFilterROCm kalman(&backend);
+
+  TestRunner runner(&backend, "Kalman[ROCm]", gpu_id);
+
+  // ── Test 1: GPU vs CPU — random complex signal ────────────────────
+
+  runner.test("gpu_vs_cpu", [&]() {
     kalman.SetParams(0.1f, 25.0f, 0.0f, 25.0f);
 
     const uint32_t channels = 8;
@@ -70,47 +85,16 @@ inline bool test_gpu_vs_cpu(ConsoleOutput& con, int gpu_id) {
     auto cpu_result = kalman.ProcessCpu(signal, channels, points);
     auto gpu_result = kalman.ProcessFromCPU(signal, channels, points);
 
-    std::vector<std::complex<float>> gpu_data(total);
-    hipError_t err = hipMemcpyDtoH(gpu_data.data(), gpu_result.data,
-                                     total * sizeof(std::complex<float>));
-    hipFree(gpu_result.data);
+    auto gpu_data = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_result.data, total);
 
-    if (err != hipSuccess) {
-      con.Print(gpu_id, "Kalman[ROCm]", "[X] Test 1: hipMemcpyDtoH failed");
-      return false;
-    }
+    return AbsError(gpu_data.data(), cpu_result.data(), total,
+                    tolerance::kFilter, "kalman_8ch");
+  });
 
-    float max_error = 0.0f;
-    for (size_t i = 0; i < total; ++i) {
-      float err_re = std::abs(gpu_data[i].real() - cpu_result[i].real());
-      float err_im = std::abs(gpu_data[i].imag() - cpu_result[i].imag());
-      max_error = std::max(max_error, std::max(err_re, err_im));
-    }
+  // ── Test 2: Constant signal + noise → convergence ────────────────
 
-    bool passed = (max_error < 1e-4f);
-    std::ostringstream oss;
-    oss << "Test 1 (GPU vs CPU 8ch): max_err = " << std::scientific
-        << std::setprecision(2) << max_error
-        << (passed ? " PASSED" : " FAILED");
-    con.Print(gpu_id, "Kalman[ROCm]", oss.str());
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "Kalman[ROCm]",
-              "[X] Test 1 EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 2: Constant signal + noise → convergence
-// ═══════════════════════════════════════════════════════════════════════════
-
-inline bool test_const_signal(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
-
-    KalmanFilterROCm kalman(&backend);
+  runner.test("const_signal", [&]() -> TestResult {
     kalman.SetParams(0.01f, 25.0f, 0.0f, 25.0f);
 
     const uint32_t channels = 8;
@@ -152,31 +136,19 @@ inline bool test_const_signal(ConsoleOutput& con, int gpu_id) {
 
     float improvement_db = 20.0f * std::log10(rms_raw / (rms_flt + 1e-10f));
 
-    bool passed = (improvement_db > 10.0f);  // at least 10 dB improvement
-    char buf[128];
-    std::snprintf(buf, sizeof(buf),
-        "Test 2 (const+noise): RMS raw=%.2f flt=%.2f improvement=%.1f dB %s",
-        rms_raw, rms_flt, improvement_db,
-        passed ? "PASSED" : "FAILED (need >10dB)");
-    con.Print(gpu_id, "Kalman[ROCm]", std::string(buf));
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "Kalman[ROCm]",
-              "[X] Test 2 EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
-}
+    TestResult tr{"const_signal"};
+    // At least 10 dB improvement
+    tr.add(improvement_db > 10.0f
+        ? PassResult("improvement_db", improvement_db, 10.0,
+                      "RMS_raw=" + std::to_string(rms_raw) + " RMS_flt=" + std::to_string(rms_flt))
+        : FailResult("improvement_db", improvement_db, 10.0,
+                      "need >10dB, RMS_raw=" + std::to_string(rms_raw) + " RMS_flt=" + std::to_string(rms_flt)));
+    return tr;
+  });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 3: Channel independence — 256ch, unique constant per channel
-// ═══════════════════════════════════════════════════════════════════════════
+  // ── Test 3: Channel independence — 256ch, unique constant ────────
 
-inline bool test_channel_independence(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
-
-    KalmanFilterROCm kalman(&backend);
+  runner.test("channel_independence", [&]() -> TestResult {
     kalman.SetParams(0.1f, 1.0f, 0.0f, 25.0f);
 
     const uint32_t channels = 256;
@@ -196,46 +168,25 @@ inline bool test_channel_independence(ConsoleOutput& con, int gpu_id) {
     }
 
     auto gpu_result = kalman.ProcessFromCPU(signal, channels, points);
-
-    std::vector<std::complex<float>> gpu_data(total);
-    hipMemcpyDtoH(gpu_data.data(), gpu_result.data,
-                    total * sizeof(std::complex<float>));
-    hipFree(gpu_result.data);
+    auto gpu_data = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_result.data, total);
 
     // Check last sample: should be close to ch * 10.0f
-    bool passed = true;
+    TestResult tr{"channel_independence"};
     float max_ch_err = 0.0f;
     for (uint32_t ch = 0; ch < channels; ++ch) {
       float cv = static_cast<float>(ch) * 10.0f;
       size_t idx = static_cast<size_t>(ch) * points + (points - 1);
       float err = std::abs(gpu_data[idx].real() - cv);
       max_ch_err = std::max(max_ch_err, err);
-      if (err > 1.0f) passed = false;
     }
+    tr.add(ScalarAbsError(max_ch_err, 0.0f, 1.0, "max_ch_err"));
+    return tr;
+  });
 
-    char buf[128];
-    std::snprintf(buf, sizeof(buf),
-        "Test 3 (256ch independence): max_ch_err = %.4f %s",
-        max_ch_err, passed ? "PASSED" : "FAILED (>1.0)");
-    con.Print(gpu_id, "Kalman[ROCm]", std::string(buf));
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "Kalman[ROCm]",
-              "[X] Test 3 EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
-}
+  // ── Test 4: Step response — step at n=512 ────────────────────────
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 4: Step response — step at n=512
-// ═══════════════════════════════════════════════════════════════════════════
-
-inline bool test_step_response(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
-
-    KalmanFilterROCm kalman(&backend);
+  runner.test("step_response", [&]() -> TestResult {
     kalman.SetParams(1.0f, 25.0f, 0.0f, 25.0f);
 
     const uint32_t channels = 1;
@@ -252,29 +203,17 @@ inline bool test_step_response(ConsoleOutput& con, int gpu_id) {
     // At the end (n=1023), should be close to 100
     float val_end = cpu_result[1023].real();
 
-    bool passed = (val_612 > 60.0f) && (std::abs(val_end - 100.0f) < 5.0f);
-    char buf[128];
-    std::snprintf(buf, sizeof(buf),
-        "Test 4 (step response): val@612=%.1f val@end=%.1f %s",
-        val_612, val_end, passed ? "PASSED" : "FAILED");
-    con.Print(gpu_id, "Kalman[ROCm]", std::string(buf));
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "Kalman[ROCm]",
-              "[X] Test 4 EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
-}
+    TestResult tr{"step_response"};
+    tr.add(val_612 > 60.0f
+        ? PassResult("val_at_612", val_612, 60.0, "should be >60")
+        : FailResult("val_at_612", val_612, 60.0, "expected >60"));
+    tr.add(ScalarAbsError(val_end, 100.0f, 5.0, "val_at_end"));
+    return tr;
+  });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 5: LFM Radar demo — 5 targets, beat signal + AWGN + Kalman
-// ═══════════════════════════════════════════════════════════════════════════
+  // ── Test 5: LFM Radar demo — 5 targets, beat signal + AWGN ──────
 
-inline bool test_lfm_radar_demo(ConsoleOutput& con, int gpu_id) {
-  try {
-    ROCmBackend backend;
-    backend.Initialize(gpu_id);
-
+  runner.test("lfm_radar_demo", [&]() -> TestResult {
     // LFM radar parameters
     const float    fs         = 10e6f;
     const float    fdev       = 2e6f;
@@ -313,18 +252,14 @@ inline bool test_lfm_radar_demo(ConsoleOutput& con, int gpu_id) {
     }
 
     // Apply Kalman filter (Q=0.01 for enough bandwidth to track all beat freqs)
-    KalmanFilterROCm kalman(&backend);
     kalman.SetParams(0.01f, 0.09f, 0.0f, 0.09f);
 
     auto gpu_result = kalman.ProcessFromCPU(signal, n_ant, N);
+    auto filtered = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_result.data, n_ant * N);
 
-    std::vector<std::complex<float>> filtered(n_ant * N);
-    hipMemcpyDtoH(filtered.data(), gpu_result.data,
-                    n_ant * N * sizeof(std::complex<float>));
-    hipFree(gpu_result.data);
-
-    // Compute time-domain RMS error (vs clean reference)
-    // Skip first 200 samples (warmup period)
+    // Print demo tables via ConsoleOutput
+    auto& con = ConsoleOutput::GetInstance();
     char buf[256];
 
     con.Print(gpu_id, "Kalman[ROCm]", "");
@@ -399,62 +334,36 @@ inline bool test_lfm_radar_demo(ConsoleOutput& con, int gpu_id) {
     }
 
     float avg_db = total_db / n_ant;
-    bool passed = (avg_db > 1.0f);
 
     std::snprintf(buf, sizeof(buf),
         "  Average improvement: %+.1f dB", avg_db);
     con.Print(gpu_id, "Kalman[ROCm]", "");
     con.Print(gpu_id, "Kalman[ROCm]", std::string(buf));
-
-    con.Print(gpu_id, "Kalman[ROCm]",
-        std::string("  Test 5 (LFM radar demo): ") +
-        (passed ? "PASSED (avg >1dB)" : "FAILED"));
     con.Print(gpu_id, "Kalman[ROCm]",
         "================================================================");
-    return passed;
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "Kalman[ROCm]",
-              "[X] Test 5 LFM EXCEPTION: " + std::string(e.what()));
-    return false;
-  }
+
+    TestResult tr{"lfm_radar_demo"};
+    tr.add(avg_db > 1.0f
+        ? PassResult("avg_improvement_db", avg_db, 1.0, "avg >1dB")
+        : FailResult("avg_improvement_db", avg_db, 1.0, "expected avg >1dB"));
+    return tr;
+  });
+
+  // ── Summary ─────────────────────────────────────────────────────
+
+  runner.print_summary();
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Main entry point
-// ═══════════════════════════════════════════════════════════════════════════
-
-inline void run() {
-  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
-  int gpu_id = 0;
-
-  con.Print(gpu_id, "Kalman[ROCm]", "");
-  con.Print(gpu_id, "Kalman[ROCm]", "============================================");
-  con.Print(gpu_id, "Kalman[ROCm]", "  Kalman Filter ROCm Tests (HIP)");
-  con.Print(gpu_id, "Kalman[ROCm]", "  1D scalar Kalman (Re/Im independent)");
-  con.Print(gpu_id, "Kalman[ROCm]", "============================================");
-
-  int passed = 0;
-  int total = 5;
-
-  if (test_gpu_vs_cpu(con, gpu_id))            ++passed;
-  if (test_const_signal(con, gpu_id))          ++passed;
-  if (test_channel_independence(con, gpu_id))  ++passed;
-  if (test_step_response(con, gpu_id))         ++passed;
-  if (test_lfm_radar_demo(con, gpu_id))        ++passed;
-
-  con.Print(gpu_id, "Kalman[ROCm]",
-            "Results: " + std::to_string(passed) + "/" +
-            std::to_string(total) + " passed");
-  con.Print(gpu_id, "Kalman[ROCm]", "============================================");
-  con.Print(gpu_id, "Kalman[ROCm]", "");
-}
+}  // namespace test_kalman_rocm
 
 #else  // !ENABLE_ROCM
 
+namespace test_kalman_rocm {
+
 inline void run() {
-  std::cout << "\n[test_kalman_rocm] SKIPPED: ENABLE_ROCM not defined\n";
+  // SKIPPED: ENABLE_ROCM not defined
 }
 
-#endif  // ENABLE_ROCM
-
 }  // namespace test_kalman_rocm
+
+#endif  // ENABLE_ROCM

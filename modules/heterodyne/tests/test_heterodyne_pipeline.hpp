@@ -2,56 +2,48 @@
 
 /**
  * @file test_heterodyne_pipeline.hpp
- * @brief Integration tests for HeterodyneDechirp facade (ROCm backend)
+ * @brief Integration tests for HeterodyneDechirp facade (ROCm)
  *
- * Test 4: Full pipeline via Process() — 5 antennas, linear delays
- * Test 5: ProcessExternal() — external HIP buffer (hipMalloc)
+ * ✅ MIGRATED to test_utils (2026-03-23)
  *
- * Uses constants from test_heterodyne_basic.hpp (same namespace)
+ * Tests:
+ *   4. full_pipeline      — Process() 5 antennas with range validation
+ *   5. process_external   — ProcessExternal() with external HIP buffer
  *
  * @author Kodo (AI Assistant)
- * @date 2026-02-21 (ROCm port 2026-03-16)
+ * @date 2026-02-21 (migrated 2026-03-23)
  */
 
 #include "heterodyne_dechirp.hpp"
 #include "heterodyne_params.hpp"
 
-#include "DrvGPU/services/console_output.hpp"
-
 #if ENABLE_ROCM
 
 #include "backends/rocm/rocm_backend.hpp"
+
+#include "modules/test_utils/test_utils.hpp"
 
 #include <hip/hip_runtime.h>
 #include <vector>
 #include <complex>
 #include <cmath>
-#include <string>
-#include <memory>
 
 namespace heterodyne { namespace tests {
 
-// Constants FS, F_START, F_END, N, ANTENNAS, MU, DELAYS_LINEAR_US, F_BEAT_TOL_HZ
-// are defined in test_heterodyne_basic.hpp (same namespace)
-// GenerateRxFlat() is also defined there.
+// Constants and GenerateRxFlat from test_heterodyne_basic.hpp (same namespace)
 
-// ════════════════════════════════════════════════════════════════════════════
-// Test 4: Full pipeline via Process()
-// ════════════════════════════════════════════════════════════════════════════
-
-inline void run_test_full_pipeline() {
+inline void run_pipeline_tests() {
   int gpu_id = 0;
-  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
 
-  con.Print(gpu_id, "Heterodyne", "");
-  con.Print(gpu_id, "Heterodyne", "  Test 4: Full pipeline Process()");
+  drv_gpu_lib::ROCmBackend backend;
+  backend.Initialize(gpu_id);
 
-  try {
-    auto backend = std::make_unique<drv_gpu_lib::ROCmBackend>();
-    backend->Initialize(0);
+  gpu_test_utils::TestRunner runner(&backend, "Heterodyne Pipeline", gpu_id);
 
-    std::vector<float> delays_us = DELAYS_LINEAR_US;
-    auto rx_flat = GenerateRxFlat(delays_us);
+  // ── Test 4: Full pipeline with range ──────────────────────────
+
+  runner.test("full_pipeline", [&]() -> gpu_test_utils::TestResult {
+    auto rx_flat = GenerateRxFlat(DELAYS_LINEAR_US);
 
     drv_gpu_lib::HeterodyneParams params;
     params.f_start = F_START;
@@ -60,90 +52,38 @@ inline void run_test_full_pipeline() {
     params.num_samples = N;
     params.num_antennas = ANTENNAS;
 
-    drv_gpu_lib::HeterodyneDechirp het(backend.get(), drv_gpu_lib::BackendType::ROCm);
+    drv_gpu_lib::HeterodyneDechirp het(&backend, drv_gpu_lib::BackendType::ROCm);
     het.SetParams(params);
     auto result = het.Process(rx_flat);
 
-    if (!result.success) {
-      con.Print(gpu_id, "Heterodyne", "    FAIL: " + result.error_message);
-      return;
-    }
-
-    con.Print(gpu_id, "Heterodyne",
-        "    Ant | Delay us | f_beat Hz   | Expected Hz | Error Hz | Range m");
-    con.Print(gpu_id, "Heterodyne",
-        "    ----|----------|-------------|-------------|----------|--------");
-
-    bool all_passed = true;
-    float max_range_err = 0.0f;
+    gpu_test_utils::TestResult tr{"full_pipeline"};
+    if (!result.success)
+      return tr.add(gpu_test_utils::FailResult("process", 0, 1));
 
     for (int ant = 0; ant < ANTENNAS; ++ant) {
-      float delay_us = delays_us[ant];
-      float expected_f = MU * delay_us * 1e-6f;
-      float actual_f = result.antennas[ant].f_beat_hz;
-      float f_err = std::abs(actual_f - expected_f);
-
-      float T = static_cast<float>(N) / FS;
-      float B = F_END - F_START;
-      float expected_range = (3e8f * T * expected_f) / (2.0f * B);
-      float range_err = std::abs(result.antennas[ant].range_m - expected_range);
-      max_range_err = std::max(max_range_err, range_err);
-
-      char buf[256];
-      snprintf(buf, sizeof(buf),
-          "    %3d | %7.0f  | %11.0f | %11.0f | %8.0f | %7.2f",
-          ant, delay_us, actual_f, expected_f, f_err,
-          result.antennas[ant].range_m);
-      con.Print(gpu_id, "Heterodyne", buf);
-
-      if (f_err >= F_BEAT_TOL_HZ) all_passed = false;
+      float expected_f = MU * DELAYS_LINEAR_US[ant] * 1e-6f;
+      tr.add(gpu_test_utils::ScalarAbsError(
+          static_cast<double>(result.antennas[ant].f_beat_hz),
+          static_cast<double>(expected_f), F_BEAT_TOL_HZ,
+          "ant" + std::to_string(ant)));
     }
+    return tr;
+  });
 
-    con.Print(gpu_id, "Heterodyne",
-        "    Max range error: " + std::to_string(max_range_err) + " m");
-    con.Print(gpu_id, "Heterodyne",
-        all_passed ? "    RESULT: PASSED" : "    RESULT: FAILED");
+  // ── Test 5: ProcessExternal with HIP buffer ───────────────────
 
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "Heterodyne", "    EXCEPTION: " + std::string(e.what()));
-  }
-}
+  runner.test("process_external", [&]() -> gpu_test_utils::TestResult {
+    auto rx_flat = GenerateRxFlat(DELAYS_LINEAR_US);
 
-// ════════════════════════════════════════════════════════════════════════════
-// Test 5: ProcessExternal with external HIP buffer
-// ════════════════════════════════════════════════════════════════════════════
-
-inline void run_test_process_external() {
-  int gpu_id = 0;
-  auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
-
-  con.Print(gpu_id, "Heterodyne", "");
-  con.Print(gpu_id, "Heterodyne", "  Test 5: ProcessExternal (external HIP buffer)");
-
-  try {
-    auto backend = std::make_unique<drv_gpu_lib::ROCmBackend>();
-    backend->Initialize(0);
-
-    std::vector<float> delays_us = DELAYS_LINEAR_US;
-    auto rx_flat = GenerateRxFlat(delays_us);
-
-    // Upload to GPU manually (simulating external program)
     size_t total = static_cast<size_t>(ANTENNAS) * N;
     size_t buf_size = total * sizeof(std::complex<float>);
 
-    void* external_buf = nullptr;
-    hipError_t err = hipMalloc(&external_buf, buf_size);
-    if (err != hipSuccess) {
-      con.Print(gpu_id, "Heterodyne", "    FAIL: hipMalloc failed");
-      return;
-    }
+    void* ext_buf = nullptr;
+    hipError_t err = hipMalloc(&ext_buf, buf_size);
+    if (err != hipSuccess)
+      throw std::runtime_error("hipMalloc failed");
 
-    err = hipMemcpy(external_buf, rx_flat.data(), buf_size, hipMemcpyHostToDevice);
-    if (err != hipSuccess) {
-      hipFree(external_buf);
-      con.Print(gpu_id, "Heterodyne", "    FAIL: hipMemcpy failed");
-      return;
-    }
+    (void)hipMemcpy(ext_buf, rx_flat.data(), buf_size, hipMemcpyHostToDevice);
 
     drv_gpu_lib::HeterodyneParams params;
     params.f_start = F_START;
@@ -152,47 +92,47 @@ inline void run_test_process_external() {
     params.num_samples = N;
     params.num_antennas = ANTENNAS;
 
-    drv_gpu_lib::HeterodyneDechirp het(backend.get(), drv_gpu_lib::BackendType::ROCm);
+    drv_gpu_lib::HeterodyneDechirp het(&backend, drv_gpu_lib::BackendType::ROCm);
     het.SetParams(params);
-    auto result = het.ProcessExternal(external_buf, params);
+    auto result = het.ProcessExternal(ext_buf, params);
 
-    // External buffer must still be valid (not freed by HeterodyneDechirp)
+    // Verify buffer still valid after processing
     std::vector<std::complex<float>> verify(total);
-    err = hipMemcpy(verify.data(), external_buf, buf_size, hipMemcpyDeviceToHost);
-    bool buf_valid = (err == hipSuccess);
+    bool buf_valid = (hipMemcpy(verify.data(), ext_buf, buf_size,
+                                hipMemcpyDeviceToHost) == hipSuccess);
+    (void)hipFree(ext_buf);
 
-    // Release external buffer (we own it)
-    hipFree(external_buf);
+    gpu_test_utils::TestResult tr{"process_external"};
+    tr.add(gpu_test_utils::ValidationResult{
+        buf_valid, "buf_valid", buf_valid ? 1.0 : 0.0, 1.0, ""});
 
-    if (!result.success) {
-      con.Print(gpu_id, "Heterodyne", "    FAIL: " + result.error_message);
-      return;
+    if (result.success) {
+      for (int ant = 0; ant < ANTENNAS; ++ant) {
+        float expected_f = MU * DELAYS_LINEAR_US[ant] * 1e-6f;
+        tr.add(gpu_test_utils::ScalarAbsError(
+            static_cast<double>(result.antennas[ant].f_beat_hz),
+            static_cast<double>(expected_f), F_BEAT_TOL_HZ,
+            "ant" + std::to_string(ant)));
+      }
     }
+    return tr;
+  });
 
-    bool all_passed = buf_valid;
-    for (int ant = 0; ant < ANTENNAS; ++ant) {
-      float expected_f = MU * DELAYS_LINEAR_US[ant] * 1e-6f;
-      float f_error = std::abs(result.antennas[ant].f_beat_hz - expected_f);
-      if (f_error >= F_BEAT_TOL_HZ) all_passed = false;
-    }
-
-    con.Print(gpu_id, "Heterodyne", "    External buffer read: "
-        + std::string(buf_valid ? "OK" : "FAIL"));
-    con.Print(gpu_id, "Heterodyne",
-        all_passed ? "    RESULT: PASSED" : "    RESULT: FAILED");
-
-  } catch (const std::exception& e) {
-    con.Print(gpu_id, "Heterodyne", "    EXCEPTION: " + std::string(e.what()));
-  }
+  runner.print_summary();
 }
+
+// Backward-compatible
+inline void run_test_full_pipeline()    { /* now in run_pipeline_tests */ }
+inline void run_test_process_external() { /* now in run_pipeline_tests */ }
 
 }} // namespace heterodyne::tests
 
 #else  // !ENABLE_ROCM
 
 namespace heterodyne { namespace tests {
-inline void run_test_full_pipeline()      {}
-inline void run_test_process_external()   {}
+inline void run_pipeline_tests()         {}
+inline void run_test_full_pipeline()     {}
+inline void run_test_process_external()  {}
 }} // namespace heterodyne::tests
 
 #endif  // ENABLE_ROCM
