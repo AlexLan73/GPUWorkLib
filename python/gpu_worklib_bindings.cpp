@@ -201,6 +201,8 @@ private:
 #include "py_complex_to_mag_rocm.hpp"
 #include "py_spectrum_maxima_finder_rocm.hpp"
 #include "py_form_signal_rocm.hpp"
+#include "py_delayed_form_signal_rocm.hpp"
+#include "py_lfm_analytical_delay_rocm.hpp"
 #include "py_filters_rocm.hpp"
 #include "py_filters_adaptive_rocm.hpp"
 #include "py_lch_farrow_rocm.hpp"
@@ -263,6 +265,11 @@ private:
 };
 
 #endif  // ENABLE_ROCM
+
+// ============================================================================
+// OpenCL-only wrapper classes (nvidia branch only, disabled on ROCm builds)
+// ============================================================================
+#if !ENABLE_ROCM
 
 // ============================================================================
 // PySignalGenerator — pythonic wrapper over signal_gen::SignalService
@@ -942,13 +949,15 @@ private:
 };
 
 // ============================================================================
-// New module wrappers — separate files (one class per file)
+// New module wrappers — separate files (one class per file, OpenCL only)
 // ============================================================================
 
 #include "py_lfm_analytical_delay.hpp"
 #include "py_lch_farrow.hpp"
 #include "py_filters.hpp"
 #include "py_heterodyne.hpp"
+
+#endif  // !ENABLE_ROCM — end of OpenCL-only wrapper classes
 
 // ============================================================================
 // PYBIND11_MODULE — the entry point
@@ -1000,6 +1009,11 @@ PYBIND11_MODULE(gpuworklib, m) {
         .def("__exit__", [](GPUContext&, py::object, py::object, py::object) {
             return false;
         });
+
+#if !ENABLE_ROCM
+    // ════════════════════════════════════════════════════════════════
+    // OpenCL-only class registrations (nvidia branch only)
+    // ════════════════════════════════════════════════════════════════
 
     // ════════════════════════════════════════════════════════════════
     // GPUBuffer (for output="gpu" from FormSignalGenerator / FormScriptGenerator)
@@ -1479,6 +1493,8 @@ PYBIND11_MODULE(gpuworklib, m) {
     // ════════════════════════════════════════════════════════════════
     register_heterodyne(m);
 
+#endif  // !ENABLE_ROCM — end of OpenCL-only class registrations
+
 #if ENABLE_ROCM
     // ════════════════════════════════════════════════════════════════
     // ROCm classes (Linux + AMD GPU only)
@@ -1516,6 +1532,12 @@ PYBIND11_MODULE(gpuworklib, m) {
 
     // FormSignalGeneratorROCm (see py_form_signal_rocm.hpp)
     register_form_signal_rocm(m);
+
+    // DelayedFormSignalGeneratorROCm (see py_delayed_form_signal_rocm.hpp)
+    register_delayed_form_signal_rocm(m);
+
+    // LfmAnalyticalDelayROCm (see py_lfm_analytical_delay_rocm.hpp)
+    register_lfm_analytical_delay_rocm(m);
 
     // FirFilterROCm (see py_filters_rocm.hpp)
     register_fir_filter_rocm(m);

@@ -17,14 +17,17 @@ test_lfm_analytical_delay.py — Тесты LfmGeneratorAnalyticalDelay
 
 import sys
 import os
+import glob
 import numpy as np
 
 # ── Путь к gpuworklib (Python_test/signal_generators/ -> 2 levels up) ──
-BUILD_PATHS = [
-    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Debug'),
-    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Release'),
-    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python'),
-]
+_root = os.path.join(os.path.dirname(__file__), '..', '..')
+BUILD_PATHS = (
+    glob.glob(os.path.join(_root, 'build', 'debian-*', 'python')) +
+    [os.path.join(_root, 'build', 'python', 'Debug'),
+     os.path.join(_root, 'build', 'python', 'Release'),
+     os.path.join(_root, 'build', 'python')]
+)
 for p in BUILD_PATHS:
     if os.path.isdir(p):
         sys.path.insert(0, os.path.abspath(p))
@@ -36,9 +39,9 @@ except ImportError:
     print("ERROR: gpuworklib not found. Build with -DBUILD_PYTHON=ON")
     sys.exit(1)
 
-if not hasattr(gpuworklib, 'LfmAnalyticalDelay'):
-    print("ERROR: gpuworklib built without LfmAnalyticalDelay.")
-    print("  Rebuild: cmake -B build -DBUILD_PYTHON=ON && cmake --build build")
+if not hasattr(gpuworklib, 'LfmAnalyticalDelayROCm'):
+    print("ERROR: gpuworklib built without LfmAnalyticalDelayROCm.")
+    print("  Rebuild: cmake -B build -DBUILD_PYTHON=ON -DENABLE_ROCM=ON && cmake --build build")
     sys.exit(1)
 
 
@@ -68,7 +71,7 @@ def lfm_analytical_numpy(fs, length, f_start, f_end, amplitude, delay_us=0.0):
 # GPU context
 # ════════════════════════════════════════════════════════════════════════════
 
-ctx = gpuworklib.GPUContext(0)
+ctx = gpuworklib.ROCmGPUContext(0)
 print(f"GPU: {ctx.device_name}")
 
 
@@ -87,21 +90,18 @@ def test_zero_delay_vs_standard_lfm():
     amplitude = 1.0
 
     # Analytical delay generator (delay = 0)
-    gen = gpuworklib.LfmAnalyticalDelay(ctx, f_start=f_start, f_end=f_end,
+    gen = gpuworklib.LfmAnalyticalDelayROCm(ctx, f_start=f_start, f_end=f_end,
                                          amplitude=amplitude)
     gen.set_sampling(fs=fs, length=length)
     gen.set_delays([0.0])
     gpu_delayed = gen.generate_gpu()
 
-    # Standard LFM generator
-    sig = gpuworklib.SignalGenerator(ctx)
-    gpu_standard = sig.generate_lfm(f_start=f_start, f_end=f_end,
-                                     fs=fs, length=length,
-                                     amplitude=amplitude, beam_count=1)
+    # NumPy reference (delay = 0)
+    ref = lfm_analytical_numpy(fs, length, f_start, f_end, amplitude, delay_us=0.0)
 
-    max_err = np.max(np.abs(gpu_delayed.ravel() - gpu_standard.ravel()))
+    max_err = np.max(np.abs(gpu_delayed.ravel() - ref.ravel()))
     print(f"  max_error = {max_err:.2e}")
-    # Two different GPU kernels + -cl-fast-relaxed-math -> ~1e-3
+    # GPU float32 vs NumPy float64 -> ~1e-3
     assert max_err < 2e-3, f"Zero delay error too large: {max_err}"
     print("  PASSED!")
 
@@ -122,7 +122,7 @@ def test_fractional_delay_boundary():
     # delay_us = 3.24 / fs * 1e6
     delay_us = 3.24 / fs * 1e6
 
-    gen = gpuworklib.LfmAnalyticalDelay(ctx, f_start=f_start, f_end=f_end)
+    gen = gpuworklib.LfmAnalyticalDelayROCm(ctx, f_start=f_start, f_end=f_end)
     gen.set_sampling(fs=fs, length=length)
     gen.set_delays([delay_us])
     data = gen.generate_gpu().ravel()
@@ -158,7 +158,7 @@ def test_gpu_vs_cpu():
     f_end = 2e6
     delay_us = 0.5
 
-    gen = gpuworklib.LfmAnalyticalDelay(ctx, f_start=f_start, f_end=f_end)
+    gen = gpuworklib.LfmAnalyticalDelayROCm(ctx, f_start=f_start, f_end=f_end)
     gen.set_sampling(fs=fs, length=length)
     gen.set_delays([delay_us])
 
@@ -187,7 +187,7 @@ def test_multi_antenna():
     delays = [0.0, 0.1, 0.2, 0.5]
     antennas = len(delays)
 
-    gen = gpuworklib.LfmAnalyticalDelay(ctx, f_start=f_start, f_end=f_end)
+    gen = gpuworklib.LfmAnalyticalDelayROCm(ctx, f_start=f_start, f_end=f_end)
     gen.set_sampling(fs=fs, length=length)
     gen.set_delays(delays)
 
@@ -219,7 +219,7 @@ def test_gpu_vs_numpy():
     amplitude = 1.0
     delay_us = 1.0  # 1 мкс
 
-    gen = gpuworklib.LfmAnalyticalDelay(ctx, f_start=f_start, f_end=f_end,
+    gen = gpuworklib.LfmAnalyticalDelayROCm(ctx, f_start=f_start, f_end=f_end,
                                          amplitude=amplitude)
     gen.set_sampling(fs=fs, length=length)
     gen.set_delays([delay_us])
@@ -267,13 +267,13 @@ def make_plots():
     # Original (delay=0) vs Delayed (1 µs = 12 samples) — сдвиг очевиден
     print("\n[Plots] Generating analytical delay visualization...")
 
-    gen0 = gpuworklib.LfmAnalyticalDelay(ctx, f_start=f_start, f_end=f_end, amplitude=amplitude)
+    gen0 = gpuworklib.LfmAnalyticalDelayROCm(ctx, f_start=f_start, f_end=f_end, amplitude=amplitude)
     gen0.set_sampling(fs=fs, length=length)
     gen0.set_delays([0.0])
     original = gen0.generate_gpu().ravel()
 
     delay_us = 1.0  # 1 µs = 12 samples at 12 MHz
-    gen1 = gpuworklib.LfmAnalyticalDelay(ctx, f_start=f_start, f_end=f_end, amplitude=amplitude)
+    gen1 = gpuworklib.LfmAnalyticalDelayROCm(ctx, f_start=f_start, f_end=f_end, amplitude=amplitude)
     gen1.set_sampling(fs=fs, length=length)
     gen1.set_delays([delay_us])
     delayed = gen1.generate_gpu().ravel()
@@ -325,7 +325,7 @@ def make_plots():
     # Верх: |signal| (0..1) — огибающая, амплитуда A=1 везде. Низ: Re, Im (-1..1) — компоненты.
     # Разные шкалы по Y — специально: |z|=1, но Re/Im осциллируют. Это не ошибка.
     delay_us_frac = 3.24 / fs * 1e6
-    gen_frac = gpuworklib.LfmAnalyticalDelay(ctx, f_start=f_start, f_end=f_end, amplitude=1.0)
+    gen_frac = gpuworklib.LfmAnalyticalDelayROCm(ctx, f_start=f_start, f_end=f_end, amplitude=1.0)
     gen_frac.set_sampling(fs=fs, length=length)
     gen_frac.set_delays([delay_us_frac])
     data_frac = gen_frac.generate_gpu().ravel()
@@ -366,7 +366,7 @@ def make_plots():
 
     # ── Plot 3: Multi-antenna — разные задержки, видимый сдвиг по каналам
     delays = [0.0, 0.2, 0.5, 1.0]
-    gen_multi = gpuworklib.LfmAnalyticalDelay(ctx, f_start=f_start, f_end=f_end)
+    gen_multi = gpuworklib.LfmAnalyticalDelayROCm(ctx, f_start=f_start, f_end=f_end)
     gen_multi.set_sampling(fs=fs, length=length)
     gen_multi.set_delays(delays)
     data_multi = gen_multi.generate_gpu()

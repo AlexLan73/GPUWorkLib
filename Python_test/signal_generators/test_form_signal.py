@@ -29,14 +29,17 @@ test_form_signal.py — Тесты FormSignalGenerator (GPU) vs NumPy (CPU) + г
 
 import sys
 import os
+import glob
 import numpy as np
 
 # ── Путь к gpuworklib (Python_test/signal_generators/ -> 2 levels up) ──
-BUILD_PATHS = [
-    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Debug'),
-    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Release'),
-    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python'),
-]
+_root = os.path.join(os.path.dirname(__file__), '..', '..')
+BUILD_PATHS = (
+    glob.glob(os.path.join(_root, 'build', 'debian-*', 'python')) +
+    [os.path.join(_root, 'build', 'python', 'Debug'),
+     os.path.join(_root, 'build', 'python', 'Release'),
+     os.path.join(_root, 'build', 'python')]
+)
 for p in BUILD_PATHS:
     if os.path.isdir(p):
         sys.path.insert(0, os.path.abspath(p))
@@ -81,8 +84,8 @@ def test_cw_no_noise():
     """FormSignal CW (f0=1 MHz, no noise) — GPU vs NumPy"""
     print("\n[Test 1] CW no noise: GPU vs NumPy...")
 
-    ctx = gpuworklib.GPUContext(0)
-    gen = gpuworklib.FormSignalGenerator(ctx)
+    ctx = gpuworklib.ROCmGPUContext(0)
+    gen = gpuworklib.FormSignalGeneratorROCm(ctx)
 
     fs = 12e6
     points = 4096
@@ -111,8 +114,8 @@ def test_chirp():
     """FormSignal Chirp (fdev=5000) — GPU vs NumPy"""
     print("\n[Test 2] Chirp (fdev=5000): GPU vs NumPy...")
 
-    ctx = gpuworklib.GPUContext(0)
-    gen = gpuworklib.FormSignalGenerator(ctx)
+    ctx = gpuworklib.ROCmGPUContext(0)
+    gen = gpuworklib.FormSignalGeneratorROCm(ctx)
 
     fs = 100000.0
     points = 4096
@@ -139,8 +142,8 @@ def test_window():
     """FormSignal Window: tau=-0.1 -> first 100 samples zero"""
     print("\n[Test 3] Window (tau=-0.1s)...")
 
-    ctx = gpuworklib.GPUContext(0)
-    gen = gpuworklib.FormSignalGenerator(ctx)
+    ctx = gpuworklib.ROCmGPUContext(0)
+    gen = gpuworklib.FormSignalGeneratorROCm(ctx)
 
     gen.set_params(fs=1000.0, points=1000, f0=100.0,
                    amplitude=1.0, noise_amplitude=0.0,
@@ -164,8 +167,8 @@ def test_multi_channel():
     """FormSignal 8 antennas with TAU_STEP=0.01"""
     print("\n[Test 4] Multi-channel (8 antennas, TAU_STEP=0.01)...")
 
-    ctx = gpuworklib.GPUContext(0)
-    gen = gpuworklib.FormSignalGenerator(ctx)
+    ctx = gpuworklib.ROCmGPUContext(0)
+    gen = gpuworklib.FormSignalGeneratorROCm(ctx)
 
     fs = 10000.0
     points = 2048
@@ -199,8 +202,8 @@ def test_noise_statistics():
     """FormSignal noise only -- mean~0, variance~1"""
     print("\n[Test 5] Noise statistics (an=1.0, a=0.0)...")
 
-    ctx = gpuworklib.GPUContext(0)
-    gen = gpuworklib.FormSignalGenerator(ctx)
+    ctx = gpuworklib.ROCmGPUContext(0)
+    gen = gpuworklib.FormSignalGeneratorROCm(ctx)
 
     gen.set_params(fs=10000.0, points=100000, f0=0.0,
                    amplitude=0.0, noise_amplitude=1.0,
@@ -228,15 +231,15 @@ def test_string_params():
     """FormSignal set_params_from_string -- same as set_params"""
     print("\n[Test 6] set_params_from_string vs set_params...")
 
-    ctx = gpuworklib.GPUContext(0)
+    ctx = gpuworklib.ROCmGPUContext(0)
 
-    gen1 = gpuworklib.FormSignalGenerator(ctx)
+    gen1 = gpuworklib.FormSignalGeneratorROCm(ctx)
     gen1.set_params(fs=12e6, points=1024, f0=1e6,
                     amplitude=1.5, phase=0.5, noise_amplitude=0.0,
                     norm=1.0 / np.sqrt(2.0))
     data1 = gen1.generate()
 
-    gen2 = gpuworklib.FormSignalGenerator(ctx)
+    gen2 = gpuworklib.FormSignalGeneratorROCm(ctx)
     gen2.set_params_from_string("fs=12e6,points=1024,f0=1e6,a=1.5,phi=0.5")
     data2 = gen2.generate()
 
@@ -252,8 +255,8 @@ def test_signal_plus_noise():
     """FormSignal signal+noise: amplitude envelope check"""
     print("\n[Test 7] Signal + Noise combined...")
 
-    ctx = gpuworklib.GPUContext(0)
-    gen = gpuworklib.FormSignalGenerator(ctx)
+    ctx = gpuworklib.ROCmGPUContext(0)
+    gen = gpuworklib.FormSignalGeneratorROCm(ctx)
 
     fs = 100000.0
     points = 10000
@@ -304,7 +307,7 @@ def make_plots(save_dir):
 
     os.makedirs(save_dir, exist_ok=True)
 
-    ctx = gpuworklib.GPUContext(0)
+    ctx = gpuworklib.ROCmGPUContext(0)
     gpu_name = ctx.device_name
 
     # ── Общий стиль ──
@@ -342,7 +345,7 @@ def make_plots(save_dir):
     # ══════════════════════════════════════════════════════════════════════
     print("  [Plot 1] CW: GPU vs NumPy...")
 
-    gen = gpuworklib.FormSignalGenerator(ctx)
+    gen = gpuworklib.FormSignalGeneratorROCm(ctx)
     fs, points, f0 = 100000.0, 1024, 5000.0
     norm_val = 1.0 / np.sqrt(2.0)
 
@@ -398,7 +401,7 @@ def make_plots(save_dir):
     # ══════════════════════════════════════════════════════════════════════
     print("  [Plot 2] Chirp: spectrogram + waveform...")
 
-    gen = gpuworklib.FormSignalGenerator(ctx)
+    gen = gpuworklib.FormSignalGeneratorROCm(ctx)
     fs_chirp, pts_chirp = 100000.0, 8192
     f0_chirp, fdev_chirp = 5000.0, 20000.0
 
@@ -448,7 +451,7 @@ def make_plots(save_dir):
     # ══════════════════════════════════════════════════════════════════════
     print("  [Plot 3] Window + Delay...")
 
-    gen = gpuworklib.FormSignalGenerator(ctx)
+    gen = gpuworklib.FormSignalGeneratorROCm(ctx)
     fs_win, pts_win = 10000.0, 2000
 
     fig, axes = plt.subplots(3, 1, figsize=(14, 8), sharex=True)
@@ -491,7 +494,7 @@ def make_plots(save_dir):
     # ══════════════════════════════════════════════════════════════════════
     print("  [Plot 4] Multi-channel waterfall...")
 
-    gen = gpuworklib.FormSignalGenerator(ctx)
+    gen = gpuworklib.FormSignalGeneratorROCm(ctx)
     fs_mc, pts_mc, n_ant = 10000.0, 2048, 8
     tau_step_mc = 0.005
 
@@ -539,7 +542,7 @@ def make_plots(save_dir):
     # ══════════════════════════════════════════════════════════════════════
     print("  [Plot 5] Noise: histogram + distribution...")
 
-    gen = gpuworklib.FormSignalGenerator(ctx)
+    gen = gpuworklib.FormSignalGeneratorROCm(ctx)
     gen.set_params(fs=10000.0, points=100000, f0=0.0,
                    amplitude=0.0, noise_amplitude=1.0,
                    norm=1.0, noise_seed=42)
@@ -602,7 +605,7 @@ def make_plots(save_dir):
     # ══════════════════════════════════════════════════════════════════════
     print("  [Plot 6] Signal + Noise: spectrum...")
 
-    gen = gpuworklib.FormSignalGenerator(ctx)
+    gen = gpuworklib.FormSignalGeneratorROCm(ctx)
     fs_sn, pts_sn, f0_sn = 100000.0, 8192, 10000.0
     amp_sn, an_sn = 1.0, 0.3
 
@@ -612,7 +615,7 @@ def make_plots(save_dir):
     sn_data = gen.generate()
 
     # Чистый сигнал
-    gen_pure = gpuworklib.FormSignalGenerator(ctx)
+    gen_pure = gpuworklib.FormSignalGeneratorROCm(ctx)
     gen_pure.set_params(fs=fs_sn, points=pts_sn, f0=f0_sn,
                         amplitude=amp_sn, noise_amplitude=0.0, norm=norm_val)
     pure_data = gen_pure.generate()

@@ -15,14 +15,17 @@ test_lch_farrow.py — Тесты LchFarrow (standalone Lagrange 48x5 fractional
 import sys
 import os
 import json
+import glob
 import numpy as np
 
 # ── Путь к gpuworklib (Python_test/lch_farrow/ -> 2 levels up) ──
-BUILD_PATHS = [
-    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Debug'),
-    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Release'),
-    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python'),
-]
+_root = os.path.join(os.path.dirname(__file__), '..', '..')
+BUILD_PATHS = (
+    glob.glob(os.path.join(_root, 'build', 'debian-*', 'python')) +
+    [os.path.join(_root, 'build', 'python', 'Debug'),
+     os.path.join(_root, 'build', 'python', 'Release'),
+     os.path.join(_root, 'build', 'python')]
+)
 for p in BUILD_PATHS:
     if os.path.isdir(p):
         sys.path.insert(0, os.path.abspath(p))
@@ -34,7 +37,7 @@ except ImportError:
     print("ERROR: gpuworklib not found. Build with -DBUILD_PYTHON=ON")
     sys.exit(1)
 
-if not hasattr(gpuworklib, 'LchFarrow'):
+if not hasattr(gpuworklib, 'LchFarrowROCm'):
     print("ERROR: gpuworklib built without LchFarrow.")
     print("  Rebuild: cmake -B build -DBUILD_PYTHON=ON && cmake --build build")
     sys.exit(1)
@@ -113,8 +116,8 @@ def test_zero_delay():
 
     signal = generate_cw_signal(fs, points, f0)
 
-    ctx = gpuworklib.GPUContext(0)
-    proc = gpuworklib.LchFarrow(ctx)
+    ctx = gpuworklib.ROCmGPUContext(0)
+    proc = gpuworklib.LchFarrowROCm(ctx)
     proc.set_sample_rate(fs)
     proc.set_delays([0.0])
     result = proc.process(signal)
@@ -140,8 +143,8 @@ def test_integer_delay():
 
     signal = generate_cw_signal(fs, points, f0)
 
-    ctx = gpuworklib.GPUContext(0)
-    proc = gpuworklib.LchFarrow(ctx)
+    ctx = gpuworklib.ROCmGPUContext(0)
+    proc = gpuworklib.LchFarrowROCm(ctx)
     proc.set_sample_rate(fs)
     proc.set_delays([delay_us])
     result = proc.process(signal).ravel()
@@ -178,8 +181,8 @@ def test_fractional_delay():
 
     signal = generate_cw_signal(fs, points, f0)
 
-    ctx = gpuworklib.GPUContext(0)
-    proc = gpuworklib.LchFarrow(ctx)
+    ctx = gpuworklib.ROCmGPUContext(0)
+    proc = gpuworklib.LchFarrowROCm(ctx)
     proc.set_sample_rate(fs)
     proc.set_delays([delay_us])
     result = proc.process(signal).ravel()
@@ -214,8 +217,8 @@ def test_multi_antenna():
     single = generate_cw_signal(fs, points, f0)
     signal = np.tile(single, (antennas, 1))  # (4, 4096)
 
-    ctx = gpuworklib.GPUContext(0)
-    proc = gpuworklib.LchFarrow(ctx)
+    ctx = gpuworklib.ROCmGPUContext(0)
+    proc = gpuworklib.LchFarrowROCm(ctx)
     proc.set_sample_rate(fs)
     proc.set_delays(delays)
     result = proc.process(signal)
@@ -253,20 +256,28 @@ def test_lch_farrow_vs_analytical():
     f_end = 2e6
     delay_us = 0.5  # 0.5 мкс
 
-    ctx = gpuworklib.GPUContext(0)
+    ctx = gpuworklib.ROCmGPUContext(0)
     # Вариант 1: Аналитическая задержка (идеальная)
-    gen_analytical = gpuworklib.LfmAnalyticalDelay(
+    gen_analytical = gpuworklib.LfmAnalyticalDelayROCm(
         ctx, f_start=f_start, f_end=f_end)
     gen_analytical.set_sampling(fs=fs, length=length)
     gen_analytical.set_delays([delay_us])
     analytical = gen_analytical.generate_gpu().ravel()
 
     # Вариант 2: Стандартный LFM + LchFarrow
-    sig = gpuworklib.SignalGenerator(ctx)
-    lfm_clean = sig.generate_lfm(
-        f_start=f_start, f_end=f_end, fs=fs, length=length)
+    if not hasattr(gpuworklib, 'SignalGenerator'):
+        # ROCm-only build: generate LFM via NumPy
+        duration = length / fs
+        chirp_rate = (f_end - f_start) / duration
+        t = np.arange(length) / fs
+        phase = np.pi * chirp_rate * t**2 + 2 * np.pi * f_start * t
+        lfm_clean = (np.exp(1j * phase)).astype(np.complex64)
+    else:
+        sig = gpuworklib.SignalGenerator(ctx)
+        lfm_clean = sig.generate_lfm(
+            f_start=f_start, f_end=f_end, fs=fs, length=length)
 
-    proc = gpuworklib.LchFarrow(ctx)
+    proc = gpuworklib.LchFarrowROCm(ctx)
     proc.set_sample_rate(fs)
     proc.set_delays([delay_us])
     farrow_result = proc.process(lfm_clean).ravel()

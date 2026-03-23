@@ -98,6 +98,8 @@ public:
     for (auto& row : data)
       flat.insert(flat.end(), row.begin(), row.end());
 
+    if (n_ant <= 1)
+      return vector_to_numpy(std::move(flat));
     return vector_to_numpy_2d(std::move(flat), n_ant, n_points);
   }
 

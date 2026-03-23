@@ -161,8 +161,8 @@ class TestSpectrumMaximaFinderROCm:
     def setUp(self):
         if not HAS_ROCM_MAXIMA:
             raise SkipTest("SpectrumMaximaFinderROCm not available")
-        ctx = gpuworklib.ROCmGPUContext(0)
-        self._finder = gpuworklib.SpectrumMaximaFinderROCm(ctx)
+        self._ctx = gpuworklib.ROCmGPUContext(0)
+        self._finder = gpuworklib.SpectrumMaximaFinderROCm(self._ctx)
 
     # ── process() — ONE_PEAK ─────────────────────────────────────────────────
 

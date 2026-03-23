@@ -1,40 +1,4 @@
-#pragma once
 
-/**
- * @file lch_farrow_kernels_rocm.hpp
- * @brief HIP kernel source for LchFarrowROCm (fractional delay, Lagrange 48x5)
- *
- * Contains:
- * - Philox-2x32-10 PRNG (counter-based, HIP-compatible)
- * - lch_farrow_delay kernel: fractional delay + optional Gaussian noise
- *
- * Kernels compiled at runtime via hiprtc.
- *
- * @author Kodo (AI Assistant)
- * @date 2026-02-23
- */
-
-#if ENABLE_ROCM
-
-namespace lch_farrow {
-namespace kernels {
-
-/**
- * @brief HIP kernel source for LchFarrow fractional delay
- *
- * lch_farrow_delay:
- *   Input:  float2_t* (complex signal), N = antennas * points
- *   Output: float2_t* (delayed signal), N = antennas * points
- *   Params: lagrange_matrix (48x5=240 floats), delay_us (per antenna)
- *
- * Algorithm (DelayedFormSignal_Kernel_CORRECT):
- *   read_pos = sample_id - delay_us[antenna] * 1e-6 * sample_rate
- *   center = floor(read_pos), frac = read_pos - center
- *   row = (uint)(frac * 48) % 48
- *   output[n] = sum(L[row][k] * input[center-1+k], k=0..4)
- */
-inline const char* GetLchFarrowKernelSource() {
-    return R"HIP(
 
 struct float2_t {
     float x;
@@ -179,10 +143,3 @@ __global__ void lch_farrow_delay(
     output[gid] = result;
 }
 
-)HIP";
-}
-
-}  // namespace kernels
-}  // namespace lch_farrow
-
-#endif  // ENABLE_ROCM

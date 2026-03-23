@@ -123,9 +123,9 @@ class TestMatrixCsvComparison:
         if _gw is None:
             raise SkipTest("gpuworklib не найден")
         try:
-            ctx = _gw.ROCmGPUContext(0)
+            self._ctx = _gw.ROCmGPUContext(0)
             self._inverter = _gw.CholeskyInverterROCm(
-                ctx, _gw.SymmetrizeMode.GpuKernel
+                self._ctx, _gw.SymmetrizeMode.GpuKernel
             )
         except Exception as e:
             raise SkipTest(f"ROCm недоступен: {e}")
