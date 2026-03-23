@@ -4,31 +4,30 @@
  * @file test_complex_to_mag_phase_rocm.hpp
  * @brief Tests for ComplexToMagPhaseROCm -- direct complex->mag+phase conversion
  *
- * Tests:
- * 1. Single beam, CPU -> CPU, sinusoid -> verify mag/phase vs std::abs/std::arg
- * 2. Multi-beam batch, CPU -> CPU, different amplitudes
- * 3. GPU input (void*) -> CPU output
- * 4. CPU -> GPU output (ProcessToGPU), verify interleaved data
- * 5. GPU -> GPU output (full GPU pipeline)
- * 6. Accuracy: edge cases (zero, pure real, pure imaginary, large/small values)
+ * ✅ MIGRATED to test_utils (2026-03-23)
  *
- * IMPORTANT: Tests compile ONLY with ENABLE_ROCM=1.
- * On Windows (no ROCm) this file is completely skipped.
+ * Tests:
+ * 1. single_beam_cpu    — CPU→CPU sinusoid, mag/phase accuracy
+ * 2. multi_beam_cpu     — 8 beams varying amplitude
+ * 3. gpu_input          — external GPU input → CPU output
+ * 4. cpu_to_gpu         — ProcessToGPU interleaved output
+ * 5. gpu_to_gpu         — full GPU pipeline
+ * 6. accuracy           — edge cases (zero, pure real/imag, 3-4-5, large/small)
  *
  * @author Kodo (AI Assistant)
- * @date 2026-03-01
+ * @date 2026-03-01 (migrated 2026-03-23)
  */
 
 #if ENABLE_ROCM
 
 #include "complex_to_mag_phase_rocm.hpp"
 #include "backends/rocm/rocm_backend.hpp"
-#include "services/console_output.hpp"
+
+#include "modules/test_utils/test_utils.hpp"
 
 #include <vector>
 #include <complex>
 #include <cmath>
-#include <string>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -38,494 +37,229 @@ namespace test_complex_to_mag_phase_rocm {
 
 using namespace fft_processor;
 using namespace drv_gpu_lib;
+using namespace gpu_test_utils;
 
-// =========================================================================
-// Utilities
-// =========================================================================
-
-inline void print_result(ConsoleOutput& con, int gpu_id,
-                         const std::string& test_name, bool passed) {
-    std::string status = passed ? "PASSED" : "FAILED";
-    std::string icon = passed ? "[+]" : "[X]";
-    con.Print(gpu_id, "C2MP ROCm", icon + " " + test_name + " ... " + status);
+// Module-specific helper: verify mag/phase pair with phase wrapping
+inline void CheckMagPhase(const std::complex<float>* input,
+    const float* mag, const float* phase, uint32_t n,
+    float& max_mag_err, float& max_phase_err) {
+  max_mag_err = 0; max_phase_err = 0;
+  for (uint32_t k = 0; k < n; ++k) {
+    float cpu_mag = std::abs(input[k]);
+    float cpu_ph = std::arg(input[k]);
+    float mag_err = std::fabs(cpu_mag - mag[k]);
+    float ph_err = std::fabs(cpu_ph - phase[k]);
+    if (ph_err > static_cast<float>(M_PI))
+      ph_err = 2.0f * static_cast<float>(M_PI) - ph_err;
+    max_mag_err = std::max(max_mag_err, mag_err);
+    if (cpu_mag > 1e-6f) max_phase_err = std::max(max_phase_err, ph_err);
+  }
 }
-
-/// Generate complex sinusoid (IQ) for testing
-inline std::vector<std::complex<float>> GenerateSinusoid(
-    float freq, float sample_rate, size_t n_point, float amplitude = 1.0f)
-{
-    std::vector<std::complex<float>> data(n_point);
-    for (size_t i = 0; i < n_point; ++i) {
-        float t = static_cast<float>(i) / sample_rate;
-        float phase = 2.0f * static_cast<float>(M_PI) * freq * t;
-        data[i] = std::complex<float>(amplitude * std::cos(phase),
-                                       amplitude * std::sin(phase));
-    }
-    return data;
-}
-
-/// Generate multi-beam data with varying amplitudes
-inline std::vector<std::complex<float>> GenerateMultiBeamVaryingAmplitude(
-    size_t beam_count, size_t n_point, float sample_rate,
-    float freq, float base_amplitude, float amp_step)
-{
-    std::vector<std::complex<float>> data(beam_count * n_point);
-    for (size_t b = 0; b < beam_count; ++b) {
-        float amplitude = base_amplitude + b * amp_step;
-        for (size_t i = 0; i < n_point; ++i) {
-            float t = static_cast<float>(i) / sample_rate;
-            float phase = 2.0f * static_cast<float>(M_PI) * freq * t;
-            data[b * n_point + i] = std::complex<float>(
-                amplitude * std::cos(phase),
-                amplitude * std::sin(phase));
-        }
-    }
-    return data;
-}
-
-// =========================================================================
-// Test 1: Single beam, CPU -> CPU (sinusoid)
-// =========================================================================
-
-inline bool test_single_beam_cpu(ConsoleOutput& con, int gpu_id) {
-    try {
-        ROCmBackend backend;
-        backend.Initialize(gpu_id);
-
-        ComplexToMagPhaseROCm converter(&backend);
-
-        const float freq = 100.0f;
-        const float sample_rate = 1000.0f;
-        const uint32_t n_point = 4096;
-        const float amplitude = 2.5f;
-
-        auto data = GenerateSinusoid(freq, sample_rate, n_point, amplitude);
-
-        MagPhaseParams params;
-        params.beam_count = 1;
-        params.n_point = n_point;
-
-        auto results = converter.Process(data, params);
-
-        bool ok = (results.size() == 1);
-        if (ok) {
-            ok = (results[0].n_point == n_point);
-        }
-
-        // Compare GPU results with CPU reference
-        float max_mag_err = 0.0f;
-        float max_phase_err = 0.0f;
-
-        if (ok) {
-            for (uint32_t k = 0; k < n_point; ++k) {
-                float cpu_mag = std::abs(data[k]);
-                float cpu_phase = std::arg(data[k]);
-                float gpu_mag = results[0].magnitude[k];
-                float gpu_phase = results[0].phase[k];
-
-                float mag_err = std::fabs(cpu_mag - gpu_mag);
-                float phase_err = std::fabs(cpu_phase - gpu_phase);
-
-                // Handle phase wrapping
-                if (phase_err > static_cast<float>(M_PI)) {
-                    phase_err = 2.0f * static_cast<float>(M_PI) - phase_err;
-                }
-
-                max_mag_err = std::max(max_mag_err, mag_err);
-                if (cpu_mag > 1e-6f) {
-                    max_phase_err = std::max(max_phase_err, phase_err);
-                }
-            }
-
-            ok = (max_mag_err < 1e-3f) && (max_phase_err < 1e-3f);
-            con.Print(gpu_id, "C2MP ROCm",
-                      "  max_mag_err=" + std::to_string(max_mag_err) +
-                      ", max_phase_err=" + std::to_string(max_phase_err));
-        }
-
-        print_result(con, gpu_id, "SingleBeam CPU->CPU (sinusoid)", ok);
-        return ok;
-    } catch (const std::exception& e) {
-        con.Print(gpu_id, "C2MP ROCm", "[X] SingleBeam EXCEPTION: " + std::string(e.what()));
-        return false;
-    }
-}
-
-// =========================================================================
-// Test 2: Multi-beam batch, CPU -> CPU
-// =========================================================================
-
-inline bool test_multi_beam_cpu(ConsoleOutput& con, int gpu_id) {
-    try {
-        ROCmBackend backend;
-        backend.Initialize(gpu_id);
-
-        ComplexToMagPhaseROCm converter(&backend);
-
-        const uint32_t beam_count = 8;
-        const uint32_t n_point = 4096;
-        const float sample_rate = 12000.0f;
-        const float freq = 500.0f;
-        const float base_amp = 0.5f;
-        const float amp_step = 0.5f;
-
-        auto data = GenerateMultiBeamVaryingAmplitude(
-            beam_count, n_point, sample_rate, freq, base_amp, amp_step);
-
-        MagPhaseParams params;
-        params.beam_count = beam_count;
-        params.n_point = n_point;
-
-        auto results = converter.Process(data, params);
-
-        bool ok = (results.size() == beam_count);
-
-        float max_mag_err = 0.0f;
-        for (uint32_t b = 0; b < beam_count && ok; ++b) {
-            ok = (results[b].beam_id == b);
-            ok = ok && (results[b].n_point == n_point);
-
-            float expected_amp = base_amp + b * amp_step;
-            for (uint32_t k = 0; k < n_point && ok; ++k) {
-                size_t idx = b * n_point + k;
-                float cpu_mag = std::abs(data[idx]);
-                float gpu_mag = results[b].magnitude[k];
-
-                float mag_err = std::fabs(cpu_mag - gpu_mag);
-                max_mag_err = std::max(max_mag_err, mag_err);
-            }
-        }
-
-        ok = ok && (max_mag_err < 1e-3f);
-        con.Print(gpu_id, "C2MP ROCm",
-                  "  " + std::to_string(beam_count) + " beams, max_mag_err=" +
-                  std::to_string(max_mag_err));
-
-        print_result(con, gpu_id, "MultiBeam CPU->CPU (8 beams)", ok);
-        return ok;
-    } catch (const std::exception& e) {
-        con.Print(gpu_id, "C2MP ROCm", "[X] MultiBeam EXCEPTION: " + std::string(e.what()));
-        return false;
-    }
-}
-
-// =========================================================================
-// Test 3: GPU input (void*) -> CPU output
-// =========================================================================
-
-inline bool test_gpu_input(ConsoleOutput& con, int gpu_id) {
-    try {
-        ROCmBackend backend;
-        backend.Initialize(gpu_id);
-
-        ComplexToMagPhaseROCm converter(&backend);
-
-        const uint32_t n_point = 2048;
-        const float freq = 200.0f;
-        const float sample_rate = 1000.0f;
-
-        auto data = GenerateSinusoid(freq, sample_rate, n_point);
-
-        // Upload data to GPU manually (external context)
-        size_t data_size = data.size() * sizeof(std::complex<float>);
-        void* gpu_data = backend.Allocate(data_size);
-        backend.MemcpyHostToDevice(gpu_data, data.data(), data_size);
-
-        MagPhaseParams params;
-        params.beam_count = 1;
-        params.n_point = n_point;
-
-        auto results = converter.Process(gpu_data, params, data_size);
-
-        backend.Free(gpu_data);
-
-        bool ok = (results.size() == 1) && (results[0].n_point == n_point);
-
-        float max_mag_err = 0.0f;
-        if (ok) {
-            for (uint32_t k = 0; k < n_point; ++k) {
-                float cpu_mag = std::abs(data[k]);
-                float gpu_mag = results[0].magnitude[k];
-                float mag_err = std::fabs(cpu_mag - gpu_mag);
-                max_mag_err = std::max(max_mag_err, mag_err);
-            }
-            ok = (max_mag_err < 1e-3f);
-        }
-
-        con.Print(gpu_id, "C2MP ROCm",
-                  "  GPU input: max_mag_err=" + std::to_string(max_mag_err));
-
-        print_result(con, gpu_id, "GPU Input (void*) -> CPU", ok);
-        return ok;
-    } catch (const std::exception& e) {
-        con.Print(gpu_id, "C2MP ROCm", "[X] GPU Input EXCEPTION: " + std::string(e.what()));
-        return false;
-    }
-}
-
-// =========================================================================
-// Test 4: CPU -> GPU output (ProcessToGPU)
-// =========================================================================
-
-inline bool test_process_to_gpu_cpu(ConsoleOutput& con, int gpu_id) {
-    try {
-        ROCmBackend backend;
-        backend.Initialize(gpu_id);
-
-        ComplexToMagPhaseROCm converter(&backend);
-
-        const uint32_t n_point = 1024;
-        const float freq = 300.0f;
-        const float sample_rate = 2000.0f;
-        const float amplitude = 3.0f;
-
-        auto data = GenerateSinusoid(freq, sample_rate, n_point, amplitude);
-
-        MagPhaseParams params;
-        params.beam_count = 1;
-        params.n_point = n_point;
-
-        // Process CPU -> GPU
-        void* gpu_output = converter.ProcessToGPU(data, params);
-
-        bool ok = (gpu_output != nullptr);
-
-        if (ok) {
-            // Read back interleaved data to verify
-            size_t output_size = n_point * 2 * sizeof(float);
-            std::vector<float> raw(n_point * 2);
-            backend.MemcpyDeviceToHost(raw.data(), gpu_output, output_size);
-
-            float max_mag_err = 0.0f;
-            float max_phase_err = 0.0f;
-
-            for (uint32_t k = 0; k < n_point; ++k) {
-                float gpu_mag   = raw[k * 2    ];  // .x = mag
-                float gpu_phase = raw[k * 2 + 1];  // .y = phase
-                float cpu_mag   = std::abs(data[k]);
-                float cpu_phase = std::arg(data[k]);
-
-                float mag_err = std::fabs(cpu_mag - gpu_mag);
-                float phase_err = std::fabs(cpu_phase - gpu_phase);
-                if (phase_err > static_cast<float>(M_PI)) {
-                    phase_err = 2.0f * static_cast<float>(M_PI) - phase_err;
-                }
-
-                max_mag_err = std::max(max_mag_err, mag_err);
-                if (cpu_mag > 1e-6f) {
-                    max_phase_err = std::max(max_phase_err, phase_err);
-                }
-            }
-
-            ok = (max_mag_err < 1e-3f) && (max_phase_err < 1e-3f);
-            con.Print(gpu_id, "C2MP ROCm",
-                      "  ProcessToGPU(CPU): max_mag_err=" + std::to_string(max_mag_err) +
-                      ", max_phase_err=" + std::to_string(max_phase_err));
-
-            // IMPORTANT: caller must free
-            backend.Free(gpu_output);
-        }
-
-        print_result(con, gpu_id, "CPU -> GPU (ProcessToGPU)", ok);
-        return ok;
-    } catch (const std::exception& e) {
-        con.Print(gpu_id, "C2MP ROCm", "[X] ProcessToGPU(CPU) EXCEPTION: " + std::string(e.what()));
-        return false;
-    }
-}
-
-// =========================================================================
-// Test 5: GPU -> GPU output (full GPU pipeline)
-// =========================================================================
-
-inline bool test_process_to_gpu_gpu(ConsoleOutput& con, int gpu_id) {
-    try {
-        ROCmBackend backend;
-        backend.Initialize(gpu_id);
-
-        ComplexToMagPhaseROCm converter(&backend);
-
-        const uint32_t beam_count = 4;
-        const uint32_t n_point = 2048;
-        const float freq = 150.0f;
-        const float sample_rate = 1000.0f;
-
-        auto data = GenerateMultiBeamVaryingAmplitude(
-            beam_count, n_point, sample_rate, freq, 1.0f, 1.0f);
-
-        // Upload data to GPU (external context)
-        size_t data_size = data.size() * sizeof(std::complex<float>);
-        void* gpu_input = backend.Allocate(data_size);
-        backend.MemcpyHostToDevice(gpu_input, data.data(), data_size);
-
-        MagPhaseParams params;
-        params.beam_count = beam_count;
-        params.n_point = n_point;
-
-        // GPU -> GPU: zero-copy path
-        void* gpu_output = converter.ProcessToGPU(gpu_input, params, data_size);
-
-        bool ok = (gpu_output != nullptr);
-
-        if (ok) {
-            // Read back and verify
-            size_t total = beam_count * n_point;
-            std::vector<float> raw(total * 2);
-            backend.MemcpyDeviceToHost(raw.data(), gpu_output, total * 2 * sizeof(float));
-
-            float max_mag_err = 0.0f;
-            for (size_t i = 0; i < total; ++i) {
-                float gpu_mag = raw[i * 2];  // .x = mag
-                float cpu_mag = std::abs(data[i]);
-                float mag_err = std::fabs(cpu_mag - gpu_mag);
-                max_mag_err = std::max(max_mag_err, mag_err);
-            }
-
-            ok = (max_mag_err < 1e-3f);
-            con.Print(gpu_id, "C2MP ROCm",
-                      "  GPU->GPU: " + std::to_string(beam_count) + " beams, max_mag_err=" +
-                      std::to_string(max_mag_err));
-
-            backend.Free(gpu_output);
-        }
-
-        backend.Free(gpu_input);
-
-        print_result(con, gpu_id, "GPU -> GPU (ProcessToGPU)", ok);
-        return ok;
-    } catch (const std::exception& e) {
-        con.Print(gpu_id, "C2MP ROCm", "[X] ProcessToGPU(GPU) EXCEPTION: " + std::string(e.what()));
-        return false;
-    }
-}
-
-// =========================================================================
-// Test 6: Accuracy -- edge cases
-// =========================================================================
-
-inline bool test_accuracy(ConsoleOutput& con, int gpu_id) {
-    try {
-        ROCmBackend backend;
-        backend.Initialize(gpu_id);
-
-        ComplexToMagPhaseROCm converter(&backend);
-
-        // Edge case data: zero, pure real, pure imaginary, large, small, negative
-        std::vector<std::complex<float>> data = {
-            {0.0f, 0.0f},        // zero
-            {1.0f, 0.0f},        // pure real positive
-            {-1.0f, 0.0f},       // pure real negative
-            {0.0f, 1.0f},        // pure imaginary positive
-            {0.0f, -1.0f},       // pure imaginary negative
-            {1.0f, 1.0f},        // 45 degrees
-            {-1.0f, 1.0f},       // 135 degrees
-            {-1.0f, -1.0f},      // -135 degrees
-            {1.0f, -1.0f},       // -45 degrees
-            {1000.0f, 2000.0f},  // large values
-            {1e-6f, 1e-6f},      // small values
-            {3.0f, 4.0f},        // 3-4-5 triangle
-            {0.0f, 0.0f},       // padding to make n_point reasonable
-            {5.0f, 12.0f},       // 5-12-13 triangle
-            {1.0f, 0.0001f},     // nearly real
-            {0.0001f, 1.0f},     // nearly imaginary
-        };
-
-        const uint32_t n_point = static_cast<uint32_t>(data.size());
-
-        MagPhaseParams params;
-        params.beam_count = 1;
-        params.n_point = n_point;
-
-        auto results = converter.Process(data, params);
-
-        bool ok = (results.size() == 1) && (results[0].n_point == n_point);
-
-        float max_mag_err = 0.0f;
-        float max_phase_err = 0.0f;
-
-        if (ok) {
-            for (uint32_t k = 0; k < n_point; ++k) {
-                float cpu_mag = std::abs(data[k]);
-                float cpu_phase = std::arg(data[k]);
-                float gpu_mag = results[0].magnitude[k];
-                float gpu_phase = results[0].phase[k];
-
-                float mag_err = std::fabs(cpu_mag - gpu_mag);
-                float phase_err = std::fabs(cpu_phase - gpu_phase);
-
-                // Handle phase wrapping
-                if (phase_err > static_cast<float>(M_PI)) {
-                    phase_err = 2.0f * static_cast<float>(M_PI) - phase_err;
-                }
-
-                max_mag_err = std::max(max_mag_err, mag_err);
-                // Only check phase where magnitude is significant
-                if (cpu_mag > 1e-5f) {
-                    max_phase_err = std::max(max_phase_err, phase_err);
-                }
-            }
-
-            // Verify specific known values
-            // data[11] = {3, 4} -> mag = 5.0, phase = atan2(4,3) = 0.9273
-            float mag_3_4_err = std::fabs(results[0].magnitude[11] - 5.0f);
-            float phase_3_4_err = std::fabs(results[0].phase[11] - std::atan2(4.0f, 3.0f));
-
-            con.Print(gpu_id, "C2MP ROCm",
-                      "  3-4-5: mag_err=" + std::to_string(mag_3_4_err) +
-                      ", phase_err=" + std::to_string(phase_3_4_err));
-
-            ok = (max_mag_err < 1e-2f) && (max_phase_err < 1e-2f);
-            con.Print(gpu_id, "C2MP ROCm",
-                      "  max_mag_err=" + std::to_string(max_mag_err) +
-                      ", max_phase_err=" + std::to_string(max_phase_err));
-        }
-
-        print_result(con, gpu_id, "Accuracy (edge cases)", ok);
-        return ok;
-    } catch (const std::exception& e) {
-        con.Print(gpu_id, "C2MP ROCm", "[X] Accuracy EXCEPTION: " + std::string(e.what()));
-        return false;
-    }
-}
-
-// =========================================================================
-// Main test runner
-// =========================================================================
 
 inline void run() {
-    auto& con = ConsoleOutput::GetInstance();
-    con.Start();
-    int gpu_id = 0;
+  int gpu_id = 0;
 
-    con.Print(gpu_id, "C2MP ROCm", "");
-    con.Print(gpu_id, "C2MP ROCm", "============================================");
-    con.Print(gpu_id, "C2MP ROCm", "  ComplexToMagPhaseROCm Tests");
-    con.Print(gpu_id, "C2MP ROCm", "============================================");
+  int device_count = ROCmCore::GetAvailableDeviceCount();
+  if (device_count == 0) {
+    ConsoleOutput::GetInstance().Print(gpu_id, "C2MP ROCm", "[!] No ROCm devices -- skip");
+    return;
+  }
 
-    // Check for ROCm devices
-    int device_count = ROCmCore::GetAvailableDeviceCount();
-    con.Print(gpu_id, "C2MP ROCm", "Available ROCm devices: " + std::to_string(device_count));
+  ROCmBackend backend;
+  backend.Initialize(gpu_id);
 
-    if (device_count == 0) {
-        con.Print(gpu_id, "C2MP ROCm", "[!] No ROCm devices found -- skipping tests");
-        return;
+  TestRunner runner(&backend, "C2MP ROCm", gpu_id);
+
+  // ── Test 1: Single beam CPU→CPU ───────────────────────────────
+
+  runner.test("single_beam_cpu", [&]() -> TestResult {
+    ComplexToMagPhaseROCm converter(&backend);
+    auto data = refs::GenerateSinusoid(100.0f, 1000.0f, 4096, 2.5f);
+
+    MagPhaseParams params;
+    params.beam_count = 1;
+    params.n_point = 4096;
+
+    auto results = converter.Process(data, params);
+
+    TestResult tr{"single_beam_cpu"};
+    if (results.empty()) return tr.add(FailResult("empty", 0, 1));
+
+    float me, pe;
+    CheckMagPhase(data.data(), results[0].magnitude.data(),
+                  results[0].phase.data(), 4096, me, pe);
+    tr.add(ScalarAbsError(static_cast<double>(me), 0.0, 1e-3, "mag_err"));
+    tr.add(ScalarAbsError(static_cast<double>(pe), 0.0, 1e-3, "phase_err"));
+    return tr;
+  });
+
+  // ── Test 2: Multi-beam CPU→CPU ────────────────────────────────
+
+  runner.test("multi_beam_cpu", [&]() -> TestResult {
+    ComplexToMagPhaseROCm converter(&backend);
+
+    const uint32_t beams = 8, n = 4096;
+    // Generate with varying amplitude
+    std::vector<std::complex<float>> data(beams * n);
+    for (uint32_t b = 0; b < beams; ++b) {
+      float amp = 0.5f + b * 0.5f;
+      auto beam = refs::GenerateSinusoid(500.0f, 12000.0f, n, amp);
+      std::copy(beam.begin(), beam.end(), data.begin() + b * n);
     }
 
-    int passed = 0;
-    int total = 6;
+    MagPhaseParams params;
+    params.beam_count = beams;
+    params.n_point = n;
 
-    if (test_single_beam_cpu(con, gpu_id)) ++passed;
-    if (test_multi_beam_cpu(con, gpu_id)) ++passed;
-    if (test_gpu_input(con, gpu_id)) ++passed;
-    if (test_process_to_gpu_cpu(con, gpu_id)) ++passed;
-    if (test_process_to_gpu_gpu(con, gpu_id)) ++passed;
-    if (test_accuracy(con, gpu_id)) ++passed;
+    auto results = converter.Process(data, params);
 
-    con.Print(gpu_id, "C2MP ROCm", "");
-    con.Print(gpu_id, "C2MP ROCm", "Results: " + std::to_string(passed) + "/" +
-                                    std::to_string(total) + " passed");
-    con.Print(gpu_id, "C2MP ROCm", "============================================");
-    con.Print(gpu_id, "C2MP ROCm", "");
+    TestResult tr{"multi_beam_cpu"};
+    if (results.size() != beams) return tr.add(FailResult("beams", results.size(), beams));
+
+    float worst = 0;
+    for (uint32_t b = 0; b < beams; ++b) {
+      for (uint32_t k = 0; k < n; ++k) {
+        float err = std::fabs(std::abs(data[b * n + k]) - results[b].magnitude[k]);
+        worst = std::max(worst, err);
+      }
+    }
+    tr.add(ScalarAbsError(static_cast<double>(worst), 0.0, 1e-3, "mag_err"));
+    return tr;
+  });
+
+  // ── Test 3: GPU input → CPU output ────────────────────────────
+
+  runner.test("gpu_input", [&]() -> TestResult {
+    ComplexToMagPhaseROCm converter(&backend);
+    auto data = refs::GenerateSinusoid(200.0f, 1000.0f, 2048);
+
+    size_t sz = data.size() * sizeof(std::complex<float>);
+    void* gpu_data = backend.Allocate(sz);
+    backend.MemcpyHostToDevice(gpu_data, data.data(), sz);
+
+    MagPhaseParams params;
+    params.beam_count = 1;
+    params.n_point = 2048;
+
+    auto results = converter.Process(gpu_data, params, sz);
+    backend.Free(gpu_data);
+
+    TestResult tr{"gpu_input"};
+    if (results.empty()) return tr.add(FailResult("empty", 0, 1));
+
+    float me, pe;
+    CheckMagPhase(data.data(), results[0].magnitude.data(),
+                  results[0].phase.data(), 2048, me, pe);
+    tr.add(ScalarAbsError(static_cast<double>(me), 0.0, 1e-3, "mag_err"));
+    return tr;
+  });
+
+  // ── Test 4: CPU → GPU (ProcessToGPU) ──────────────────────────
+
+  runner.test("cpu_to_gpu", [&]() -> TestResult {
+    ComplexToMagPhaseROCm converter(&backend);
+    auto data = refs::GenerateSinusoid(300.0f, 2000.0f, 1024, 3.0f);
+
+    MagPhaseParams params;
+    params.beam_count = 1;
+    params.n_point = 1024;
+
+    void* gpu_out = converter.ProcessToGPU(data, params);
+
+    TestResult tr{"cpu_to_gpu"};
+    if (!gpu_out) return tr.add(FailResult("null_ptr", 0, 1));
+
+    std::vector<float> raw(1024 * 2);
+    backend.MemcpyDeviceToHost(raw.data(), gpu_out, raw.size() * sizeof(float));
+    backend.Free(gpu_out);
+
+    float max_mag_err = 0, max_phase_err = 0;
+    for (uint32_t k = 0; k < 1024; ++k) {
+      float gpu_mag = raw[k * 2], gpu_ph = raw[k * 2 + 1];
+      float cpu_mag = std::abs(data[k]), cpu_ph = std::arg(data[k]);
+      max_mag_err = std::max(max_mag_err, std::fabs(cpu_mag - gpu_mag));
+      float pe = std::fabs(cpu_ph - gpu_ph);
+      if (pe > static_cast<float>(M_PI)) pe = 2.0f * static_cast<float>(M_PI) - pe;
+      if (cpu_mag > 1e-6f) max_phase_err = std::max(max_phase_err, pe);
+    }
+    tr.add(ScalarAbsError(static_cast<double>(max_mag_err), 0.0, 1e-3, "mag_err"));
+    tr.add(ScalarAbsError(static_cast<double>(max_phase_err), 0.0, 1e-3, "phase_err"));
+    return tr;
+  });
+
+  // ── Test 5: GPU → GPU ────────────────────────────────────────
+
+  runner.test("gpu_to_gpu", [&]() -> TestResult {
+    ComplexToMagPhaseROCm converter(&backend);
+    const uint32_t beams = 4, n = 2048;
+
+    std::vector<std::complex<float>> data(beams * n);
+    for (uint32_t b = 0; b < beams; ++b) {
+      float amp = 1.0f + b;
+      auto beam = refs::GenerateSinusoid(150.0f, 1000.0f, n, amp);
+      std::copy(beam.begin(), beam.end(), data.begin() + b * n);
+    }
+
+    size_t sz = data.size() * sizeof(std::complex<float>);
+    void* gpu_in = backend.Allocate(sz);
+    backend.MemcpyHostToDevice(gpu_in, data.data(), sz);
+
+    MagPhaseParams params;
+    params.beam_count = beams;
+    params.n_point = n;
+
+    void* gpu_out = converter.ProcessToGPU(gpu_in, params, sz);
+    backend.Free(gpu_in);
+
+    TestResult tr{"gpu_to_gpu"};
+    if (!gpu_out) return tr.add(FailResult("null_ptr", 0, 1));
+
+    size_t total = beams * n;
+    std::vector<float> raw(total * 2);
+    backend.MemcpyDeviceToHost(raw.data(), gpu_out, raw.size() * sizeof(float));
+    backend.Free(gpu_out);
+
+    float worst = 0;
+    for (size_t i = 0; i < total; ++i) {
+      worst = std::max(worst, std::fabs(std::abs(data[i]) - raw[i * 2]));
+    }
+    tr.add(ScalarAbsError(static_cast<double>(worst), 0.0, 1e-3, "mag_err"));
+    return tr;
+  });
+
+  // ── Test 6: Accuracy — edge cases ─────────────────────────────
+
+  runner.test("accuracy", [&]() -> TestResult {
+    ComplexToMagPhaseROCm converter(&backend);
+
+    std::vector<std::complex<float>> data = {
+      {0,0}, {1,0}, {-1,0}, {0,1}, {0,-1},
+      {1,1}, {-1,1}, {-1,-1}, {1,-1},
+      {1000,2000}, {1e-6f,1e-6f}, {3,4}, {0,0}, {5,12}, {1,0.0001f}, {0.0001f,1}
+    };
+    uint32_t n = static_cast<uint32_t>(data.size());
+
+    MagPhaseParams params;
+    params.beam_count = 1;
+    params.n_point = n;
+
+    auto results = converter.Process(data, params);
+
+    TestResult tr{"accuracy"};
+    if (results.empty()) return tr.add(FailResult("empty", 0, 1));
+
+    float me, pe;
+    CheckMagPhase(data.data(), results[0].magnitude.data(),
+                  results[0].phase.data(), n, me, pe);
+    tr.add(ScalarAbsError(static_cast<double>(me), 0.0, 1e-2, "mag_err"));
+    tr.add(ScalarAbsError(static_cast<double>(pe), 0.0, 1e-2, "phase_err"));
+
+    // 3-4-5 triangle
+    tr.add(ScalarAbsError(static_cast<double>(results[0].magnitude[11]), 5.0, 1e-3, "mag_3_4_5"));
+    return tr;
+  });
+
+  runner.print_summary();
 }
 
 }  // namespace test_complex_to_mag_phase_rocm
