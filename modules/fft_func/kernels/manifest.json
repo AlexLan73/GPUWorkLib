@@ -28,6 +28,20 @@
       "created": "2026-03-16T10:48:17",
       "params": "gfx1201",
       "backend": "rocm"
+    },
+    {
+      "name": "C2MP_kernels",
+      "comment": "C2MP hiprtc kernels",
+      "created": "2026-03-23T10:39:05",
+      "params": "",
+      "backend": "rocm"
+    },
+    {
+      "name": "SpectrumMaxima_kernels",
+      "comment": "SpectrumMaxima hiprtc kernels",
+      "created": "2026-03-23T10:39:47",
+      "params": "",
+      "backend": "rocm"
     }
   ]
 }

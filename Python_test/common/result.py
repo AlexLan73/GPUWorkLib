@@ -58,7 +58,8 @@ class TestResult:
         if self.error is not None:
             return False
         if not self.validations:
-            return False
+            # assert-style test: passed if explicitly marked
+            return bool(self.metadata.get("assert_passed"))
         return all(v.passed for v in self.validations)
 
     def add(self, v: ValidationResult) -> "TestResult":

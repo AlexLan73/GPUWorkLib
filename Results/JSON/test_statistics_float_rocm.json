@@ -1,0 +1,14 @@
+{
+  "module": "StatsFloat",
+  "total": 6,
+  "passed": 6,
+  "failed": 0,
+  "tests": [
+    {"name": "stats_vector_float", "passed": true, "skipped": false, "checks": 2},
+    {"name": "median_vector_float", "passed": true, "skipped": false, "checks": 1},
+    {"name": "stats_gpu_float_managed", "passed": true, "skipped": false, "checks": 2},
+    {"name": "median_gpu_float_managed", "passed": true, "skipped": false, "checks": 1},
+    {"name": "pipeline_mag_to_stats", "passed": true, "skipped": false, "checks": 2},
+    {"name": "pipeline_mag_to_median", "passed": true, "skipped": false, "checks": 1}
+  ]
+}

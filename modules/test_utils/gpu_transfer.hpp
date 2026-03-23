@@ -12,7 +12,7 @@
 #include <string>
 
 // DrvGPU includes
-#include "DrvGPU/backends/i_backend.hpp"
+#include "interface/i_backend.hpp"
 
 // OpenCL — всегда доступен
 #include <CL/cl.h>
@@ -120,7 +120,7 @@ ReadGpuBuffer(drv_gpu_lib::IBackend* backend, void* buffer, size_t count,
               size_t offset = 0, bool release = true)
 {
 #ifdef ENABLE_ROCM
-  if (backend->GetBackendType() == drv_gpu_lib::BackendType::ROCm) {
+  if (backend->GetType() == drv_gpu_lib::BackendType::ROCm) {
     return ReadHipBuffer<T>(backend->GetNativeQueue(), buffer, count,
                             offset, release);
   }

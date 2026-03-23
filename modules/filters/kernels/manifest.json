@@ -70,6 +70,41 @@
       "created": "2026-03-16T15:19:23",
       "params": "gfx1201",
       "backend": "rocm"
+    },
+    {
+      "name": "FIR_kernels",
+      "comment": "FIR hiprtc kernels",
+      "created": "2026-03-23T10:40:16",
+      "params": "",
+      "backend": "rocm"
+    },
+    {
+      "name": "IIR_kernels",
+      "comment": "IIR hiprtc kernels",
+      "created": "2026-03-23T10:40:17",
+      "params": "",
+      "backend": "rocm"
+    },
+    {
+      "name": "SMA_kernels",
+      "comment": "SMA hiprtc kernels",
+      "created": "2026-03-23T10:40:17",
+      "params": "",
+      "backend": "rocm"
+    },
+    {
+      "name": "Kalman_kernels",
+      "comment": "Kalman hiprtc kernels",
+      "created": "2026-03-23T10:40:17",
+      "params": "",
+      "backend": "rocm"
+    },
+    {
+      "name": "KAMA_kernels",
+      "comment": "KAMA hiprtc kernels",
+      "created": "2026-03-23T10:40:17",
+      "params": "",
+      "backend": "rocm"
     }
   ]
 }

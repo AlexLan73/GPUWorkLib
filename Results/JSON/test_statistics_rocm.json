@@ -1,0 +1,23 @@
+{
+  "module": "Stats ROCm",
+  "total": 15,
+  "passed": 15,
+  "failed": 0,
+  "tests": [
+    {"name": "mean_single_beam", "passed": true, "skipped": false, "checks": 2},
+    {"name": "mean_multi_beam", "passed": true, "skipped": false, "checks": 8},
+    {"name": "welford_statistics", "passed": true, "skipped": false, "checks": 3},
+    {"name": "median_linear", "passed": true, "skipped": false, "checks": 1},
+    {"name": "gpu_input", "passed": true, "skipped": false, "checks": 1},
+    {"name": "mean_constant", "passed": true, "skipped": false, "checks": 2},
+    {"name": "benchmark_median", "passed": true, "skipped": false, "checks": 1},
+    {"name": "histogram_median_basic", "passed": true, "skipped": false, "checks": 1},
+    {"name": "histogram_median_multi", "passed": true, "skipped": false, "checks": 4},
+    {"name": "histogram_median_float", "passed": true, "skipped": false, "checks": 2},
+    {"name": "histogram_vs_radix_benchmark", "passed": true, "skipped": false, "checks": 1},
+    {"name": "compute_all_cpu", "passed": true, "skipped": false, "checks": 24},
+    {"name": "compute_all_gpu", "passed": true, "skipped": false, "checks": 10},
+    {"name": "compute_all_float", "passed": true, "skipped": false, "checks": 10},
+    {"name": "compute_all_edge_cases", "passed": true, "skipped": false, "checks": 10}
+  ]
+}

@@ -66,21 +66,35 @@ class TestRunner:
             if name.startswith("test_") and callable(getattr(obj, name))
         ])
 
+        setup = getattr(obj, "setUp", None)
+        teardown = getattr(obj, "tearDown", None)
+
         for method_name in test_methods:
             method = getattr(obj, method_name)
             full_name = f"{obj.__class__.__name__}.{method_name}"
             result = TestResult(test_name=full_name)
 
             try:
+                if setup:
+                    setup()
                 method_result = method()
                 if isinstance(method_result, TestResult):
                     method_result.test_name = full_name
                     result = method_result
+                else:
+                    # test used assert-style (returned None) — mark as passed
+                    result.metadata["assert_passed"] = True
             except SkipTest as e:
                 result.metadata["skipped"] = True
                 result.metadata["skip_reason"] = str(e)
             except Exception as e:
                 result.error = e
+            finally:
+                if teardown:
+                    try:
+                        teardown()
+                    except Exception:
+                        pass
 
             results.append(result)
 

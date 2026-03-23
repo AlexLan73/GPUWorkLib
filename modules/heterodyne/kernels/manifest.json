@@ -7,6 +7,13 @@
       "created": "2026-03-10T11:12:40",
       "params": "gfx1201",
       "backend": "rocm"
+    },
+    {
+      "name": "Heterodyne_kernels",
+      "comment": "Heterodyne hiprtc kernels",
+      "created": "2026-03-23T10:40:10",
+      "params": "",
+      "backend": "rocm"
     }
   ]
 }

@@ -138,7 +138,7 @@ def cpu_pipeline(delays_s):
 
 def gpu_pipeline(delays_s):
     """Full GPU pipeline via gpuworklib.HeterodyneDechirp."""
-    ctx = gpuworklib.GPUContext(0)
+    ctx = gpuworklib.ROCmGPUContext(0)
     het = gpuworklib.HeterodyneDechirp(ctx)
     het.set_params(F_START, F_END, FS, N, len(delays_s))
 

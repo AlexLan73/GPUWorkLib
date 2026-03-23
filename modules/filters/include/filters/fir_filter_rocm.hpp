@@ -101,7 +101,7 @@ public:
 
   uint32_t GetNumTaps() const { return static_cast<uint32_t>(coefficients_.size()); }
   const std::vector<float>& GetCoefficients() const { return coefficients_; }
-  bool IsReady() const { return kernel_compiled_ && !coefficients_.empty(); }
+  bool IsReady() const { return compiled_ && !coefficients_.empty(); }
 
 private:
   void EnsureCompiled();

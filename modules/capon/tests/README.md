@@ -60,7 +60,7 @@ R^{-1}                      — обращение (rocSOLVER POTRF+POTRI)
 
 Сравнение с CPU прототипом: `Doc_Addition/Capon/capon_test/` (ArrayFire).
 
-TODO: Python тесты в `Python_test/capon/test_capon.py` — сравнение с NumPy/SciPy.
+Python тесты: `Python_test/capon/test_capon.py` — см. [Python_test/capon/README.md](../../../Python_test/capon/README.md).
 
 ## Статус
 
@@ -71,4 +71,4 @@ TODO: Python тесты в `Python_test/capon/test_capon.py` — сравнен�
 - [x] Реализация AdaptBeamformOp (rocBLAS CGEMM)
 - [x] Тесты 01-04 (написаны, НЕ тестировано на GPU)
 - [ ] Тест 05 (GPU-to-GPU: нужен GPU alloc/upload API)
-- [ ] Python тесты (сравнение с NumPy)
+- [x] Python тесты (`Python_test/capon/test_capon.py`) — NumPy + реальные данные MATLAB

@@ -34,6 +34,7 @@ warnings.filterwarnings('ignore', message='Unable to import Axes3D', category=Us
 
 # ── Путь к gpuworklib (Python_test/signal_generators/ -> 2 levels up) ──
 BUILD_PATHS = [
+    os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'debian-radeon9070', 'python'),
     os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Debug'),
     os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python', 'Release'),
     os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'python'),
@@ -50,12 +51,9 @@ except ImportError:
     print(f"Searched: {BUILD_PATHS}")
     sys.exit(1)
 
-if not hasattr(gpuworklib, 'DelayedFormSignalGenerator'):
-    print("ERROR: gpuworklib built without DelayedFormSignalGenerator.")
-    print("  - Rebuild: cmake -B build -DBUILD_PYTHON=ON && cmake --build build")
-    print("  - PyCharm: Run → Edit Configurations → this script:")
-    print("      Working directory: <корень GPUWorkLib>")
-    print("      PYTHONPATH or Path: add build/python (или build/python/Release)")
+if not hasattr(gpuworklib, 'DelayedFormSignalGeneratorROCm'):
+    print("ERROR: gpuworklib built without DelayedFormSignalGeneratorROCm.")
+    print("  - Rebuild: cmake -B build -DBUILD_PYTHON=ON -DENABLE_ROCM=ON && cmake --build build")
     print("  - Loaded from:", getattr(gpuworklib, '__file__', '?'))
     sys.exit(1)
 
@@ -153,8 +151,8 @@ def test_integer_delay():
     delay_samples = delay_us * 1e-6 * fs  # = 5.0
 
     # GPU
-    ctx = gpuworklib.GPUContext(0)
-    gen = gpuworklib.DelayedFormSignalGenerator(ctx)
+    ctx = gpuworklib.ROCmGPUContext(0)
+    gen = gpuworklib.DelayedFormSignalGeneratorROCm(ctx)
     gen.set_params(fs=fs, antennas=1, points=points, f0=f0,
                    amplitude=amplitude, norm=norm_val)
     gen.set_delays([delay_us])
@@ -192,8 +190,8 @@ def test_fractional_delay():
     delay_us = 2.7
     delay_samples = delay_us * 1e-6 * fs
 
-    ctx = gpuworklib.GPUContext(0)
-    gen = gpuworklib.DelayedFormSignalGenerator(ctx)
+    ctx = gpuworklib.ROCmGPUContext(0)
+    gen = gpuworklib.DelayedFormSignalGeneratorROCm(ctx)
     gen.set_params(fs=fs, antennas=1, points=points, f0=f0,
                    amplitude=amplitude, norm=norm_val)
     gen.set_delays([delay_us])
@@ -227,8 +225,8 @@ def test_multichannel_delay():
     norm_val = 1.0 / np.sqrt(2)
     delays = [i * 1.5 for i in range(antennas)]  # 0, 1.5, 3.0, ..., 10.5 мкс
 
-    ctx = gpuworklib.GPUContext(0)
-    gen = gpuworklib.DelayedFormSignalGenerator(ctx)
+    ctx = gpuworklib.ROCmGPUContext(0)
+    gen = gpuworklib.DelayedFormSignalGeneratorROCm(ctx)
     gen.set_params(fs=fs, antennas=antennas, points=points, f0=f0,
                    amplitude=amplitude, norm=norm_val)
     gen.set_delays(delays)
@@ -273,16 +271,16 @@ def test_zero_delay():
     amplitude = 1.0
     norm_val = 1.0 / np.sqrt(2)
 
-    ctx = gpuworklib.GPUContext(0)
+    ctx = gpuworklib.ROCmGPUContext(0)
     # DelayedFormSignalGenerator с delay=0
-    dgen = gpuworklib.DelayedFormSignalGenerator(ctx)
+    dgen = gpuworklib.DelayedFormSignalGeneratorROCm(ctx)
     dgen.set_params(fs=fs, antennas=1, points=points, f0=f0,
                     amplitude=amplitude, norm=norm_val)
     dgen.set_delays([0.0])
     delayed = dgen.generate()
 
     # FormSignalGenerator (reference — без шума и задержки)
-    fgen = gpuworklib.FormSignalGenerator(ctx)
+    fgen = gpuworklib.FormSignalGeneratorROCm(ctx)
     fgen.set_params(fs=fs, antennas=1, points=points, f0=f0,
                     amplitude=amplitude, norm=norm_val)
     original = fgen.generate()
@@ -309,8 +307,8 @@ def test_delay_with_noise():
     norm_val = 1.0 / np.sqrt(2)
     delay_us = 3.5
 
-    ctx = gpuworklib.GPUContext(0)
-    gen = gpuworklib.DelayedFormSignalGenerator(ctx)
+    ctx = gpuworklib.ROCmGPUContext(0)
+    gen = gpuworklib.DelayedFormSignalGeneratorROCm(ctx)
     gen.set_params(fs=fs, antennas=1, points=points, f0=f0,
                    amplitude=amplitude, noise_amplitude=noise_amp,
                    norm=norm_val, noise_seed=42)
@@ -318,7 +316,7 @@ def test_delay_with_noise():
     noisy = gen.generate()
 
     # Без шума
-    gen2 = gpuworklib.DelayedFormSignalGenerator(ctx)
+    gen2 = gpuworklib.DelayedFormSignalGeneratorROCm(ctx)
     gen2.set_params(fs=fs, antennas=1, points=points, f0=f0,
                     amplitude=amplitude, norm=norm_val)
     gen2.set_delays([delay_us])
@@ -525,10 +523,10 @@ def plot4_delay_sweep():
     errors = []
 
     clean = getX_numpy(fs, points, f0, amplitude, 0.0, 0.0, norm_val)
-    ctx = gpuworklib.GPUContext(0)
+    ctx = gpuworklib.ROCmGPUContext(0)
 
     for d_us in delays_us:
-        gen = gpuworklib.DelayedFormSignalGenerator(ctx)
+        gen = gpuworklib.DelayedFormSignalGeneratorROCm(ctx)
         gen.set_params(fs=fs, antennas=1, points=points, f0=f0,
                        amplitude=amplitude, norm=norm_val)
         gen.set_delays([float(d_us)])

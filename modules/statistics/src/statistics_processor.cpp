@@ -41,6 +41,8 @@ static const std::vector<std::string> kKernelNames = {
 
 static constexpr unsigned int kBlockSize = 256;
 
+namespace statistics {
+
 // =========================================================================
 // Constructor / Destructor / Move
 // =========================================================================

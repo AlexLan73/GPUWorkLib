@@ -503,7 +503,7 @@ def step08_gpu_pipeline():
     print("STEP 8: GPU Pipeline (HeterodyneDechirp.process)")
     print("=" * 60)
 
-    ctx = gpuworklib.GPUContext(0)
+    ctx = gpuworklib.ROCmGPUContext(0)
     het = gpuworklib.HeterodyneDechirp(ctx)
     het.set_params(F_START, F_END, FS, N, ANTENNAS)
 

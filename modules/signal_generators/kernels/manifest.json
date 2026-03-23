@@ -35,6 +35,48 @@
       "created": "2026-03-17T08:02:02",
       "params": "fs=1e+07,f0=1e+06,a=1,an=0,antennas=1,points=256",
       "backend": "opencl"
+    },
+    {
+      "name": "CwGen_kernels",
+      "comment": "CwGen hiprtc kernels",
+      "created": "2026-03-23T10:39:48",
+      "params": "",
+      "backend": "rocm"
+    },
+    {
+      "name": "LfmGen_kernels",
+      "comment": "LfmGen hiprtc kernels",
+      "created": "2026-03-23T10:39:48",
+      "params": "",
+      "backend": "rocm"
+    },
+    {
+      "name": "NoiseGen_kernels",
+      "comment": "NoiseGen hiprtc kernels",
+      "created": "2026-03-23T10:39:48",
+      "params": "",
+      "backend": "rocm"
+    },
+    {
+      "name": "LfmConj_kernels",
+      "comment": "LfmConj hiprtc kernels",
+      "created": "2026-03-23T10:39:48",
+      "params": "",
+      "backend": "rocm"
+    },
+    {
+      "name": "FormSignal_kernels",
+      "comment": "FormSignal hiprtc kernels",
+      "created": "2026-03-23T10:39:48",
+      "params": "",
+      "backend": "rocm"
+    },
+    {
+      "name": "LfmDelay_kernels",
+      "comment": "LfmDelay hiprtc kernels",
+      "created": "2026-03-23T11:53:49",
+      "params": "",
+      "backend": "rocm"
     }
   ]
 }

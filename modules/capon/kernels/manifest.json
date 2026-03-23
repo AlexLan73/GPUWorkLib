@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "kernels": [
+    {
+      "name": "Capon_kernels",
+      "comment": "Capon hiprtc kernels",
+      "created": "2026-03-23T10:40:39",
+      "params": "",
+      "backend": "rocm"
+    }
+  ]
+}

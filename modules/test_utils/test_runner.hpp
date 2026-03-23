@@ -13,7 +13,7 @@
 #include <fstream>
 #include "test_result.hpp"
 #include "reporters.hpp"
-#include "DrvGPU/backends/i_backend.hpp"
+#include "interface/i_backend.hpp"
 
 namespace gpu_test_utils {
 

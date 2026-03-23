@@ -476,9 +476,9 @@ def run_pipeline(filter_request: str, fs: float = 44100.0,
     print("=" * 60)
 
     # ── GPU контекст ─────────────────────────────────────────────────
-    ctx = gpuworklib.GPUContext(0)
+    ctx = gpuworklib.ROCmGPUContext(0)
     gen = gpuworklib.SignalGenerator(ctx)
-    fft = gpuworklib.FFTProcessor(ctx)
+    fft = gpuworklib.FFTProcessorROCm(ctx)
     print(f"  GPU: {ctx.device_name}")
 
     # ── Шаг 1: AI парсит запрос ──────────────────────────────────────

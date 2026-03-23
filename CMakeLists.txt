@@ -27,11 +27,11 @@ add_subdirectory(DrvGPU)
 # FFT Functions module (FFTProcessor + SpectrumMaximaFinder)
 add_subdirectory(modules/fft_func)
 
-# Signal Generators module
-add_subdirectory(modules/signal_generators)
-
 # LCH Farrow module (standalone fractional delay processor)
 add_subdirectory(modules/lch_farrow)
+
+# Signal Generators module (depends on lch_farrow for DelayedFormSignalGeneratorROCm)
+add_subdirectory(modules/signal_generators)
 
 # Filters module (FIR + IIR GPU filters)
 add_subdirectory(modules/filters)

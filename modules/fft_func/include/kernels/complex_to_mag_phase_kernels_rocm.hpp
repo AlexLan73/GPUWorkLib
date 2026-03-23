@@ -62,7 +62,7 @@ extern "C" __global__ void complex_to_mag_phase(
     float2_t z = input[gid];
     float2_t mp;
     mp.x = __fsqrt_rn(z.x * z.x + z.y * z.y);
-    mp.y = __atan2f(z.y, z.x);
+    mp.y = atan2f(z.y, z.x);
     mag_phase[gid] = mp;
 }
 
@@ -142,7 +142,7 @@ extern "C" __global__ void complex_to_mag_phase(
     float2_t z = input[gid];
     float2_t mp;
     mp.x = __fsqrt_rn(z.x * z.x + z.y * z.y);
-    mp.y = __atan2f(z.y, z.x);
+    mp.y = atan2f(z.y, z.x);
     mag_phase[gid] = mp;
 }
 
