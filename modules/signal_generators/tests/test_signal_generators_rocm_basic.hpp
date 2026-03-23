@@ -4,11 +4,17 @@
  * @file test_signal_generators_rocm_basic.hpp
  * @brief ROCm тесты: CW, LFM, Noise, LfmConjugate генераторы (GPU vs CPU)
  *
- * Переписано с OpenCL test_signal_generators.hpp на ROCm.
- * Паттерн: GPU generate → hipMemcpyDtoH → сравнить с CPU reference.
+ * ✅ MIGRATED to test_utils (2026-03-23)
+ *
+ * Tests:
+ *   1. cw_gpu_vs_cpu       — CW single beam, GPU vs CPU reference
+ *   2. cw_multi_beam       — CW 8 beams with freq_step
+ *   3. lfm_gpu_vs_cpu      — LFM chirp, GPU vs CPU
+ *   4. noise_statistics    — mean ~0, power ~1
+ *   5. lfm_conjugate       — conj(LFM), GPU vs CPU + negative phase check
  *
  * @author Kodo (AI Assistant)
- * @date 2026-03-22 (rewrite from OpenCL → ROCm)
+ * @date 2026-03-22 (migrated 2026-03-23)
  */
 
 #if ENABLE_ROCM
@@ -18,16 +24,13 @@
 #include "generators/noise_generator_rocm.hpp"
 #include "generators/lfm_conjugate_generator_rocm.hpp"
 #include "backends/rocm/rocm_backend.hpp"
-#include "services/console_output.hpp"
 
-#include <hip/hip_runtime.h>
-#include <iostream>
+// test_utils — единая тестовая инфраструктура
+#include "modules/test_utils/test_utils.hpp"
+
 #include <vector>
 #include <complex>
 #include <cmath>
-#include <iomanip>
-#include <numeric>
-#include <cassert>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -35,241 +38,160 @@
 
 namespace test_signal_generators_rocm_basic {
 
-// ════════════════════════════════════════════════════════════════════════════
-// Utilities
-// ════════════════════════════════════════════════════════════════════════════
+using namespace signal_gen;
+using namespace drv_gpu_lib;
+using namespace gpu_test_utils;
 
-inline float MaxError(const std::complex<float>* a, const std::complex<float>* b, size_t n) {
-    float max_err = 0.0f;
-    for (size_t i = 0; i < n; ++i) {
-        float d = std::abs(a[i] - b[i]);
-        if (d > max_err) max_err = d;
-    }
-    return max_err;
-}
+// =========================================================================
+// run() — TestRunner (функциональный стиль)
+// =========================================================================
 
-// ════════════════════════════════════════════════════════════════════════════
-// Test 1: CW GPU vs CPU
-// ════════════════════════════════════════════════════════════════════════════
+inline void run() {
+  int gpu_id = 0;
 
-inline bool TestCwGpuVsCpu(drv_gpu_lib::IBackend* backend) {
-    std::cout << "\n  [SigGen ROCm 1] CW: GPU vs CPU...\n";
+  ROCmBackend backend;
+  backend.Initialize(gpu_id);
 
-    signal_gen::CwParams cw;
+  TestRunner runner(&backend, "SigGen ROCm", gpu_id);
+
+  // ── Test 1: CW GPU vs CPU ─────────────────────────────────────
+
+  runner.test("cw_gpu_vs_cpu", [&]() {
+    CwParams cw;
     cw.f0 = 250.0;
     cw.amplitude = 1.5;
     cw.phase = 0.3;
+    SystemSampling sys{4000.0, 4096};
 
-    signal_gen::SystemSampling sys{4000.0, 4096};
-
-    signal_gen::CwGeneratorROCm gen(backend);
+    CwGeneratorROCm gen(&backend);
     auto cpu_data = gen.GenerateToCpu(sys, cw, 1);
 
     auto gpu_result = gen.GenerateToGpu(sys, cw, 1);
-    std::vector<std::complex<float>> gpu_data(sys.length);
-    hipMemcpyDtoH(gpu_data.data(), gpu_result.data,
-                    sys.length * sizeof(std::complex<float>));
-    hipFree(gpu_result.data);
+    auto gpu_data = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_result.data, sys.length);
 
-    float max_err = MaxError(gpu_data.data(), cpu_data.data(), sys.length);
-    bool pass = max_err < 1e-3f;
+    return AbsError(gpu_data.data(), cpu_data.data(), sys.length,
+                    tolerance::kComplex32, "cw_max_err");
+  });
 
-    std::cout << "    Max error: " << std::scientific << std::setprecision(2) << max_err << "\n";
-    std::cout << std::fixed << "    " << (pass ? "PASS" : "FAIL") << "\n";
-    return pass;
-}
+  // ── Test 2: CW multi-beam (8 beams, freq_step) ────────────────
 
-// ════════════════════════════════════════════════════════════════════════════
-// Test 2: CW multi-beam with freq_step
-// ════════════════════════════════════════════════════════════════════════════
-
-inline bool TestCwMultiBeam(drv_gpu_lib::IBackend* backend) {
-    std::cout << "\n  [SigGen ROCm 2] CW multi-beam (8 beams, freq_step)...\n";
-
-    signal_gen::CwParams cw;
+  runner.test("cw_multi_beam", [&]() -> TestResult {
+    CwParams cw;
     cw.f0 = 100.0;
     cw.freq_step = 50.0;
     cw.amplitude = 1.0;
-
-    signal_gen::SystemSampling sys{2000.0, 2048};
+    SystemSampling sys{2000.0, 2048};
     uint32_t beam_count = 8;
 
-    signal_gen::CwGeneratorROCm gen(backend);
+    CwGeneratorROCm gen(&backend);
     auto gpu_result = gen.GenerateToGpu(sys, cw, beam_count);
 
     size_t total = static_cast<size_t>(beam_count) * sys.length;
-    std::vector<std::complex<float>> gpu_data(total);
-    hipMemcpyDtoH(gpu_data.data(), gpu_result.data,
-                    total * sizeof(std::complex<float>));
-    hipFree(gpu_result.data);
+    auto gpu_data = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_result.data, total);
 
-    bool all_pass = true;
+    TestResult tr{"cw_multi_beam"};
     for (uint32_t b = 0; b < beam_count; ++b) {
-        float expected_freq = static_cast<float>(cw.f0 + b * cw.freq_step);
-        float fs = static_cast<float>(sys.fs);
+      float freq = static_cast<float>(cw.f0 + b * cw.freq_step);
+      float fs = static_cast<float>(sys.fs);
 
-        std::vector<std::complex<float>> cpu_beam(sys.length);
-        for (size_t i = 0; i < sys.length; ++i) {
-            float t = static_cast<float>(i) / fs;
-            float phase = 2.0f * static_cast<float>(M_PI) * expected_freq * t
-                        + static_cast<float>(cw.phase);
-            cpu_beam[i] = {cw.amplitude * std::cos(phase), cw.amplitude * std::sin(phase)};
-        }
+      std::vector<std::complex<float>> cpu_beam(sys.length);
+      for (size_t i = 0; i < sys.length; ++i) {
+        float t = static_cast<float>(i) / fs;
+        float ph = 2.0f * static_cast<float>(M_PI) * freq * t
+                  + static_cast<float>(cw.phase);
+        cpu_beam[i] = {static_cast<float>(cw.amplitude) * std::cos(ph),
+                       static_cast<float>(cw.amplitude) * std::sin(ph)};
+      }
 
-        float err = MaxError(gpu_data.data() + b * sys.length, cpu_beam.data(), sys.length);
-        bool pass = err < 1e-3f;
-        if (!pass) all_pass = false;
-
-        std::cout << "    Beam " << b << " (f=" << std::setprecision(0)
-                  << expected_freq << " Hz): err=" << std::scientific
-                  << std::setprecision(2) << err << std::fixed
-                  << " " << (pass ? "OK" : "FAIL") << "\n";
+      tr.add(AbsError(gpu_data.data() + b * sys.length,
+                       cpu_beam.data(), sys.length,
+                       tolerance::kComplex32, "beam" + std::to_string(b)));
     }
+    return tr;
+  });
 
-    std::cout << "    " << (all_pass ? "PASS" : "FAIL") << "\n";
-    return all_pass;
-}
+  // ── Test 3: LFM GPU vs CPU ────────────────────────────────────
 
-// ════════════════════════════════════════════════════════════════════════════
-// Test 3: LFM GPU vs CPU
-// ════════════════════════════════════════════════════════════════════════════
-
-inline bool TestLfmGpuVsCpu(drv_gpu_lib::IBackend* backend) {
-    std::cout << "\n  [SigGen ROCm 3] LFM: GPU vs CPU...\n";
-
-    signal_gen::LfmParams lfm;
+  runner.test("lfm_gpu_vs_cpu", [&]() {
+    LfmParams lfm;
     lfm.f_start = 100.0;
     lfm.f_end = 500.0;
+    SystemSampling sys{4000.0, 4096};
 
-    signal_gen::SystemSampling sys{4000.0, 4096};
-
-    signal_gen::LfmGeneratorROCm gen(backend);
+    LfmGeneratorROCm gen(&backend);
     auto cpu_data = gen.GenerateToCpu(sys, lfm, 1);
 
     auto gpu_result = gen.GenerateToGpu(sys, lfm, 1);
-    std::vector<std::complex<float>> gpu_data(sys.length);
-    hipMemcpyDtoH(gpu_data.data(), gpu_result.data,
-                    sys.length * sizeof(std::complex<float>));
-    hipFree(gpu_result.data);
+    auto gpu_data = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_result.data, sys.length);
 
-    float max_err = MaxError(gpu_data.data(), cpu_data.data(), sys.length);
-    bool pass = max_err < 1e-3f;
+    return AbsError(gpu_data.data(), cpu_data.data(), sys.length,
+                    tolerance::kComplex32, "lfm_max_err");
+  });
 
-    std::cout << "    Max error: " << std::scientific << std::setprecision(2) << max_err << "\n";
-    std::cout << std::fixed << "    " << (pass ? "PASS" : "FAIL") << "\n";
-    return pass;
-}
+  // ── Test 4: Noise statistics ──────────────────────────────────
 
-// ════════════════════════════════════════════════════════════════════════════
-// Test 4: Noise statistical test
-// ════════════════════════════════════════════════════════════════════════════
-
-inline bool TestNoiseStatistics(drv_gpu_lib::IBackend* backend) {
-    std::cout << "\n  [SigGen ROCm 4] Noise: statistical test...\n";
-
-    signal_gen::NoiseParams np;
+  runner.test("noise_statistics", [&]() -> TestResult {
+    NoiseParams np;
     np.power = 1.0;
     np.seed = 42;
+    SystemSampling sys{4000.0, 8192};
 
-    signal_gen::SystemSampling sys{4000.0, 8192};
-
-    signal_gen::NoiseGeneratorROCm gen(backend);
+    NoiseGeneratorROCm gen(&backend);
     auto gpu_result = gen.GenerateToGpu(sys, np, 1);
+    auto data = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_result.data, sys.length);
 
-    std::vector<std::complex<float>> data(sys.length);
-    hipMemcpyDtoH(data.data(), gpu_result.data,
-                    sys.length * sizeof(std::complex<float>));
-    hipFree(gpu_result.data);
-
-    // Compute mean and variance
     double sum_re = 0, sum_im = 0, sum_sq = 0;
     for (size_t i = 0; i < sys.length; ++i) {
-        sum_re += data[i].real();
-        sum_im += data[i].imag();
-        sum_sq += std::norm(data[i]);
+      sum_re += data[i].real();
+      sum_im += data[i].imag();
+      sum_sq += std::norm(data[i]);
     }
     double mean_re = sum_re / sys.length;
     double mean_im = sum_im / sys.length;
     double mean_power = sum_sq / sys.length;
 
-    // Mean should be close to 0, power close to np.power
-    bool mean_ok = std::abs(mean_re) < 0.1 && std::abs(mean_im) < 0.1;
-    bool power_ok = std::abs(mean_power - np.power) < 0.3 * np.power;  // 30% tolerance
+    TestResult tr{"noise_statistics"};
+    tr.add(ScalarAbsError(mean_re, 0.0, 0.1, "mean_re"));
+    tr.add(ScalarAbsError(mean_im, 0.0, 0.1, "mean_im"));
+    // Complex Gaussian: total power = var_re + var_im = 2 * np.power
+    tr.add(ScalarAbsError(mean_power, 2.0 * np.power, 0.3, "power"));
+    return tr;
+  });
 
-    std::cout << "    Mean: (" << std::setprecision(4) << mean_re << ", " << mean_im << ")\n";
-    std::cout << "    Power: " << std::setprecision(4) << mean_power
-              << " (expected " << np.power << ")\n";
-    std::cout << "    " << (mean_ok && power_ok ? "PASS" : "FAIL") << "\n";
+  // ── Test 5: LfmConjugate GPU vs CPU ───────────────────────────
 
-    return mean_ok && power_ok;
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Test 5: LfmConjugate GPU vs CPU
-// ════════════════════════════════════════════════════════════════════════════
-
-inline bool TestLfmConjugateGpuVsCpu(drv_gpu_lib::IBackend* backend) {
-    std::cout << "\n  [SigGen ROCm 5] LfmConjugate: GPU vs CPU...\n";
-
-    signal_gen::LfmParams lfm;
+  runner.test("lfm_conjugate", [&]() -> TestResult {
+    LfmParams lfm;
     lfm.f_start = 100.0;
     lfm.f_end = 500.0;
+    SystemSampling sys{4000.0, 4096};
 
-    signal_gen::SystemSampling sys{4000.0, 4096};
-
-    signal_gen::LfmConjugateGeneratorROCm gen(backend, lfm);
+    LfmConjugateGeneratorROCm gen(&backend, lfm);
     gen.SetSampling(sys);
 
     auto cpu_data = gen.GenerateToCpu();
     void* gpu_ptr = gen.GenerateToGpu();
+    auto gpu_data = ReadHipBuffer<std::complex<float>>(
+        backend.GetNativeQueue(), gpu_ptr, sys.length);
 
-    std::vector<std::complex<float>> gpu_data(sys.length);
-    hipMemcpyDtoH(gpu_data.data(), gpu_ptr,
-                    sys.length * sizeof(std::complex<float>));
-    hipFree(gpu_ptr);
+    TestResult tr{"lfm_conjugate"};
+    tr.add(AbsError(gpu_data.data(), cpu_data.data(), sys.length,
+                     tolerance::kComplex32, "conj_max_err"));
 
-    float max_err = MaxError(gpu_data.data(), cpu_data.data(), sys.length);
-    bool pass = max_err < 1e-3f;
-
-    // Also verify conjugate property: phase should be negative
-    float t1 = 1.0f / static_cast<float>(sys.fs);
+    // Verify conjugate property: phase should be negative
     float phase1 = std::arg(gpu_data[1]);
-    bool neg_phase = phase1 < 0.0f;  // conjugate → negative phase
+    tr.add(ValidationResult{
+        phase1 < 0.0f, "neg_phase",
+        static_cast<double>(phase1), 0.0,
+        phase1 < 0.0f ? "phase[1] < 0 OK" : "phase[1] >= 0 FAIL"});
+    return tr;
+  });
 
-    std::cout << "    Max error: " << std::scientific << std::setprecision(2) << max_err << "\n";
-    std::cout << std::fixed << "    Phase[1] = " << phase1 << " (should be < 0)\n";
-    std::cout << "    " << (pass && neg_phase ? "PASS" : "FAIL") << "\n";
-
-    return pass && neg_phase;
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// Runner
-// ════════════════════════════════════════════════════════════════════════════
-
-inline void run() {
-    auto& con = drv_gpu_lib::ConsoleOutput::GetInstance();
-    if (!con.IsRunning()) con.Start();
-
-    con.Print(0, "SigGen[ROCm]", "════════════════════════════════════════════");
-    con.Print(0, "SigGen[ROCm]", " Signal Generators ROCm Basic Tests");
-    con.Print(0, "SigGen[ROCm]", "════════════════════════════════════════════");
-
-    drv_gpu_lib::ROCmBackend backend;
-    backend.Initialize(0);
-
-    int passed = 0, total = 0;
-
-    auto check = [&](bool ok) { total++; if (ok) passed++; };
-
-    check(TestCwGpuVsCpu(&backend));
-    check(TestCwMultiBeam(&backend));
-    check(TestLfmGpuVsCpu(&backend));
-    check(TestNoiseStatistics(&backend));
-    check(TestLfmConjugateGpuVsCpu(&backend));
-
-    std::cout << "\n  Signal Generators ROCm: " << passed << "/" << total << " passed\n";
-    con.Print(0, "SigGen[ROCm]", "════════════════════════════════════════════");
+  runner.print_summary();
 }
 
 }  // namespace test_signal_generators_rocm_basic
