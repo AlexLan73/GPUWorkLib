@@ -1,8 +1,10 @@
+
 # Capon Module — Tests
 
 ## Описание
 
 Тесты модуля `capon` — алгоритм Кейпона (MVDR beamformer) на GPU (ROCm).
+Все тесты компилируются только при `ENABLE_ROCM=1` (Linux + AMD GPU).
 
 ## Запуск
 
@@ -11,9 +13,9 @@
 ./GPUWorkLib all            # Запустить все модули
 ```
 
-## Тесты
+## Файлы тестов
 
-### `test_capon_rocm.hpp` — ROCm тесты `CaponProcessor`
+### `test_capon_rocm.hpp` — Базовые ROCm тесты CaponProcessor
 
 | # | Тест | Что проверяет |
 |---|------|---------------|
@@ -23,13 +25,49 @@
 | 04 | `test_04_regularization` | Устойчивость при N < P (вырожденная матрица, mu > 0) |
 | 05 | `test_05_gpu_to_gpu` | SKIP (TODO: GPU alloc/upload API) |
 
-### `capon_benchmark.hpp` + `test_capon_benchmark_rocm.hpp` — бенчмарки
+### `test_capon_reference_data.hpp` — Тесты на реальных данных MATLAB
+
+Загружает эталонные данные из `Doc_Addition/Capon/capon_test/build/`:
+- `x_data.txt`, `y_data.txt` — координаты антенных секций (340 значений)
+- `signal_matlab.txt` — MATLAB сигнал (341 строка x 1000 комплексных чисел)
+
+| # | Тест | Что проверяет |
+|---|------|---------------|
+| 01 | `test_01_load_files` | Загрузка и валидация файлов (x, y, signal) |
+| 02 | `test_02_physical_relief_properties` | GPU рельеф на реальных данных (P=85, N=1000, M=1369): > 0 и конечный |
+| 03 | `test_03_cpu_vs_gpu_small_p` | CPU эталон vs GPU (P=8, N=64, M=16): относительная погрешность < 0.5% |
+
+Физическая модель: f0 = 3921.15 МГц, ULA с физическими координатами.
+CPU эталон: Cholesky + ForwardSolve (формула GPU с делением на N).
+
+### `test_capon_opencl_to_rocm.hpp` — Zero Copy Interop (OpenCL → ROCm)
+
+Тестирует передачу данных из OpenCL в ROCm через ZeroCopyBridge (без копирования VRAM).
+
+| # | Тест | Что проверяет |
+|---|------|---------------|
+| 01 | `test_01_detect_interop` | Определение метода Zero Copy (DMA-BUF / AMD GPU VA / NONE) |
+| 02 | `test_02_signal_from_opencl` | Полный pipeline: CPU → cl_mem → ZeroCopy → Capon ROCm → z[m] > 0 |
+| 03 | `test_03_results_match_ref` | Математическая прозрачность: Zero Copy путь == прямой CPU путь (< 1e-4) |
+| 04 | `test_04_beamform_from_opencl` | AdaptiveBeamform с входом через cl_mem → выход [M x N], все конечные |
+
+Pipeline теста 02:
+```
+CPU data → cl.Allocate + MemcpyH2D → cl.Synchronize → ZeroCopyBridge.ImportFromOpenCl
+         → CaponProcessor.ComputeRelief(hip_ptr) → z[m]
+```
+
+Подробное руководство: [GUIDE_opencl_to_rocm.md](GUIDE_opencl_to_rocm.md)
+
+### `capon_benchmark.hpp` + `test_capon_benchmark_rocm.hpp` — Бенчмарки
 
 | Класс | Что измеряет |
 |-------|--------------|
 | `CaponReliefBenchmarkROCm` | ComputeRelief: 5 warmup + 20 runs (hipEvent timing) |
 | `CaponBeamformBenchmarkROCm` | AdaptiveBeamform: 5 warmup + 20 runs |
 
+Параметры: P=16 каналов, N=256 отсчётов, M=64 направления, mu=0.01.
+Результаты → `Results/Profiler/GPU_00_Capon_ROCm/`.
 Запускается только при `is_prof=true` в `configGPU.json`.
 
 ## Алгоритм Кейпона (MVDR)
@@ -62,6 +100,15 @@ R^{-1}                      — обращение (rocSOLVER POTRF+POTRI)
 
 Python тесты: `Python_test/capon/test_capon.py` — см. [Python_test/capon/README.md](../../../Python_test/capon/README.md).
 
+## Связанные файлы
+
+| Файл | Описание |
+|------|----------|
+| [GUIDE_opencl_to_rocm.md](GUIDE_opencl_to_rocm.md) | Руководство разработчика: паттерн Zero Copy OpenCL → ROCm |
+| `DrvGPU/backends/rocm/zero_copy_bridge.hpp` | ZeroCopyBridge API |
+| `DrvGPU/tests/test_zero_copy.hpp` | Базовые тесты ZeroCopyBridge |
+| `Python_test/capon/test_capon.py` | Python тесты с NumPy + MATLAB данные |
+
 ## Статус
 
 - [x] Реализация CovarianceMatrixOp (rocBLAS CGEMM)
@@ -69,6 +116,10 @@ Python тесты: `Python_test/capon/test_capon.py` — см. [Python_test/capo
 - [x] Реализация ComputeWeightsOp (rocBLAS CGEMM)
 - [x] Реализация CaponReliefOp (HIP hiprtc kernel)
 - [x] Реализация AdaptBeamformOp (rocBLAS CGEMM)
-- [x] Тесты 01-04 (написаны, НЕ тестировано на GPU)
+- [x] Тесты 01-04 ROCm базовые (написаны, НЕ тестировано на GPU)
+- [x] Тесты reference_data 01-03 (MATLAB данные, CPU vs GPU)
+- [x] Тесты opencl_to_rocm 01-04 (Zero Copy Interop)
+- [x] Бенчмарки (ComputeRelief + AdaptiveBeamform, GpuBenchmarkBase)
 - [ ] Тест 05 (GPU-to-GPU: нужен GPU alloc/upload API)
 - [x] Python тесты (`Python_test/capon/test_capon.py`) — NumPy + реальные данные MATLAB
+- [ ] Миграция на test_utils (GpuTestBase/TestRunner) — сейчас assert()

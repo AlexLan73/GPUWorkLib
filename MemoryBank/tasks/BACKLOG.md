@@ -1,25 +1,15 @@
 # BACKLOG — Очередь задач
 
-> **Обновлено**: 2026-03-22
+> **Обновлено**: 2026-03-23
 > **Главный план**: `MemoryBank/tasks/MODULES_WORK_PLAN.md`
 
 ---
 
-## 🏗️ C++ test_utils — Модуль общей тестовой инфраструктуры
+## ✅ C++ test_utils — Фаза 0 выполнена (инфраструктура)
 
-> **Индекс**: [`TASK_CppTest_INDEX.md`](TASK_CppTest_INDEX.md)
+> **Статус**: CppTest-01…05 реализованы в `modules/test_utils/`. Миграция модулей — см. [`COMPLETED.md`](COMPLETED.md) (Task_14), [`IN_PROGRESS.md`](IN_PROGRESS.md).
+> **Индекс (архив тасков)**: [`TASK_CppTest_INDEX.md`](TASK_CppTest_INDEX.md)
 > **Исследование**: [`research/cpp_test_utils_full_plan.md`](../research/cpp_test_utils_full_plan.md)
-> **Добавлено**: 2026-03-21
-
-| # | Файл | Фаза | Приоритет | Что |
-|---|------|------|-----------|-----|
-| CppTest-01 | [TASK_CppTest_01](TASK_CppTest_01_result_configs.md) | 0 | 🔴 HIGH | `test_result.hpp` + `test_configs.hpp` (Value Objects) |
-| CppTest-02 | [TASK_CppTest_02](TASK_CppTest_02_validators.md) | 0 | 🔴 HIGH | `validators/` — MaxRel, Abs, Rmse, Frequency, Composite |
-| CppTest-03 | [TASK_CppTest_03](TASK_CppTest_03_references.md) | 0 | 🔴 HIGH | `references/` — CPU-эталоны signals, statistics, fft |
-| CppTest-04 | [TASK_CppTest_04](TASK_CppTest_04_gpu_transfer.md) | 0 | 🔴 HIGH | `gpu_transfer.hpp` — ReadGpuBuffer (OpenCL + ROCm) |
-| CppTest-05 | [TASK_CppTest_05](TASK_CppTest_05_runner_base.md) | 0 | 🔴 HIGH | `test_runner.hpp` + `gpu_test_base.hpp` + `reporters.hpp` + master |
-
-**Порядок**: 01 → (02 ∥ 03 ∥ 04) → 05
 
 ---
 
@@ -44,19 +34,7 @@
 
 ## Приоритет 🔴 Высокий
 
-### TASK-process-magnitude-stats — ProcessMagnitude + Statistics pipeline (SVM тесты)
-
-**Документ**: `MemoryBank/tasks/TASK_process_magnitude_statistics_pipeline.md`
-
-**Суть**:
-- `ComplexToMagPhaseROCm`: ProcessMagnitude / ProcessMagnitudeToGPU (magnitude-only, norm_coeff через умножение)
-- `StatisticsProcessor`: vector<float> обёртки для тестов
-- Тесты: малый объём, `hipMallocManaged` (SVM), `InputData<T>` — единообразие
-- C++ и Python тесты обязательны
-
-**Проверка**: другой AI как старший (чеклист в документе).
-
----
+> **Закрыто (ранее висела битая ссылка на `TASK_process_magnitude_statistics_pipeline.md`)**: содержание покрыто **Task_13** (strategies + ProcessMagnitudeToBuffer), тестами `test_process_magnitude_rocm`, сессией `sessions/2026-03-12.md`. Отдельного файла задачи не было — пункт убран из backlog.
 
 ### TASK-REF01 — Выделить clFFT в тупиковую ветку + ROCm-only в main
 **Дата планирования**: 2026-03-10
@@ -148,4 +126,4 @@
 | filters | ✅ | ✅ | ✅ |
 | heterodyne | ✅ | ✅ | ✅ |
 
-*Последнее обновление: 2026-03-10*
+*Последнее обновление: 2026-03-23*

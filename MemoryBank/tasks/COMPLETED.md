@@ -32,6 +32,7 @@
 
 - ProcessMagnitudeToBuffer, StrategiesFloatApi, AllocateManaged
 - Parallel benchmark, Python 13/13 PASSED
+- Связанный backlog-пункт «ProcessMagnitude + Statistics pipeline» (ранее без файла задачи): закрыт тем же контекстом + `test_process_magnitude_rocm`, см. `sessions/2026-03-12.md`
 
 ---
 

@@ -1,5 +1,7 @@
 # Code Review: Statistics ComputeAll
 
+> **⚠️ Статус документа**: первичный отчёт с замечаниями. **Актуальный итог после исправлений** — [`review_statistics_compute_all_v2.md`](review_statistics_compute_all_v2.md) (все CR закрыты ✅).
+
 > **Дата**: 2026-03-20
 > **Задача**: `MemoryBank/tasks/TASK_statistics_compute_all.md`
 > **Файлы**: `modules/statistics/**` vs спецификация TASK_statistics_compute_all.md

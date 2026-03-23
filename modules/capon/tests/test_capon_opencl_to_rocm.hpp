@@ -97,6 +97,7 @@
 
 // ── Алгоритм Кейпона ─────────────────────────────────────────────────────
 #include "capon_processor.hpp"
+#include "capon_test_helpers.hpp"
 
 // ── GPU инфраструктура ────────────────────────────────────────────────────
 #include "backends/opencl/opencl_backend.hpp"
@@ -127,6 +128,8 @@ namespace test_capon_opencl_to_rocm {
 
 using cx = std::complex<float>;
 using namespace drv_gpu_lib;
+using capon_test_helpers::MakeSteeringMatrix;
+using capon_test_helpers::MakeNoise;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Вывод на консоль (мультиGPU-безопасный через ConsoleOutput)
@@ -143,7 +146,7 @@ inline void TestPrint(const std::string& msg) {
 // OpenCL/ROCm контекстов). Создаём один раз для всего набора тестов.
 // ════════════════════════════════════════════════════════════════════════════
 
-static OpenCLBackend& GetClBackend() {
+inline OpenCLBackend& GetClBackend() {
   static OpenCLBackend cl;
   static bool inited = false;
   if (!inited) {
@@ -153,62 +156,13 @@ static OpenCLBackend& GetClBackend() {
   return cl;
 }
 
-static ROCmBackend& GetRocmBackend() {
-  static ROCmBackend rocm;
-  static bool inited = false;
-  if (!inited) {
-    rocm.Initialize(0);  // device 0 = тот же GPU что и OpenCL
-    inited = true;
-  }
-  return rocm;
+inline ROCmBackend& GetRocmBackend() {
+  return capon_test_helpers::GetROCmBackend();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Вспомогательные функции генерации тестовых данных
+// Тестовые данные: MakeSteeringMatrix, MakeNoise → capon_test_helpers.hpp
 // ════════════════════════════════════════════════════════════════════════════
-
-/**
- * ULA steering matrix: u[p,m] = exp(j*2π*p*0.5*sin(θ_m))
- * Хранение: column-major, [p + m*P]  ← C++ column-major стандарт для BLAS
- */
-static std::vector<cx> MakeSteeringMatrix(
-    uint32_t n_channels, uint32_t n_directions,
-    float theta_min_rad, float theta_max_rad) {
-  std::vector<cx> U(static_cast<size_t>(n_channels) * n_directions);
-  for (uint32_t m = 0; m < n_directions; ++m) {
-    float theta = (n_directions > 1)
-        ? theta_min_rad + (theta_max_rad - theta_min_rad) * m / (n_directions - 1)
-        : theta_min_rad;
-    float d_sin = std::sin(theta) * 0.5f;  // d/λ = 0.5 (полуволновой интервал)
-    for (uint32_t p = 0; p < n_channels; ++p) {
-      float phase = 2.0f * static_cast<float>(M_PI) * p * d_sin;
-      U[m * n_channels + p] = cx(std::cos(phase), std::sin(phase));
-    }
-  }
-  return U;
-}
-
-/**
- * Комплексный гауссов шум CN(0, sigma²) через LCG + Box-Muller.
- * Воспроизводимый (детерминированный seed) — результаты не зависят от ОС.
- */
-static std::vector<cx> MakeNoise(size_t count, float sigma = 1.0f,
-                                 uint32_t seed = 42) {
-  std::vector<cx> noise(count);
-  uint32_t state = seed;
-  auto rng = [&]() -> float {
-    state = state * 1664525u + 1013904223u;          // LCG
-    return static_cast<float>(state) / 4294967295.0f; // [0, 1)
-  };
-  for (size_t i = 0; i < count; ++i) {
-    float u1 = rng(); if (u1 < 1e-10f) u1 = 1e-10f;  // защита log(0)
-    float u2 = rng();
-    float mag = sigma * std::sqrt(-2.0f * std::log(u1));  // Box-Muller
-    float phi = 2.0f * static_cast<float>(M_PI) * u2;
-    noise[i]  = cx(mag * std::cos(phi), mag * std::sin(phi));
-  }
-  return noise;
-}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Общая проверка доступности Zero Copy — вызывается в начале каждого теста
@@ -218,7 +172,7 @@ static std::vector<cx> MakeNoise(size_t count, float sigma = 1.0f,
  * @return true если ZeroCopy доступен на устройстве device 0.
  *         false + вывод SKIP если не поддерживается.
  */
-static bool CheckZeroCopyAvailable(const char* test_name) {
+inline bool CheckZeroCopyAvailable(const char* test_name) {
   auto& cl = GetClBackend();
   cl_device_id cl_device = static_cast<cl_device_id>(cl.GetNativeDevice());
   auto method = DetectBestZeroCopyMethod(cl_device);

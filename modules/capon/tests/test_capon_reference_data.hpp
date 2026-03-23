@@ -33,6 +33,7 @@
 #include "capon_processor.hpp"
 #include "services/console_output.hpp"
 #include "backends/rocm/rocm_backend.hpp"
+#include "capon_test_helpers.hpp"
 
 #include <vector>
 #include <complex>
@@ -49,18 +50,12 @@ namespace test_capon_reference_data {
 
 using cx = std::complex<float>;
 
-// Переиспользуем TestPrint и GetTestBackend из test_capon_rocm
-// (они статические inline — при включении обоих файлов без ODR-нарушения)
 inline void TestPrint(const std::string& msg) {
   drv_gpu_lib::ConsoleOutput::GetInstance().Print(0, "Capon", msg);
 }
 
 inline drv_gpu_lib::IBackend* GetTestBackend() {
-  static drv_gpu_lib::ROCmBackend backend;
-  if (!backend.IsInitialized()) {
-    backend.Initialize(0);
-  }
-  return &backend;
+  return &capon_test_helpers::GetROCmBackend();
 }
 
 // ============================================================================
@@ -82,7 +77,7 @@ static const std::string kDataDir =
 // ============================================================================
 
 /// Загрузить вектор вещественных чисел из файла (одно число на строку/через пробел)
-static bool LoadRealVector(const std::string& path,
+inline bool LoadRealVector(const std::string& path,
                            std::vector<float>& out) {
   std::ifstream f(path);
   if (!f.is_open()) return false;
@@ -95,7 +90,7 @@ static bool LoadRealVector(const std::string& path,
 
 /// Разобрать одно комплексное число в формате MATLAB: "реальная+мнимаяi"
 /// Поддерживает оба знака: "6.17+18.74i" и "-9.80-30.59i"
-static bool ParseMatlabComplex(const std::string& token, cx& result) {
+inline bool ParseMatlabComplex(const std::string& token, cx& result) {
   if (token.empty()) return false;
   // Найти последний + или - перед 'i', не являющийся частью 'e+' / 'E-'
   // Ищем справа налево (от предпоследнего символа, последний — 'i')
@@ -140,7 +135,7 @@ static bool ParseMatlabComplex(const std::string& token, cx& result) {
  * @param out    выходной вектор [P*N], column-major
  * @return true при успехе
  */
-static bool LoadSignalMatlab(const std::string& path,
+inline bool LoadSignalMatlab(const std::string& path,
                              uint32_t P, uint32_t N,
                              std::vector<cx>& out) {
   std::ifstream f(path);
@@ -200,7 +195,7 @@ static bool LoadSignalMatlab(const std::string& path,
  * @param c          скорость распространения, м/с
  * @return вектор [P*M], column-major
  */
-static std::vector<cx> MakePhysicalSteering(
+inline std::vector<cx> MakePhysicalSteering(
     const std::vector<float>& x,
     const std::vector<float>& y,
     const std::vector<float>& u_dirs,
@@ -240,7 +235,7 @@ static std::vector<cx> MakePhysicalSteering(
  *
  * @return true при успехе, false при вырожденности
  */
-static bool CholeskyLower(std::vector<cx>& A, uint32_t P) {
+inline bool CholeskyLower(std::vector<cx>& A, uint32_t P) {
   // L[i,j] = A[j*P+i], i >= j
   for (uint32_t j = 0; j < P; ++j) {
     // Диагональный элемент
@@ -271,7 +266,7 @@ static bool CholeskyLower(std::vector<cx>& A, uint32_t P) {
  * @param b  правая часть [P]
  * @return x [P]
  */
-static std::vector<cx> ForwardSolve(const std::vector<cx>& L,
+inline std::vector<cx> ForwardSolve(const std::vector<cx>& L,
                                     uint32_t P,
                                     const std::vector<cx>& b) {
   std::vector<cx> x(P);
@@ -301,7 +296,7 @@ static std::vector<cx> ForwardSolve(const std::vector<cx>& L,
  * @param mu     коэффициент регуляризации
  * @return z[M]  рельеф Кейпона
  */
-static std::vector<float> CpuCaponRelief(
+inline std::vector<float> CpuCaponRelief(
     const std::vector<cx>& Y, uint32_t P, uint32_t N,
     const std::vector<cx>& U, uint32_t M,
     float mu) {

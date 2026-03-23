@@ -21,34 +21,36 @@
 #if ENABLE_ROCM
 
 #include "capon_benchmark.hpp"
-#include "test_capon_rocm.hpp"          // MakeNoise, MakeSteeringMatrix
-#include "DrvGPU/backends/rocm/rocm_backend.hpp"
-#include "DrvGPU/backends/rocm/rocm_core.hpp"
+#include "capon_test_helpers.hpp"
+#include "backends/rocm/rocm_core.hpp"
+#include "services/console_output.hpp"
 
 #include <complex>
-#include <iostream>
 #include <stdexcept>
 #include <vector>
 #include <cmath>
+#include <string>
 
 namespace test_capon_benchmark_rocm {
 
-inline int run() {
-  std::cout << "\n"
-            << "============================================================\n"
-            << "  Capon Benchmark (ComputeRelief / AdaptiveBeamform) — ROCm\n"
-            << "============================================================\n";
+inline void TestPrint(const std::string& msg) {
+  drv_gpu_lib::ConsoleOutput::GetInstance().Print(0, "Capon[Bench]", msg);
+}
+
+inline void run() {
+  TestPrint("============================================================");
+  TestPrint("  Capon Benchmark (ComputeRelief / AdaptiveBeamform) — ROCm");
+  TestPrint("============================================================");
 
   // Проверить AMD GPU
   if (drv_gpu_lib::ROCmCore::GetAvailableDeviceCount() == 0) {
-    std::cout << "  [SKIP] No AMD GPU available\n";
-    return 0;
+    TestPrint("  [SKIP] No AMD GPU available");
+    return;
   }
 
   try {
-    // ── ROCm backend init ─────────────────────────────────────────────────
-    auto backend = std::make_unique<drv_gpu_lib::ROCmBackend>();
-    backend->Initialize(0);
+    // ── ROCm backend ──────────────────────────────────────────────────────
+    auto* backend = &capon_test_helpers::GetROCmBackend();
 
     // ── Параметры Кейпона ─────────────────────────────────────────────────
     capon::CaponParams params;
@@ -58,49 +60,46 @@ inline int run() {
     params.mu           = 0.01f;
 
     // ── Тестовые данные ───────────────────────────────────────────────────
-    const auto signal   = test_capon_rocm::MakeNoise(
+    const auto signal   = capon_test_helpers::MakeNoise(
         static_cast<size_t>(params.n_channels) * params.n_samples, 1.0f, 42u);
-    const auto steering = test_capon_rocm::MakeSteeringMatrix(
+    const auto steering = capon_test_helpers::MakeSteeringMatrix(
         params.n_channels, params.n_directions,
         -static_cast<float>(M_PI) / 3.0f,
          static_cast<float>(M_PI) / 3.0f);
 
     // ── Создать процессор (компилирует HIP kernels один раз) ──────────────
-    capon::CaponProcessor proc(backend.get());
+    capon::CaponProcessor proc(backend);
 
     // ── Benchmark 1: ComputeRelief() ──────────────────────────────────────
-    std::cout << "\n--- Benchmark 1: CaponProcessor::ComputeRelief() ---\n";
+    TestPrint("--- Benchmark 1: CaponProcessor::ComputeRelief() ---");
     {
       test_capon_rocm_bench::CaponReliefBenchmarkROCm bench(
-          backend.get(), proc, signal, steering, params,
+          backend, proc, signal, steering, params,
           {.n_warmup   = 5,
            .n_runs     = 20,
            .output_dir = "Results/Profiler/GPU_00_Capon_ROCm"});
 
       bench.Run();
       bench.Report();
-      std::cout << "  [OK] ComputeRelief ROCm benchmark complete\n";
+      TestPrint("  [OK] ComputeRelief ROCm benchmark complete");
     }
 
     // ── Benchmark 2: AdaptiveBeamform() ──────────────────────────────────
-    std::cout << "\n--- Benchmark 2: CaponProcessor::AdaptiveBeamform() ---\n";
+    TestPrint("--- Benchmark 2: CaponProcessor::AdaptiveBeamform() ---");
     {
       test_capon_rocm_bench::CaponBeamformBenchmarkROCm bench(
-          backend.get(), proc, signal, steering, params,
+          backend, proc, signal, steering, params,
           {.n_warmup   = 5,
            .n_runs     = 20,
            .output_dir = "Results/Profiler/GPU_00_Capon_ROCm"});
 
       bench.Run();
       bench.Report();
-      std::cout << "  [OK] AdaptiveBeamform ROCm benchmark complete\n";
+      TestPrint("  [OK] AdaptiveBeamform ROCm benchmark complete");
     }
 
-    return 0;
-
   } catch (const std::exception& e) {
-    std::cout << "  [SKIP] " << e.what() << "\n";
-    return 0;
+    TestPrint(std::string("  [SKIP] ") + e.what());
   }
 }
 

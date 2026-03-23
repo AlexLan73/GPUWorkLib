@@ -47,11 +47,11 @@ Tolerance хардкод ×100        →      modules/test_utils/test_configs.h
 
 | # | Файл | Что делает | Фаза | Статус |
 |---|------|-----------|------|--------|
-| 01 | [TASK_CppTest_01](TASK_CppTest_01_result_configs.md) | `test_result.hpp` + `test_configs.hpp` | 0 | ⬜ TODO |
-| 02 | [TASK_CppTest_02](TASK_CppTest_02_validators.md) | `validators/` — numeric, signal, composite | 0 | ⬜ TODO |
-| 03 | [TASK_CppTest_03](TASK_CppTest_03_references.md) | `references/` — signal, statistics, fft | 0 | ⬜ TODO |
-| 04 | [TASK_CppTest_04](TASK_CppTest_04_gpu_transfer.md) | `gpu_transfer.hpp` — OpenCL + ROCm | 0 | ⬜ TODO |
-| 05 | [TASK_CppTest_05](TASK_CppTest_05_runner_base.md) | `test_runner.hpp` + `gpu_test_base.hpp` + `reporters.hpp` + `test_utils.hpp` | 0 | ⬜ TODO |
+| 01 | [TASK_CppTest_01](TASK_CppTest_01_result_configs.md) | `test_result.hpp` + `test_configs.hpp` | 0 | ✅ DONE |
+| 02 | [TASK_CppTest_02](TASK_CppTest_02_validators.md) | `validators/` — numeric, signal, composite | 0 | ✅ DONE |
+| 03 | [TASK_CppTest_03](TASK_CppTest_03_references.md) | `references/` — signal, statistics, fft | 0 | ✅ DONE |
+| 04 | [TASK_CppTest_04](TASK_CppTest_04_gpu_transfer.md) | `gpu_transfer.hpp` — OpenCL + ROCm | 0 | ✅ DONE |
+| 05 | [TASK_CppTest_05](TASK_CppTest_05_runner_base.md) | `test_runner.hpp` + `gpu_test_base.hpp` + `reporters.hpp` + `test_utils.hpp` | 0 | ✅ DONE |
 
 ---
 

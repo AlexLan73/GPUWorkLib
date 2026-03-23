@@ -9,7 +9,7 @@
  *   2. Подавление помехи: мощная CW-помеха на угле θ_int=0° → MVDR минимален там
  *   3. Адаптивное ДО (выходная матрица нужной размерности)
  *   4. Регуляризация (mu=0 vs mu>0, вырожденная матрица N < P)
- *   5. GPU-to-GPU пайплайн (входные данные уже на GPU)
+ *   5. GPU-to-GPU пайплайн (hipMalloc + hipMemcpy + void* API)
  *
  * Сравнение эталона:
  *   test_02 проверяет физическое свойство MVDR: z[m_int] < mean(z) / 2.
@@ -20,9 +20,11 @@
 
 #if ENABLE_ROCM
 
+#include "capon_test_helpers.hpp"
 #include "capon_processor.hpp"
 #include "services/console_output.hpp"
-#include "backends/rocm/rocm_backend.hpp"
+
+#include <hip/hip_runtime.h>
 
 #include <vector>
 #include <complex>
@@ -34,102 +36,16 @@
 namespace test_capon_rocm {
 
 using cx = std::complex<float>;
+using capon_test_helpers::MakeSteeringMatrix;
+using capon_test_helpers::MakeNoise;
+using capon_test_helpers::AddInterference;
 
 inline void TestPrint(const std::string& msg) {
   drv_gpu_lib::ConsoleOutput::GetInstance().Print(0, "Capon", msg);
 }
 
 inline drv_gpu_lib::IBackend* GetTestBackend() {
-  static drv_gpu_lib::ROCmBackend backend;
-  if (!backend.IsInitialized()) {
-    backend.Initialize(0);
-  }
-  return &backend;
-}
-
-// ============================================================================
-// Вспомогательные функции
-// ============================================================================
-
-/// Управляющие векторы ULA: u[p,m] = exp(j*2π*p*(d/λ)*sin(θ_m))
-/// d/λ = 0.5 (полуволновой интервал), θ сканирует [theta_min, theta_max]
-/// Хранение: column-major, [p + m*P]
-static std::vector<cx> MakeSteeringMatrix(
-    uint32_t n_channels, uint32_t n_directions,
-    float theta_min_rad, float theta_max_rad) {
-  std::vector<cx> U(static_cast<size_t>(n_channels) * n_directions);
-  for (uint32_t m = 0; m < n_directions; ++m) {
-    float theta = (n_directions > 1)
-        ? theta_min_rad + (theta_max_rad - theta_min_rad) * m / (n_directions - 1)
-        : theta_min_rad;
-    float d_sin = std::sin(theta) * 0.5f;  // d/λ = 0.5
-    for (uint32_t p = 0; p < n_channels; ++p) {
-      float phase = 2.0f * static_cast<float>(M_PI) * p * d_sin;
-      U[m * n_channels + p] = cx(std::cos(phase), std::sin(phase));
-    }
-  }
-  return U;
-}
-
-/**
- * @brief Сгенерировать CN(0, sigma²) шум через LCG + Box-Muller.
- *
- * Воспроизводимый (детерминированный seed), но статистически корректный:
- * амплитуда гауссова, фаза равномерная → правильная ковариационная матрица.
- */
-static std::vector<cx> MakeNoise(size_t count, float sigma = 1.0f,
-                                 uint32_t seed = 42) {
-  std::vector<cx> noise(count);
-  uint32_t state = seed;
-
-  auto rng_uniform = [&]() -> float {
-    // LCG: Numerical Recipes константы
-    state = state * 1664525u + 1013904223u;
-    return (static_cast<float>(state) / static_cast<float>(0xFFFFFFFFu));
-    // результат в [0, 1)
-  };
-
-  for (size_t i = 0; i < count; ++i) {
-    float u1 = rng_uniform();
-    float u2 = rng_uniform();
-    if (u1 < 1e-10f) u1 = 1e-10f;  // защита от log(0)
-
-    // Box-Muller: Gaussian с нулевым средним, дисперсия sigma²
-    float mag = sigma * std::sqrt(-2.0f * std::log(u1));
-    float phi = 2.0f * static_cast<float>(M_PI) * u2;
-    noise[i]  = cx(mag * std::cos(phi), mag * std::sin(phi));
-  }
-  return noise;
-}
-
-/**
- * @brief Добавить CW-помеху из направления theta_rad в сигнальную матрицу.
- *
- * Y[p, n] += amplitude * exp(j*2π*p*(d/λ)*sin(θ)) * exp(j*ω₀*n)
- * Хранение Y: column-major, индекс [p, n] = n*P + p
- *
- * @param Y          сигнальная матрица [P × N], column-major
- * @param n_channels P
- * @param n_samples  N
- * @param theta_rad  угол прихода помехи
- * @param amplitude  амплитуда помехи
- * @param omega0     нормированная частота (рад/отсчёт)
- */
-static void AddInterference(std::vector<cx>& Y,
-                            uint32_t n_channels, uint32_t n_samples,
-                            float theta_rad,
-                            float amplitude,
-                            float omega0 = 0.37f) {
-  const float d_sin = std::sin(theta_rad) * 0.5f;  // d/λ = 0.5
-  for (uint32_t n = 0; n < n_samples; ++n) {
-    for (uint32_t p = 0; p < n_channels; ++p) {
-      float phase_spatial  = 2.0f * static_cast<float>(M_PI) * p * d_sin;
-      float phase_temporal = omega0 * static_cast<float>(n);
-      cx s = amplitude * cx(std::cos(phase_spatial + phase_temporal),
-                            std::sin(phase_spatial + phase_temporal));
-      Y[static_cast<size_t>(n) * n_channels + p] += s;  // column-major: [p,n] = n*P+p
-    }
-  }
+  return &capon_test_helpers::GetROCmBackend();
 }
 
 // ============================================================================
@@ -290,11 +206,11 @@ inline void test_04_regularization() {
 }
 
 // ============================================================================
-// Test 05: GPU-to-GPU пайплайн
+// Test 05: GPU-to-GPU пайплайн (hipMalloc → hipMemcpy → void* API)
 // ============================================================================
 
 inline void test_05_gpu_to_gpu() {
-  TestPrint("[test_capon_rocm::05] GPU-to-GPU pipeline");
+  TestPrint("[test_capon_rocm::05] GPU-to-GPU pipeline (hipMalloc + D2D)");
 
   auto* backend = GetTestBackend();
 
@@ -306,17 +222,40 @@ inline void test_05_gpu_to_gpu() {
   auto steering_cpu = MakeSteeringMatrix(P, M, -static_cast<float>(M_PI)/3.0f,
                                                static_cast<float>(M_PI)/3.0f);
 
-  // TODO: аллоцировать GPU буфер через backend и загрузить данные
-  // void* gpu_signal   = backend->Malloc(signal_cpu.size() * sizeof(cx));
-  // void* gpu_steering = backend->Malloc(steering_cpu.size() * sizeof(cx));
-  // backend->Upload(gpu_signal, signal_cpu.data(), ...);
-  // backend->Upload(gpu_steering, steering_cpu.data(), ...);
-  // capon::CaponParams params{P, N, M, 0.01f};
-  // capon::CaponProcessor processor(backend);
-  // auto result = processor.ComputeRelief(gpu_signal, gpu_steering, params);
-  // assert(result.relief.size() == M);
+  const size_t bytes_Y = signal_cpu.size()   * sizeof(cx);
+  const size_t bytes_U = steering_cpu.size() * sizeof(cx);
 
-  TestPrint("[test_capon_rocm::05] SKIP (TODO: GPU alloc/upload API в тесте)");
+  // Аллоцировать GPU буферы через HIP
+  void* gpu_Y = nullptr;
+  void* gpu_U = nullptr;
+  hipError_t err;
+
+  err = hipMalloc(&gpu_Y, bytes_Y);
+  assert(err == hipSuccess && "hipMalloc gpu_Y failed");
+  err = hipMalloc(&gpu_U, bytes_U);
+  assert(err == hipSuccess && "hipMalloc gpu_U failed");
+
+  // Загрузить данные CPU → GPU
+  err = hipMemcpy(gpu_Y, signal_cpu.data(),   bytes_Y, hipMemcpyHostToDevice);
+  assert(err == hipSuccess && "hipMemcpy signal failed");
+  err = hipMemcpy(gpu_U, steering_cpu.data(), bytes_U, hipMemcpyHostToDevice);
+  assert(err == hipSuccess && "hipMemcpy steering failed");
+
+  // Вычислить рельеф через void* GPU API
+  capon::CaponParams params{P, N, M, 0.01f};
+  capon::CaponProcessor processor(backend);
+  auto result = processor.ComputeRelief(gpu_Y, gpu_U, params);
+
+  assert(result.relief.size() == M);
+  for (uint32_t m = 0; m < M; ++m) {
+    assert(std::isfinite(result.relief[m]));
+    assert(result.relief[m] > 0.0f);
+  }
+
+  hipFree(gpu_Y);
+  hipFree(gpu_U);
+
+  TestPrint("[test_capon_rocm::05] PASS");
 }
 
 // ============================================================================
