@@ -1,5 +1,6 @@
 # C++ test_utils — Модуль общей тестовой инфраструктуры (INDEX)
 
+> ✅ **Инфраструктура COMPLETED** (TASK 01-05). Миграция 5/10 модулей DONE (2026-03-23).
 > **Цель**: Создать `modules/test_utils/` — единую C++ тестовую инфраструктуру (зеркало Python `common/`)
 > **Создан**: 2026-03-21
 > **Исследование**: `MemoryBank/research/cpp_test_utils_full_plan.md`

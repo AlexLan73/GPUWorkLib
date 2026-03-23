@@ -3,7 +3,7 @@
 > **Проект**: Библиотеки GPU-вычислений (OpenCL, ROCm, HIP)
 > **Автор**: Alex
 > **AI-ассистент**: Кодо
-> **Обновлено**: 2026-03-17
+> **Обновлено**: 2026-03-23
 
 ---
 
@@ -14,8 +14,6 @@
 | **DrvGPU** | 🟢 Active | `Doc/DrvGPU/Full.md` ✅ Quick.md ✅ API.md ✅ |
 | signal_generators | 🟢 Active | `Doc/Modules/signal_generators/Full.md` |
 | **fft_func** | 🟢 Active | `Doc/Modules/fft_func/Full.md` ✅ Quick.md ✅ API.md ✅ |
-| ~~fft_processor~~ | ⚫ Merged → fft_func | `Doc/Modules/~!/fft_processor/Full.md` (архив) |
-| ~~fft_maxima~~ | ⚫ Merged → fft_func | `Doc/Modules/~!/fft_maxima/Full.md` (архив) |
 | filters | 🟢 Active | `Doc/Modules/filters/Full.md` |
 | **lch_farrow** | 🟢 Active | `Doc/Modules/lch_farrow/Full.md` ✅ API.md ✅ |
 | heterodyne | 🟢 Active | `Doc/Modules/heterodyne/Full.md` |
@@ -28,12 +26,38 @@
 
 ---
 
-## Текущие задачи (см. MemoryBank/tasks/)
+## Текущие задачи
 
 | Задача | Описание | Статус |
 |--------|----------|--------|
-| **Task_13** | Strategies Pipeline: fft_func + ProcessMagnitudeToBuffer + CPU wrappers + AllocateManaged + benchmark | ✅ COMPLETED 2026-03-12 |
+| **Task_14** | Python 5 bugs fixed + C++ test migration (4 модуля, -52% LOC) | ✅ COMPLETED 2026-03-23 |
+| **CppTest migration** | Оставшиеся модули: lch_farrow, vector_algebra, fm_correlator, strategies | 🟢 Low priority |
+| **capon_rocblas** | rocBLAS CGEMM в CovarianceMatrixOp | 🔴 TODO |
 
-| **capon_rocblas** | rocBLAS CGEMM в CovarianceMatrixOp / CaponReliefOp / AdaptBeamformOp | 🔴 TODO |
+---
 
-*Следующий шаг: реализация rocBLAS CGEMM (нужен rocblas_handle из backend) или Python bindings.*
+## C++ Test Infrastructure
+
+| Компонент | Файл | Статус |
+|-----------|------|--------|
+| test_result.hpp | `modules/test_utils/` | ✅ Ready |
+| test_configs.hpp | `modules/test_utils/` | ✅ Ready |
+| validators/ | `modules/test_utils/validators/` | ✅ Ready |
+| references/ | `modules/test_utils/references/` | ✅ Ready |
+| gpu_transfer.hpp | `modules/test_utils/` | ✅ Ready |
+| test_runner.hpp | `modules/test_utils/` | ✅ Ready |
+| gpu_test_base.hpp | `modules/test_utils/` | ✅ Ready |
+
+### Миграция модулей
+
+| Модуль | Статус | Тесты |
+|--------|--------|-------|
+| statistics | ✅ Эталон | 21/21 |
+| signal_generators | ✅ Мигрирован | 11/11 |
+| fft_func | ✅ Мигрирован | 23/23 |
+| heterodyne | ✅ Мигрирован | 11/11 |
+| filters | ✅ Мигрирован | 22/22 |
+| lch_farrow | ⬜ Pending | — |
+| vector_algebra | ⬜ Pending | — |
+| fm_correlator | ⬜ Pending | — |
+| strategies | ⬜ Pending | — |

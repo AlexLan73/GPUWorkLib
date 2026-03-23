@@ -1,43 +1,54 @@
 # COMPLETED — Завершённые задачи
 
-> **Обновлено**: 2026-03-12
+> **Обновлено**: 2026-03-23
 
 ---
 
-## Task_13 — Strategies Pipeline: fft_func + vector<float> API ✅ 2026-03-12
+## Task_14 — Python Test Bugs + C++ Test Migration ✅ 2026-03-23
 
-- **ProcessMagnitudeToBuffer** в `fft_func` (zero-alloc, пишет в буфер вызывающего)
-- **T6 тест** для ProcessMagnitudeToBuffer — **PASSED** ✅
-- **strategies**: `ComplexToMagPhaseROCm` вместо `magnitudes_kernel_` в `do_window_fft`
-- **StrategiesFloatApi** (`strategies_float_api.hpp`): `OneMaxParabolaFromFloat`, `GlobalMinMaxFromFloat`, `AllMaximaFromMagnitudes`
-- **AllocateManaged** в `IBackend` (default nullptr) + `ROCmBackend` (hipMallocManaged)
-- **Parallel benchmark**: `stream_bench3a/b/c_`, `do_run_post_fft_parallel()`, `test_strategies_benchmark_streams.hpp`
-- **Python tests**: 13/13 PASSED (`test_strategies_step_by_step.py`)
-- Сборка: 100% OK, без ошибок
+### Python: 5 нерешённых багов → ALL FIXED
+| # | Баг | Причина | Фикс |
+|---|-----|---------|------|
+| 5 | Нет биндинга LfmAnalyticalDelayROCm | Отсутствовал файл | `py_lfm_analytical_delay_rocm.hpp` + регистрация |
+| 4 | FormSignal window tau_base=-0.1 | 2D shape (1,N) вместо 1D | `if (n_ant<=1) return 1D` |
+| 3 | LchFarrow integer delay err=8.0 | float32: `3.0*1e-6*1e6≈3.000001` + hsaco cache | snap delay_samples к nearest int |
+| 1 | SpectrumMaxima segfault | GC убивал ctx → dangling ref | `self._ctx` вместо `ctx` |
+| 2 | Matrix CSV segfault | То же — GC + ctx | `self._ctx` |
+
+### C++ Test Migration (TASK_CppTest_06) → 4 модуля на test_utils
+| Модуль | Файлов | Строк: было→стало | Тесты |
+|--------|--------|-------------------|-------|
+| signal_generators | 2 | 713→400 (-44%) | 11/11 ✅ |
+| fft_func | 4 | 1745→830 (-52%) | 23/23 ✅ |
+| heterodyne | 3 | 1096→440 (-60%) | 11/11 ✅ |
+| filters | 4 | 1764→860 (-51%) | 22/22 ✅ |
+| **Итого** | **13** | **5318→2530 (-52%)** | **67/67 ✅** |
+
+Убрано: 13 дублей helpers, 40+ raw hipMemcpy, 30+ per-test backend creation
 
 ---
 
-## 2026-03-09 — DrvGPU External Context Integration (ROCm 7.2+)
+## Task_13 — Strategies Pipeline ✅ 2026-03-12
 
-**Цель**: Позволить всем слоям DrvGPU принимать внешние GPU-хэндлы без захвата владения.
-**Платформы**: AMD Radeon 9070 (gfx1201, RDNA4) + MI100 (gfx908, CDNA1).
+- ProcessMagnitudeToBuffer, StrategiesFloatApi, AllocateManaged
+- Parallel benchmark, Python 13/13 PASSED
 
-### TASK A: ROCmBackend::InitializeFromExternalStream ✅
+---
 
-- `DrvGPU/backends/rocm/rocm_core.hpp/cpp` — добавлен `owns_stream_` флаг + `InitializeFromExternalStream()`
-- `DrvGPU/backends/rocm/rocm_backend.hpp/cpp` — добавлен `InitializeFromExternalStream()`, `Cleanup()` делегирует решение `ROCmCore`
-- `DrvGPU/tests/test_rocm_external_context.hpp` — 6 тестов (базовая init, ops, stream жив, native handles, device info, OwnsStream флаг)
+## 2026-03-09 — DrvGPU External Context Integration ✅
 
-### TASK B: HybridBackend::InitializeFromExternalContexts ✅
+- ROCmBackend::InitializeFromExternalStream
+- HybridBackend::InitializeFromExternalContexts
+- DrvGPU Facade Static Factory Methods + 18 тестов
 
-- `DrvGPU/backends/hybrid/hybrid_backend.hpp/cpp` — добавлен `InitializeFromExternalContexts(int, cl_context, cl_device_id, cl_command_queue, hipStream_t)`
-- `DrvGPU/tests/test_hybrid_external_context.hpp` — 6 тестов (basic init, sub-backends, OpenCL ops, ROCm ops, native handles, resources survive cleanup)
+---
 
-### TASK C: DrvGPU Facade — Static Factory Methods ✅
+## Task_12 — Cholesky Optimize ✅ 2026-02-26
 
-- `DrvGPU/include/drv_gpu.hpp` — `ExternalInitTag` + приватный ctor + 3 static factory declarations
-- `DrvGPU/src/drv_gpu.cpp` — реализация `ExternalInitTag` ctor + `CreateFromExternalOpenCL/ROCm/Hybrid`
-- `DrvGPU/tests/test_drv_gpu_external.hpp` — 6 тестов (OpenCL: ops+survives; ROCm: ops+stream survives; Hybrid: ops+resources survive)
-- `DrvGPU/tests/all_test.hpp` — добавлены закомментированные includes для всех 3 новых тест-файлов
-- `DrvGPU/tests/README.md` — обновлена таблица тестов и покрытие
+- 341×341 GpuKernel: 1.482→0.941 мс (-36.5%)
+- Предаллокация d_info_, отложенная CheckInfo
 
+## Task_11 — VectorAlgebra Cholesky v2 ✅ 2026-02-26
+
+- SymmetrizeMode (Roundtrip/GpuKernel), RAII CholeskyResult, hiprtc
+- C++ 23 PASSED, Python 6/6 PASSED
