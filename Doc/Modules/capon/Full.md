@@ -33,10 +33,12 @@
 
 | Op-класс | Назначение | Библиотека |
 |----------|-----------|------------|
-| `CovarianceMatrixOp` | R = Y·Y^H/N + μI | rocBLAS CGEMM + HIP `add_regularization` |
-| `CaponInvertOp` | R⁻¹ | **vector_algebra::CholeskyInverterROCm** |
-| `CaponReliefOp` | z[m] = 1/Re(u^H R⁻¹ u) | rocBLAS CGEMM + HIP `compute_capon_relief` |
-| `AdaptBeamformOp` | Y_out = (R⁻¹U)^H Y | rocBLAS CGEMM × 2 |
+| `CovarianceMatrixOp` | R = Y·Y^H/N | `MatrixOpsROCm::CovarianceMatrix` (rocBLAS CGEMM) |
+| *DiagonalLoadRegularizer* | R += μI | `vector_algebra::DiagonalLoadRegularizer` (Strategy) |
+| `CaponInvertOp` | R⁻¹ | `vector_algebra::CholeskyInverterROCm` (unique_ptr) |
+| `ComputeWeightsOp` | W = R⁻¹·U | `MatrixOpsROCm::Multiply` (rocBLAS CGEMM) |
+| `CaponReliefOp` | z[m] = 1/Re(u^H·W[m]) | HIP kernel `compute_capon_relief` (hiprtc) |
+| `AdaptBeamformOp` | Y_out = W^H·Y | `MatrixOpsROCm::MultiplyConjTransA` (rocBLAS CGEMM) |
 
 **Прототип**: `Doc_Addition/Capon/capon_test/` — ArrayFire реализация с 6 методами инверсии. Тестировалась на P=85 каналах, 25 помехах, f0=3.9 ГГц. GPUWorkLib использует typeCalc=4 (chol+inv) через `CholeskyInverterROCm`.
 
@@ -127,7 +129,7 @@ Y [P×N]  U [P×M]
     ▼
 ┌────────────────────────────────────────────────┐
 │ 2. CovarianceMatrixOp::Execute(P, N, mu)        │
-│    rocBLAS CGEMM: R = Y*Y^H/N  [TODO]         │
+│    rocBLAS CGEMM: R = Y*Y^H/N  ✅         │
 │    HIP add_regularization: R[i,i] += mu         │
 │    → kCovMatrix [P×P]                          │
 └────────────────────────────────────────────────┘
@@ -145,7 +147,7 @@ Y [P×N]  U [P×M]
     ▼
 ┌────────────────────────────────────────────────┐
 │ 4. CaponReliefOp::Execute(P, M, R⁻¹_ptr)       │
-│    rocBLAS CGEMM: W = R⁻¹·U [P×M]  [TODO]    │
+│    rocBLAS CGEMM: W = R⁻¹·U [P×M]  ✅    │
 │    HIP compute_capon_relief:                    │
 │      z[m] = 1/Re(Σ_p conj(U[p,m]) * W[p,m])   │
 │    → kOutput float[M]                           │
@@ -163,8 +165,8 @@ ctx_.Synchronize() → ReadReliefResult() → CaponReliefResult
     ▼
 ┌────────────────────────────────────────────────┐
 │ 4. AdaptBeamformOp::Execute(P, N, M, R⁻¹_ptr)  │
-│    CGEMM 1: W = R⁻¹·U [P×M]        [TODO]    │
-│    CGEMM 2: Y_out = W^H·Y [M×N]    [TODO]    │
+│    CGEMM 1: W = R⁻¹·U [P×M]        ✅    │
+│    CGEMM 2: Y_out = W^H·Y [M×N]    ✅    │
 │    → kOutput complex<float>[M×N]               │
 └────────────────────────────────────────────────┘
     │
@@ -253,11 +255,11 @@ extern "C" __global__ void compute_capon_relief(
 modules/capon/
   CaponProcessor (Facade, L6)
   ├── GpuContext ctx_             stream, compiled kernels, shared bufs
-  ├── CovarianceMatrixOp          GpuKernelOp: rocBLAS CGEMM [TODO] + add_regularization
+  ├── CovarianceMatrixOp          GpuKernelOp: rocBLAS CGEMM ✅ + add_regularization
   ├── CaponInvertOp               НЕ GpuKernelOp — обёртка CholeskyInverterROCm
   │     └── CholeskyInverterROCm  ← modules/vector_algebra/ (POTRF+POTRI+symmetrize)
-  ├── CaponReliefOp               GpuKernelOp: rocBLAS CGEMM [TODO] + compute_capon_relief
-  ├── AdaptBeamformOp             GpuKernelOp: 2x rocBLAS CGEMM [TODO]
+  ├── CaponReliefOp               GpuKernelOp: rocBLAS CGEMM ✅ + compute_capon_relief
+  ├── AdaptBeamformOp             GpuKernelOp: 2x rocBLAS CGEMM ✅
   └── CholeskyResult last_inv_    R⁻¹ на GPU (RAII, обновляется каждый вызов)
 ```
 
@@ -352,28 +354,51 @@ MakeNoise:            re[i] = σ·cos(i·1.23),  im[i] = σ·sin(i·2.34)  [де
 MakeSteeringMatrix:   U[m*P+p] = exp(j·2π·p·0.5·sin(θ_m)),  θ_m ∈ [θ_min, θ_max]
 ```
 
-### C++ тесты — ROCm (`tests/test_capon_rocm.hpp`)
+### C++ тесты — test_capon_rocm.hpp (базовые)
 
-| # | Тест | P | N | M | mu | Что проверяет | Порог | Что ловит |
-|---|------|---|---|---|----|---------------|-------|-----------|
-| 01 | `test_01_relief_noise_only` | 8 | 64 | 16 | 0.01 | relief.size()==M; все > 0 | `> 0` | Баг в полном pipeline (GEMM/POTRF/kernel/Read). При R≈σ²I рельеф аналитически постоянный и > 0 |
-| 02 | `test_02_relief_with_interference` | 8 | 128 | 32 | 0.001 | relief.size()==M | размерность | Корректность при больших параметрах. TODO: добавить помеху, проверить argmin(relief) |
-| 03 | `test_03_adaptive_beamform_dims` | 4 | 32 | 6 | 0.01 | output.size()==M×N | точное равенство | Ошибку в ReadBeamResult или CGEMM Y_out=W^H*Y |
-| 04 | `test_04_regularization` | 4 | **16 (N<P!)** | 8 | 0.1 | isfinite && ≥ 0 | `isfinite && ≥ 0` | Вырожденность: без mu POTRF→info!=0→исключение. С mu=0.1 восстановлена HPD. NaN из kernel при acc=0 |
-| 05 | `test_05_gpu_to_gpu` | 8 | 64 | 16 | 0.01 | GPU-to-GPU | SKIP | TODO: GPU alloc в тесте |
+| # | Тест | P | N | M | mu | Что проверяет | Порог |
+|---|------|---|---|---|----|---------------|-------|
+| 01 | `relief_noise_only` | 8 | 64 | 16 | 0.01 | Все z[m] > 0, isfinite, size==M | > 0 |
+| 02 | `relief_with_interference` | 8 | 128 | 32 | 0.001 | MVDR подавление: z[m_int] < mean(z)/2 | < mean/2 |
+| 03 | `adaptive_beamform_dims` | 4 | 32 | 6 | 0.01 | output.size()==M×N, isfinite | точное |
+| 04 | `regularization` | 4 | 8 (N<P) | 8 | 0.1 | isfinite && ≥ 0 при вырожденной матрице | isfinite |
+| 05 | `gpu_to_gpu` | 8 | 64 | 16 | 0.01 | hipMalloc→hipMemcpy→void* API→z[m]>0 | > 0 |
 
-**Почему шум в тесте 01?** При $Y \sim CN(0,\sigma^2)$: $R \approx \sigma^2 I$, $R^{-1} \approx \sigma^{-2} I$, $z[m] \approx 1/P$ — аналитически постоянно. Любое отклонение (NaN/Inf/z<0) однозначно указывает на баг.
+### C++ тесты — test_capon_reference_data.hpp (MATLAB данные)
 
-**Почему N<P в тесте 04?** $YY^H/N$ вырождена при N<P. Без μ: POTRF вернёт `info!=0`. С μ=0.1: HPD восстановлена. `isfinite && ≥ 0` ловит: недостаточную регуляризацию, NaN из kernel при acc=0.
+Данные: `Doc_Addition/Capon/capon_test/build/` (x_data, y_data, signal_matlab).
 
-### Python тесты (запланированы: `Python_test/capon/test_capon.py`)
+| # | Тест | Параметры | Порог |
+|---|------|-----------|-------|
+| 01 | load_files | — | SKIP если нет файлов |
+| 02 | physical_relief_properties | P=85, N=1000, M=1369, mu=1.0 | all z[m] > 0 |
+| 03 | cpu_vs_gpu_small_p | P=8, N=64, M=16, mu=100 | max_rel_error < 0.5% |
 
-| # | Тест | Порог |
-|---|------|-------|
-| 1 | GPU рельеф ≈ NumPy эталон (P=4, N=32, M=8) | ATOL=1e-4 |
-| 2 | output.shape == (M, N) | точное равенство |
-| 3 | argmin(relief) ≈ направление помехи | ±0.5 бина |
-| 4 | N<P, mu>0 → all isfinite | isfinite |
+### C++ тесты — test_capon_opencl_to_rocm.hpp (Zero Copy)
+
+| # | Тест | Что проверяет |
+|---|------|---------------|
+| 01 | detect_interop | Метод Zero Copy: AMD_GPU_VA / DMA_BUF / NONE |
+| 02 | signal_from_opencl | CPU→cl_mem→ZeroCopy→hip→ComputeRelief: z[m]>0 |
+| 03 | results_match_ref | Zero Copy путь == прямой CPU путь (< 1e-4) |
+| 04 | beamform_from_opencl | AdaptiveBeamform через cl_mem → [M×N] isfinite |
+
+### Бенчмарки — capon_benchmark.hpp + test_capon_benchmark_rocm.hpp
+
+| Класс | Метод | Параметры | Runs |
+|-------|-------|-----------|------|
+| `CaponReliefBenchmarkROCm` | ComputeRelief | P=16, N=256, M=64 | 5+20 |
+| `CaponBeamformBenchmarkROCm` | AdaptiveBeamform | P=16, N=256, M=64 | 5+20 |
+
+Результаты → `Results/Profiler/GPU_00_Capon_ROCm/`. Запуск при `is_prof=true`.
+
+### Python тесты — `Python_test/capon/test_capon.py`
+
+| Класс | Тесты | Описание |
+|-------|-------|----------|
+| `TestCaponReference` | 8 тестов | NumPy эталон: shape, positive, finite, suppression, regularization |
+| `TestCaponGPU` | 2 теста | Запуск C++ тестов, проверка PASS |
+| `TestCaponRealData` | 6 тестов | MATLAB данные P=85, корреляция > 0.99 |
 
 ---
 
@@ -396,7 +421,13 @@ modules/capon/
 │   └── capon_processor.cpp               Facade + Upload/Copy/Read + Move semantics
 └── tests/
     ├── all_test.hpp                       capon_all_test::run()
-    ├── test_capon_rocm.hpp                5 тестов (01-04 активны, 05 SKIP)
+    ├── capon_test_helpers.hpp               Общие хелперы: MakeNoise, MakeSteeringMatrix, shared backend
+    ├── test_capon_rocm.hpp                5 базовых тестов (01-05)
+    ├── test_capon_reference_data.hpp      3 теста на MATLAB данных (CPU vs GPU)
+    ├── test_capon_opencl_to_rocm.hpp      4 теста Zero Copy (OpenCL→ROCm)
+    ├── capon_benchmark.hpp                Benchmark классы (GpuBenchmarkBase)
+    ├── test_capon_benchmark_rocm.hpp      Benchmark runner
+    ├── GUIDE_opencl_to_rocm.md            Руководство: паттерн Zero Copy
     └── README.md
 
 Doc_Addition/Capon/capon_test/            ArrayFire прототип (CPU)
@@ -417,17 +448,19 @@ modules/vector_algebra/                   Зависимость — инвер�
 
 3. **N < P без mu → POTRF fail.** При N < P матрица $YY^H/N$ вырождена → не HPD → POTRF вернёт `info != 0` → исключение. Всегда `mu > 0`.
 
-4. **CaponInvertOp — не GpuKernelOp.** Не вызывать `Release()`. В `~CaponProcessor()` явно освобождаются только `cov_op_`, `relief_op_`, `beam_op_`. `inv_op_` — стандартный деструктор.
+4. **CaponInvertOp в unique_ptr.** `CholeskyInverterROCm` non-copyable → `inv_op_` хранится как `unique_ptr<CaponInvertOp>` → корректный move. В `~CaponProcessor()` `inv_op_` освобождается автоматически.
 
-5. **CholeskyInverterROCm не перемещаемый.** Move assignment `CaponProcessor` не переприсваивает `inv_op_` (помечено TODO). Для fix — обернуть в `unique_ptr<CaponInvertOp>`.
+5. **ComputeWeightsOp — единый CGEMM.** W = R⁻¹·U вычисляется один раз в `RunComputeWeights()` → `kWeight`. `CaponReliefOp` и `AdaptBeamformOp` не дублируют CGEMM.
 
-6. **Статус: CGEMM — TODO.** rocBLAS CGEMM в `CovarianceMatrixOp`, `CaponReliefOp`, `AdaptBeamformOp` помечены TODO. HIP kernels реализованы. Нужно получить `rocblas_handle` из backend.
+6. **DiagonalLoadRegularizer — Strategy.** R[i,i] += μ через `IMatrixRegularizer` (vector_algebra). mu==0 → no-op.
 
 7. **last_inv_ пересоздаётся каждый вызов.** `RunCovAndInvert()` делает `last_inv_ = ...` — старый `CholeskyResult` (с `hipFree`) уничтожается. Нельзя хранить `AsHipPtr()` дольше одного пайплайна.
 
-8. **Прototип: P=85, 25 помех, f0=3.9 ГГц.** typeCalc=4 (chol+inv) — лучший баланс скорости и стабильности. SVD (typeCalc=6) стабильнее, но медленнее. Шульц (typeCalc=3/5) быстрее при P>>100, но требует начального приближения.
+8. **GPU-to-GPU и Zero Copy.** `ComputeRelief(void*, void*, params)` принимает HIP device pointers. Совместимо с `ZeroCopyBridge` (OpenCL→ROCm без DMA). См. `tests/GUIDE_opencl_to_rocm.md`.
+
+9. **Первый вызов медленнее.** `EnsureCompiled()` компилирует hiprtc (~200 мс) + `inv_op_->CompileKernels()` warmup.
 
 ---
 
-*Обновлено: 2026-03-16*
+*Обновлено: 2026-03-24*
 *[Quick.md](Quick.md) | [API.md](API.md)*
