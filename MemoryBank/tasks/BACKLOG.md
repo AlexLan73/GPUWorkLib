@@ -1,6 +1,6 @@
 # BACKLOG — Очередь задач
 
-> **Обновлено**: 2026-03-23
+> **Обновлено**: 2026-03-24
 > **Главный план**: `MemoryBank/tasks/MODULES_WORK_PLAN.md`
 
 ---
@@ -29,6 +29,23 @@
 | Arch-06 | [TASK_PythonArch_06](TASK_PythonArch_06_plotting.md) | 3 | 🟡 LOW | `common/plotting/` — PlotterFactory, SpectrumPlotter, TimePlotter |
 
 **Начинать с Фазы 1**: Arch-03 ∥ Arch-01 → Arch-02 (03 и 01 параллельно, 02 после 01)
+
+---
+
+## 🖥️ GPU + Mellanox Topology (новая задача 2026-03-24)
+
+> **Таск**: [`TASK_GPU_Mellanox_Topology.md`](TASK_GPU_Mellanox_Topology.md)
+> **Сервер**: kc-vse-4-debian (SuperServer 6049GP-TRT, 6×MI100 + 6×CX-5)
+
+**Цель**: Авто-детектор пар GPU+NIC по PCIe слотам → стабильные ID независимо от перезагрузки.
+
+| Фаза | Что | Где |
+|------|-----|-----|
+| Phase 1 | Standalone утилита (отладка на сервере) | `Examples/GetGPU_and_Mellanox/` |
+| Phase 2 | Сервис в DrvGPU | `DrvGPU/services/server_topology_service.*` |
+| Phase 3 | config + backends | `config_types.hpp`, `rocm_backend.cpp`, `opencl_backend.cpp` |
+
+**Начинать с Phase 1** — собрать на сервере и проверить что топология определяется верно.
 
 ---
 

@@ -354,7 +354,7 @@ std::unique_ptr<ZeroCopyBridge> HybridBackend::CreateZeroCopyBridge(
   cl_device_id cl_device = static_cast<cl_device_id>(opencl_->GetNativeDevice());
 
   // ImportFromOpenCl() автоматически выбирает лучший метод:
-  // AMD_GPU_VA (прямой VA) → DMA-BUF (Linux kernel) → SVM → NONE.
+  // HSA Probe (true zero-copy) → HSA DMA-BUF → OpenCL DMA-BUF → SVM fallback.
   bridge->ImportFromOpenCl(cl_buffer, buffer_size, cl_device);
 
   DRVGPU_LOG_INFO("HybridBackend", "ZeroCopy bridge created: " +

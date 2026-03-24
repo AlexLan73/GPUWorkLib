@@ -6,18 +6,18 @@
  *
  * Загружает файлы из Doc_Addition/Capon/capon_test/build/:
  *   - x_data.txt, y_data.txt  — координаты антенных секций (340 значений)
- *   - signal_matlab.txt       — MATLAB сигнал (341 строка × 1000 комплексных чисел)
- *   - z_values.txt            — эталонные значения рельефа (4 блока × 37×37 = 5476)
+ *   - signal_matlab.txt       — MATLAB сигнал (341 строка x 1000 комплексных чисел)
+ *   - z_values.txt            — эталонные значения рельефа (4 блока x 37x37 = 5476)
  *
  * Физические параметры (из эталонной реализации):
  *   f0 = 3918e6 + 3.15e6 = 3921150000 Hz
  *   c  = 299792458 m/s
- *   getU(x, y, u, v, f0) = exp(j * 2π * (x*u + y*v) * f0/c)   — нет нормализации (numdims=1)
+ *   getU(x, y, u, v, f0) = exp(j * 2pi * (x*u + y*v) * f0/c)
  *
  * Отличие формул:
  *   Эталон (ArrayFire):  R = Y*Y^H       + mu*I   (нет деления на N)
  *   GPU (CaponProcessor): R = (1/N)*Y*Y^H + mu*I   (есть деление на N)
- *   → для сравнения форм рельефа используется нормировка
+ *   -> для сравнения форм рельефа используется нормировка
  *
  * Тесты:
  *   01 — загрузка и валидация файлов
@@ -31,24 +31,29 @@
 #if ENABLE_ROCM
 
 #include "capon_processor.hpp"
-#include "services/console_output.hpp"
-#include "backends/rocm/rocm_backend.hpp"
 #include "capon_test_helpers.hpp"
+#include "services/console_output.hpp"
 
 #include <vector>
 #include <complex>
 #include <cmath>
 #include <cassert>
 #include <string>
-#include <fstream>
 #include <sstream>
 #include <algorithm>
-#include <numeric>
-#include <stdexcept>
 
 namespace test_capon_reference_data {
 
 using cx = std::complex<float>;
+
+// Используем общие утилиты из capon_test_helpers
+using capon_test_helpers::kF0;
+using capon_test_helpers::kC;
+using capon_test_helpers::kDataDir;
+using capon_test_helpers::LoadRealVector;
+using capon_test_helpers::LoadSignalMatlab;
+using capon_test_helpers::MakePhysicalSteering;
+using capon_test_helpers::MakeScanGrid1D;
 
 inline void TestPrint(const std::string& msg) {
   drv_gpu_lib::ConsoleOutput::GetInstance().Print(0, "Capon", msg);
@@ -59,197 +64,22 @@ inline drv_gpu_lib::IBackend* GetTestBackend() {
 }
 
 // ============================================================================
-// Физические константы
+// CPU эталон (для test_03) — специфичен для этого файла
 // ============================================================================
 
-static constexpr double kF0 = 3918e6 + 3.15e6;   // 3921150000 Hz
-static constexpr double kC  = 299792458.0;          // скорость света, м/с
-
-// ============================================================================
-// Пути к файлам данных (относительно корня проекта)
-// ============================================================================
-
-static const std::string kDataDir =
-    "Doc_Addition/Capon/capon_test/build/";
-
-// ============================================================================
-// Загрузка файлов
-// ============================================================================
-
-/// Загрузить вектор вещественных чисел из файла (одно число на строку/через пробел)
-inline bool LoadRealVector(const std::string& path,
-                           std::vector<float>& out) {
-  std::ifstream f(path);
-  if (!f.is_open()) return false;
-  double v;
-  while (f >> v) {
-    out.push_back(static_cast<float>(v));
-  }
-  return !out.empty();
-}
-
-/// Разобрать одно комплексное число в формате MATLAB: "реальная+мнимаяi"
-/// Поддерживает оба знака: "6.17+18.74i" и "-9.80-30.59i"
-inline bool ParseMatlabComplex(const std::string& token, cx& result) {
-  if (token.empty()) return false;
-  // Найти последний + или - перед 'i', не являющийся частью 'e+' / 'E-'
-  // Ищем справа налево (от предпоследнего символа, последний — 'i')
-  if (token.back() != 'i') return false;
-  std::string s = token.substr(0, token.size() - 1);  // обрезать 'i'
-
-  // Ищем последний + или -, стоящий НЕ после 'e'/'E'
-  int split_pos = -1;
-  for (int i = static_cast<int>(s.size()) - 1; i > 0; --i) {
-    char c = s[i];
-    if ((c == '+' || c == '-') &&
-        s[i - 1] != 'e' && s[i - 1] != 'E') {
-      split_pos = i;
-      break;
-    }
-  }
-  if (split_pos <= 0) return false;
-
-  std::string real_str = s.substr(0, split_pos);
-  std::string imag_str = s.substr(split_pos);  // включает знак
-
-  try {
-    float re = std::stof(real_str);
-    float im = std::stof(imag_str);
-    result = cx(re, im);
-    return true;
-  } catch (...) {
-    return false;
-  }
-}
-
-/**
- * @brief Загрузить сигнальную матрицу из signal_matlab.txt
- *
- * Формат: 341 строка, каждая содержит 1000 комплексных чисел в MATLAB формате.
- * Первые P строк → P каналов, первые N столбцов → N отсчётов.
- * Хранение: column-major Y[m*P + p] → для CaponProcessor.
- *
- * @param path   путь к файлу
- * @param P      число строк (каналов) для загрузки
- * @param N      число столбцов (отсчётов) для загрузки
- * @param out    выходной вектор [P*N], column-major
- * @return true при успехе
- */
-inline bool LoadSignalMatlab(const std::string& path,
-                             uint32_t P, uint32_t N,
-                             std::vector<cx>& out) {
-  std::ifstream f(path);
-  if (!f.is_open()) return false;
-
-  // Буфер: row-major строки × столбцы → потом транспонировать в column-major
-  std::vector<std::vector<cx>> rows;
-  rows.reserve(P);
-
-  std::string line;
-  uint32_t row_idx = 0;
-  while (std::getline(f, line) && row_idx < P) {
-    std::istringstream ss(line);
-    std::vector<cx> row;
-    row.reserve(N);
-    std::string token;
-    while (ss >> token && row.size() < N) {
-      cx val;
-      if (!ParseMatlabComplex(token, val)) return false;
-      row.push_back(val);
-    }
-    if (row.size() < N) return false;
-    rows.push_back(std::move(row));
-    ++row_idx;
-  }
-  if (rows.size() < P) return false;
-
-  // Транспонировать в column-major: Y[p + n*P]
-  out.resize(static_cast<size_t>(P) * N);
-  for (uint32_t p = 0; p < P; ++p) {
-    for (uint32_t n = 0; n < N; ++n) {
-      out[static_cast<size_t>(n) * P + p] = rows[p][n];
-    }
-  }
-  return true;
-}
-
-// ============================================================================
-// Построение направляющих векторов (физическая антенна)
-// ============================================================================
-
-/**
- * @brief Построить матрицу управляющих векторов
- *
- * U[p, m] = exp(j * 2π * (x[p]*u_m + y[p]*v_m) * f0/c)
- *
- * Нормализация: getU в эталоне делит на sqrt(y_sub_prm.numdims()),
- * для 1D вектора numdims()=1 → sqrt(1)=1 → нет нормализации.
- *
- * Хранение column-major: U[m*P + p]
- *
- * @param x          координаты x[0..P-1]
- * @param y          координаты y[0..P-1]
- * @param u_dirs     u-координаты направлений [M]
- * @param v_dirs     v-координаты направлений [M]
- * @param f0         несущая частота, Гц
- * @param c          скорость распространения, м/с
- * @return вектор [P*M], column-major
- */
-inline std::vector<cx> MakePhysicalSteering(
-    const std::vector<float>& x,
-    const std::vector<float>& y,
-    const std::vector<float>& u_dirs,
-    const std::vector<float>& v_dirs,
-    double f0, double c) {
-  const uint32_t P = static_cast<uint32_t>(x.size());
-  const uint32_t M = static_cast<uint32_t>(u_dirs.size());
-  assert(u_dirs.size() == v_dirs.size());
-  assert(x.size() == y.size());
-
-  std::vector<cx> U(static_cast<size_t>(P) * M);
-  const double k = 2.0 * M_PI * f0 / c;
-
-  for (uint32_t m = 0; m < M; ++m) {
-    double um = static_cast<double>(u_dirs[m]);
-    double vm = static_cast<double>(v_dirs[m]);
-    for (uint32_t p = 0; p < P; ++p) {
-      double phase = k * (static_cast<double>(x[p]) * um +
-                          static_cast<double>(y[p]) * vm);
-      U[static_cast<size_t>(m) * P + p] =
-          cx(static_cast<float>(std::cos(phase)),
-             static_cast<float>(std::sin(phase)));
-    }
-  }
-  return U;
-}
-
-// ============================================================================
-// CPU эталон (для test_03)
-// ============================================================================
-
-/**
- * @brief Разложение Холецкого нижняя треугольная L (column-major, in-place)
- *
- * Вход: A — симметричная положительно определённая матрица P×P, column-major.
- * Выход: нижний треугольник A заменяется на L, где A = L*L^H.
- *
- * @return true при успехе, false при вырожденности
- */
+/// Разложение Холецкого нижняя треугольная L (column-major, in-place)
 inline bool CholeskyLower(std::vector<cx>& A, uint32_t P) {
-  // L[i,j] = A[j*P+i], i >= j
   for (uint32_t j = 0; j < P; ++j) {
-    // Диагональный элемент
     float diag = A[j * P + j].real();
     for (uint32_t k = 0; k < j; ++k) {
-      cx lkj = A[j * P + k];
-      diag -= (lkj * std::conj(lkj)).real();
+      cx ljk = A[k * P + j];  // L[j,k] column-major: (row=j, col=k)
+      diag -= (ljk * std::conj(ljk)).real();
     }
     if (diag <= 0.0f) return false;
     A[j * P + j] = cx(std::sqrt(diag), 0.0f);
 
-    // Внестрогий нижний треугольник
     for (uint32_t i = j + 1; i < P; ++i) {
-      cx sum = A[j * P + i];  // a[i,j]
+      cx sum = A[j * P + i];
       for (uint32_t k = 0; k < j; ++k) {
         sum -= A[k * P + i] * std::conj(A[k * P + j]);
       }
@@ -259,13 +89,7 @@ inline bool CholeskyLower(std::vector<cx>& A, uint32_t P) {
   return true;
 }
 
-/**
- * @brief Решить L*x = b (нижнетреугольная, column-major L)
- *
- * @param L  нижняя треугольная матрица P×P, column-major
- * @param b  правая часть [P]
- * @return x [P]
- */
+/// Решить L*x = b (нижнетреугольная, column-major L)
 inline std::vector<cx> ForwardSolve(const std::vector<cx>& L,
                                     uint32_t P,
                                     const std::vector<cx>& b) {
@@ -273,7 +97,7 @@ inline std::vector<cx> ForwardSolve(const std::vector<cx>& L,
   for (uint32_t i = 0; i < P; ++i) {
     cx sum = b[i];
     for (uint32_t k = 0; k < i; ++k) {
-      sum -= L[k * P + i] * x[k];  // L[i,k] column-major: L[k*P+i]
+      sum -= L[k * P + i] * x[k];
     }
     x[i] = sum / L[i * P + i];
   }
@@ -287,55 +111,41 @@ inline std::vector<cx> ForwardSolve(const std::vector<cx>& L,
  * L*L^H = R  (Cholesky)
  * x_m = L^{-1} * u_m
  * z[m] = 1 / ||x_m||^2
- *
- * @param Y      сигнальная матрица [P*N], column-major
- * @param P      число каналов
- * @param N      число отсчётов
- * @param U      управляющие векторы [P*M], column-major
- * @param M      число направлений
- * @param mu     коэффициент регуляризации
- * @return z[M]  рельеф Кейпона
  */
 inline std::vector<float> CpuCaponRelief(
     const std::vector<cx>& Y, uint32_t P, uint32_t N,
     const std::vector<cx>& U, uint32_t M,
     float mu) {
-  // 1. Вычислить R = Y*Y^H/N + mu*I   (column-major, P×P)
+  // 1. R = Y*Y^H/N + mu*I
   std::vector<cx> R(static_cast<size_t>(P) * P, cx(0.0f));
   for (uint32_t n = 0; n < N; ++n) {
     for (uint32_t i = 0; i < P; ++i) {
       cx y_i = Y[static_cast<size_t>(n) * P + i];
       for (uint32_t j = 0; j < P; ++j) {
         cx y_j = Y[static_cast<size_t>(n) * P + j];
-        // R[i,j] += y_i * conj(y_j)  ;  column-major: R[j*P+i]
         R[static_cast<size_t>(j) * P + i] += y_i * std::conj(y_j);
       }
     }
   }
   float inv_N = 1.0f / static_cast<float>(N);
   for (auto& r : R) r *= inv_N;
-  // Добавить mu*I
   for (uint32_t i = 0; i < P; ++i) {
     R[static_cast<size_t>(i) * P + i] += cx(mu, 0.0f);
   }
 
-  // 2. Cholesky: L*L^H = R (нижняя треугольная)
+  // 2. Cholesky
   if (!CholeskyLower(R, P)) {
     return std::vector<float>(M, 0.0f);
   }
-  // Теперь нижний треугольник R содержит L
 
-  // 3. Для каждого направления: z[m] = 1 / ||L^{-1}*u_m||^2
+  // 3. z[m] = 1 / ||L^{-1}*u_m||^2
   std::vector<float> z(M);
   for (uint32_t m = 0; m < M; ++m) {
-    // Извлечь u_m (column-major: U[m*P .. m*P+P-1])
     std::vector<cx> u_m(P);
     for (uint32_t p = 0; p < P; ++p) {
       u_m[p] = U[static_cast<size_t>(m) * P + p];
     }
-    // x = L^{-1} * u_m
     std::vector<cx> x = ForwardSolve(R, P, u_m);
-    // ||x||^2
     float norm2 = 0.0f;
     for (auto& v : x) {
       norm2 += v.real() * v.real() + v.imag() * v.imag();
@@ -370,7 +180,6 @@ inline void test_01_load_files() {
     return;
   }
 
-  // Попробовать загрузить первые 2 строки × 3 столбца сигнала (быстрая проверка)
   std::vector<cx> signal_test;
   const bool sig_ok = LoadSignalMatlab(kDataDir + "signal_matlab.txt",
                                        2, 3, signal_test);
@@ -394,7 +203,6 @@ inline void test_01_load_files() {
 inline void test_02_physical_relief_properties() {
   TestPrint("[test_capon_reference_data::02] GPU Capon on real data (P=85, N=1000, M=1369)");
 
-  // Загрузить координаты
   std::vector<float> x_vals, y_vals;
   if (!LoadRealVector(kDataDir + "x_data.txt", x_vals) ||
       !LoadRealVector(kDataDir + "y_data.txt", y_vals)) {
@@ -412,27 +220,16 @@ inline void test_02_physical_relief_properties() {
   x_vals.resize(P);
   y_vals.resize(P);
 
-  // Загрузить сигнал
   std::vector<cx> signal;
   if (!LoadSignalMatlab(kDataDir + "signal_matlab.txt", P, N, signal)) {
     TestPrint("[test_capon_reference_data::02] SKIP: signal_matlab.txt not found or parse error");
     return;
   }
 
-  // Построить направляющую сетку 37×37=1369
-  // u_step = 0.00312,  ulim = sin(3.25° * π/180)
-  const double u_step = 0.00312;
-  const double ulim   = std::sin(3.25 * M_PI / 180.0);  // ≈ 0.05673
-
-  // Вычислить количество точек: arange(-ulim, ulim, u_step)
-  // число шагов = floor((2*ulim) / u_step) + 1
-  std::vector<float> u0_seq;
-  for (double v = -ulim; v <= ulim + u_step * 0.5; v += u_step) {
-    u0_seq.push_back(static_cast<float>(v));
-  }
+  // 2D сетка 37x37 = 1369 направлений
+  auto u0_seq = MakeScanGrid1D(3.25, 0.00312);
   const uint32_t Nu = static_cast<uint32_t>(u0_seq.size());
 
-  // Mesh-grid: u[m] = u0[m % Nu], v[m] = u0[m / Nu]
   const uint32_t M = Nu * Nu;
   std::vector<float> u_dirs(M), v_dirs(M);
   for (uint32_t iv = 0; iv < Nu; ++iv) {
@@ -443,13 +240,10 @@ inline void test_02_physical_relief_properties() {
     }
   }
 
-  // Построить управляющие векторы
   auto steering = MakePhysicalSteering(x_vals, y_vals,
                                        u_dirs, v_dirs, kF0, kC);
 
-  // Большая mu для компенсации отсутствия нормализации (GPU делит на N=1000)
-  // Эквивалентно эталонной mu=1000.0 при R без деления: mu_gpu = mu_ref/N
-  const float mu_gpu = 1.0f;  // gpu: R = Y*Y^H/N + mu*I
+  const float mu_gpu = 1.0f;
 
   capon::CaponParams params{P, N, M, mu_gpu};
 
@@ -462,7 +256,6 @@ inline void test_02_physical_relief_properties() {
     return;
   }
 
-  // Validate: все > 0 и конечные
   float min_val = result.relief[0];
   float max_val = result.relief[0];
   bool all_positive = true;
@@ -492,13 +285,12 @@ inline void test_02_physical_relief_properties() {
 }
 
 // ============================================================================
-// Test 03: CPU эталон vs GPU (P=8, N=64, M=16) — ключевой тест корректности
+// Test 03: CPU эталон vs GPU (P=8, N=64, M=16)
 // ============================================================================
 
 inline void test_03_cpu_vs_gpu_small_p() {
   TestPrint("[test_capon_reference_data::03] CPU reference vs GPU (P=8, N=64, M=16)");
 
-  // Загрузить координаты
   std::vector<float> x_vals, y_vals;
   if (!LoadRealVector(kDataDir + "x_data.txt", x_vals) ||
       !LoadRealVector(kDataDir + "y_data.txt", y_vals)) {
@@ -515,18 +307,15 @@ inline void test_03_cpu_vs_gpu_small_p() {
     return;
   }
 
-  // Первые 8 каналов
   std::vector<float> x8(x_vals.begin(), x_vals.begin() + P);
   std::vector<float> y8(y_vals.begin(), y_vals.begin() + P);
 
-  // Загрузить первые P строк × N столбцов сигнала
   std::vector<cx> signal;
   if (!LoadSignalMatlab(kDataDir + "signal_matlab.txt", P, N, signal)) {
     TestPrint("[test_capon_reference_data::03] SKIP: signal_matlab.txt not found");
     return;
   }
 
-  // 1D сканирование по u при v=0, M=16 направлений
   const double ulim = std::sin(3.25 * M_PI / 180.0);
   std::vector<float> u_dirs(M), v_dirs(M, 0.0f);
   for (uint32_t m = 0; m < M; ++m) {
@@ -534,12 +323,10 @@ inline void test_03_cpu_vs_gpu_small_p() {
         -ulim + 2.0 * ulim * m / (M - 1));
   }
 
-  // Построить управляющие векторы
   auto steering = MakePhysicalSteering(x8, y8, u_dirs, v_dirs, kF0, kC);
 
   const float mu = 100.0f;
 
-  // GPU результат
   capon::CaponParams params{P, N, M, mu};
   auto* backend = GetTestBackend();
   capon::CaponProcessor processor(backend);
@@ -550,10 +337,8 @@ inline void test_03_cpu_vs_gpu_small_p() {
     return;
   }
 
-  // CPU эталон (та же формула с делением на N)
   auto cpu_z = CpuCaponRelief(signal, P, N, steering, M, mu);
 
-  // Сравнить: relative_error[m] = |gpu[m] - cpu[m]| / max(cpu[m], 1e-6)
   float max_rel_error = 0.0f;
   uint32_t worst_m    = 0;
   for (uint32_t m = 0; m < M; ++m) {
@@ -565,7 +350,6 @@ inline void test_03_cpu_vs_gpu_small_p() {
     }
   }
 
-  // Допуск: 0.5% (плавающая точка + GPU нюансы)
   const float kTolerance = 0.005f;
 
   if (max_rel_error > kTolerance) {
@@ -576,7 +360,6 @@ inline void test_03_cpu_vs_gpu_small_p() {
         << "  (tolerance=" << kTolerance * 100.0f << "%)";
     TestPrint(msg.str());
 
-    // Диагностика: первые 5 пар
     TestPrint("  Diagnostic (gpu vs cpu):");
     for (uint32_t m = 0; m < std::min(M, 5u); ++m) {
       std::ostringstream d;
@@ -596,7 +379,7 @@ inline void test_03_cpu_vs_gpu_small_p() {
 }
 
 // ============================================================================
-// run() — точка входа
+// run()
 // ============================================================================
 
 inline void run() {

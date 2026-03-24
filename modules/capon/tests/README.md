@@ -23,7 +23,7 @@
 | 02 | `test_02_relief_with_interference` | MVDR подавление помехи: z[m_int] < mean(z)/2 |
 | 03 | `test_03_adaptive_beamform_dims` | AdaptiveBeamform — размерность выхода [M × N] |
 | 04 | `test_04_regularization` | Устойчивость при N < P (вырожденная матрица, mu > 0) |
-| 05 | `test_05_gpu_to_gpu` | SKIP (TODO: GPU alloc/upload API) |
+| 05 | `test_05_gpu_to_gpu` | GPU-to-GPU pipeline (hipMalloc + hipMemcpy D2D + void* API) |
 
 ### `test_capon_reference_data.hpp` — Тесты на реальных данных MATLAB
 
@@ -40,21 +40,35 @@
 Физическая модель: f0 = 3921.15 МГц, ULA с физическими координатами.
 CPU эталон: Cholesky + ForwardSolve (формула GPU с делением на N).
 
-### `test_capon_opencl_to_rocm.hpp` — Zero Copy Interop (OpenCL → ROCm)
+### `test_capon_opencl_to_rocm.hpp` — Zero Copy Interop (OpenCL → ROCm) с данными заказчика
 
-Тестирует передачу данных из OpenCL в ROCm через ZeroCopyBridge (без копирования VRAM).
+**Демонстрация полного production pipeline с реальными данными заказчика.**
+
+Тест 02 (customer_data_pipeline) чётко разделён на **4 этапа для заказчика**:
+
+| Этап | Описание | Что происходит |
+|------|----------|----------------|
+| **1. ЗАГРУЗКА ДАННЫХ** | Файлы заказчика (MATLAB) | x_data, y_data, signal_matlab → P=85, N=1000, M=37 |
+| **2. ЗАПИСЬ НА GPU** | OpenCL `cl_mem` | `cl.Allocate()` + `cl.MemcpyHostToDevice()` + `cl.Synchronize()` |
+| **3. ZERO COPY** | OpenCL → ROCm | `ZeroCopyBridge::ImportFromOpenCl()` — 0 копий, тот же VRAM |
+| **4. РАСЧЁТ КЕЙПОНА** | ROCm GPU pipeline | `CaponProcessor::ComputeRelief(hip_ptr, hip_ptr, params)` |
 
 | # | Тест | Что проверяет |
 |---|------|---------------|
 | 01 | `test_01_detect_interop` | Определение метода Zero Copy (DMA-BUF / AMD GPU VA / NONE) |
-| 02 | `test_02_signal_from_opencl` | Полный pipeline: CPU → cl_mem → ZeroCopy → Capon ROCm → z[m] > 0 |
-| 03 | `test_03_results_match_ref` | Математическая прозрачность: Zero Copy путь == прямой CPU путь (< 1e-4) |
-| 04 | `test_04_beamform_from_opencl` | AdaptiveBeamform с входом через cl_mem → выход [M x N], все конечные |
+| 02 | `test_02_customer_data_pipeline` | **ПОЛНЫЙ PIPELINE** с данными заказчика (4 этапа, P=85, N=1000) |
+| 03 | `test_03_zerocopy_matches_direct` | Прозрачность: Zero Copy путь == прямой путь (< 1e-4) |
+| 04 | `test_04_beamform_customer_data` | AdaptiveBeamform с данными заказчика через Zero Copy |
 
-Pipeline теста 02:
+Pipeline теста 02 (данные заказчика):
 ```
-CPU data → cl.Allocate + MemcpyH2D → cl.Synchronize → ZeroCopyBridge.ImportFromOpenCl
-         → CaponProcessor.ComputeRelief(hip_ptr) → z[m]
+[ЭТАП 1] Загрузка: signal_matlab.txt, x_data.txt, y_data.txt
+     ↓
+[ЭТАП 2] OpenCL:  cl.Allocate() → cl.MemcpyH2D(signal, steering) → cl.Synchronize()
+     ↓
+[ЭТАП 3] ZeroCopy: ZeroCopyBridge.ImportFromOpenCl() → hip_Y, hip_U (0 копий!)
+     ↓
+[ЭТАП 4] Capon:   CaponProcessor.ComputeRelief(hip_Y, hip_U, params) → z[m]
 ```
 
 Подробное руководство: [GUIDE_opencl_to_rocm.md](GUIDE_opencl_to_rocm.md)
@@ -104,10 +118,12 @@ Python тесты: `Python_test/capon/test_capon.py` — см. [Python_test/capo
 
 | Файл | Описание |
 |------|----------|
+| `capon_test_helpers.hpp` | Общие утилиты: backend, загрузка данных, steering, noise |
 | [GUIDE_opencl_to_rocm.md](GUIDE_opencl_to_rocm.md) | Руководство разработчика: паттерн Zero Copy OpenCL → ROCm |
 | `DrvGPU/backends/rocm/zero_copy_bridge.hpp` | ZeroCopyBridge API |
 | `DrvGPU/tests/test_zero_copy.hpp` | Базовые тесты ZeroCopyBridge |
 | `Python_test/capon/test_capon.py` | Python тесты с NumPy + MATLAB данные |
+| `Doc_Addition/Capon/capon_test/build/` | Данные заказчика (MATLAB: signal, координаты, эталон) |
 
 ## Статус
 

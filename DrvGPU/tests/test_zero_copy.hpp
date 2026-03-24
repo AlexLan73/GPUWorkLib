@@ -23,6 +23,7 @@
 #include "../backends/opencl/opencl_export.hpp"
 #include "../backends/rocm/rocm_backend.hpp"
 #include "../backends/rocm/zero_copy_bridge.hpp"
+#include "../backends/rocm/hsa_interop.hpp"
 #include "../logger/logger.hpp"
 
 #include <CL/cl.h>
@@ -67,9 +68,11 @@ static void test_detect_method() {
 
   // Проверка отдельных capabilities
   bool has_dma_buf = SupportsDmaBufExport(device);
-  bool has_amd_va = SupportsAmdGpuVA(device);
+  bool has_hsa = IsHsaAvailable();
+  bool has_svm = SupportsSVMZeroCopy(device);
+  std::cout << "  [ZeroCopy]   HSA Probe support: " << (has_hsa ? "YES" : "NO") << "\n";
   std::cout << "  [ZeroCopy]   DMA-BUF support: " << (has_dma_buf ? "YES" : "NO") << "\n";
-  std::cout << "  [ZeroCopy]   AMD GPU VA support: " << (has_amd_va ? "YES" : "NO") << "\n";
+  std::cout << "  [ZeroCopy]   SVM fine-grain support: " << (has_svm ? "YES" : "NO") << "\n";
 
   cl_backend.Cleanup();
   print_test("detect_method", passed);
@@ -108,34 +111,88 @@ static void test_export_dma_buf() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Test 3: Export cl_mem → GPU VA (AMD-only)
+// Test 3: HSA Probe — извлечение GPU VA из cl_mem
 // ════════════════════════════════════════════════════════════════════════════
 
-static void test_export_gpu_va() {
+static void test_hsa_probe() {
   using namespace drv_gpu_lib;
+
+  if (!IsHsaAvailable()) {
+    std::cout << "  [ZeroCopy] hsa_probe: SKIPPED (HSA not available)\n";
+    return;
+  }
 
   OpenCLBackend cl_backend;
   cl_backend.Initialize(0);
 
-  cl_device_id device = static_cast<cl_device_id>(cl_backend.GetNativeDevice());
-  if (!SupportsAmdGpuVA(device)) {
-    std::cout << "  [ZeroCopy] export_gpu_va: SKIPPED (no AMD GPU VA support)\n";
-    cl_backend.Cleanup();
-    return;
+  ROCmBackend rocm_backend;
+  rocm_backend.Initialize(0);
+
+  // 1MB буфер — ближе к реальному use case, probe надёжнее для больших аллокаций
+  const size_t N = 256 * 1024;  // 256K float = 1MB
+  const size_t buf_size = N * sizeof(float);
+
+  // Записать данные в cl_mem
+  void* cl_buf = cl_backend.Allocate(buf_size);
+  std::vector<float> input(N);
+  for (size_t i = 0; i < N; ++i) input[i] = static_cast<float>(i % 1000) * 0.5f + 1.0f;
+  cl_backend.MemcpyHostToDevice(cl_buf, input.data(), buf_size);
+  cl_backend.Synchronize();
+
+  // Диагностика: ручной скан cl_mem (как в standalone тесте)
+  {
+    auto* raw = reinterpret_cast<uint8_t*>(cl_buf);
+    int hsa_count = 0;
+    for (int off = 0; off < 2048; off += 8) {
+      void* val = *reinterpret_cast<void**>(raw + off);
+      if (!val || reinterpret_cast<uintptr_t>(val) < 0x10000) continue;
+      hsa_amd_pointer_info_t info = {};
+      info.size = sizeof(info);
+      if (hsa_amd_pointer_info(val, &info, nullptr, nullptr, nullptr) == HSA_STATUS_SUCCESS
+          && info.type == HSA_EXT_POINTER_TYPE_HSA) {
+        bool aligned = (reinterpret_cast<uintptr_t>(val) % 4096 == 0);
+        bool base_ok = (info.agentBaseAddress == val);
+        std::cout << "  [ZeroCopy]   scan +";
+        std::cout.width(4); std::cout << off;
+        std::cout << "  ptr=0x" << std::hex << reinterpret_cast<uintptr_t>(val) << std::dec
+                  << "  aligned=" << aligned << "  base=" << base_ok
+                  << "  size=" << info.sizeInBytes << "\n";
+        hsa_count++;
+      }
+    }
+    std::cout << "  [ZeroCopy]   Total HSA ptrs in cl_mem: " << hsa_count << "\n";
   }
 
-  const size_t buf_size = 1024 * sizeof(float);
-  void* cl_buf = cl_backend.Allocate(buf_size);
+  // HSA Probe: извлечь GPU VA
+  auto probe = ProbeGpuVA(static_cast<cl_mem>(cl_buf), buf_size);
+  std::cout << "  [ZeroCopy]   HSA Probe: valid=" << probe.valid
+            << ", gpu_va=0x" << std::hex << reinterpret_cast<uintptr_t>(probe.gpu_va)
+            << std::dec << ", offset=+" << probe.offset
+            << ", alloc_size=" << probe.alloc_size << "\n";
 
-  void* gpu_va = ExportClBufferToGpuVA(static_cast<cl_mem>(cl_buf));
-  bool passed = (gpu_va != nullptr);
-
-  std::cout << "  [ZeroCopy]   GPU VA = 0x" << std::hex
-            << reinterpret_cast<uintptr_t>(gpu_va) << std::dec << "\n";
+  bool passed = false;
+  if (probe.valid && probe.gpu_va) {
+    // Прочитать через HIP от GPU VA — проверка TRUE zero-copy
+    std::vector<float> output(N, 0.0f);
+    hipError_t err = hipMemcpy(output.data(), probe.gpu_va,
+                                buf_size, hipMemcpyDeviceToHost);
+    if (err == hipSuccess) {
+      float max_error = 0.0f;
+      for (size_t i = 0; i < N; ++i) {
+        float diff = std::fabs(input[i] - output[i]);
+        if (diff > max_error) max_error = diff;
+      }
+      passed = (max_error < 1e-6f);
+      std::cout << "  [ZeroCopy]   hipMemcpy from GPU VA: max_error=" << max_error << "\n";
+    } else {
+      std::cout << "  [ZeroCopy]   hipMemcpy error: " << hipGetErrorString(err) << "\n";
+    }
+  }
 
   cl_backend.Free(cl_buf);
+  rocm_backend.Cleanup();
   cl_backend.Cleanup();
-  print_test("export_gpu_va", passed);
+  print_test("hsa_probe", passed);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -154,10 +211,9 @@ static void test_bridge_import() {
   cl_device_id cl_device = static_cast<cl_device_id>(cl_backend.GetNativeDevice());
   auto method = DetectBestZeroCopyMethod(cl_device);
 
-  // ImportFromOpenCl поддерживает только DMA_BUF и AMD_GPU_VA; SVM — нет
-  if (method != ZeroCopyMethod::DMA_BUF && method != ZeroCopyMethod::AMD_GPU_VA) {
-    std::cout << "  [ZeroCopy] bridge_import: SKIPPED (method="
-              << ZeroCopyMethodToString(method) << ", need DMA_BUF or AMD_GPU_VA)\n";
+  // ImportFromOpenCl поддерживает HSA_PROBE, DMA_BUF и SVM (fallback)
+  if (method == ZeroCopyMethod::NONE) {
+    std::cout << "  [ZeroCopy] bridge_import: SKIPPED (no ZeroCopy method available)\n";
     rocm_backend.Cleanup();
     cl_backend.Cleanup();
     return;
@@ -201,9 +257,8 @@ static void test_data_integrity() {
   cl_device_id cl_device = static_cast<cl_device_id>(cl_backend.GetNativeDevice());
   auto method = DetectBestZeroCopyMethod(cl_device);
 
-  if (method != ZeroCopyMethod::DMA_BUF && method != ZeroCopyMethod::AMD_GPU_VA) {
-    std::cout << "  [ZeroCopy] data_integrity: SKIPPED (method="
-              << ZeroCopyMethodToString(method) << ", need DMA_BUF or AMD_GPU_VA)\n";
+  if (method == ZeroCopyMethod::NONE) {
+    std::cout << "  [ZeroCopy] data_integrity: SKIPPED (no ZeroCopy method available)\n";
     rocm_backend.Cleanup();
     cl_backend.Cleanup();
     return;
@@ -296,6 +351,242 @@ static void test_bridge_lifecycle() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Test 7: SVM ZeroCopy (true zero-copy через SVM pointer)
+// ════════════════════════════════════════════════════════════════════════════
+
+static void test_svm_zerocopy() {
+  using namespace drv_gpu_lib;
+
+  OpenCLBackend cl_backend;
+  cl_backend.Initialize(0);
+
+  ROCmBackend rocm_backend;
+  rocm_backend.Initialize(0);
+
+  cl_device_id cl_device = static_cast<cl_device_id>(cl_backend.GetNativeDevice());
+
+  if (!SupportsSVMZeroCopy(cl_device)) {
+    std::cout << "  [ZeroCopy] svm_zerocopy: SKIPPED (no SVM fine-grain support)\n";
+    rocm_backend.Cleanup();
+    cl_backend.Cleanup();
+    return;
+  }
+
+  const size_t N = 1024;
+  const size_t buf_size = N * sizeof(float);
+
+  // 1. Аллокация SVM (fine-grain: CPU и GPU доступ без map/unmap)
+  cl_context ctx = static_cast<cl_context>(cl_backend.GetNativeContext());
+  void* svm_ptr = clSVMAlloc(ctx,
+      CL_MEM_SVM_FINE_GRAIN_BUFFER | CL_MEM_READ_WRITE,
+      buf_size, 0);
+
+  if (!svm_ptr) {
+    std::cout << "  [ZeroCopy] svm_zerocopy: SKIPPED (clSVMAlloc failed)\n";
+    rocm_backend.Cleanup();
+    cl_backend.Cleanup();
+    return;
+  }
+
+  // 2. Записать данные через CPU (fine-grain → прямой доступ)
+  float* data = static_cast<float*>(svm_ptr);
+  for (size_t i = 0; i < N; ++i) {
+    data[i] = static_cast<float>(i) * 0.25f + 1.0f;
+  }
+
+  // 3. Импортировать SVM pointer в ZeroCopyBridge
+  bool passed = false;
+  try {
+    ZeroCopyBridge bridge;
+    bridge.ImportFromSVM(svm_ptr, buf_size);
+
+    if (!bridge.IsActive() || bridge.GetMethod() != ZeroCopyMethod::SVM) {
+      std::cout << "  [ZeroCopy]   ImportFromSVM failed to activate bridge\n";
+    } else {
+      // 4. Прочитать через HIP (SVM ptr доступен в HIP через unified VA)
+      std::vector<float> output(N, 0.0f);
+      hipError_t herr = hipMemcpy(output.data(), bridge.GetHipPtr(),
+                                   buf_size, hipMemcpyDeviceToHost);
+
+      if (herr == hipSuccess) {
+        float max_error = 0.0f;
+        for (size_t i = 0; i < N; ++i) {
+          float diff = std::fabs(data[i] - output[i]);
+          if (diff > max_error) max_error = diff;
+        }
+        passed = (max_error < 1e-6f);
+        std::cout << "  [ZeroCopy]   SVM→HIP max error: " << max_error << "\n";
+      } else {
+        std::cout << "  [ZeroCopy]   hipMemcpy from SVM error: "
+                  << hipGetErrorString(herr) << "\n";
+      }
+    }
+  } catch (const std::exception& e) {
+    std::cout << "  [ZeroCopy]   Exception: " << e.what() << "\n";
+  }
+
+  clSVMFree(ctx, svm_ptr);
+  rocm_backend.Cleanup();
+  cl_backend.Cleanup();
+  print_test("svm_zerocopy", passed);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test 8: GPU Copy Kernel (cl_mem → coarse-grain SVM, VRAM→VRAM)
+// ════════════════════════════════════════════════════════════════════════════
+
+static void test_gpu_copy_kernel() {
+  using namespace drv_gpu_lib;
+
+  OpenCLBackend cl_backend;
+  cl_backend.Initialize(0);
+
+  ROCmBackend rocm_backend;
+  rocm_backend.Initialize(0);
+
+  cl_device_id cl_device = static_cast<cl_device_id>(cl_backend.GetNativeDevice());
+
+  if (!SupportsSVMCoarseGrain(cl_device)) {
+    std::cout << "  [ZeroCopy] gpu_copy_kernel: SKIPPED (no coarse-grain SVM)\n";
+    rocm_backend.Cleanup();
+    cl_backend.Cleanup();
+    return;
+  }
+
+  const size_t N = 256 * 1024;  // 256K floats = 1MB
+  const size_t buf_size = N * sizeof(float);
+
+  // Подготовить данные
+  std::vector<float> input(N);
+  for (size_t i = 0; i < N; ++i) {
+    input[i] = static_cast<float>(i % 1000) * 0.3f + 2.0f;
+  }
+
+  // Записать в cl_mem
+  void* cl_buf = cl_backend.Allocate(buf_size);
+  cl_backend.MemcpyHostToDevice(cl_buf, input.data(), buf_size);
+  cl_backend.Synchronize();
+
+  bool passed = false;
+  try {
+    // Принудительно стратегия C: GPU Copy Kernel
+    ZeroCopyBridge bridge;
+    bridge.ImportFromOpenCl(static_cast<cl_mem>(cl_buf), buf_size, cl_device,
+                            ZeroCopyStrategy::FORCE_GPU_COPY);
+
+    if (bridge.IsActive() && bridge.GetMethod() == ZeroCopyMethod::GPU_COPY) {
+      // Прочитать через HIP
+      std::vector<float> output(N, 0.0f);
+      hipError_t err = hipMemcpy(output.data(), bridge.GetHipPtr(),
+                                  buf_size, hipMemcpyDeviceToHost);
+      if (err == hipSuccess) {
+        float max_error = 0.0f;
+        for (size_t i = 0; i < N; ++i) {
+          float diff = std::fabs(input[i] - output[i]);
+          if (diff > max_error) max_error = diff;
+        }
+        passed = (max_error < 1e-6f);
+        std::cout << "  [ZeroCopy]   GPU Copy: max_error=" << max_error << "\n";
+      } else {
+        std::cout << "  [ZeroCopy]   hipMemcpy error: " << hipGetErrorString(err) << "\n";
+      }
+    } else {
+      std::cout << "  [ZeroCopy]   Method: "
+                << ZeroCopyMethodToString(bridge.GetMethod()) << " (expected GPU_COPY)\n";
+    }
+  } catch (const std::exception& e) {
+    std::cout << "  [ZeroCopy]   Exception: " << e.what() << "\n";
+  }
+
+  cl_backend.Free(cl_buf);
+  rocm_backend.Cleanup();
+  cl_backend.Cleanup();
+  print_test("gpu_copy_kernel", passed);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Test 9: Force strategy (программное переключение)
+// ════════════════════════════════════════════════════════════════════════════
+
+static void test_force_strategy() {
+  using namespace drv_gpu_lib;
+
+  OpenCLBackend cl_backend;
+  cl_backend.Initialize(0);
+
+  ROCmBackend rocm_backend;
+  rocm_backend.Initialize(0);
+
+  cl_device_id cl_device = static_cast<cl_device_id>(cl_backend.GetNativeDevice());
+
+  const size_t N = 1024;
+  const size_t buf_size = N * sizeof(float);
+
+  std::vector<float> input(N);
+  for (size_t i = 0; i < N; ++i) input[i] = static_cast<float>(i) * 0.1f;
+
+  void* cl_buf = cl_backend.Allocate(buf_size);
+  cl_backend.MemcpyHostToDevice(cl_buf, input.data(), buf_size);
+  cl_backend.Synchronize();
+
+  int strategies_ok = 0;
+  int strategies_tested = 0;
+
+  // Тестируем каждую стратегию с проверкой данных
+  struct TestCase {
+    ZeroCopyStrategy strategy;
+    ZeroCopyMethod expected;
+    const char* name;
+  };
+  TestCase cases[] = {
+    {ZeroCopyStrategy::FORCE_HSA_PROBE, ZeroCopyMethod::HSA_PROBE, "HSA_PROBE"},
+    {ZeroCopyStrategy::FORCE_GPU_COPY,  ZeroCopyMethod::GPU_COPY,  "GPU_COPY"},
+    {ZeroCopyStrategy::FORCE_SVM,       ZeroCopyMethod::SVM,       "SVM"},
+  };
+
+  for (const auto& tc : cases) {
+    try {
+      ZeroCopyBridge bridge;
+      bridge.ImportFromOpenCl(static_cast<cl_mem>(cl_buf), buf_size, cl_device, tc.strategy);
+
+      if (bridge.GetMethod() == tc.expected) {
+        // Проверка данных
+        std::vector<float> output(N, 0.0f);
+        hipError_t err = hipMemcpy(output.data(), bridge.GetHipPtr(),
+                                    buf_size, hipMemcpyDeviceToHost);
+        if (err == hipSuccess) {
+          float max_err = 0.0f;
+          for (size_t i = 0; i < N; ++i) {
+            float diff = std::fabs(input[i] - output[i]);
+            if (diff > max_err) max_err = diff;
+          }
+          if (max_err < 1e-6f) {
+            strategies_ok++;
+            std::cout << "  [ZeroCopy]   Force " << tc.name << ": OK (err=" << max_err << ")\n";
+          } else {
+            std::cout << "  [ZeroCopy]   Force " << tc.name << ": DATA MISMATCH (err=" << max_err << ")\n";
+          }
+        }
+      } else {
+        std::cout << "  [ZeroCopy]   Force " << tc.name << ": wrong method="
+                  << ZeroCopyMethodToString(bridge.GetMethod()) << "\n";
+      }
+      strategies_tested++;
+    } catch (const std::exception& e) {
+      std::cout << "  [ZeroCopy]   Force " << tc.name << ": SKIP (" << e.what() << ")\n";
+    }
+  }
+
+  std::cout << "  [ZeroCopy]   Strategies: " << strategies_ok << "/" << strategies_tested << " OK\n";
+  bool passed = (strategies_ok >= 1);  // минимум HSA Probe должен работать
+
+  cl_backend.Free(cl_buf);
+  rocm_backend.Cleanup();
+  cl_backend.Cleanup();
+  print_test("force_strategy", passed);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Run all
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -304,10 +595,13 @@ inline void run() {
 
   test_detect_method();
   test_export_dma_buf();
-  test_export_gpu_va();
+  test_hsa_probe();
   test_bridge_import();
   test_data_integrity();
   test_bridge_lifecycle();
+  test_svm_zerocopy();
+  test_gpu_copy_kernel();
+  test_force_strategy();
 
   std::cout << "========== ZeroCopy Bridge Tests Done ==========\n\n";
 }

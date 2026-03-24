@@ -257,7 +257,7 @@ public:
 
   /**
    * @brief Определить лучший метод ZeroCopy для данного GPU
-   * @return ZeroCopyMethod (AMD_GPU_VA, DMA_BUF, SVM или NONE)
+   * @return ZeroCopyMethod (HSA_PROBE, DMA_BUF, SVM или NONE)
    */
   ZeroCopyMethod GetBestZeroCopyMethod() const;
 

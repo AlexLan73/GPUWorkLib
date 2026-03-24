@@ -33,6 +33,7 @@
 | **Task_14** | Python 5 bugs fixed + C++ test migration (4 модуля, -52% LOC) | ✅ COMPLETED 2026-03-23 |
 | **CppTest migration** | Оставшиеся модули: lch_farrow, vector_algebra, fm_correlator, strategies | 🟢 Low priority |
 | **capon_rocblas** | rocBLAS CGEMM в CovarianceMatrixOp | 🔴 TODO |
+| **GPU+Mellanox Topology** | Авто-детектор пар GPU+NIC по PCIe слотам (сервер 6049GP-TRT) | 📋 PLANNED |
 
 ---
 

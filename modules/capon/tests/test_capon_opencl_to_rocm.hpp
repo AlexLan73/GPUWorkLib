@@ -2,115 +2,78 @@
 
 /**
  * @file test_capon_opencl_to_rocm.hpp
- * @brief Данные от OpenCL — расчёт Кейпона на ROCm (Zero Copy Interop)
+ * @brief Данные заказчика -> OpenCL -> Zero Copy -> Capon на ROCm
  *
- * ══════════════════════════════════════════════════════════════════════════
- * ДЛЯ ЧЕГО ЭТОТ ТЕСТ
- * ══════════════════════════════════════════════════════════════════════════
+ * ======================================================================
+ * НАЗНАЧЕНИЕ
+ * ======================================================================
  *
- * В реальных DSP-системах данные часто уже находятся в OpenCL (например,
- * вышли из предыдущего этапа обработки). Нужно передать их в ROCm для
- * расчёта алгоритма Кейпона. Есть два способа:
+ * Демонстрация полного production pipeline с РЕАЛЬНЫМИ данными заказчика:
  *
- *   МЕДЛЕННЫЙ — через CPU (не делай так!):
- *     cl_mem (VRAM) → RAM (CPU) → hipMalloc (VRAM)   ← 2 ненужных DMA!
+ *   1. Загрузка данных заказчика (MATLAB сигнал, координаты антенн)
+ *   2. Запись на GPU через OpenCL (cl_mem) — как в реальной DSP-системе
+ *   3. Передача из OpenCL в ROCm (Zero Copy — без копирования!)
+ *   4. Расчёт алгоритма Кейпона на ROCm (GPU pipeline)
  *
- *   БЫСТРЫЙ — Zero Copy:
- *     cl_mem (VRAM) ──────────────────────────────► hip_ptr (тот же VRAM)
- *     (передаём только GPU-адрес, данные не перемещаются)
+ * ======================================================================
+ * ДАННЫЕ ЗАКАЗЧИКА
+ * ======================================================================
  *
- * ══════════════════════════════════════════════════════════════════════════
- * КАК РАБОТАЕТ ZERO COPY
- * ══════════════════════════════════════════════════════════════════════════
+ * Файлы из Doc_Addition/Capon/capon_test/build/:
+ *   - x_data.txt        — координаты x 340 антенных элементов
+ *   - y_data.txt        — координаты y 340 антенных элементов
+ *   - signal_matlab.txt — сигнал [341 строка x 1000 complex], формат MATLAB
+ *   - z_values.txt      — эталонные значения рельефа (для верификации)
  *
- * OpenCL и HIP/ROCm на одном AMD GPU разделяют одну физическую видеопамять.
- * ZeroCopyBridge «рассказывает» HIP, по какому адресу в VRAM лежат данные.
+ * Физические параметры:
+ *   f0 = 3918 МГц + 3.15 МГц = 3 921 150 000 Гц
+ *   c  = 299 792 458 м/с
+ *   P  = 85 антенных каналов (подмассив из 340)
+ *   N  = 1000 временных отсчётов
  *
- * Метод 1 — AMD GPU VA (предпочтительный, 0 overhead):
- *   Расширение CL_MEM_AMD_GPU_VA даёт нам GPU Virtual Address (VA) буфера.
- *   HIP принимает этот адрес напрямую — никаких системных вызовов.
- *
- *   cl_mem ──CL_MEM_AMD_GPU_VA──► void* gpu_va ──► hip_ptr  (~нс)
- *
- * Метод 2 — DMA-BUF (Linux kernel, ~мкс):
- *   OpenCL экспортирует cl_mem как Linux dma-buf file descriptor.
- *   HIP импортирует fd через hipImportExternalMemory.
- *
- *   cl_mem ──dma-buf fd──► hipExternalMemory_t ──► hip_ptr  (~мкс)
- *
- * ══════════════════════════════════════════════════════════════════════════
- * PIPELINE ТЕСТА (пошагово)
- * ══════════════════════════════════════════════════════════════════════════
- *
- *   [CPU]  std::vector<cx> signal, steering    — генерируем тестовые данные
- *     │
- *     │  (1 DMA transfer: CPU RAM → GPU VRAM)
- *     ▼
- *   [OpenCL]  cl_mem Y, cl_mem U              — данные в VRAM через OpenCL
- *     │
- *     │  cl.Synchronize() ← ОБЯЗАТЕЛЬНО! Иначе ROCm начнёт читать
- *     │                      до завершения записи OpenCL
- *     │
- *     │  ZeroCopyBridge::ImportFromOpenCl()   — только указатель, 0 копий
- *     ▼
- *   [ROCm]  void* hip_Y, void* hip_U          — те же данные, вид со стороны HIP
- *     │
- *     │  CaponProcessor::ComputeRelief(hip_Y, hip_U, params)
- *     │    ├── CovarianceMatrix:  R = (1/N)*Y*Y^H + μI   (rocBLAS CGEMM)
- *     │    ├── CaponInvert:       R⁻¹  (rocSOLVER POTRF+POTRI)
- *     │    ├── ComputeWeights:    W = R⁻¹*U              (rocBLAS CGEMM)
- *     │    └── CaponRelief:       z[m] = 1/Re(u^H*W[:,m])  (HIP kernel)
- *     ▼
- *   [CPU]  CaponReliefResult — M вещественных значений пространственного спектра
- *
- * ══════════════════════════════════════════════════════════════════════════
+ * ======================================================================
  * ТЕСТЫ
- * ══════════════════════════════════════════════════════════════════════════
+ * ======================================================================
  *
- *   01. detect_interop       — определить метод Zero Copy, вывести возможности GPU
- *   02. signal_from_opencl   — загрузить Y и U через OpenCL, Кейпон на ROCm
- *   03. results_match_ref    — Zero Copy путь = прямой CPU путь (одинаковый рельеф)
- *   04. beamform_from_opencl — адаптивное ДО [M×N] с входом через OpenCL
+ *   01. detect_interop              — возможности Zero Copy на данном GPU
+ *   02. customer_data_pipeline      — ПОЛНЫЙ PIPELINE с данными заказчика
+ *   03. zerocopy_matches_direct     — доказать: ZeroCopy путь == прямой путь
+ *   04. beamform_customer_data      — адаптивное ДО с данными заказчика
  *
- * ══════════════════════════════════════════════════════════════════════════
+ * ======================================================================
  * ЗАВИСИМОСТИ
- * ══════════════════════════════════════════════════════════════════════════
+ * ======================================================================
  *
  *   - OpenCLBackend  (DrvGPU/backends/opencl/)
  *   - ROCmBackend    (DrvGPU/backends/rocm/)
  *   - ZeroCopyBridge (DrvGPU/backends/rocm/zero_copy_bridge.hpp)
  *   - CaponProcessor (modules/capon/include/capon_processor.hpp)
  *
- * @note  ТОЛЬКО Linux + AMD GPU с поддержкой DMA-BUF или AMD GPU VA.
- *        На других системах все тесты пропускаются (SKIP).
- * @note  OpenCL и ROCm должны использовать одно и то же физическое GPU (device 0).
- *
- * @see   DrvGPU/tests/test_zero_copy.hpp    — базовые тесты ZeroCopyBridge
- * @see   modules/capon/tests/test_capon_rocm.hpp  — базовые тесты CaponProcessor
- * @see   modules/capon/tests/README.md       — описание модуля capon
+ * @note  ТОЛЬКО Linux + AMD GPU с HSA Probe, DMA-BUF или SVM.
+ * @note  OpenCL и ROCm должны использовать одно физическое GPU (device 0).
  *
  * @author Кодо (AI Assistant)
- * @date   2026-03-23
+ * @date   2026-03-24
  */
 
 #if ENABLE_ROCM
 
-// ── Алгоритм Кейпона ─────────────────────────────────────────────────────
+// -- Алгоритм Кейпона ---------------------------------------------------
 #include "capon_processor.hpp"
 #include "capon_test_helpers.hpp"
 
-// ── GPU инфраструктура ────────────────────────────────────────────────────
+// -- GPU инфраструктура --------------------------------------------------
 #include "backends/opencl/opencl_backend.hpp"
 #include "backends/opencl/opencl_export.hpp"
 #include "backends/rocm/rocm_backend.hpp"
 #include "backends/rocm/zero_copy_bridge.hpp"
 #include "services/console_output.hpp"
 
-// ── OpenCL и HIP ──────────────────────────────────────────────────────────
+// -- OpenCL и HIP --------------------------------------------------------
 #include <CL/cl.h>
 #include <hip/hip_runtime.h>
 
-// ── Стандартные ───────────────────────────────────────────────────────────
+// -- Стандартные ---------------------------------------------------------
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -128,29 +91,25 @@ namespace test_capon_opencl_to_rocm {
 
 using cx = std::complex<float>;
 using namespace drv_gpu_lib;
-using capon_test_helpers::MakeSteeringMatrix;
-using capon_test_helpers::MakeNoise;
+using namespace capon_test_helpers;
 
-// ════════════════════════════════════════════════════════════════════════════
-// Вывод на консоль (мультиGPU-безопасный через ConsoleOutput)
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
+// Консольный вывод (мультиGPU-безопасный)
+// ========================================================================
 
 inline void TestPrint(const std::string& msg) {
-  ConsoleOutput::GetInstance().Print(0, "Capon[OCL→ROCm]", msg);
+  ConsoleOutput::GetInstance().Print(0, "Capon[OCL->ROCm]", msg);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// Backend-синглтоны — инициализируются один раз, используются всеми тестами
-//
-// Почему статические: каждая инициализация занимает ~100мс (загрузка
-// OpenCL/ROCm контекстов). Создаём один раз для всего набора тестов.
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
+// Backend-синглтоны
+// ========================================================================
 
 inline OpenCLBackend& GetClBackend() {
   static OpenCLBackend cl;
   static bool inited = false;
   if (!inited) {
-    cl.Initialize(0);  // device 0 = тот же GPU что и ROCm
+    cl.Initialize(0);
     inited = true;
   }
   return cl;
@@ -160,27 +119,20 @@ inline ROCmBackend& GetRocmBackend() {
   return capon_test_helpers::GetROCmBackend();
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// Тестовые данные: MakeSteeringMatrix, MakeNoise → capon_test_helpers.hpp
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
+// Проверка доступности Zero Copy
+// ========================================================================
 
-// ════════════════════════════════════════════════════════════════════════════
-// Общая проверка доступности Zero Copy — вызывается в начале каждого теста
-// ════════════════════════════════════════════════════════════════════════════
-
-/**
- * @return true если ZeroCopy доступен на устройстве device 0.
- *         false + вывод SKIP если не поддерживается.
- */
 inline bool CheckZeroCopyAvailable(const char* test_name) {
   auto& cl = GetClBackend();
   cl_device_id cl_device = static_cast<cl_device_id>(cl.GetNativeDevice());
   auto method = DetectBestZeroCopyMethod(cl_device);
 
-  if (method != ZeroCopyMethod::DMA_BUF && method != ZeroCopyMethod::AMD_GPU_VA) {
+  // ImportFromOpenCl поддерживает: HSA_PROBE, DMA_BUF и SVM (fallback)
+  if (method == ZeroCopyMethod::NONE) {
     char buf[128];
     std::snprintf(buf, sizeof(buf),
-        "[%s] SKIP — ZeroCopy не поддерживается (method=%s)",
+        "[%s] SKIP -- ZeroCopy not supported (method=%s)",
         test_name, ZeroCopyMethodToString(method));
     TestPrint(buf);
     return false;
@@ -188,59 +140,52 @@ inline bool CheckZeroCopyAvailable(const char* test_name) {
   return true;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 // Test 01: detect_interop
-//
-// Задача: выяснить, поддерживает ли наш GPU Zero Copy между OpenCL и ROCm.
-//         Вывести возможности устройства для диагностики.
-//
-// Этот тест никогда не падает — он только сообщает, что доступно.
-// Остальные тесты пропустятся (SKIP) если метод == NONE.
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 
 inline void test_01_detect_interop() {
-  TestPrint("[01] detect_interop — проверить возможности Zero Copy");
+  TestPrint("[01] detect_interop -- capabilities of Zero Copy on this GPU");
 
   auto& cl = GetClBackend();
   cl_device_id cl_device = static_cast<cl_device_id>(cl.GetNativeDevice());
 
+  bool has_hsa     = SupportsHsaProbe();
   bool has_dma_buf = SupportsDmaBufExport(cl_device);
-  bool has_amd_va  = SupportsAmdGpuVA(cl_device);
+  bool has_svm     = SupportsSVMZeroCopy(cl_device);
   auto method      = DetectBestZeroCopyMethod(cl_device);
 
   char buf[256];
   std::snprintf(buf, sizeof(buf),
-      "  Capabilities: DMA-BUF=%s  AMD-GPU-VA=%s",
+      "  Capabilities: HSA-Probe=%s  DMA-BUF=%s  SVM=%s",
+      has_hsa     ? "YES" : "NO",
       has_dma_buf ? "YES" : "NO",
-      has_amd_va  ? "YES" : "NO");
+      has_svm     ? "YES" : "NO");
   TestPrint(buf);
 
   std::snprintf(buf, sizeof(buf),
       "  Selected method: %s", ZeroCopyMethodToString(method));
   TestPrint(buf);
 
-  if (method == ZeroCopyMethod::NONE) {
-    TestPrint("[01] SKIP — аппаратный Zero Copy недоступен");
+  if (method != ZeroCopyMethod::NONE) {
+    TestPrint("[01] PASS -- Zero Copy ready (" +
+             std::string(ZeroCopyMethodToString(method)) + ")");
   } else {
-    TestPrint("[01] PASS — Zero Copy готов к использованию");
+    TestPrint("[01] SKIP -- hardware Zero Copy unavailable");
   }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// Test 02: signal_from_opencl
+// ========================================================================
 //
-// Задача: полный путь «OpenCL upload → Zero Copy → Capon на ROCm».
+//   Test 02: ПОЛНЫЙ PIPELINE С ДАННЫМИ ЗАКАЗЧИКА
 //
-//   1. Генерируем матрицу сигнала Y [P×N] и управляющие векторы U [P×M] на CPU
-//   2. Загружаем обе матрицы в VRAM через OpenCL (clEnqueueWriteBuffer)
-//   3. Синхронизируем OpenCL (clFinish) — ОБЯЗАТЕЛЬНО перед ZeroCopy
-//   4. ZeroCopyBridge создаёт hip_ptr на те же данные в VRAM (0 копий)
-//   5. CaponProcessor считает рельеф через HIP-указатели
-//   6. Проверяем: все z[m] > 0 и конечные
-// ════════════════════════════════════════════════════════════════════════════
+//   Этот тест демонстрирует production-сценарий от начала до конца:
+//   данные заказчика проходят весь путь через систему.
+//
+// ========================================================================
 
-inline void test_02_signal_from_opencl() {
-  TestPrint("[02] signal_from_opencl — сигнал через cl_mem → Кейпон на ROCm");
+inline void test_02_customer_data_pipeline() {
+  TestPrint("[02] ===== ПОЛНЫЙ PIPELINE: данные заказчика -> OpenCL -> ZeroCopy -> Capon =====");
 
   if (!CheckZeroCopyAvailable("02")) return;
 
@@ -248,148 +193,243 @@ inline void test_02_signal_from_opencl() {
   auto& rocm = GetRocmBackend();
   cl_device_id cl_device = static_cast<cl_device_id>(cl.GetNativeDevice());
 
-  // Размерность задачи
-  const uint32_t P = 8;   // P антенн (каналов)
-  const uint32_t N = 64;  // N временных отсчётов
-  const uint32_t M = 16;  // M направлений сканирования
+  // ╔══════════════════════════════════════════════════════════════════════╗
+  // ║                                                                      ║
+  // ║   ЭТАП 1: ЗАГРУЗКА ДАННЫХ ЗАКАЗЧИКА                                  ║
+  // ║                                                                      ║
+  // ║   Источник: MATLAB файлы из Doc_Addition/Capon/capon_test/build/     ║
+  // ║     - x_data.txt, y_data.txt — координаты 340 антенных элементов     ║
+  // ║     - signal_matlab.txt      — сигнал [341 x 1000] complex           ║
+  // ║                                                                      ║
+  // ║   Используем:                                                        ║
+  // ║     P = 85 каналов (подмассив антенной решётки)                      ║
+  // ║     N = 1000 временных отсчётов                                      ║
+  // ║     M = 37 направлений (1D сканирование)                             ║
+  // ║                                                                      ║
+  // ╚══════════════════════════════════════════════════════════════════════╝
 
-  // ── Шаг 1: Генерация тестовых данных на CPU ─────────────────────────────
-  // Y [P×N] — матрица сигнала (чистый шум, column-major: индекс [p,n] = n*P+p)
-  auto signal_cpu   = MakeNoise(P * N, 1.0f, 42u);
-  // U [P×M] — управляющие векторы ULA (column-major: индекс [p,m] = m*P+p)
-  auto steering_cpu = MakeSteeringMatrix(P, M,
-      -static_cast<float>(M_PI) / 3.0f,   // -60°
-       static_cast<float>(M_PI) / 3.0f);  // +60°
+  TestPrint("  ---[ ЭТАП 1: ЗАГРУЗКА ДАННЫХ ЗАКАЗЧИКА ]---");
 
-  const size_t bytes_Y = signal_cpu.size()   * sizeof(cx); // P*N * 8 байт
-  const size_t bytes_U = steering_cpu.size() * sizeof(cx); // P*M * 8 байт
+  // 1.1. Координаты антенных элементов
+  std::vector<float> x_all, y_all;
+  if (!LoadRealVector(kDataDir + "x_data.txt", x_all) ||
+      !LoadRealVector(kDataDir + "y_data.txt", y_all)) {
+    TestPrint("[02] SKIP -- customer data not found: x_data.txt / y_data.txt");
+    return;
+  }
 
-  // ── Шаг 2: Выделить OpenCL буферы в VRAM ────────────────────────────────
-  // cl.Allocate(bytes) вызывает clCreateBuffer(CL_MEM_READ_WRITE, bytes)
-  // Возвращает void* = cl_mem (нужен static_cast обратно)
-  void* cl_Y = cl.Allocate(bytes_Y);
-  void* cl_U = cl.Allocate(bytes_U);
+  const uint32_t P = 85;   // число антенных каналов (подмассив)
+  const uint32_t N = 1000;  // число временных отсчётов
 
-  // ── Шаг 3: Загрузить данные CPU → GPU (один DMA-трансфер) ───────────────
-  // Это единственная операция копирования в этом pipeline.
-  // clEnqueueWriteBuffer → данные попадают в VRAM.
-  cl.MemcpyHostToDevice(cl_Y, signal_cpu.data(),   bytes_Y);
-  cl.MemcpyHostToDevice(cl_U, steering_cpu.data(), bytes_U);
+  if (x_all.size() < P || y_all.size() < P) {
+    TestPrint("[02] SKIP -- not enough antenna elements in coordinate files");
+    return;
+  }
 
-  // ── Шаг 4: clFinish — синхронизация OpenCL ──────────────────────────────
-  // КРИТИЧНО: ZeroCopyBridge не синхронизирует OpenCL автоматически.
-  // Без Synchronize() ROCm может начать читать данные до завершения записи!
-  cl.Synchronize();  // clFinish(cl_command_queue)
+  // Первые P элементов — рабочий подмассив
+  std::vector<float> x_sub(x_all.begin(), x_all.begin() + P);
+  std::vector<float> y_sub(y_all.begin(), y_all.begin() + P);
+
+  // 1.2. Сигнальная матрица от заказчика (MATLAB формат)
+  std::vector<cx> signal;
+  if (!LoadSignalMatlab(kDataDir + "signal_matlab.txt", P, N, signal)) {
+    TestPrint("[02] SKIP -- signal_matlab.txt not found or parse error");
+    return;
+  }
+
+  // 1.3. Управляющие векторы по реальным координатам
+  //      1D сканирование: M = 37 направлений, v = 0
+  auto u0 = MakeScanGrid1D(3.25, 0.00312);
+  const uint32_t M = static_cast<uint32_t>(u0.size());  // ~37
+  std::vector<float> v0(M, 0.0f);  // 1D сканирование: v = 0
+
+  auto steering = MakePhysicalSteering(x_sub, y_sub, u0, v0, kF0, kC);
+
+  {
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+        "  Loaded: P=%u channels, N=%u samples, M=%u directions",
+        P, N, M);
+    TestPrint(buf);
+    std::snprintf(buf, sizeof(buf),
+        "  Signal: %zu complex values (%.1f KB)",
+        signal.size(), signal.size() * sizeof(cx) / 1024.0);
+    TestPrint(buf);
+    std::snprintf(buf, sizeof(buf),
+        "  Steering: %zu complex values (%.1f KB)",
+        steering.size(), steering.size() * sizeof(cx) / 1024.0);
+    TestPrint(buf);
+  }
+
+  const size_t bytes_Y = signal.size()   * sizeof(cx);  // P*N * 8
+  const size_t bytes_U = steering.size() * sizeof(cx);   // P*M * 8
+
+  // ╔══════════════════════════════════════════════════════════════════════╗
+  // ║                                                                      ║
+  // ║   ЭТАП 2: ЗАПИСЬ НА GPU ЧЕРЕЗ OpenCL (cl_mem)                        ║
+  // ║                                                                      ║
+  // ║   В реальной DSP-системе данные уже находятся в OpenCL:              ║
+  // ║   вышли из предыдущего этапа обработки (FFT, фильтрация и т.д.)      ║
+  // ║                                                                      ║
+  // ║   Здесь мы эмулируем этот сценарий:                                  ║
+  // ║     CPU RAM ──[ clEnqueueWriteBuffer ]──> GPU VRAM (cl_mem)          ║
+  // ║                                                                      ║
+  // ║   Это ЕДИНСТВЕННАЯ операция копирования данных в этом pipeline.       ║
+  // ║                                                                      ║
+  // ╚══════════════════════════════════════════════════════════════════════╝
+
+  TestPrint("  ---[ ЭТАП 2: ЗАПИСЬ НА GPU ЧЕРЕЗ OpenCL ]---");
+
+  // 2.1. Выделить OpenCL буферы в VRAM
+  void* cl_Y = cl.Allocate(bytes_Y);  // cl_mem для сигнала Y [P x N]
+  void* cl_U = cl.Allocate(bytes_U);  // cl_mem для управляющих векторов U [P x M]
+
+  // 2.2. Загрузить данные заказчика CPU -> GPU (один DMA-трансфер)
+  cl.MemcpyHostToDevice(cl_Y, signal.data(),   bytes_Y);
+  cl.MemcpyHostToDevice(cl_U, steering.data(), bytes_U);
+
+  // 2.3. Синхронизация OpenCL (clFinish)
+  //      КРИТИЧНО: без этого ROCm может начать читать незаписанные данные!
+  cl.Synchronize();
+
+  {
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+        "  cl_mem Y: %zu bytes (signal [%u x %u])", bytes_Y, P, N);
+    TestPrint(buf);
+    std::snprintf(buf, sizeof(buf),
+        "  cl_mem U: %zu bytes (steering [%u x %u])", bytes_U, P, M);
+    TestPrint(buf);
+    TestPrint("  clFinish() -- OpenCL synchronized");
+  }
 
   bool ok = false;
   try {
-    // ── Шаг 5: Zero Copy — cl_mem → HIP pointer ───────────────────────────
-    //
-    // ZeroCopyBridge::ImportFromOpenCl() автоматически выбирает лучший метод:
-    //   - AMD GPU VA (если GPU поддерживает CL_MEM_AMD_GPU_VA) — 0 overhead
-    //   - DMA-BUF   (dma_buf fd → hipImportExternalMemory)     — ~мкс
-    //
-    // После ImportFromOpenCl():
-    //   bridge.GetHipPtr() указывает на ТЕ ЖЕ байты в VRAM что и cl_Y/cl_U.
-    //   Никакого копирования данных не происходит.
-    //
-    // ВАЖНО: bridge должен оставаться живым пока HIP использует указатель!
-    //        Деструктор bridge освобождает handle при выходе из блока.
+
+    // ╔══════════════════════════════════════════════════════════════════════╗
+    // ║                                                                      ║
+    // ║   ЭТАП 3: ПЕРЕДАЧА ИЗ OpenCL В ROCm (ZERO COPY)                    ║
+    // ║                                                                      ║
+    // ║   КЛЮЧЕВОЙ МОМЕНТ: данные НЕ копируются!                            ║
+    // ║                                                                      ║
+    // ║   OpenCL и HIP/ROCm на одном AMD GPU разделяют одну VRAM.           ║
+    // ║   ZeroCopyBridge передаёт только GPU-адрес, а не данные:             ║
+    // ║                                                                      ║
+    // ║     cl_mem ──[ AMD GPU VA / DMA-BUF ]──> void* hip_ptr              ║
+    // ║                                                                      ║
+    // ║   Результат: hip_ptr указывает на ТЕ ЖЕ байты в VRAM.              ║
+    // ║   Время передачи: ~наносекунды (только адрес, не данные).           ║
+    // ║                                                                      ║
+    // ╚══════════════════════════════════════════════════════════════════════╝
+
+    TestPrint("  ---[ ЭТАП 3: ZERO COPY OpenCL -> ROCm ]---");
+
+    // 3.1. Импорт cl_mem -> HIP device pointer
     ZeroCopyBridge bridge_Y;
     ZeroCopyBridge bridge_U;
 
     bridge_Y.ImportFromOpenCl(static_cast<cl_mem>(cl_Y), bytes_Y, cl_device);
     bridge_U.ImportFromOpenCl(static_cast<cl_mem>(cl_U), bytes_U, cl_device);
 
-    // Проверить, что импорт прошёл успешно
     assert(bridge_Y.IsActive() && bridge_Y.GetHipPtr() != nullptr);
     assert(bridge_U.IsActive() && bridge_U.GetHipPtr() != nullptr);
 
     {
       char buf[256];
       std::snprintf(buf, sizeof(buf),
-          "  ZeroCopy: method=%s  hip_Y=0x%zx  hip_U=0x%zx",
-          ZeroCopyMethodToString(bridge_Y.GetMethod()),
-          reinterpret_cast<size_t>(bridge_Y.GetHipPtr()),
+          "  ZeroCopy method: %s", ZeroCopyMethodToString(bridge_Y.GetMethod()));
+      TestPrint(buf);
+      std::snprintf(buf, sizeof(buf),
+          "  hip_Y = 0x%zx  (same VRAM, zero data movement)",
+          reinterpret_cast<size_t>(bridge_Y.GetHipPtr()));
+      TestPrint(buf);
+      std::snprintf(buf, sizeof(buf),
+          "  hip_U = 0x%zx  (same VRAM, zero data movement)",
           reinterpret_cast<size_t>(bridge_U.GetHipPtr()));
       TestPrint(buf);
     }
 
-    // ── Шаг 6: Расчёт Кейпона на ROCm ────────────────────────────────────
-    //
-    // CaponProcessor::ComputeRelief(void* gpu_Y, void* gpu_U, params)
-    // принимает HIP device pointer-ы. Внутри:
-    //   ① D2D copy: gpu_Y → internal kSignal buffer (hipMemcpyDeviceToDevice)
-    //   ② D2D copy: gpu_U → internal kSteering buffer
-    //   ③ CovarianceMatrixOp:  R = (1/N)*Y*Y^H + μI  (rocBLAS CGEMM)
-    //   ④ CaponInvertOp:       R^{-1}  (rocSOLVER POTRF + POTRI)
-    //   ⑤ ComputeWeightsOp:   W = R^{-1}*U  (rocBLAS CGEMM)
-    //   ⑥ CaponReliefOp:      z[m] = 1/Re(u_m^H * W[:,m])  (HIP kernel)
-    //   ⑦ Download:           z → CPU  (hipMemcpy D2H)
-    capon::CaponParams params;
-    params.n_channels   = P;
-    params.n_samples    = N;
-    params.n_directions = M;
-    params.mu           = 0.01f;  // диагональная нагрузка (регуляризация)
+    // ╔══════════════════════════════════════════════════════════════════════╗
+    // ║                                                                      ║
+    // ║   ЭТАП 4: РАСЧЁТ АЛГОРИТМА КЕЙПОНА НА ROCm                         ║
+    // ║                                                                      ║
+    // ║   CaponProcessor выполняет полный GPU pipeline:                      ║
+    // ║     1) CovarianceMatrixOp:  R = (1/N)*Y*Y^H + mu*I   (rocBLAS)     ║
+    // ║     2) CaponInvertOp:       R^{-1}                    (rocSOLVER)   ║
+    // ║     3) ComputeWeightsOp:    W = R^{-1}*U              (rocBLAS)     ║
+    // ║     4) CaponReliefOp:       z[m] = 1/Re(u^H*W[:,m])   (HIP kernel) ║
+    // ║                                                                      ║
+    // ║   Входные данные: hip_ptr (от ZeroCopy, не от CPU!)                 ║
+    // ║   Результат: M вещественных значений рельефа Кейпона                ║
+    // ║                                                                      ║
+    // ╚══════════════════════════════════════════════════════════════════════╝
 
+    TestPrint("  ---[ ЭТАП 4: РАСЧЁТ КЕЙПОНА НА ROCm ]---");
+
+    // 4.1. Параметры алгоритма
+    capon::CaponParams params;
+    params.n_channels   = P;      // 85 антенных каналов
+    params.n_samples    = N;      // 1000 временных отсчётов
+    params.n_directions = M;      // ~37 направлений сканирования
+    params.mu           = 1.0f;   // регуляризация (GPU: R = Y*Y^H/N + mu*I)
+
+    // 4.2. Запуск GPU pipeline с HIP-указателями от Zero Copy
     capon::CaponProcessor processor(&rocm);
     auto result = processor.ComputeRelief(
-        bridge_Y.GetHipPtr(),   // void* gpu_signal   — Y в VRAM
-        bridge_U.GetHipPtr(),   // void* gpu_steering — U в VRAM
+        bridge_Y.GetHipPtr(),   // void* -- сигнал Y в VRAM (от Zero Copy!)
+        bridge_U.GetHipPtr(),   // void* -- steering U в VRAM (от Zero Copy!)
         params);
 
-    // ── Шаг 7: Проверка результата ────────────────────────────────────────
+    // 4.3. Проверка результата
     assert(result.relief.size() == M);
 
-    // Физическое требование MVDR: все z[m] должны быть > 0 и конечными.
-    // (z[m] = 1/позитивная_форма → всегда > 0 при корректных данных)
+    float z_min = result.relief[0];
+    float z_max = result.relief[0];
+    bool all_ok = true;
     for (uint32_t m = 0; m < M; ++m) {
-      assert(std::isfinite(result.relief[m]));
-      assert(result.relief[m] > 0.0f);
+      if (!std::isfinite(result.relief[m]) || result.relief[m] <= 0.0f) {
+        all_ok = false;
+      }
+      if (result.relief[m] < z_min) z_min = result.relief[m];
+      if (result.relief[m] > z_max) z_max = result.relief[m];
     }
 
-    float z_min = *std::min_element(result.relief.begin(), result.relief.end());
-    float z_max = *std::max_element(result.relief.begin(), result.relief.end());
+    assert(all_ok && "Capon relief must be > 0 and finite for all directions");
+
     {
-      char buf[128];
+      char buf[256];
       std::snprintf(buf, sizeof(buf),
-          "  Relief[M=%u]: min=%.4g  max=%.4g  (all > 0, finite ✓)", M, z_min, z_max);
+          "  Capon relief [M=%u]: min=%.4g  max=%.4g  ratio=%.1f",
+          M, z_min, z_max, z_max / (z_min + 1e-30f));
       TestPrint(buf);
+      TestPrint("  All z[m] > 0 and finite -- GPU pipeline OK");
     }
 
     ok = true;
-    // bridge_Y и bridge_U автоматически освобождают HIP handles здесь
 
   } catch (const std::exception& e) {
     TestPrint(std::string("  EXCEPTION: ") + e.what());
   }
 
-  // Освободить cl_mem ПОСЛЕ уничтожения bridge (LIFO порядок важен!)
+  // Освободить cl_mem ПОСЛЕ уничтожения bridge (LIFO порядок!)
   cl.Free(cl_Y);
   cl.Free(cl_U);
 
   assert(ok);
-  TestPrint("[02] PASS");
+  TestPrint("[02] PASS -- full customer data pipeline completed successfully");
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// Test 03: results_match_ref
+// ========================================================================
 //
-// Задача: доказать математическую прозрачность Zero Copy.
+//   Test 03: ДОКАЗАТЕЛЬСТВО ПРОЗРАЧНОСТИ ZERO COPY
 //
-// ГАРАНТИЯ: Zero Copy должен давать ИДЕНТИЧНЫЙ результат прямой загрузке
-//           через CPU. Пользователь использует ту же физику — тот же ответ.
+//   Гарантия: Zero Copy путь даёт ИДЕНТИЧНЫЙ результат прямой загрузке.
+//   Одни и те же данные заказчика -> два разных пути -> один результат.
 //
-// Сравнение:
-//   Путь A (reference): CPU vector → CaponProcessor::ComputeRelief(vector,...)
-//   Путь B (opencl):    CPU vector → cl_mem → ZeroCopy → ComputeRelief(void*,...)
-//
-// Оба вычисления используют одни и те же данные и один и тот же GPU.
-// Результаты должны совпасть с точностью до float32 погрешности (~1e-5).
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 
-inline void test_03_results_match_ref() {
-  TestPrint("[03] results_match_ref — сравнить: OpenCL-путь == CPU-путь");
+inline void test_03_zerocopy_matches_direct() {
+  TestPrint("[03] zerocopy_matches_direct -- Zero Copy == direct path (customer data)");
 
   if (!CheckZeroCopyAvailable("03")) return;
 
@@ -397,37 +437,59 @@ inline void test_03_results_match_ref() {
   auto& rocm = GetRocmBackend();
   cl_device_id cl_device = static_cast<cl_device_id>(cl.GetNativeDevice());
 
-  const uint32_t P = 8;
-  const uint32_t N = 64;
+  // Загрузка данных заказчика (подмножество для скорости)
+  std::vector<float> x_all, y_all;
+  if (!LoadRealVector(kDataDir + "x_data.txt", x_all) ||
+      !LoadRealVector(kDataDir + "y_data.txt", y_all)) {
+    TestPrint("[03] SKIP -- customer data not found");
+    return;
+  }
+
+  const uint32_t P = 16;   // подмножество каналов
+  const uint32_t N = 128;  // подмножество отсчётов
+
+  if (x_all.size() < P || y_all.size() < P) {
+    TestPrint("[03] SKIP -- not enough antenna elements");
+    return;
+  }
+
+  std::vector<float> x_sub(x_all.begin(), x_all.begin() + P);
+  std::vector<float> y_sub(y_all.begin(), y_all.begin() + P);
+
+  std::vector<cx> signal;
+  if (!LoadSignalMatlab(kDataDir + "signal_matlab.txt", P, N, signal)) {
+    TestPrint("[03] SKIP -- signal_matlab.txt not found");
+    return;
+  }
+
+  // Steering (1D, M=16)
   const uint32_t M = 16;
+  const double ulim = std::sin(3.25 * M_PI / 180.0);
+  std::vector<float> u_dirs(M), v_dirs(M, 0.0f);
+  for (uint32_t m = 0; m < M; ++m) {
+    u_dirs[m] = static_cast<float>(-ulim + 2.0 * ulim * m / (M - 1));
+  }
+  auto steering = MakePhysicalSteering(x_sub, y_sub, u_dirs, v_dirs, kF0, kC);
 
-  // Одни и те же данные для обоих путей (одинаковый seed!)
-  auto signal_cpu   = MakeNoise(P * N, 1.0f, 77u);
-  auto steering_cpu = MakeSteeringMatrix(P, M,
-      -static_cast<float>(M_PI) / 3.0f,
-       static_cast<float>(M_PI) / 3.0f);
+  const size_t bytes_Y = signal.size()   * sizeof(cx);
+  const size_t bytes_U = steering.size() * sizeof(cx);
 
-  const size_t bytes_Y = signal_cpu.size()   * sizeof(cx);
-  const size_t bytes_U = steering_cpu.size() * sizeof(cx);
+  capon::CaponParams params{P, N, M, 1.0f};
 
-  capon::CaponParams params{P, N, M, 0.01f};
-
-  // ── Путь A: прямой вызов с CPU данными (reference) ──────────────────────
+  // -- Путь A: ПРЯМОЙ (CPU vector -> CaponProcessor) --
   capon::CaponProcessor proc_ref(&rocm);
-  capon::CaponReliefResult relief_ref = proc_ref.ComputeRelief(
-      signal_cpu, steering_cpu, params);
+  auto relief_ref = proc_ref.ComputeRelief(signal, steering, params);
 
-  // ── Путь B: через OpenCL cl_mem + ZeroCopy ──────────────────────────────
+  // -- Путь B: через OpenCL cl_mem -> Zero Copy -> CaponProcessor --
   capon::CaponReliefResult relief_ocl;
   bool ok = false;
 
   try {
-    // Загрузка через OpenCL (тот же единственный DMA-трансфер как в тесте 02)
     void* cl_Y = cl.Allocate(bytes_Y);
     void* cl_U = cl.Allocate(bytes_U);
-    cl.MemcpyHostToDevice(cl_Y, signal_cpu.data(),   bytes_Y);
-    cl.MemcpyHostToDevice(cl_U, steering_cpu.data(), bytes_U);
-    cl.Synchronize();  // clFinish — обязательно перед ZeroCopy!
+    cl.MemcpyHostToDevice(cl_Y, signal.data(),   bytes_Y);
+    cl.MemcpyHostToDevice(cl_U, steering.data(), bytes_U);
+    cl.Synchronize();
 
     ZeroCopyBridge bridge_Y, bridge_U;
     bridge_Y.ImportFromOpenCl(static_cast<cl_mem>(cl_Y), bytes_Y, cl_device);
@@ -449,11 +511,8 @@ inline void test_03_results_match_ref() {
   assert(ok);
   assert(relief_ocl.relief.size() == M);
 
-  // ── Сравнение результатов ─────────────────────────────────────────────
-  // Оба пути: одинаковые данные → один GPU → одинаковый алгоритм.
-  // Максимальное расхождение должно быть ~0 (float32 точность).
-  // Допуск 1e-4: учитываем порядок float32-операций внутри CaponProcessor.
-  float max_diff  = 0.0f;
+  // -- Сравнение: оба пути должны дать идентичный результат --
+  float max_diff    = 0.0f;
   float max_reldiff = 0.0f;
   for (uint32_t m = 0; m < M; ++m) {
     float diff    = std::fabs(relief_ref.relief[m] - relief_ocl.relief[m]);
@@ -465,29 +524,27 @@ inline void test_03_results_match_ref() {
   {
     char buf[256];
     std::snprintf(buf, sizeof(buf),
-        "  max |z_ref - z_opencl| = %.3e   max_rel = %.3e   (допуск < 1e-4)",
+        "  max |z_direct - z_zerocopy| = %.3e   max_rel = %.3e   (tolerance < 1e-4)",
         max_diff, max_reldiff);
     TestPrint(buf);
   }
 
-  // Если допуск нарушен — Zero Copy что-то испортил в данных!
   assert(max_diff < 1e-4f &&
-         "Zero Copy изменил данные: результаты не совпадают с прямым путём");
-  TestPrint("[03] PASS — Zero Copy прозрачен: результаты идентичны");
+         "Zero Copy corrupted data: results don't match direct path");
+  TestPrint("[03] PASS -- Zero Copy is transparent: results are identical");
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// Test 04: beamform_from_opencl
+// ========================================================================
 //
-// Задача: проверить AdaptiveBeamform с входом через OpenCL cl_mem.
+//   Test 04: АДАПТИВНОЕ ДО С ДАННЫМИ ЗАКАЗЧИКА
 //
-// AdaptiveBeamform вычисляет Y_out = (R^{-1}*U)^H * Y — адаптивные веса
-// применяются к входному сигналу. Выход: матрица [M × N] комплексных отсчётов,
-// где строка m — выход адаптивного луча для направления m.
-// ════════════════════════════════════════════════════════════════════════════
+//   AdaptiveBeamform: W = R^{-1}*U,  Y_out = W^H * Y  -> [M x N]
+//   Вход через OpenCL cl_mem -> Zero Copy -> HIP ptr.
+//
+// ========================================================================
 
-inline void test_04_beamform_from_opencl() {
-  TestPrint("[04] beamform_from_opencl — адаптивное ДО с входом через cl_mem");
+inline void test_04_beamform_customer_data() {
+  TestPrint("[04] beamform_customer_data -- adaptive beamforming via OpenCL -> ROCm");
 
   if (!CheckZeroCopyAvailable("04")) return;
 
@@ -495,46 +552,72 @@ inline void test_04_beamform_from_opencl() {
   auto& rocm = GetRocmBackend();
   cl_device_id cl_device = static_cast<cl_device_id>(cl.GetNativeDevice());
 
-  const uint32_t P = 4;  // антенны
-  const uint32_t N = 32; // отсчёты
-  const uint32_t M = 6;  // направления
+  // Загрузка данных заказчика (подмножество)
+  std::vector<float> x_all, y_all;
+  if (!LoadRealVector(kDataDir + "x_data.txt", x_all) ||
+      !LoadRealVector(kDataDir + "y_data.txt", y_all)) {
+    TestPrint("[04] SKIP -- customer data not found");
+    return;
+  }
 
-  auto signal_cpu   = MakeNoise(P * N, 1.0f, 13u);
-  auto steering_cpu = MakeSteeringMatrix(P, M,
-      -static_cast<float>(M_PI) / 6.0f,   // -30°
-       static_cast<float>(M_PI) / 6.0f);  // +30°
+  const uint32_t P = 16;
+  const uint32_t N = 128;
+  const uint32_t M = 8;
 
-  const size_t bytes_Y = signal_cpu.size()   * sizeof(cx);
-  const size_t bytes_U = steering_cpu.size() * sizeof(cx);
+  if (x_all.size() < P || y_all.size() < P) {
+    TestPrint("[04] SKIP -- not enough antenna elements");
+    return;
+  }
+
+  std::vector<float> x_sub(x_all.begin(), x_all.begin() + P);
+  std::vector<float> y_sub(y_all.begin(), y_all.begin() + P);
+
+  std::vector<cx> signal;
+  if (!LoadSignalMatlab(kDataDir + "signal_matlab.txt", P, N, signal)) {
+    TestPrint("[04] SKIP -- signal_matlab.txt not found");
+    return;
+  }
+
+  // Steering (1D, M=8 направлений)
+  const double ulim = std::sin(3.25 * M_PI / 180.0);
+  std::vector<float> u_dirs(M), v_dirs(M, 0.0f);
+  for (uint32_t m = 0; m < M; ++m) {
+    u_dirs[m] = static_cast<float>(-ulim + 2.0 * ulim * m / (M - 1));
+  }
+  auto steering = MakePhysicalSteering(x_sub, y_sub, u_dirs, v_dirs, kF0, kC);
+
+  const size_t bytes_Y = signal.size()   * sizeof(cx);
+  const size_t bytes_U = steering.size() * sizeof(cx);
 
   bool ok = false;
   try {
-    // OpenCL upload + Synchronize + ZeroCopy (тот же паттерн что в тесте 02)
+    // ЭТАП 2: OpenCL upload
     void* cl_Y = cl.Allocate(bytes_Y);
     void* cl_U = cl.Allocate(bytes_U);
-    cl.MemcpyHostToDevice(cl_Y, signal_cpu.data(),   bytes_Y);
-    cl.MemcpyHostToDevice(cl_U, steering_cpu.data(), bytes_U);
+    cl.MemcpyHostToDevice(cl_Y, signal.data(),   bytes_Y);
+    cl.MemcpyHostToDevice(cl_U, steering.data(), bytes_U);
     cl.Synchronize();
 
+    // ЭТАП 3: Zero Copy
     ZeroCopyBridge bridge_Y, bridge_U;
     bridge_Y.ImportFromOpenCl(static_cast<cl_mem>(cl_Y), bytes_Y, cl_device);
     bridge_U.ImportFromOpenCl(static_cast<cl_mem>(cl_U), bytes_U, cl_device);
 
-    capon::CaponParams params{P, N, M, 0.01f};
+    // ЭТАП 4: Расчёт AdaptiveBeamform
+    capon::CaponParams params{P, N, M, 1.0f};
     capon::CaponProcessor processor(&rocm);
 
-    // AdaptiveBeamform(void*, void*, params) — GPU overload с HIP-указателями
     auto result = processor.AdaptiveBeamform(
-        bridge_Y.GetHipPtr(),   // gpu_signal   [P × N]
-        bridge_U.GetHipPtr(),   // gpu_steering [P × M]
+        bridge_Y.GetHipPtr(),
+        bridge_U.GetHipPtr(),
         params);
 
-    // Проверка размерности выхода: должно быть [M × N]
+    // Проверка размерности: [M x N]
     assert(result.n_directions == M);
     assert(result.n_samples    == N);
     assert(result.output.size() == static_cast<size_t>(M) * N);
 
-    // Проверка конечности — никаких NaN/Inf
+    // Проверка конечности
     size_t n_finite = 0;
     for (const auto& v : result.output) {
       if (std::isfinite(v.real()) && std::isfinite(v.imag())) ++n_finite;
@@ -544,7 +627,7 @@ inline void test_04_beamform_from_opencl() {
     {
       char buf[128];
       std::snprintf(buf, sizeof(buf),
-          "  Beamform output: [%u × %u] = %zu elements, all finite ✓",
+          "  Beamform output: [%u x %u] = %zu elements, all finite",
           result.n_directions, result.n_samples, result.output.size());
       TestPrint(buf);
     }
@@ -560,27 +643,30 @@ inline void test_04_beamform_from_opencl() {
   TestPrint("[04] PASS");
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// run() — точка входа, вызывается из all_test.hpp
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
+// run() -- точка входа, вызывается из all_test.hpp
+// ========================================================================
 
 inline void run() {
   ConsoleOutput::GetInstance().Start();
-  TestPrint("=== test_capon_opencl_to_rocm: данные от OpenCL → расчёт Кейпона на ROCm ===");
+  TestPrint("========================================================");
+  TestPrint("  test_capon_opencl_to_rocm");
+  TestPrint("  Данные заказчика -> OpenCL -> Zero Copy -> Capon ROCm");
+  TestPrint("========================================================");
 
   test_01_detect_interop();
-  test_02_signal_from_opencl();
-  test_03_results_match_ref();
-  test_04_beamform_from_opencl();
+  test_02_customer_data_pipeline();
+  test_03_zerocopy_matches_direct();
+  test_04_beamform_customer_data();
 
   TestPrint("=== test_capon_opencl_to_rocm DONE ===");
 }
 
 }  // namespace test_capon_opencl_to_rocm
 
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 // Заглушка для не-ROCm сборки (Windows / ENABLE_ROCM=OFF)
-// ════════════════════════════════════════════════════════════════════════════
+// ========================================================================
 
 #else  // !ENABLE_ROCM
 

@@ -187,9 +187,8 @@ static void test_zero_copy_bridge() {
   std::cout << "  [Hybrid]   ZeroCopy method: "
             << ZeroCopyMethodToString(method) << "\n";
 
-  if (method != ZeroCopyMethod::DMA_BUF && method != ZeroCopyMethod::AMD_GPU_VA) {
-    std::cout << "  [Hybrid] zero_copy_bridge: SKIPPED (method="
-              << ZeroCopyMethodToString(method) << ", need DMA_BUF or AMD_GPU_VA)\n";
+  if (method == ZeroCopyMethod::NONE) {
+    std::cout << "  [Hybrid] zero_copy_bridge: SKIPPED (no ZeroCopy method available)\n";
     hybrid.Cleanup();
     return;
   }

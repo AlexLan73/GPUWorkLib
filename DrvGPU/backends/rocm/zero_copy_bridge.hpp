@@ -4,16 +4,22 @@
  * @file zero_copy_bridge.hpp
  * @brief ZeroCopy мост между OpenCL и ROCm/HIP
  *
- * Позволяет импортировать OpenCL cl_mem буфер в HIP address space
- * без копирования через CPU. Поддерживает три метода:
- * - DMA-BUF (cl_khr_external_memory_dma_buf → hipImportExternalMemory)
- * - AMD GPU VA (прямой GPU virtual address, zero overhead)
- * - SVM (Shared Virtual Memory)
+ * Импорт OpenCL cl_mem буфера в HIP address space.
+ * Поддерживаемые методы ImportFromOpenCl (в порядке приоритета):
+ *
+ * A. HSA Probe    — GPU VA из cl_mem через hsa_amd_pointer_info (TRUE zero-copy, 0 копий)
+ * B. DMA-BUF      — cl_khr_external_memory_dma_buf → hipImportExternalMemory
+ * C. GPU Copy     — OpenCL kernel: cl_mem → coarse-grain SVM (VRAM→VRAM, ~8мс для 4ГБ)
+ * D. SVM fallback — fine-grain SVM + копия через CPU (медленно, секунды для 4ГБ)
+ *
+ * Отдельные методы (ручной вызов):
+ * - ImportFromSVM  — clSVMAlloc pointer напрямую в HIP (unified VA)
+ * - ImportFromGpuVA — прямой GPU VA в HIP (unified VA)
  *
  * ВАЖНО: Linux only! На Windows — стаб, бросающий исключение.
  *
  * @author Кодо (AI Assistant)
- * @date 2026-02-23
+ * @date 2026-03-24
  */
 
 #if ENABLE_ROCM
@@ -35,24 +41,12 @@ namespace drv_gpu_lib {
 
 /**
  * @class ZeroCopyBridge
- * @brief Импорт OpenCL cl_mem в HIP address space без копирования
+ * @brief Импорт OpenCL cl_mem в HIP address space
  *
- * Последовательность использования:
- * 1. Создать ZeroCopyBridge
- * 2. Вызвать ImportFromOpenCl(fd, size) или ImportFromGpuVA(va, size)
- * 3. Получить HIP указатель через GetHipPtr()
- * 4. Использовать указатель в HIP kernels
- * 5. Деструктор освободит ресурсы
- *
+ * Использование:
  * @code
- * // Экспорт cl_mem → dma-buf fd
- * int fd = ExportClBufferToFd(cl_buffer);
- *
- * // Импорт в HIP
  * ZeroCopyBridge bridge;
- * bridge.ImportFromDmaBuf(fd, buffer_size);
- *
- * // Использовать в HIP kernel
+ * bridge.ImportFromOpenCl(cl_buffer, size, cl_device);  // автовыбор метода
  * void* hip_ptr = bridge.GetHipPtr();
  * my_kernel<<<grid, block>>>((float*)hip_ptr, N);
  * @endcode
@@ -75,74 +69,75 @@ public:
   // ═══════════════════════════════════════════════════════════════════════
 
   /**
-   * @brief Импорт через dma-buf file descriptor (метод A)
+   * @brief Импорт через HSA Probe — TRUE zero-copy из cl_mem
    *
-   * Использует hipImportExternalMemory для маппинга dma-buf fd
-   * в HIP address space. Minimal overhead (~микросекунды).
+   * Извлекает GPU VA из cl_mem через hsa_amd_pointer_info probe.
+   * Тот же адрес в VRAM доступен в HIP напрямую.
+   * 0 копий, 0 доп. памяти, ~микросекунды.
    *
-   * @param dma_buf_fd File descriptor от ExportClBufferToFd()
+   * @param cl_buffer OpenCL cl_mem буфер
+   * @param buffer_size Размер буфера в байтах
+   * @throws std::runtime_error если probe не нашёл GPU VA
+   */
+  void ImportFromHsaProbe(cl_mem cl_buffer, size_t buffer_size);
+
+  /**
+   * @brief Импорт через dma-buf file descriptor
+   *
+   * hipImportExternalMemory для маппинга dma-buf fd в HIP address space.
+   *
+   * @param dma_buf_fd File descriptor
    * @param buffer_size Размер буфера в байтах
    * @return hipSuccess при успехе
-   * @throws std::runtime_error при ошибке HIP
    */
   hipError_t ImportFromDmaBuf(int dma_buf_fd, size_t buffer_size);
 
   /**
-   * @brief Импорт через GPU virtual address (метод B, AMD-only)
+   * @brief Импорт через GPU virtual address (прямой указатель)
    *
-   * Если OpenCL и HIP работают на одном AMD GPU с unified address space,
-   * GPU VA из cl_mem можно использовать в HIP напрямую.
-   * Zero overhead — просто сохраняем указатель.
+   * Zero overhead — тот же адрес в unified VA space.
    *
-   * @param gpu_va GPU virtual address от ExportClBufferToGpuVA()
+   * @param gpu_va GPU virtual address
    * @param buffer_size Размер буфера в байтах
-   * @throws std::runtime_error если gpu_va == nullptr
    */
   void ImportFromGpuVA(void* gpu_va, size_t buffer_size);
 
   /**
-   * @brief Универсальный импорт — автоопределение метода
+   * @brief Импорт через SVM pointer (от clSVMAlloc)
    *
-   * Пробует методы в порядке приоритета:
-   * 1. AMD GPU VA (если OpenCL device передан и поддерживает)
-   * 2. DMA-BUF
-   * 3. Ошибка
+   * SVM pointer доступен в HIP через unified VA space (HSA).
+   *
+   * @param svm_ptr SVM pointer
+   * @param buffer_size Размер буфера в байтах
+   */
+  void ImportFromSVM(void* svm_ptr, size_t buffer_size);
+
+  /**
+   * @brief Универсальный импорт — автоопределение лучшего метода
+   *
+   * Порядок стратегий (AUTO):
+   * A. HSA Probe (TRUE zero-copy, 0 копий, 0 памяти)
+   * B. DMA-BUF через OpenCL extension
+   * C. GPU Copy Kernel (cl_mem → coarse-grain SVM, VRAM→VRAM, ~8мс для 4ГБ)
+   * D. SVM fallback (fine-grain SVM + копия через CPU, медленно)
    *
    * @param cl_buffer OpenCL буфер для импорта
    * @param buffer_size Размер буфера в байтах
-   * @param cl_device OpenCL device (для проверки capabilities)
+   * @param cl_device OpenCL device
+   * @param strategy Принудительный выбор стратегии (AUTO по умолчанию)
    * @throws std::runtime_error если ни один метод не сработал
    */
-  void ImportFromOpenCl(cl_mem cl_buffer, size_t buffer_size, cl_device_id cl_device);
+  void ImportFromOpenCl(cl_mem cl_buffer, size_t buffer_size, cl_device_id cl_device,
+                        ZeroCopyStrategy strategy = ZeroCopyStrategy::AUTO);
 
   // ═══════════════════════════════════════════════════════════════════════
   // Доступ к данным
   // ═══════════════════════════════════════════════════════════════════════
 
-  /**
-   * @brief Получить HIP указатель на данные
-   * @return void* — указатель, пригодный для HIP kernels
-   */
   void* GetHipPtr() const { return hip_ptr_; }
-
-  /**
-   * @brief Размер буфера в байтах
-   */
   size_t GetSize() const { return size_; }
-
-  /**
-   * @brief Активен ли мост (импорт выполнен)
-   */
   bool IsActive() const { return hip_ptr_ != nullptr; }
-
-  /**
-   * @brief Какой метод ZeroCopy использован
-   */
   ZeroCopyMethod GetMethod() const { return method_; }
-
-  /**
-   * @brief Освободить ресурсы (вызывается автоматически в деструкторе)
-   */
   void Release();
 
 private:
@@ -150,7 +145,8 @@ private:
   void* hip_ptr_;                  ///< HIP device pointer
   size_t size_;                    ///< Размер буфера
   ZeroCopyMethod method_;          ///< Используемый метод
-  bool owns_memory_;               ///< true если ext_mem_ нужно освободить
+  bool owns_memory_;               ///< true если ext_mem_ или SVM нужно освободить
+  cl_context svm_cl_context_;      ///< OpenCL context для clSVMFree (SVM fallback)
 };
 
 }  // namespace drv_gpu_lib
@@ -164,22 +160,27 @@ private:
 
 namespace drv_gpu_lib {
 
-/**
- * @class ZeroCopyBridge
- * @brief Windows stub — ZeroCopy не поддерживается
- */
 class ZeroCopyBridge {
 public:
   ZeroCopyBridge() = default;
   ~ZeroCopyBridge() = default;
-
   ZeroCopyBridge(const ZeroCopyBridge&) = delete;
   ZeroCopyBridge& operator=(const ZeroCopyBridge&) = delete;
   ZeroCopyBridge(ZeroCopyBridge&&) noexcept = default;
   ZeroCopyBridge& operator=(ZeroCopyBridge&&) noexcept = default;
 
-  void ImportFromOpenCl(cl_mem, size_t, cl_device_id) {
-    throw std::runtime_error("ZeroCopyBridge: not available (ENABLE_ROCM=OFF, Linux required)");
+  void ImportFromHsaProbe(cl_mem, size_t) {
+    throw std::runtime_error("ZeroCopyBridge: not available (ENABLE_ROCM=OFF)");
+  }
+  void ImportFromGpuVA(void*, size_t) {
+    throw std::runtime_error("ZeroCopyBridge: not available (ENABLE_ROCM=OFF)");
+  }
+  void ImportFromSVM(void*, size_t) {
+    throw std::runtime_error("ZeroCopyBridge: not available (ENABLE_ROCM=OFF)");
+  }
+  void ImportFromOpenCl(cl_mem, size_t, cl_device_id,
+                        ZeroCopyStrategy = ZeroCopyStrategy::AUTO) {
+    throw std::runtime_error("ZeroCopyBridge: not available (ENABLE_ROCM=OFF)");
   }
 
   void* GetHipPtr() const { return nullptr; }

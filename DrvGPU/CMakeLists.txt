@@ -264,6 +264,12 @@ endif()
 # ROCm: link hip::host + hiprtc and add ENABLE_ROCM definition
 if(ROCM_ENABLED)
     target_link_libraries(drvgpu PUBLIC hip::host)
+    # HSA runtime нужен для ZeroCopy HSA Probe (hsa_amd_pointer_info, hsa_amd_portable_export_dmabuf)
+    # hip::host зависит от libhsa-runtime64.so, но линковщику нужна явная ссылка для наших вызовов
+    find_library(HSA_RUNTIME hsa-runtime64 PATHS /opt/rocm/lib)
+    if(HSA_RUNTIME)
+        target_link_libraries(drvgpu PUBLIC ${HSA_RUNTIME})
+    endif()
     if(TARGET hiprtc::hiprtc)
         target_link_libraries(drvgpu PUBLIC hiprtc::hiprtc)
         message(STATUS "DrvGPU: ROCm/HIP linked (hip::host + hiprtc::hiprtc, ENABLE_ROCM=1)")
