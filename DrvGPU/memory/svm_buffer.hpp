@@ -1,5 +1,7 @@
 #pragma once
 
+#if !ENABLE_ROCM  // OpenCL-only: ROCm uses UVA (hipMalloc) instead of SVM
+
 /**
  * @file svm_buffer.hpp
  * @brief RAII обёртка для OpenCL SVM (Shared Virtual Memory)
@@ -17,12 +19,13 @@
 #include "i_memory_buffer.hpp"
 #include "svm_capabilities.hpp"
 #include "memory_type.hpp"
+#include "../logger/logger.hpp"
 #include <CL/cl.h>
 #include <complex>
 #include <vector>
 #include <cstring>
 #include <stdexcept>
-#include <iostream>
+#include <sstream>
 #include <iomanip>
 
 namespace drv_gpu_lib {
@@ -503,20 +506,22 @@ inline BufferInfo SVMBuffer::GetInfo() const {
 }
 
 inline void SVMBuffer::PrintStats() const {
-    std::cout << "\n" << std::string(50, '─') << "\n";
-    std::cout << "SVMBuffer Statistics\n";
-    std::cout << std::string(50, '─') << "\n";
-    std::cout << std::left << std::setw(20) << "Elements:" << num_elements_ << "\n";
-    std::cout << std::left << std::setw(20) << "Size:" 
-              << std::fixed << std::setprecision(2) 
-              << (size_bytes_ / (1024.0 * 1024.0)) << " MB\n";
-    std::cout << std::left << std::setw(20) << "Strategy:" 
-              << MemoryStrategyToString(strategy_) << "\n";
-    std::cout << std::left << std::setw(20) << "Mapped:" 
-              << (is_mapped_ ? "YES" : "NO") << "\n";
-    std::cout << std::left << std::setw(20) << "SVM Pointer:" 
-              << svm_ptr_ << "\n";
-    std::cout << std::string(50, '─') << "\n";
+    std::ostringstream ss;
+    ss << "\n" << std::string(50, '-') << "\n";
+    ss << "SVMBuffer Statistics\n";
+    ss << std::string(50, '-') << "\n";
+    ss << std::left << std::setw(20) << "Elements:" << num_elements_ << "\n";
+    ss << std::left << std::setw(20) << "Size:"
+       << std::fixed << std::setprecision(2)
+       << (size_bytes_ / (1024.0 * 1024.0)) << " MB\n";
+    ss << std::left << std::setw(20) << "Strategy:"
+       << MemoryStrategyToString(strategy_) << "\n";
+    ss << std::left << std::setw(20) << "Mapped:"
+       << (is_mapped_ ? "YES" : "NO") << "\n";
+    ss << std::left << std::setw(20) << "SVM Pointer:"
+       << svm_ptr_ << "\n";
+    ss << std::string(50, '-');
+    DRVGPU_LOG_INFO("SVMBuffer", ss.str());
 }
 
 inline void SVMBuffer::CheckCLError(cl_int err, const std::string& operation) {
@@ -528,4 +533,6 @@ inline void SVMBuffer::CheckCLError(cl_int err, const std::string& operation) {
 }
 
 } // namespace drv_gpu_lib
+
+#endif  // !ENABLE_ROCM
 

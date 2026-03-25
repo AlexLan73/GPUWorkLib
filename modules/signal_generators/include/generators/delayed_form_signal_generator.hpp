@@ -1,5 +1,7 @@
 #pragma once
 
+#if !ENABLE_ROCM  // OpenCL-only: ROCm uses DelayedFormSignalGeneratorROCm
+
 /**
  * @file delayed_form_signal_generator.hpp
  * @brief DelayedFormSignalGenerator — генератор с дробной задержкой (Farrow 48×5)
@@ -136,3 +138,5 @@ private:
 };
 
 } // namespace signal_gen
+
+#endif  // !ENABLE_ROCM

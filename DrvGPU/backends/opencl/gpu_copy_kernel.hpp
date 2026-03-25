@@ -70,6 +70,38 @@ struct GpuCopyKernels {
   cl_kernel  k_tail  = nullptr;
 };
 
+/// Внутренний кеш: static mutex + map (per cl_context)
+struct GpuCopyKernelCache {
+  std::mutex mutex;
+  std::unordered_map<cl_context, GpuCopyKernels> map;
+  static GpuCopyKernelCache& Instance() {
+    static GpuCopyKernelCache instance;
+    return instance;
+  }
+};
+
+/**
+ * @brief Удалить закешированные kernels для данного context.
+ *
+ * Вызывать при уничтожении cl_context (из ~OpenCLCore), чтобы
+ * предотвратить dangling pointer при переиспользовании адреса context.
+ *
+ * @param ctx OpenCL context, который будет уничтожен
+ */
+inline void ReleaseCopyKernelsForContext(cl_context ctx) {
+  auto& cache = GpuCopyKernelCache::Instance();
+  std::lock_guard<std::mutex> lock(cache.mutex);
+
+  auto it = cache.map.find(ctx);
+  if (it != cache.map.end()) {
+    auto& kk = it->second;
+    if (kk.k_wide)  clReleaseKernel(kk.k_wide);
+    if (kk.k_tail)  clReleaseKernel(kk.k_tail);
+    if (kk.program) clReleaseProgram(kk.program);
+    cache.map.erase(it);
+  }
+}
+
 /**
  * @brief Получить или скомпилировать copy kernels для данного context.
  *
@@ -80,12 +112,11 @@ struct GpuCopyKernels {
  * @param ctx OpenCL context
  * @return указатель на закешированные kernels, nullptr при ошибке
  *
- * @note Кеш живёт до завершения процесса. OpenCL runtime освобождает
- *       ресурсы при exit — явный cleanup не требуется.
+ * @note Вызовите ReleaseCopyKernelsForContext(ctx) при уничтожении context!
  */
 inline GpuCopyKernels* GetOrCompileCopyKernels(cl_context ctx) {
-  static std::mutex cache_mutex;
-  static std::unordered_map<cl_context, GpuCopyKernels> cache;
+  auto& cache = GpuCopyKernelCache::Instance();
+  std::lock_guard<std::mutex> lock(cache.mutex);
 
   std::lock_guard<std::mutex> lock(cache_mutex);
 

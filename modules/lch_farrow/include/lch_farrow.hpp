@@ -1,5 +1,7 @@
 #pragma once
 
+#if !ENABLE_ROCM  // OpenCL-only: ROCm uses LchFarrowROCm
+
 /**
  * @file lch_farrow.hpp
  * @brief LchFarrow - Lagrange interpolation fractional delay processor (48x5)
@@ -146,3 +148,5 @@ private:
 };
 
 } // namespace lch_farrow
+
+#endif  // !ENABLE_ROCM

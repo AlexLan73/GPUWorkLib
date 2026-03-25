@@ -1,5 +1,7 @@
 #pragma once
 
+#if !ENABLE_ROCM  // OpenCL-only facade: ROCm modules use generators directly
+
 /**
  * @file signal_service.hpp
  * @brief SignalService — Facade для генерации сигналов
@@ -147,3 +149,5 @@ private:
 };
 
 } // namespace signal_gen
+
+#endif  // !ENABLE_ROCM

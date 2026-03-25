@@ -165,6 +165,8 @@ if(ROCM_ENABLED)
         "${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/rocm_core.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/zero_copy_bridge.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/zero_copy_bridge.hpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/stream_pool.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/stream_pool.hpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/backends/hybrid/hybrid_backend.cpp"
     )
     message(STATUS "ROCm Backend: ENABLED (${CMAKE_CURRENT_SOURCE_DIR}/backends/rocm/)")

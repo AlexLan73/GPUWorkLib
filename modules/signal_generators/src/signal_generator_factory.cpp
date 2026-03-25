@@ -30,12 +30,14 @@ std::unique_ptr<ISignalGenerator> SignalGeneratorFactory::CreateNoise(
     return std::make_unique<NoiseGenerator>(backend, params);
 }
 
+#if !ENABLE_ROCM
 std::unique_ptr<FormSignalGenerator> SignalGeneratorFactory::CreateForm(
     drv_gpu_lib::IBackend* backend, const FormParams& params) {
     auto gen = std::make_unique<FormSignalGenerator>(backend);
     gen->SetParams(params);
     return gen;
 }
+#endif
 
 std::unique_ptr<FormSignalGeneratorROCm> SignalGeneratorFactory::CreateFormROCm(
     drv_gpu_lib::IBackend* backend, const FormParams& params) {

@@ -1,5 +1,7 @@
 #pragma once
 
+#if !ENABLE_ROCM  // OpenCL-only: ROCm uses FormSignalGeneratorROCm
+
 /**
  * @file form_signal_generator.hpp
  * @brief FormSignalGenerator — мультиканальный генератор комплексных сигналов
@@ -132,3 +134,5 @@ private:
 };
 
 } // namespace signal_gen
+
+#endif  // !ENABLE_ROCM
