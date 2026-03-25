@@ -79,6 +79,7 @@
 #include <cmath>
 #include <complex>
 #include <cstdio>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -644,6 +645,179 @@ inline void test_04_beamform_customer_data() {
 }
 
 // ========================================================================
+//
+//   Test 05: ПУТЬ ЧЕРЕЗ SVM — данные заказчика → clSVMAlloc → ROCm
+//
+//   Явный SVM pipeline:
+//     1. clSVMAlloc (fine-grain SVM)
+//     2. clEnqueueSVMMemcpy (CPU → SVM на GPU)
+//     3. ZeroCopyBridge::ImportFromSVM (SVM pointer → HIP)
+//     4. CaponProcessor (ROCm pipeline)
+//     5. Сравнение с прямым путём
+//
+// ========================================================================
+
+inline void test_05_svm_customer_data() {
+  TestPrint("[05] ===== SVM PATH: данные заказчика -> clSVMAlloc -> ROCm Capon =====");
+
+  auto& cl   = GetClBackend();
+  auto& rocm = GetRocmBackend();
+  cl_device_id cl_device = static_cast<cl_device_id>(cl.GetNativeDevice());
+
+  // Проверить поддержку fine-grain SVM
+  cl_device_svm_capabilities svm_caps = 0;
+  cl_int svm_err = clGetDeviceInfo(cl_device, CL_DEVICE_SVM_CAPABILITIES,
+                                    sizeof(svm_caps), &svm_caps, nullptr);
+  if (svm_err != CL_SUCCESS || !(svm_caps & CL_DEVICE_SVM_FINE_GRAIN_BUFFER)) {
+    TestPrint("[05] SKIP -- fine-grain SVM not supported on this device");
+    return;
+  }
+
+  // ── Загрузка данных заказчика ──────────────────────────────────────────
+  std::vector<float> x_all, y_all;
+  if (!LoadRealVector(kDataDir + "x_data.txt", x_all) ||
+      !LoadRealVector(kDataDir + "y_data.txt", y_all)) {
+    TestPrint("[05] SKIP -- customer data not found");
+    return;
+  }
+
+  const uint32_t P = 16;
+  const uint32_t N = 128;
+
+  if (x_all.size() < P || y_all.size() < P) {
+    TestPrint("[05] SKIP -- not enough antenna elements");
+    return;
+  }
+
+  std::vector<float> x_sub(x_all.begin(), x_all.begin() + P);
+  std::vector<float> y_sub(y_all.begin(), y_all.begin() + P);
+
+  std::vector<cx> signal;
+  if (!LoadSignalMatlab(kDataDir + "signal_matlab.txt", P, N, signal)) {
+    TestPrint("[05] SKIP -- signal_matlab.txt not found");
+    return;
+  }
+
+  // Steering (1D, M=16)
+  const uint32_t M = 16;
+  const double ulim = std::sin(3.25 * M_PI / 180.0);
+  std::vector<float> u_dirs(M), v_dirs(M, 0.0f);
+  for (uint32_t m = 0; m < M; ++m) {
+    u_dirs[m] = static_cast<float>(-ulim + 2.0 * ulim * m / (M - 1));
+  }
+  auto steering = MakePhysicalSteering(x_sub, y_sub, u_dirs, v_dirs, kF0, kC);
+
+  const size_t bytes_Y = signal.size()   * sizeof(cx);
+  const size_t bytes_U = steering.size() * sizeof(cx);
+
+  capon::CaponParams params{P, N, M, 1.0f};
+
+  // ── Путь A: Прямой (CPU → CaponProcessor, без SVM) ────────────────────
+  capon::CaponProcessor proc_ref(&rocm);
+  auto relief_ref = proc_ref.ComputeRelief(signal, steering, params);
+
+  // ── Путь B: Через SVM ──────────────────────────────────────────────────
+  // Получить OpenCL context из backend
+  cl_context cl_ctx = static_cast<cl_context>(cl.GetNativeContext());
+
+  bool ok = false;
+  try {
+    TestPrint("  ---[ ЭТАП 1: clSVMAlloc (fine-grain SVM) ]---");
+
+    // 1. Аллокация fine-grain SVM буферов
+    void* svm_Y = clSVMAlloc(cl_ctx,
+        CL_MEM_SVM_FINE_GRAIN_BUFFER | CL_MEM_READ_WRITE, bytes_Y, 0);
+    void* svm_U = clSVMAlloc(cl_ctx,
+        CL_MEM_SVM_FINE_GRAIN_BUFFER | CL_MEM_READ_WRITE, bytes_U, 0);
+
+    if (!svm_Y || !svm_U) {
+      if (svm_Y) clSVMFree(cl_ctx, svm_Y);
+      if (svm_U) clSVMFree(cl_ctx, svm_U);
+      TestPrint("[05] SKIP -- clSVMAlloc failed");
+      return;
+    }
+
+    {
+      char buf[256];
+      std::snprintf(buf, sizeof(buf),
+          "  SVM alloc: Y=%zu bytes (%p), U=%zu bytes (%p)",
+          bytes_Y, svm_Y, bytes_U, svm_U);
+      TestPrint(buf);
+    }
+
+    TestPrint("  ---[ ЭТАП 2: Запись данных заказчика в SVM ]---");
+
+    // 2. Fine-grain SVM доступен из CPU напрямую — memcpy!
+    std::memcpy(svm_Y, signal.data(),   bytes_Y);
+    std::memcpy(svm_U, steering.data(), bytes_U);
+
+    TestPrint("  memcpy CPU→SVM done (fine-grain: прямой доступ из CPU)");
+
+    TestPrint("  ---[ ЭТАП 3: ImportFromSVM → HIP pointer ]---");
+
+    // 3. SVM pointer → HIP через ZeroCopyBridge
+    ZeroCopyBridge bridge_Y, bridge_U;
+    bridge_Y.ImportFromSVM(svm_Y, bytes_Y);
+    bridge_U.ImportFromSVM(svm_U, bytes_U);
+
+    assert(bridge_Y.IsActive() && bridge_Y.GetHipPtr() != nullptr);
+    assert(bridge_U.IsActive() && bridge_U.GetHipPtr() != nullptr);
+
+    {
+      char buf[256];
+      std::snprintf(buf, sizeof(buf),
+          "  hip_Y=%p  hip_U=%p  (SVM→HIP unified VA)",
+          bridge_Y.GetHipPtr(), bridge_U.GetHipPtr());
+      TestPrint(buf);
+    }
+
+    TestPrint("  ---[ ЭТАП 4: Capon на ROCm через SVM pointers ]---");
+
+    // 4. Capon на ROCm
+    capon::CaponProcessor proc_svm(&rocm);
+    auto relief_svm = proc_svm.ComputeRelief(
+        bridge_Y.GetHipPtr(),
+        bridge_U.GetHipPtr(),
+        params);
+
+    assert(relief_svm.relief.size() == M);
+
+    // 5. Сравнение: SVM путь == прямой путь
+    float max_diff    = 0.0f;
+    float max_reldiff = 0.0f;
+    for (uint32_t m = 0; m < M; ++m) {
+      float diff    = std::fabs(relief_ref.relief[m] - relief_svm.relief[m]);
+      float reldiff = diff / (std::fabs(relief_ref.relief[m]) + 1e-30f);
+      if (diff    > max_diff)    max_diff    = diff;
+      if (reldiff > max_reldiff) max_reldiff = reldiff;
+    }
+
+    {
+      char buf[256];
+      std::snprintf(buf, sizeof(buf),
+          "  |z_direct - z_svm| max=%.3e  max_rel=%.3e  (tolerance < 1e-4)",
+          max_diff, max_reldiff);
+      TestPrint(buf);
+    }
+
+    assert(max_diff < 1e-4f && "SVM path data corruption: results don't match direct path");
+
+    // Cleanup: мост уничтожается перед SVM
+    bridge_Y.Release();
+    bridge_U.Release();
+    clSVMFree(cl_ctx, svm_Y);
+    clSVMFree(cl_ctx, svm_U);
+
+    ok = true;
+  } catch (const std::exception& e) {
+    TestPrint(std::string("  EXCEPTION: ") + e.what());
+  }
+
+  assert(ok);
+  TestPrint("[05] PASS -- SVM customer data pipeline: clSVMAlloc → ROCm Capon verified");
+}
+
+// ========================================================================
 // run() -- точка входа, вызывается из all_test.hpp
 // ========================================================================
 
@@ -658,6 +832,7 @@ inline void run() {
   test_02_customer_data_pipeline();
   test_03_zerocopy_matches_direct();
   test_04_beamform_customer_data();
+  test_05_svm_customer_data();
 
   TestPrint("=== test_capon_opencl_to_rocm DONE ===");
 }

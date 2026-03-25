@@ -59,6 +59,7 @@ CPU эталон: Cholesky + ForwardSolve (формула GPU с деление�
 | 02 | `test_02_customer_data_pipeline` | **ПОЛНЫЙ PIPELINE** с данными заказчика (4 этапа, P=85, N=1000) |
 | 03 | `test_03_zerocopy_matches_direct` | Прозрачность: Zero Copy путь == прямой путь (< 1e-4) |
 | 04 | `test_04_beamform_customer_data` | AdaptiveBeamform с данными заказчика через Zero Copy |
+| 05 | `test_05_svm_customer_data` | **SVM PATH**: clSVMAlloc → memcpy → ImportFromSVM → Capon → verify |
 
 Pipeline теста 02 (данные заказчика):
 ```
@@ -134,8 +135,8 @@ Python тесты: `Python_test/capon/test_capon.py` — см. [Python_test/capo
 - [x] Реализация AdaptBeamformOp (rocBLAS CGEMM)
 - [x] Тесты 01-04 ROCm базовые (написаны, НЕ тестировано на GPU)
 - [x] Тесты reference_data 01-03 (MATLAB данные, CPU vs GPU)
-- [x] Тесты opencl_to_rocm 01-04 (Zero Copy Interop)
+- [x] Тесты opencl_to_rocm 01-05 (Zero Copy Interop + SVM path)
 - [x] Бенчмарки (ComputeRelief + AdaptiveBeamform, GpuBenchmarkBase)
-- [ ] Тест 05 (GPU-to-GPU: нужен GPU alloc/upload API)
+- [x] Тест 05 GPU-to-GPU: hipMalloc + D2D в test_capon_rocm.hpp
 - [x] Python тесты (`Python_test/capon/test_capon.py`) — NumPy + реальные данные MATLAB
 - [ ] Миграция на test_utils (GpuTestBase/TestRunner) — сейчас assert()

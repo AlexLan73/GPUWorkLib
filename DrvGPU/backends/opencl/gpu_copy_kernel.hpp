@@ -10,6 +10,9 @@
  * Оптимизация: uint4 (16 байт на work-item) для максимальной пропускной
  * способности. Остаток обрабатывается побайтово.
  *
+ * Кеш: cl_program компилируется один раз per cl_context (static map + mutex).
+ * Первый вызов ~1мс (JIT), последующие ~0 (lookup).
+ *
  * Использование:
  * @code
  * void* svm = clSVMAlloc(ctx, CL_MEM_READ_WRITE, size, 0);  // coarse-grain VRAM
@@ -26,6 +29,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <unordered_map>
 
 namespace drv_gpu_lib {
 
@@ -57,6 +61,70 @@ __kernel void copy_tail(
 )CL";
 
 // ════════════════════════════════════════════════════════════════════════════
+// Кеш скомпилированных программ (per cl_context, thread-safe)
+// ════════════════════════════════════════════════════════════════════════════
+
+struct GpuCopyKernels {
+  cl_program program = nullptr;
+  cl_kernel  k_wide  = nullptr;
+  cl_kernel  k_tail  = nullptr;
+};
+
+/**
+ * @brief Получить или скомпилировать copy kernels для данного context.
+ *
+ * Первый вызов: clBuildProgram (~1мс JIT).
+ * Последующие: O(1) lookup в static unordered_map.
+ * Thread-safe через static mutex.
+ *
+ * @param ctx OpenCL context
+ * @return указатель на закешированные kernels, nullptr при ошибке
+ *
+ * @note Кеш живёт до завершения процесса. OpenCL runtime освобождает
+ *       ресурсы при exit — явный cleanup не требуется.
+ */
+inline GpuCopyKernels* GetOrCompileCopyKernels(cl_context ctx) {
+  static std::mutex cache_mutex;
+  static std::unordered_map<cl_context, GpuCopyKernels> cache;
+
+  std::lock_guard<std::mutex> lock(cache_mutex);
+
+  auto it = cache.find(ctx);
+  if (it != cache.end()) return &it->second;
+
+  // Первая компиляция для этого context
+  cl_int err;
+  const char* src_ptr = kGpuCopyKernelSource;
+  cl_program program = clCreateProgramWithSource(ctx, 1, &src_ptr, nullptr, &err);
+  if (err != CL_SUCCESS || !program) return nullptr;
+
+  err = clBuildProgram(program, 0, nullptr, "-cl-std=CL2.0", nullptr, nullptr);
+  if (err != CL_SUCCESS) {
+    clReleaseProgram(program);
+    return nullptr;
+  }
+
+  cl_kernel k_wide = clCreateKernel(program, "copy_wide", &err);
+  if (err != CL_SUCCESS) {
+    clReleaseProgram(program);
+    return nullptr;
+  }
+
+  cl_kernel k_tail = clCreateKernel(program, "copy_tail", &err);
+  if (err != CL_SUCCESS) {
+    clReleaseKernel(k_wide);
+    clReleaseProgram(program);
+    return nullptr;
+  }
+
+  auto& entry = cache[ctx];
+  entry.program = program;
+  entry.k_wide  = k_wide;
+  entry.k_tail  = k_tail;
+  return &entry;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // GpuCopyClMemToSVM — основная функция
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -79,26 +147,11 @@ inline bool GpuCopyClMemToSVM(
 
   if (!queue || !ctx || !src || !svm_dst || size_bytes == 0) return false;
 
-  // ── Lazy compile (один раз per context) ────────────────────────────────
-  // Простой подход: компилируем при каждом вызове (overhead ~1мс, ничтожен
-  // на фоне копии 4ГБ). Для частых вызовов малых буферов можно кешировать.
+  // ── Закешированная компиляция (один раз per context) ───────────────────
+  GpuCopyKernels* kk = GetOrCompileCopyKernels(ctx);
+  if (!kk) return false;
+
   cl_int err;
-
-  const char* src_ptr = kGpuCopyKernelSource;
-  cl_program program = clCreateProgramWithSource(ctx, 1, &src_ptr, nullptr, &err);
-  if (err != CL_SUCCESS || !program) return false;
-
-  err = clBuildProgram(program, 0, nullptr, "-cl-std=CL2.0", nullptr, nullptr);
-  if (err != CL_SUCCESS) {
-    clReleaseProgram(program);
-    return false;
-  }
-
-  cl_kernel k_wide = clCreateKernel(program, "copy_wide", &err);
-  if (err != CL_SUCCESS) {
-    clReleaseProgram(program);
-    return false;
-  }
 
   // ── Wide copy: uint4 (16 байт) per work-item ──────────────────────────
   const uint32_t n_uint4 = static_cast<uint32_t>(size_bytes / 16);
@@ -106,52 +159,54 @@ inline bool GpuCopyClMemToSVM(
   bool ok = true;
 
   if (n_uint4 > 0) {
-    // src — cl_mem, dst — SVM pointer
-    err = clSetKernelArg(k_wide, 0, sizeof(cl_mem), &src);
-    if (err != CL_SUCCESS) { ok = false; goto cleanup; }
+    err = clSetKernelArg(kk->k_wide, 0, sizeof(cl_mem), &src);
+    if (err != CL_SUCCESS) return false;
 
-    err = clSetKernelArgSVMPointer(k_wide, 1, svm_dst);
-    if (err != CL_SUCCESS) { ok = false; goto cleanup; }
+    err = clSetKernelArgSVMPointer(kk->k_wide, 1, svm_dst);
+    if (err != CL_SUCCESS) return false;
 
-    err = clSetKernelArg(k_wide, 2, sizeof(uint32_t), &n_uint4);
-    if (err != CL_SUCCESS) { ok = false; goto cleanup; }
+    err = clSetKernelArg(kk->k_wide, 2, sizeof(uint32_t), &n_uint4);
+    if (err != CL_SUCCESS) return false;
 
-    // Сообщаем runtime о SVM pointer (требуется для coarse-grain SVM)
-    err = clSetKernelExecInfo(k_wide, CL_KERNEL_EXEC_INFO_SVM_PTRS,
+    err = clSetKernelExecInfo(kk->k_wide, CL_KERNEL_EXEC_INFO_SVM_PTRS,
                                sizeof(void*), &svm_dst);
-    if (err != CL_SUCCESS) { ok = false; goto cleanup; }
+    if (err != CL_SUCCESS) return false;
 
     constexpr size_t kLocalSize = 256;
     size_t global_size = ((static_cast<size_t>(n_uint4) + kLocalSize - 1) / kLocalSize) * kLocalSize;
 
-    err = clEnqueueNDRangeKernel(queue, k_wide, 1, nullptr,
+    err = clEnqueueNDRangeKernel(queue, kk->k_wide, 1, nullptr,
                                   &global_size, &kLocalSize, 0, nullptr, nullptr);
-    if (err != CL_SUCCESS) { ok = false; goto cleanup; }
+    if (err != CL_SUCCESS) return false;
   }
 
   // ── Tail copy: остаток байт ────────────────────────────────────────────
-  if (ok && n_tail > 0) {
-    cl_kernel k_tail = clCreateKernel(program, "copy_tail", &err);
-    if (err == CL_SUCCESS && k_tail) {
-      uint32_t tail_offset = n_uint4 * 16;
+  if (n_tail > 0) {
+    uint32_t tail_offset = n_uint4 * 16;
 
-      clSetKernelArg(k_tail, 0, sizeof(cl_mem), &src);
-      clSetKernelArgSVMPointer(k_tail, 1, svm_dst);
-      clSetKernelArg(k_tail, 2, sizeof(uint32_t), &tail_offset);
-      clSetKernelArg(k_tail, 3, sizeof(uint32_t), &n_tail);
-      clSetKernelExecInfo(k_tail, CL_KERNEL_EXEC_INFO_SVM_PTRS,
-                           sizeof(void*), &svm_dst);
+    err = clSetKernelArg(kk->k_tail, 0, sizeof(cl_mem), &src);
+    if (err != CL_SUCCESS) { ok = false; }
 
+    if (ok) err = clSetKernelArgSVMPointer(kk->k_tail, 1, svm_dst);
+    if (err != CL_SUCCESS) { ok = false; }
+
+    if (ok) err = clSetKernelArg(kk->k_tail, 2, sizeof(uint32_t), &tail_offset);
+    if (err != CL_SUCCESS) { ok = false; }
+
+    if (ok) err = clSetKernelArg(kk->k_tail, 3, sizeof(uint32_t), &n_tail);
+    if (err != CL_SUCCESS) { ok = false; }
+
+    if (ok) err = clSetKernelExecInfo(kk->k_tail, CL_KERNEL_EXEC_INFO_SVM_PTRS,
+                                       sizeof(void*), &svm_dst);
+    if (err != CL_SUCCESS) { ok = false; }
+
+    if (ok) {
       constexpr size_t kLocalSize = 256;
       size_t global_size = ((static_cast<size_t>(n_tail) + kLocalSize - 1) / kLocalSize) * kLocalSize;
 
-      err = clEnqueueNDRangeKernel(queue, k_tail, 1, nullptr,
+      err = clEnqueueNDRangeKernel(queue, kk->k_tail, 1, nullptr,
                                     &global_size, &kLocalSize, 0, nullptr, nullptr);
       if (err != CL_SUCCESS) ok = false;
-
-      clReleaseKernel(k_tail);
-    } else {
-      ok = false;
     }
   }
 
@@ -161,9 +216,6 @@ inline bool GpuCopyClMemToSVM(
     if (err != CL_SUCCESS) ok = false;
   }
 
-cleanup:
-  clReleaseKernel(k_wide);
-  clReleaseProgram(program);
   return ok;
 }
 

@@ -90,6 +90,7 @@ CaponProcessor& CaponProcessor::operator=(CaponProcessor&& other) noexcept {
 
     backend_     = other.backend_;
     ctx_         = std::move(other.ctx_);
+    cov_op_      = std::move(other.cov_op_);   // БЫЛ ПРОПУЩЕН — без этого cov_op_ пуст после move
     inv_op_      = std::move(other.inv_op_);   // unique_ptr — корректный move assignment
     weights_op_  = std::move(other.weights_op_);
     relief_op_   = std::move(other.relief_op_);
