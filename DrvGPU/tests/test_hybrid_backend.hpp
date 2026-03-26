@@ -20,6 +20,7 @@
 #if ENABLE_ROCM
 
 #include "../backends/hybrid/hybrid_backend.hpp"
+#include "../backends/rocm/zero_copy_bridge.hpp"
 #include "../logger/logger.hpp"
 
 #include <CL/cl.h>
@@ -183,16 +184,6 @@ static void test_zero_copy_bridge() {
   HybridBackend hybrid;
   hybrid.Initialize(0);
 
-  auto method = hybrid.GetBestZeroCopyMethod();
-  std::cout << "  [Hybrid]   ZeroCopy method: "
-            << ZeroCopyMethodToString(method) << "\n";
-
-  if (method == ZeroCopyMethod::NONE) {
-    std::cout << "  [Hybrid] zero_copy_bridge: SKIPPED (no ZeroCopy method available)\n";
-    hybrid.Cleanup();
-    return;
-  }
-
   const size_t N = 512;
   const size_t buf_size = N * sizeof(float);
 
@@ -205,16 +196,21 @@ static void test_zero_copy_bridge() {
   // 2. Синхронизировать OpenCL
   hybrid.SyncBeforeZeroCopy();
 
-  // 3. Создать ZeroCopy bridge
+  // 3. Создать ZeroCopy bridge — FORCE_GPU_COPY (HSA Probe ненадёжен на RDNA4 gfx1201)
   bool passed = false;
   try {
-    auto bridge = hybrid.CreateZeroCopyBridge(
-        static_cast<cl_mem>(cl_buf), buf_size);
+    cl_device_id cl_device = static_cast<cl_device_id>(hybrid.GetOpenCL()->GetNativeDevice());
 
-    if (bridge && bridge->IsActive()) {
+    ZeroCopyBridge bridge;
+    bridge.ImportFromOpenCl(static_cast<cl_mem>(cl_buf), buf_size, cl_device,
+                            ZeroCopyStrategy::FORCE_GPU_COPY);
+
+    std::cout << "  [Hybrid]   ZeroCopy method: " << ZeroCopyMethodToString(bridge.GetMethod()) << "\n";
+
+    if (bridge.IsActive()) {
       // 4. Прочитать через HIP
       std::vector<float> output(N, 0.0f);
-      hipError_t err = hipMemcpy(output.data(), bridge->GetHipPtr(),
+      hipError_t err = hipMemcpy(output.data(), bridge.GetHipPtr(),
                                   buf_size, hipMemcpyDeviceToHost);
 
       if (err == hipSuccess) {

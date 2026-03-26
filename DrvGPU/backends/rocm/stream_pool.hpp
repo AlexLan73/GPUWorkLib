@@ -64,9 +64,6 @@ public:
    */
   bool Initialize(int count = 0, int device_index = 0);
 
-  /// Освободить все streams
-  void Cleanup();
-
   /**
    * @brief Получить stream по индексу (round-robin)
    * @param index Индекс (index % count)
@@ -87,6 +84,9 @@ public:
   int GetDeviceIndex() const { return device_index_; }
 
 private:
+  /// Освободить все streams (вызывается из деструктора и Initialize)
+  void Cleanup();
+
   std::vector<hipStream_t> streams_;
   int device_index_ = 0;
   bool initialized_ = false;

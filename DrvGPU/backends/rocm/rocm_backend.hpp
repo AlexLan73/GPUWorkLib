@@ -23,6 +23,7 @@
 #include "../../memory/memory_manager.hpp"
 
 #include "rocm_core.hpp"
+#include "stream_pool.hpp"
 
 #include <hip/hip_runtime.h>
 #include <memory>
@@ -199,6 +200,18 @@ public:
   MemoryManager* GetMemoryManager() override;
   const MemoryManager* GetMemoryManager() const override;
 
+  /**
+   * @brief Доступ к пулу дополнительных HIP streams для параллельных операций
+   *
+   * StreamPool инициализируется автоматически в Initialize() с 2 streams.
+   * Используется модулями для параллельного запуска kernel'ов на одном GPU.
+   * Основной stream (GetCore().GetStream()) — для последовательных операций.
+   *
+   * @return Ссылка на StreamPool; бросает если не инициализирован
+   */
+  StreamPool& GetStreamPool();
+  const StreamPool& GetStreamPool() const;
+
 protected:
   int device_index_;    ///< Индекс HIP устройства (hipSetDevice argument)
   bool initialized_;    ///< true после успешного Initialize()
@@ -208,6 +221,7 @@ protected:
 
   std::unique_ptr<ROCmCore> core_;                  ///< HIP stream + device props — сердце бэкенда
   std::unique_ptr<MemoryManager> memory_manager_;   ///< Пул hipMalloc буферов
+  StreamPool stream_pool_;                           ///< Пул дополнительных HIP streams (Ref04)
 
   // Кешированные хэндлы из core_ — для быстрого доступа без разыменования unique_ptr.
   // Обновляются в Initialize() и обнуляются в Cleanup().

@@ -53,6 +53,7 @@ ROCmBackend::ROCmBackend(ROCmBackend&& other) noexcept
       owns_resources_(other.owns_resources_),
       core_(std::move(other.core_)),
       memory_manager_(std::move(other.memory_manager_)),
+      stream_pool_(std::move(other.stream_pool_)),
       device_(other.device_),
       stream_(other.stream_) {
   // Сбрасываем источник: деструктор other не должен вызвать Cleanup() с уже переданными ресурсами.
@@ -77,6 +78,7 @@ ROCmBackend& ROCmBackend::operator=(ROCmBackend&& other) noexcept {
     owns_resources_ = other.owns_resources_;
     core_ = std::move(other.core_);
     memory_manager_ = std::move(other.memory_manager_);
+    stream_pool_ = std::move(other.stream_pool_);
     device_ = other.device_;
     stream_ = other.stream_;
 
@@ -130,11 +132,15 @@ void ROCmBackend::Initialize(int device_index) {
   // Создаём MemoryManager ПОСЛЕ инициализации core_ — MemoryManager хранит указатель на IBackend
   memory_manager_ = std::make_unique<MemoryManager>(this);
 
+  // StreamPool: 2 дополнительных stream'а для параллельных операций (Ref04)
+  stream_pool_.Initialize(2, device_index);
+
   initialized_ = true;
 
   DRVGPU_LOG_INFO_GPU(device_index_, "ROCmBackend",
                       "Initialized for device " + std::to_string(device_index) +
-                      " (" + core_->GetDeviceName() + ")");
+                      " (" + core_->GetDeviceName() +
+                      ", StreamPool: " + std::to_string(stream_pool_.GetStreamCount()) + " streams)");
 }
 
 /**
@@ -187,11 +193,15 @@ void ROCmBackend::InitializeFromExternalStream(int device_index, hipStream_t ext
   // MemoryManager — наш собственный (hipMalloc/hipFree буферы независимы от stream)
   memory_manager_ = std::make_unique<MemoryManager>(this);
 
+  // StreamPool: 2 дополнительных stream'а (Ref04)
+  stream_pool_.Initialize(2, device_index);
+
   initialized_ = true;
 
   DRVGPU_LOG_INFO_GPU(device_index_, "ROCmBackend",
                       "Attached to external stream on device " + std::to_string(device_index) +
-                      " (" + core_->GetDeviceName() + ") [owns_resources=false]");
+                      " (" + core_->GetDeviceName() + ") [owns_resources=false"
+                      ", StreamPool: " + std::to_string(stream_pool_.GetStreamCount()) + " streams]");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -220,6 +230,10 @@ void ROCmBackend::Cleanup() {
   DRVGPU_LOG_INFO_GPU(gpu_id_for_log, "ROCmBackend",
                       "Cleanup started for device " + std::to_string(device_index_) +
                       " (owns_resources = " + std::string(owns_resources_ ? "true" : "false") + ")");
+
+  // Освобождаем StreamPool ПЕРЕД core_ — streams зависят от device context
+  // StreamPool::~StreamPool() вызовет Cleanup() автоматически, но делаем явно для логирования
+  stream_pool_ = StreamPool{};  // move-assign пустого → деструктор старого вызывает Cleanup()
 
   // Освобождаем MemoryManager
   memory_manager_.reset();
@@ -566,6 +580,24 @@ MemoryManager* ROCmBackend::GetMemoryManager() {
 
 const MemoryManager* ROCmBackend::GetMemoryManager() const {
   return memory_manager_.get();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// StreamPool — пул дополнительных streams (Ref04)
+// ════════════════════════════════════════════════════════════════════════════
+
+StreamPool& ROCmBackend::GetStreamPool() {
+  if (!initialized_) {
+    throw std::runtime_error("ROCmBackend::GetStreamPool - Not initialized");
+  }
+  return stream_pool_;
+}
+
+const StreamPool& ROCmBackend::GetStreamPool() const {
+  if (!initialized_) {
+    throw std::runtime_error("ROCmBackend::GetStreamPool - Not initialized");
+  }
+  return stream_pool_;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

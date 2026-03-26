@@ -13,7 +13,9 @@
 #if !ENABLE_ROCM
 #include "generators/form_signal_generator.hpp"
 #endif
+#if ENABLE_ROCM
 #include "generators/form_signal_generator_rocm.hpp"
+#endif
 #include "generators/form_script_generator.hpp"
 #include "interface/i_backend.hpp"
 #include "common/backend_type.hpp"
@@ -46,9 +48,11 @@ public:
         drv_gpu_lib::IBackend* backend, const FormParams& params);
 #endif
 
+#if ENABLE_ROCM
     /// Создать FormSignalGeneratorROCm (ROCm, standalone)
     static std::unique_ptr<FormSignalGeneratorROCm> CreateFormROCm(
         drv_gpu_lib::IBackend* backend, const FormParams& params);
+#endif
 
     /// Создать FormScriptGenerator (DSL + on-disk cache)
     static std::unique_ptr<FormScriptGenerator> CreateFormScript(

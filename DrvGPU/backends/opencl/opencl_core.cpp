@@ -52,12 +52,16 @@ OpenCLCore::OpenCLCore(OpenCLCore&& other) noexcept
       initialized_(other.initialized_),
       platform_(other.platform_),
       device_(other.device_),
-      context_(other.context_) {
+      context_(other.context_),
+      copy_kernels_(other.copy_kernels_),
+      copy_kernels_compiled_(other.copy_kernels_compiled_) {
     // Обнуляем источник
     other.initialized_ = false;
     other.platform_ = nullptr;
     other.device_ = nullptr;
     other.context_ = nullptr;
+    other.copy_kernels_ = {};
+    other.copy_kernels_compiled_ = false;
 }
 
 OpenCLCore& OpenCLCore::operator=(OpenCLCore&& other) noexcept {
@@ -72,12 +76,16 @@ OpenCLCore& OpenCLCore::operator=(OpenCLCore&& other) noexcept {
         platform_ = other.platform_;
         device_ = other.device_;
         context_ = other.context_;
+        copy_kernels_ = other.copy_kernels_;
+        copy_kernels_compiled_ = other.copy_kernels_compiled_;
 
         // Обнуляем источник
         other.initialized_ = false;
         other.platform_ = nullptr;
         other.device_ = nullptr;
         other.context_ = nullptr;
+        other.copy_kernels_ = {};
+        other.copy_kernels_compiled_ = false;
     }
     return *this;
 }
@@ -179,6 +187,10 @@ void OpenCLCore::Cleanup() {
 }
 
 void OpenCLCore::ReleaseResources() {
+    // Сначала освобождаем copy kernels (зависят от context) — Ref04 БАГ-3 fix
+    ReleaseCopyKernels(copy_kernels_);
+    copy_kernels_compiled_ = false;
+
     if (context_) {
         clReleaseContext(context_);
         context_ = nullptr;
@@ -188,6 +200,31 @@ void OpenCLCore::ReleaseResources() {
     // Для обычных устройств это не нужно
     device_ = nullptr;
     platform_ = nullptr;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Per-GPU кеш copy kernels (Ref04: вместо singleton GpuCopyKernelCache)
+// ════════════════════════════════════════════════════════════════════════════
+
+GpuCopyKernels* OpenCLCore::GetOrCompileCopyKernels() {
+    if (copy_kernels_compiled_) {
+        return &copy_kernels_;
+    }
+
+    if (!context_) {
+        DRVGPU_LOG_ERROR_GPU(device_index_, "OpenCLCore", "GetOrCompileCopyKernels: context is null");
+        return nullptr;
+    }
+
+    copy_kernels_ = CompileCopyKernels(context_);
+    if (!copy_kernels_.program) {
+        DRVGPU_LOG_ERROR_GPU(device_index_, "OpenCLCore", "GetOrCompileCopyKernels: compilation failed");
+        return nullptr;
+    }
+
+    copy_kernels_compiled_ = true;
+    DRVGPU_LOG_DEBUG_GPU(device_index_, "OpenCLCore", "Copy kernels compiled for this GPU context");
+    return &copy_kernels_;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

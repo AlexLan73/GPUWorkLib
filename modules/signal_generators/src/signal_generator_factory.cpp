@@ -39,12 +39,14 @@ std::unique_ptr<FormSignalGenerator> SignalGeneratorFactory::CreateForm(
 }
 #endif
 
+#if ENABLE_ROCM
 std::unique_ptr<FormSignalGeneratorROCm> SignalGeneratorFactory::CreateFormROCm(
     drv_gpu_lib::IBackend* backend, const FormParams& params) {
     auto gen = std::make_unique<FormSignalGeneratorROCm>(backend);
     gen->SetParams(params);
     return gen;
 }
+#endif
 
 std::unique_ptr<FormScriptGenerator> SignalGeneratorFactory::CreateFormScript(
     drv_gpu_lib::IBackend* backend, const FormParams& params) {

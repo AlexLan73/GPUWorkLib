@@ -51,6 +51,7 @@ static constexpr int kMaxProbeBytes = 2048;
 /// Шаг сканирования (sizeof(void*) на 64-bit)
 static constexpr int kProbeStep = 8;
 
+
 // ════════════════════════════════════════════════════════════════════════════
 // Struct: HsaProbeResult
 // ════════════════════════════════════════════════════════════════════════════

@@ -12,6 +12,8 @@
 // Forward declaration для SVMCapabilities
 namespace drv_gpu_lib { struct SVMCapabilities; }
 
+#include "gpu_copy_kernel.hpp"  // GpuCopyKernels — per-GPU кеш copy kernels
+
 namespace drv_gpu_lib {
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -166,6 +168,20 @@ public:
      */
     static std::string GetAllDevicesInfo(DeviceType device_type = DeviceType::GPU);
 
+    // ═══════════════════════════════════════════════════════════════
+    // GPU Copy Kernels — per-GPU кеш (Ref04: заменяет singleton)
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * @brief Получить или скомпилировать copy kernels для ЭТОГО GPU
+     *
+     * Per-instance кеш: компилируется один раз, хранится до ReleaseResources().
+     * Никакого shared state между GPU — каждый OpenCLCore свой.
+     *
+     * @return Указатель на кешированные kernels, nullptr при ошибке
+     */
+    GpuCopyKernels* GetOrCompileCopyKernels();
+
 private:
     // ═══════════════════════════════════════════════════════════════
     // Члены класса
@@ -178,6 +194,10 @@ private:
     cl_platform_id platform_;
     cl_device_id device_;
     cl_context context_;
+
+    // Per-GPU кеш copy kernels (Ref04: вместо singleton GpuCopyKernelCache)
+    GpuCopyKernels copy_kernels_{};       // Compile-on-first-use, release in ReleaseResources()
+    bool copy_kernels_compiled_ = false;
 
     mutable std::mutex mutex_;
 

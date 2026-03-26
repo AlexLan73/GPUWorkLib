@@ -10,26 +10,19 @@
  * Оптимизация: uint4 (16 байт на work-item) для максимальной пропускной
  * способности. Остаток обрабатывается побайтово.
  *
- * Кеш: cl_program компилируется один раз per cl_context (static map + mutex).
- * Первый вызов ~1мс (JIT), последующие ~0 (lookup).
- *
- * Использование:
- * @code
- * void* svm = clSVMAlloc(ctx, CL_MEM_READ_WRITE, size, 0);  // coarse-grain VRAM
- * GpuCopyClMemToSVM(queue, ctx, cl_buffer, svm, size);
- * // svm содержит копию cl_buffer, данные в VRAM
- * @endcode
+ * Два режима использования:
+ * 1. Через OpenCLCore::GetOrCompileCopyKernels() — per-GPU кеш (рекомендуется)
+ * 2. Через GpuCopyClMemToSVM(queue, ctx, ...) — компилирует per-call (для ZeroCopy fallback)
  *
  * @note Linux only, требует OpenCL 2.0+ SVM coarse-grain support
  * @author Кодо (AI Assistant)
  * @date 2026-03-24
+ * @updated 2026-03-26 (Ref04: убран singleton GpuCopyKernelCache, per-OpenCLCore кеш)
  */
 
 #include <CL/cl.h>
 #include <cstddef>
 #include <cstdint>
-#include <mutex>
-#include <unordered_map>
 
 namespace drv_gpu_lib {
 
@@ -61,7 +54,7 @@ __kernel void copy_tail(
 )CL";
 
 // ════════════════════════════════════════════════════════════════════════════
-// Кеш скомпилированных программ (per cl_context, thread-safe)
+// GpuCopyKernels — скомпилированная пара kernels для одного cl_context
 // ════════════════════════════════════════════════════════════════════════════
 
 struct GpuCopyKernels {
@@ -70,117 +63,90 @@ struct GpuCopyKernels {
   cl_kernel  k_tail  = nullptr;
 };
 
-/// Внутренний кеш: static mutex + map (per cl_context)
-struct GpuCopyKernelCache {
-  std::mutex mutex;
-  std::unordered_map<cl_context, GpuCopyKernels> map;
-  static GpuCopyKernelCache& Instance() {
-    static GpuCopyKernelCache instance;
-    return instance;
-  }
-};
+// ════════════════════════════════════════════════════════════════════════════
+// Helpers: компиляция и освобождение (без кеширования)
+// ════════════════════════════════════════════════════════════════════════════
 
 /**
- * @brief Удалить закешированные kernels для данного context.
+ * @brief Скомпилировать copy kernels для данного cl_context
  *
- * Вызывать при уничтожении cl_context (из ~OpenCLCore), чтобы
- * предотвратить dangling pointer при переиспользовании адреса context.
- *
- * @param ctx OpenCL context, который будет уничтожен
- */
-inline void ReleaseCopyKernelsForContext(cl_context ctx) {
-  auto& cache = GpuCopyKernelCache::Instance();
-  std::lock_guard<std::mutex> lock(cache.mutex);
-
-  auto it = cache.map.find(ctx);
-  if (it != cache.map.end()) {
-    auto& kk = it->second;
-    if (kk.k_wide)  clReleaseKernel(kk.k_wide);
-    if (kk.k_tail)  clReleaseKernel(kk.k_tail);
-    if (kk.program) clReleaseProgram(kk.program);
-    cache.map.erase(it);
-  }
-}
-
-/**
- * @brief Получить или скомпилировать copy kernels для данного context.
- *
- * Первый вызов: clBuildProgram (~1мс JIT).
- * Последующие: O(1) lookup в static unordered_map.
- * Thread-safe через static mutex.
+ * Компилирует OpenCL программу с двумя kernels (copy_wide, copy_tail).
+ * ~1мс JIT. Вызывающий код ответственен за Release через ReleaseCopyKernels().
  *
  * @param ctx OpenCL context
- * @return указатель на закешированные kernels, nullptr при ошибке
- *
- * @note Вызовите ReleaseCopyKernelsForContext(ctx) при уничтожении context!
+ * @return GpuCopyKernels с валидными program/k_wide/k_tail, или все nullptr при ошибке
  */
-inline GpuCopyKernels* GetOrCompileCopyKernels(cl_context ctx) {
-  auto& cache = GpuCopyKernelCache::Instance();
-  std::lock_guard<std::mutex> lock(cache.mutex);
+inline GpuCopyKernels CompileCopyKernels(cl_context ctx) {
+  GpuCopyKernels result{};
+  if (!ctx) return result;
 
-  std::lock_guard<std::mutex> lock(cache_mutex);
-
-  auto it = cache.find(ctx);
-  if (it != cache.end()) return &it->second;
-
-  // Первая компиляция для этого context
   cl_int err;
   const char* src_ptr = kGpuCopyKernelSource;
   cl_program program = clCreateProgramWithSource(ctx, 1, &src_ptr, nullptr, &err);
-  if (err != CL_SUCCESS || !program) return nullptr;
+  if (err != CL_SUCCESS || !program) return result;
 
   err = clBuildProgram(program, 0, nullptr, "-cl-std=CL2.0", nullptr, nullptr);
   if (err != CL_SUCCESS) {
     clReleaseProgram(program);
-    return nullptr;
+    return result;
   }
 
   cl_kernel k_wide = clCreateKernel(program, "copy_wide", &err);
   if (err != CL_SUCCESS) {
     clReleaseProgram(program);
-    return nullptr;
+    return result;
   }
 
   cl_kernel k_tail = clCreateKernel(program, "copy_tail", &err);
   if (err != CL_SUCCESS) {
     clReleaseKernel(k_wide);
     clReleaseProgram(program);
-    return nullptr;
+    return result;
   }
 
-  auto& entry = cache[ctx];
-  entry.program = program;
-  entry.k_wide  = k_wide;
-  entry.k_tail  = k_tail;
-  return &entry;
+  result.program = program;
+  result.k_wide  = k_wide;
+  result.k_tail  = k_tail;
+  return result;
+}
+
+/**
+ * @brief Освободить скомпилированные copy kernels
+ *
+ * Безопасно для пустых (nullptr) полей. Обнуляет структуру после освобождения.
+ *
+ * @param kk Структура с kernels для освобождения
+ */
+inline void ReleaseCopyKernels(GpuCopyKernels& kk) {
+  if (kk.k_wide)  clReleaseKernel(kk.k_wide);
+  if (kk.k_tail)  clReleaseKernel(kk.k_tail);
+  if (kk.program) clReleaseProgram(kk.program);
+  kk = {};
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// GpuCopyClMemToSVM — основная функция
+// RunCopyKernels — запуск copy_wide + copy_tail для данных kernels
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
- * @brief Копировать cl_mem → coarse-grain SVM через OpenCL kernel (VRAM→VRAM)
+ * @brief Выполнить VRAM→VRAM копию используя скомпилированные kernels
  *
- * @param queue   OpenCL command queue (должен быть на том же device что и cl_mem)
- * @param ctx     OpenCL context
+ * @param queue   OpenCL command queue
+ * @param kk      Скомпилированные copy kernels
  * @param src     cl_mem source buffer
- * @param svm_dst coarse-grain SVM pointer (destination, аллоцирован через clSVMAlloc)
+ * @param svm_dst coarse-grain SVM pointer (destination)
  * @param size_bytes Размер копии в байтах
- * @return true если копия успешна, false при ошибке OpenCL
+ * @return true если копия успешна
  */
-inline bool GpuCopyClMemToSVM(
+inline bool RunCopyKernels(
     cl_command_queue queue,
-    cl_context ctx,
+    GpuCopyKernels* kk,
     cl_mem src,
     void* svm_dst,
     size_t size_bytes) {
 
-  if (!queue || !ctx || !src || !svm_dst || size_bytes == 0) return false;
-
-  // ── Закешированная компиляция (один раз per context) ───────────────────
-  GpuCopyKernels* kk = GetOrCompileCopyKernels(ctx);
-  if (!kk) return false;
+  if (!queue || !kk || !kk->k_wide || !src || !svm_dst || size_bytes == 0)
+    return false;
 
   cl_int err;
 
@@ -246,6 +212,48 @@ inline bool GpuCopyClMemToSVM(
     err = clFinish(queue);
     if (err != CL_SUCCESS) ok = false;
   }
+
+  return ok;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// GpuCopyClMemToSVM — основная функция (compile per-call, без кеша)
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * @brief Копировать cl_mem → coarse-grain SVM через OpenCL kernel (VRAM→VRAM)
+ *
+ * Компилирует kernels per-call и освобождает после использования.
+ * Подходит для ZeroCopy fallback (стратегия C) — вызывается редко,
+ * ~1мс JIT overhead ничтожен vs ~8-15мс GPU copy.
+ *
+ * Для частого использования: OpenCLCore::GetOrCompileCopyKernels() + RunCopyKernels()
+ *
+ * @param queue   OpenCL command queue (должен быть на том же device что и cl_mem)
+ * @param ctx     OpenCL context
+ * @param src     cl_mem source buffer
+ * @param svm_dst coarse-grain SVM pointer (destination, аллоцирован через clSVMAlloc)
+ * @param size_bytes Размер копии в байтах
+ * @return true если копия успешна, false при ошибке OpenCL
+ */
+inline bool GpuCopyClMemToSVM(
+    cl_command_queue queue,
+    cl_context ctx,
+    cl_mem src,
+    void* svm_dst,
+    size_t size_bytes) {
+
+  if (!queue || !ctx || !src || !svm_dst || size_bytes == 0) return false;
+
+  // Компилируем kernels (per-call, ~1мс JIT)
+  GpuCopyKernels kk = CompileCopyKernels(ctx);
+  if (!kk.program) return false;
+
+  // Выполняем копию
+  bool ok = RunCopyKernels(queue, &kk, src, svm_dst, size_bytes);
+
+  // Освобождаем kernels (per-call — нет shared state, нет contention)
+  ReleaseCopyKernels(kk);
 
   return ok;
 }
