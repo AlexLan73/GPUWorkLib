@@ -17,6 +17,7 @@
 #include "test_capon_rocm.hpp"
 #include "test_capon_reference_data.hpp"
 #include "test_capon_opencl_to_rocm.hpp"
+#include "test_capon_hip_opencl_to_rocm.hpp"
 #include "capon_benchmark.hpp"
 #include "test_capon_benchmark_rocm.hpp"
 #endif
@@ -27,7 +28,8 @@ inline void run() {
 #if ENABLE_ROCM
   test_capon_rocm::run();
   test_capon_reference_data::run();
-  test_capon_opencl_to_rocm::run();  // OpenCL cl_mem → Zero Copy → ROCm Capon
+  test_capon_opencl_to_rocm::run();         // OpenCL cl_mem → ZeroCopy → ROCm Capon
+  test_capon_hip_opencl_to_rocm::run();     // hipMalloc → OpenCL writes → ROCm Capon
   // Benchmark (запускается только при is_prof=true в configGPU.json):
   // test_capon_benchmark_rocm::run();
 #endif

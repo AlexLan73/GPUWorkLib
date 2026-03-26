@@ -27,7 +27,7 @@
 
 ### `test_capon_reference_data.hpp` — Тесты на реальных данных MATLAB
 
-Загружает эталонные данные из `Doc_Addition/Capon/capon_test/build/`:
+Загружает эталонные данные из `modules/capon/tests/data/` (копия из прототипа `Doc_Addition/Capon/capon_test/build/`):
 - `x_data.txt`, `y_data.txt` — координаты антенных секций (340 значений)
 - `signal_matlab.txt` — MATLAB сигнал (341 строка x 1000 комплексных чисел)
 
@@ -39,6 +39,96 @@
 
 Физическая модель: f0 = 3921.15 МГц, ULA с физическими координатами.
 CPU эталон: Cholesky + ForwardSolve (формула GPU с делением на N).
+
+### `test_capon_hip_opencl_to_rocm.hpp` — HIP alloc + OpenCL write (hipMalloc → clEnqueueSVMMemcpy → Capon)
+
+**Демонстрация pipeline с HIP-owned памятью для заказчика. Аналог HIPmemTest для 4 ГБ данных.**
+
+#### Ключевая идея
+
+Существует два способа передать данные в Capon на ROCm:
+
+| Способ | Кто выделяет память | Кто пишет данные | Нужен ZeroCopyBridge? |
+|--------|--------------------|-----------------|-----------------------|
+| **Старый** (`opencl_to_rocm`) | OpenCL (`cl_mem`) | OpenCL (`MemcpyH2D`) | **ДА** — мост OCL→HIP |
+| **Новый** (`hip_opencl_to_rocm`) | HIP (`hipMalloc`) | OpenCL (`clEnqueueSVMMemcpy`) | **НЕТ** — уже HIP ptr |
+
+#### Почему hipMalloc-указатель работает в OpenCL?
+
+На AMD GPU оба рантайма (HIP и OpenCL) построены поверх одного слоя — **HSA Runtime (ROCR)**. `hipMalloc` выделяет память через `hsa_amd_memory_pool_allocate` и возвращает указатель в **едином виртуальном адресном пространстве HSA**. OpenCL видит тот же указатель как валидный **SVM (Shared Virtual Memory) pointer** — передавать его в `clSetKernelArgSVMPointer` или `clEnqueueSVMMemcpy` безопасно, без конвертации.
+
+```
+                  ┌─────────────────────────────────────────┐
+                  │         AMD GPU   (один физический)      │
+   hipMalloc() ──►│  hsa_amd_memory_pool_allocate → VRAM    │
+                  │     ▲  адрес 0x7f1234560000              │
+                  │     │  единое VA пространство HSA        │
+clEnqueueSVMMemcpy│─────┘                                    │
+                  └─────────────────────────────────────────┘
+   HIP и OpenCL видят ОДИН буфер. Нет копирования между API.
+```
+
+#### Сравнение с HIPmemTest (`/home/alex/C++/HIPmemTest/`)
+
+```
+HIPmemTest (доказательство концепции, 10 элементов):
+  hipMalloc(d_vec_a, d_vec_b) → hipMemset(0)
+  clSetKernelArgSVMPointer(kernel, 0, d_vec_a)   ← hipMalloc ptr → OpenCL
+  clEnqueueNDRangeKernel(fill_vectors)           ← OpenCL пишет в VRAM
+  hip_kernel<<<>>>(d_vec_a, d_vec_b, d_vec_c)   ← HIP читает — ноль копий!
+
+Этот тест (реальные данные заказчика, до 4 ГБ):
+  hipMalloc(d_hip_Y, d_hip_U) → hipMemset(0)
+  clEnqueueSVMMemcpy(d_hip_Y, h_signal.data(), bytes_Y)   ← один DMA CPU→VRAM
+  clEnqueueSVMMemcpy(d_hip_U, h_steering.data(), bytes_U) ← один DMA CPU→VRAM
+  clFinish()
+  CaponProcessor.ComputeRelief(d_hip_Y, d_hip_U, params)  ← HIP ptr напрямую!
+```
+
+**Отличие**: HIPmemTest использует OpenCL kernel чтобы ВЫЧИСЛИТЬ данные. Здесь данные приходят с CPU (реальный сигнал из файлов) через `clEnqueueSVMMemcpy` — один DMA-трансфер без промежуточных буферов.
+
+#### Что НЕ используется (и почему это важно для 4 ГБ)
+
+| Не используется | Почему важно для больших данных |
+|-----------------|--------------------------------|
+| `clSVMAlloc` (staging-буфер) | Экономия памяти: нет дублирования 4 ГБ в SVM |
+| copy-kernel (GPU→GPU копирование) | Нет лишнего GPU-bandwidth на staging→VRAM |
+| `ZeroCopyBridge` | Нет накладных расходов на конвертацию адресов |
+
+#### Pipeline теста 02
+
+```
+[ЭТАП 1] Загрузка: signal_matlab.txt + x_data.txt + y_data.txt → CPU RAM
+     ↓
+[ЭТАП 2] hipMalloc:  d_hip_Y[P×N], d_hip_U[P×M] в VRAM
+         hipMemset(0) — обнуляем, доказываем что OpenCL запишет данные
+     ↓
+[ЭТАП 3] OpenCL пишет в HIP-память (NO staging, NO copy-kernel):
+         clEnqueueSVMMemcpy(d_hip_Y, h_signal.data(), bytes_Y)
+         clEnqueueSVMMemcpy(d_hip_U, h_steering.data(), bytes_U)
+         clFinish()
+     ↓
+[ЭТАП 4] Capon ROCm:
+         CaponProcessor.ComputeRelief(d_hip_Y, d_hip_U, params) → z[m]
+         (d_hip_Y — тот же указатель от hipMalloc, ZeroCopyBridge не нужен!)
+     ↓
+         hipFree(d_hip_Y); hipFree(d_hip_U)
+```
+
+| # | Тест | Что проверяет |
+|---|------|---------------|
+| 01 | `test_01_detect_hip_svm` | SVM capabilities (coarse/fine/system), проверка применимости pipeline |
+| 02 | `test_02_hip_opencl_capon_pipeline` | **ПОЛНЫЙ PIPELINE** с данными заказчика (P=85, N=1000, M≈37) |
+| 03 | `test_03_hip_opencl_matches_direct` | Корректность: новый путь == прямой путь (допуск < 1e-4) |
+
+#### Требования
+
+- AMD GPU с ROCm 7.2+ (проверено: gfx1201 / Radeon 9070)
+- OpenCL SVM coarse-grain (минимум, как HIPmemTest)
+- Данные заказчика: `modules/capon/tests/data/` (оригинал: `Doc_Addition/Capon/capon_test/build/`)
+- Proof of concept: `/home/alex/C++/HIPmemTest/`
+
+---
 
 ### `test_capon_opencl_to_rocm.hpp` — Zero Copy Interop (OpenCL → ROCm) с данными заказчика
 
@@ -124,7 +214,8 @@ Python тесты: `Python_test/capon/test_capon.py` — см. [Python_test/capo
 | `DrvGPU/backends/rocm/zero_copy_bridge.hpp` | ZeroCopyBridge API |
 | `DrvGPU/tests/test_zero_copy.hpp` | Базовые тесты ZeroCopyBridge |
 | `Python_test/capon/test_capon.py` | Python тесты с NumPy + MATLAB данные |
-| `Doc_Addition/Capon/capon_test/build/` | Данные заказчика (MATLAB: signal, координаты, эталон) |
+| `modules/capon/tests/data/` | Данные заказчика (MATLAB: signal, координаты, эталон). [Памятка](data/README_DATA.md) |
+| `Doc_Addition/Capon/capon_test/` | Оригинальный прототип заказчика (ArrayFire CPU) |
 
 ## Статус
 
@@ -136,6 +227,7 @@ Python тесты: `Python_test/capon/test_capon.py` — см. [Python_test/capo
 - [x] Тесты 01-04 ROCm базовые (написаны, НЕ тестировано на GPU)
 - [x] Тесты reference_data 01-03 (MATLAB данные, CPU vs GPU)
 - [x] Тесты opencl_to_rocm 01-05 (Zero Copy Interop + SVM path)
+- [x] Тесты hip_opencl_to_rocm 01-03 (hipMalloc + clEnqueueSVMMemcpy → Capon)
 - [x] Бенчмарки (ComputeRelief + AdaptiveBeamform, GpuBenchmarkBase)
 - [x] Тест 05 GPU-to-GPU: hipMalloc + D2D в test_capon_rocm.hpp
 - [x] Python тесты (`Python_test/capon/test_capon.py`) — NumPy + реальные данные MATLAB

@@ -64,10 +64,14 @@ static constexpr double kC  = 299792458.0;        // скорость света
 
 // ============================================================================
 // Путь к данным заказчика (относительно корня проекта)
+//
+// Данные лежат в modules/capon/tests/data/ — локальная копия из прототипа.
+// Оригинал: Doc_Addition/Capon/capon_test/build/
+// См. памятку: modules/capon/tests/data/README_DATA.md
 // ============================================================================
 
 static const std::string kDataDir =
-    "Doc_Addition/Capon/capon_test/build/";
+    "modules/capon/tests/data/";
 
 // ============================================================================
 // Steering matrix (ULA — синтетическая)
