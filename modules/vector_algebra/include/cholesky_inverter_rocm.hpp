@@ -38,6 +38,8 @@ namespace vector_algebra {
  *   - GpuKernel: HIP kernel in-place (hiprtc)
  *
  * Не копируемый, не перемещаемый (владеет rocBLAS handle + hipModule).
+ *
+ * @ingroup grp_vector_algebra
  */
 class CholeskyInverterROCm {
 public:

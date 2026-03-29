@@ -1,7 +1,7 @@
 # DFD — Data Flow Diagram
 
 > **Project**: GPUWorkLib
-> **Date**: 2026-02-23
+> **Date**: 2026-03-28
 > **Notation**: Gane-Sarson (процессы = прямоугольники с закруглёнными углами)
 
 ---
@@ -72,30 +72,25 @@
              │ complex IQ          │ complex IQ (from any source)
              ▼                     ▼
 ╭─────────────────╮         ╭──────────────────────╮
-│  P2: FFT        │         │  P5: Heterodyne      │
-│  Processor      │         │  Dechirp             │
-│                 │         │                      │
-│ clFFT / hipFFT  │         │ 1. GenConj(LFM)      │
-│ Complex,        │         │ 2. Multiply          │
-│ MagPhase modes  │         │ 3. FFT               │
-╰────────┬────────╯         │ 4. PeakFind          │
-         │                  │ 5. Range calc         │
-         │ spectrum         ╰──────────┬───────────╯
-         │ (complex/mag+phase)         │
-         ▼                             │ HeterodyneResult
-╭─────────────────╮                    │ (f_beat, range_m)
-│  P3: FFT Maxima │                    │
-│  (Spectrum-     │                    │
-│   MaximaFinder) │                    │
-│                 │                    │
-│ ONE_PEAK        │                    │
-│ TWO_PEAKS       │                    │
-│ ALL_MAXIMA      │                    ▼
-╰────────┬────────╯              ┌─────────────┐
+│  P2: fft_func   │         │  P5: Heterodyne      │
+│  (merged FFT +  │         │  Dechirp             │
+│   Maxima)       │         │                      │
+│                 │         │ 1. GenConj(LFM)      │
+│ clFFT / hipFFT  │         │ 2. Multiply          │
+│ Complex,        │         │ 3. FFT               │
+│ MagPhase modes  │         │ 4. PeakFind          │
+│ ONE_PEAK        │         │ 5. Range calc         │
+│ TWO_PEAKS       │         ╰──────────┬───────────╯
+│ ALL_MAXIMA      │                    │
+╰────────┬────────╯                    │ HeterodyneResult
+         │                             │ (f_beat, range_m)
+         │ SpectrumResult[]            │
+         │ AllMaximaResult             │
+         │ FFTComplexResult            ▼
+         │                       ┌─────────────┐
          │                       │  Results    │
-         │ SpectrumResult[]      │  (User App) │
-         │ AllMaximaResult       │             │
-         └──────────────────────▶│             │
+         └──────────────────────▶│  (User App) │
+                                 │             │
                                  └─────────────┘
 ```
 
@@ -103,37 +98,40 @@
 
 ## Level 2 — Detailed Pipelines
 
-### Pipeline A: Signal Generation → FFT → Peak Detection
+### Pipeline A: Signal Generation → fft_func (FFT + Peak Detection)
 
 ```
   CwParams / LfmParams                      vector<SpectrumResult>
   SystemSampling                             AllMaximaResult
        │                                          ▲
        ▼                                          │
-╭──────────────╮    cl_mem     ╭──────────────╮   │    ╭──────────────╮
-│ P1.1: Create │──(IQ data)──▶│ P2.1: Pad &  │   │    │ P3.1: Peak   │
-│ Generator    │              │ Pre-callback  │   │    │ Detection    │
-│ (Factory)    │              │ (GPU kernel)  │   │    │ Scan         │
-╰──────────────╯              ╰──────┬────────╯   │    │ (GPU kernel) │
-                                     │            │    ╰──────┬───────╯
-                              FFT input (padded)  │           │
-                                     │            │    peak candidates
-                                     ▼            │           │
-                              ╭──────────────╮    │    ╭──────┴───────╮
-                              │ P2.2: clFFT  │    │    │ P3.2: Stream │
-                              │ Transform    │    │    │ Compact      │
-                              │ (Fwd C2C)    │    │    │ (GPU kernel) │
-                              ╰──────┬────────╯   │    ╰──────┬───────╯
-                                     │            │           │
-                              spectrum (complex)  │    compacted peaks
-                                     │            │           │
-                                     ▼            │           ▼
-                              ╭──────────────╮    │    ╭──────────────╮
-                              │ P2.3: Post-  │────┘    │ P3.3: Read-  │
-                              │ process      │         │ back to CPU  │
-                              │ (Mag/Phase   │         │              │
-                              │  kernel)     │         │ → vector<>   │
-                              ╰──────────────╯         ╰──────────────╯
+╭──────────────╮    cl_mem     ╭──────────────────────────────────────╮
+│ P1.1: Create │──(IQ data)──▶│            fft_func module            │
+│ Generator    │              │                                      │
+│ (Factory)    │              │ ╭──────────────╮  ╭──────────────╮   │
+╰──────────────╯              │ │ P2.1: Pad &  │  │ P2.4: Peak   │   │
+                              │ │ Pre-callback  │  │ Detection    │   │
+                              │ │ (GPU kernel)  │  │ Scan         │   │
+                              │ ╰──────┬────────╯  │ (GPU kernel) │   │
+                              │        │           ╰──────┬───────╯   │
+                              │ FFT input (padded)        │           │
+                              │        │           peak candidates    │
+                              │        ▼                  │           │
+                              │ ╭──────────────╮  ╭──────┴───────╮   │
+                              │ │ P2.2: clFFT  │  │ P2.5: Stream │   │
+                              │ │ Transform    │  │ Compact      │   │
+                              │ │ (Fwd C2C)    │  │ (GPU kernel) │   │
+                              │ ╰──────┬────────╯ ╰──────┬───────╯   │
+                              │        │          compacted peaks     │
+                              │ spectrum (complex)       │           │
+                              │        │                 ▼           │
+                              │        ▼          ╭──────────────╮   │
+                              │ ╭──────────────╮  │ P2.6: Read-  │   │
+                              │ │ P2.3: Post-  │──│ back to CPU  │───│──▶
+                              │ │ process      │  │              │   │
+                              │ │ (Mag/Phase)  │  │ → vector<>   │   │
+                              │ ╰──────────────╯  ╰──────────────╯   │
+                              ╰──────────────────────────────────────╯
 ```
 
 ### Pipeline B: Heterodyne LFM Dechirp
@@ -203,6 +201,149 @@
                               ╰──────────────╯
 ```
 
+### Pipeline E: Strategies Beamforming
+
+```
+  Signal[N_ant × M]                          AntennaResult
+  Weights[N_ant × K]                         (pre_stats, post_gemm_stats,
+       │                                      post_fft_stats, scenario results)
+       ▼                                          ▲
+╭──────────────╮                                  │
+│ P7.1: Pre-   │  pre_stats                       │
+│ Statistics   │──(mean, std, power)──┐           │
+│ (Statistics- │                      │           │
+│  Processor)  │                      │           │
+╰──────┬───────╯                      │           │
+       │ signal                       │           │
+       ▼                              │           │
+╭──────────────╮                      │           │
+│ P7.2: CGEMM  │  X = W · S          │           │
+│ (hipBLAS)    │──────────────────────┤           │
+╰──────┬───────╯                      │           │
+       │ X (transformed)              │           │
+       ▼                              │           │
+╭──────────────╮  post_gemm_stats     │           │
+│ P7.3: Post-  │──(mean, std, power)──┤           │
+│ GEMM Stats   │                      │           │
+│ (Statistics) │                      │           │
+╰──────┬───────╯                      │           │
+       │ X                            │           │
+       ▼                              │           │
+╭──────────────╮                      │           │
+│ P7.4: Hamming│  spectrum            │           │
+│ + batched FFT│──────────┐           │           │
+│ (hipFFT)     │          │           │           │
+╰──────────────╯          │           │           │
+                          ▼           │           │
+                   ╭──────────────╮   │           │
+                   │ P7.5: Post-  │   │           │
+                   │ FFT Stats    │───┤           │
+                   │ (Statistics) │   │           │
+                   ╰──────┬───────╯   │           │
+                          │           │           │
+                          ▼           │           │
+                   ╭──────────────╮   │           │
+                   │ P7.6: PostFFT│───┘           │
+                   │ Scenario     │───────────────┘
+                   │ (OneMax /    │
+                   │  AllMaxima / │
+                   │  MinMax)     │
+                   ╰──────────────╯
+```
+
+### Pipeline F: Capon MVDR
+
+```
+  Y[P×N] (antenna data)                     CaponReliefResult / CaponBeamResult
+  U[P×M] (steering vectors)                 (relief[M] or Y_out[M×N])
+       │                                          ▲
+       ▼                                          │
+╭──────────────╮                                  │
+│ P8.1: Covari-│  R = YY^H/N + μI               │
+│ ance Matrix  │──(rocBLAS CGEMM)──┐             │
+│ (CovMatrix-  │                   │             │
+│  Op)         │                   │             │
+╰──────────────╯                   │             │
+                                   ▼             │
+                            ╭──────────────╮     │
+                            │ P8.2: Cholesky│    │
+                            │ Invert       │     │
+                            │ (POTRF +     │     │
+                            │  POTRI +     │     │
+                            │  symmetrize) │     │
+                            ╰──────┬───────╯     │
+                                   │             │
+                                   │ R^-1        │
+                                   ▼             │
+                            ╭──────────────╮     │
+                            │ P8.3: Compute│     │
+                            │ Weights or   │─────┘
+                            │ Relief       │
+                            │              │
+                            │ Relief:      │
+                            │  z[m] = 1/   │
+                            │  Re(u^H·R^-1·u)
+                            │              │
+                            │ Beamform:    │
+                            │  W = R^-1·U  │
+                            │  Y_out=W^H·Y │
+                            ╰──────────────╯
+```
+
+### Pipeline G: Range Angle 3D Processing
+
+```
+  rx[n_ant × n_samples]                     RangeAngleResult
+  (FMCW radar data)                         (TargetInfo[], power_cube)
+       │                                          ▲
+       ▼                                          │
+╭──────────────╮                                  │
+│ P9.1: Dechirp│  beat tones                     │
+│ Window       │──(rx × conj(ref)                │
+│ + Hamming    │   + window)──┐                   │
+╰──────────────╯              │                   │
+                              ▼                   │
+                       ╭──────────────╮           │
+                       │ P9.2: Range  │           │
+                       │ FFT          │           │
+                       │ (batched     │           │
+                       │  hipFFT per  │           │
+                       │  antenna)    │           │
+                       ╰──────┬───────╯           │
+                              │                   │
+                       range spectrum              │
+                       per antenna                │
+                              │                   │
+                              ▼                   │
+                       ╭──────────────╮           │
+                       │ P9.3: Trans- │           │
+                       │ pose         │           │
+                       │ rearrange to │           │
+                       │ [range×az×el]│           │
+                       ╰──────┬───────╯           │
+                              │                   │
+                              ▼                   │
+                       ╭──────────────╮           │
+                       │ P9.4: Beam   │           │
+                       │ FFT 2D       │           │
+                       │ (spatial FFT │           │
+                       │  + fftshift) │           │
+                       │ → power cube │           │
+                       ╰──────┬───────╯           │
+                              │                   │
+                       power cube                 │
+                       [range×az×el]              │
+                              │                   │
+                              ▼                   │
+                       ╭──────────────╮           │
+                       │ P9.5: Peak   │───────────┘
+                       │ Search       │
+                       │ (3D max      │
+                       │  reduction)  │
+                       │ → TargetInfo │
+                       ╰──────────────╯
+```
+
 ---
 
 ## Level 2 — DrvGPU Internal Data Flow
@@ -264,14 +405,14 @@
 |---|-------|----------|-----------|------------|-------|
 | D1 | Signal params | User | SignalGenerator | CwParams/LfmParams/etc. | CPU |
 | D2 | Generated IQ | SignalGenerator | GPU Buffer | `cl_mem` (complex\<float\>) | GPU |
-| D3 | FFT input | GPU Buffer | FFTProcessor | `cl_mem` | GPU |
-| D4 | Spectrum | FFTProcessor | GPU Buffer | `cl_mem` (complex/mag+phase) | GPU |
-| D5 | Spectrum | GPU Buffer | FFTMaxima | `cl_mem` | GPU |
-| D6 | Peak results | FFTMaxima | User | `SpectrumResult[]` | CPU |
+| D3 | FFT input | GPU Buffer | fft_func | `cl_mem` | GPU |
+| D4 | Spectrum | fft_func (FFT) | GPU Buffer | `cl_mem` (complex/mag+phase) | GPU |
+| D5 | Spectrum | fft_func (FFT) | fft_func (Maxima) | `cl_mem` | GPU |
+| D6 | Peak results | fft_func (Maxima) | User | `SpectrumResult[]` | CPU |
 | D7 | RX data | User | Heterodyne | `vector<complex<float>>` | CPU→GPU |
 | D8 | Conj(LFM) ref | SignalGen | Heterodyne | `cl_mem` (cached) | GPU |
 | D9 | Dechirped | Heterodyne mul | FFT stage | `cl_mem` | GPU |
-| D10 | Beat freq | Maxima | Heterodyne | `float` (f_beat_hz) | CPU |
+| D10 | Beat freq | fft_func (Maxima) | Heterodyne | `float` (f_beat_hz) | CPU |
 | D11 | Filter coeffs | User/JSON | FIR/IIR | `vector<float>` → `cl_mem` | CPU→GPU |
 | D12 | Filtered data | Filters | GPU Buffer | `cl_mem` | GPU |
 | D13 | Delay params | User/JSON | LchFarrow | `vector<float>` | CPU→GPU |
@@ -279,8 +420,17 @@
 | D15 | Profiling | Any module | GPUProfiler | `ProfilingMessage` | Async queue |
 | D16 | Log messages | Any module | ConsoleOutput | `ConsoleMessage` | Async queue |
 | D17 | Kernel binary | KernelCache | Filesystem | `.bin` files | Disk |
+| D18 | Signal + Weights | User | Strategies | `complex<float>*` × 2 | CPU→GPU |
+| D19 | AntennaResult | Strategies | User | stats + scenario results | CPU |
+| D20 | Y + Steering | User | Capon | `complex<float>*` × 2 | CPU→GPU |
+| D21 | Relief / Beam | Capon | User | `float[]` or `complex[]` | CPU |
+| D22 | FMCW RX data | User | RangeAngle | `complex<float>*` | CPU→GPU |
+| D23 | Power cube | RangeAngle (BeamFFT) | PeakSearch | `float[]` 3D | GPU |
+| D24 | TargetInfo[] | RangeAngle | User | range/angle/power | CPU |
 
 ---
+
+*Last updated: 2026-03-28*
 
 *Предыдущий документ: [C4 — Code Diagram](Architecture_C4_Code.md)*
 *Следующий документ: [Sequence Diagrams](Architecture_Seq.md)*

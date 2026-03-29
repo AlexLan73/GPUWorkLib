@@ -1,17 +1,26 @@
-# GPUWorkLib test order
-# One module per line. Use # to skip: comment line or add "# skip" at end
-# Order is mandatory. Used by default (no args) and by "all"
+# GPUWorkLib — порядок запуска тестов
+# Формат: одна строка = один модуль. # = комментарий/пропуск.
+# Используется при запуске без аргументов и при "all".
+# Порядок обязателен (зависимости: инфраструктура → базовые → зависимые).
 
-drvgpu              #  0. набор драйверов 
-fft_func            #  1. объединяет fft_processor + fft_maxima
-lch_farrow          #  2.    
-signal_generators   #  3.
-statistics          #  4.
-vector_algebra      #  5.
-heterodyne          #  6.
-fm_correlator       #  7.
-strategies          #  8.
-filters             #  9.
-vector_algebra      #  10.
-capon               #  11.
-range_angle         #  12.
+# ── Инфраструктура ──────────────────────────────────────────
+drvgpu              #  0. Драйвер GPU: backends (OpenCL/ROCm/Hybrid), MemoryManager, GPUProfiler, ConsoleOutput
+fft_func            #  1. Пакетный FFT (hipFFT) + поиск максимумов спектра (ONE_PEAK/TWO_PEAKS/ALL_MAXIMA)
+
+# ── Базовые модули ──────────────────────────────────────────
+statistics          #  2. GPU-статистика: mean, std, variance (Welford), median (radix sort / histogram)
+vector_algebra      #  3. Матричная алгебра: Cholesky inversion (rocsolver POTRF+POTRI), symmetrize
+
+# ── Фильтры и генераторы ────────────────────────────────────
+filters             #  4. FIR (direct), IIR (biquad DFII-T), MovingAverage (SMA/EMA/DEMA/TEMA), Kalman, KAMA
+signal_generators   #  5. CW, LFM, Noise (Philox+Box-Muller), FormSignal, DelayedFormSignal, LfmAnalyticalDelay
+lch_farrow          #  6. Дробная задержка: Lagrange 48x5 интерполяция (для FormSignal delayed)
+
+# ── Обработка сигналов ──────────────────────────────────────
+heterodyne          #  7. LFM Dechirp: NCO × conj(ref) → beat frequency → range (м), SNR (дБ)
+fm_correlator       #  8. FM-корреляция: M-sequence LFSR + cyclic shifts + freq-domain correlation (hipFFT R2C/C2R)
+
+# ── Высокоуровневые pipeline ────────────────────────────────
+strategies          #  9. Цифровое ДН: CGEMM beamforming → Hamming+FFT → post-FFT scenarios (OneMax/AllMaxima/MinMax)
+capon               # 10. MVDR Capon: R=YY^H/N+μI → Cholesky → R⁻¹ → relief z[m] / adaptive beamform
+range_angle         # 11. 3D обработка: dechirp → range FFT → 2D beam FFT → peak search (range + az/el)

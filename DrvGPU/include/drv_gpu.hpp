@@ -67,6 +67,8 @@ namespace drv_gpu_lib {
  * - Bridge Pattern (абстракция бэкенда)
  * - Facade Pattern (упрощённый интерфейс)
  * - RAII (автоматическое управление ресурсами)
+ *
+ * @ingroup grp_drvgpu
  */
 class DrvGPU {
 public:

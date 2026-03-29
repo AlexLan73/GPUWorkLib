@@ -1,7 +1,7 @@
 # C4 — Code-level Diagram
 
 > **Project**: GPUWorkLib
-> **Date**: 2026-02-23
+> **Date**: 2026-03-28
 > **Reference**: [c4model.com](https://c4model.com)
 > **Level**: 4 (Code) — классы, интерфейсы, сигнатуры методов
 
@@ -291,10 +291,12 @@ public:
 
 ---
 
-## 3. FFT Processor — Classes
+## 3. fft_func — FFT Processor + Spectrum Maxima (merged module)
+
+### 3.1 FFTProcessor
 
 ```cpp
-// modules/fft_processor/include/fft_processor.hpp
+// modules/fft_func/include/fft_processor.hpp
 
 enum class FFTOutputMode { COMPLEX, MAGNITUDE_PHASE, MAGNITUDE_PHASE_FREQ };
 
@@ -343,7 +345,7 @@ public:
 
 private:
     IBackend* backend_;
-    // clFFT plan (cached per FFT size — ⚠️ new instance per different size!)
+    // clFFT plan (cached per FFT size)
     clfftPlanHandle plan_;
     cl_mem pre_callback_userdata_;
     cl_mem fft_input_;
@@ -353,12 +355,10 @@ private:
 };
 ```
 
----
-
-## 4. FFT Maxima — Classes
+### 3.2 ISpectrumProcessor (Maxima Finder)
 
 ```cpp
-// modules/fft_maxima/include/processors/i_spectrum_processor.hpp
+// modules/fft_func/include/processors/i_spectrum_processor.hpp
 
 enum class SpectrumMode { ONE_PEAK, TWO_PEAKS, ALL_MAXIMA };
 enum class OutputDestination { CPU, GPU };
@@ -412,7 +412,7 @@ public:
 
 ---
 
-## 5. Heterodyne — Classes
+## 4. Heterodyne — Classes
 
 ```cpp
 // modules/heterodyne/include/heterodyne_dechirp.hpp
@@ -466,7 +466,7 @@ private:
 
 ---
 
-## 6. Filters — Classes
+## 5. Filters — Classes
 
 ```cpp
 // modules/filters/include/filters/fir_filter.hpp
@@ -514,7 +514,7 @@ private:
 
 ---
 
-## 7. LCH Farrow — Classes
+## 6. LCH Farrow — Classes
 
 ```cpp
 // modules/lch_farrow/include/lch_farrow.hpp
@@ -545,7 +545,163 @@ private:
 
 ---
 
-## 8. UML Class Diagram (Pseudocode)
+## 7. Strategies — Classes
+
+```cpp
+// modules/strategies/include/antenna_processor_v1.hpp
+
+namespace strategies {
+
+enum class PostFftScenarioMode {
+    ALL_REQUIRED,      // Compute all post-FFT statistics
+    ONE_MAX_PARABOLA,  // Single peak with parabolic interpolation
+    ALL_MAXIMA,        // All peaks above threshold
+    GLOBAL_MINMAX      // Global min/max across spectrum
+};
+
+struct AntennaProcessorConfig {
+    int   n_ant;            // Number of antennas
+    int   n_samples;        // Samples per antenna
+    float sample_rate;      // Sample rate (Hz)
+    PostFftScenarioMode scenario_mode;
+};
+
+struct AntennaResult {
+    std::vector<float> pre_stats;        // Pre-processing statistics
+    std::vector<float> post_gemm_stats;  // Post-CGEMM statistics
+    std::vector<float> post_fft_stats;   // Post-FFT statistics
+    // Scenario-dependent results:
+    float  one_max_freq_hz;              // ONE_MAX_PARABOLA
+    float  one_max_amplitude;
+    std::vector<float> all_maxima_freqs; // ALL_MAXIMA
+    float  global_min;                   // GLOBAL_MINMAX
+    float  global_max;
+};
+
+class AntennaProcessor_v1 {
+public:
+    explicit AntennaProcessor_v1(IBackend* backend);
+    ~AntennaProcessor_v1();
+
+    void Initialize(AntennaProcessorConfig config);
+
+    AntennaResult Process(const std::complex<float>* signal,
+                          const std::complex<float>* weights);
+
+private:
+    IBackend* backend_;
+    AntennaProcessorConfig config_;
+    // Internal: StatisticsProcessor, hipBLAS handle, hipFFT plan
+};
+
+} // namespace strategies
+```
+
+---
+
+## 8. Capon — Classes
+
+```cpp
+// modules/capon/include/capon_processor.hpp
+
+namespace capon {
+
+struct CaponParams {
+    int   n_channels;    // P — number of antenna channels
+    int   n_samples;     // N — number of time samples
+    int   n_directions;  // M — number of steering directions
+    float mu;            // Diagonal loading factor (regularization)
+};
+
+struct CaponReliefResult {
+    std::vector<float> relief;   // z[M] — spatial power spectrum
+    float runtime_ms;
+};
+
+struct CaponBeamResult {
+    std::vector<std::complex<float>> output;  // Y_out[M x N] — beamformed output
+    float runtime_ms;
+};
+
+class CaponProcessor {
+public:
+    explicit CaponProcessor(IBackend* backend);
+    ~CaponProcessor();
+
+    void Initialize(CaponParams params);
+
+    // MVDR spatial power spectrum: z[m] = 1 / Re(u^H * R^-1 * u)
+    CaponReliefResult ComputeRelief(const std::complex<float>* Y,
+                                     const std::complex<float>* steering);
+
+    // Adaptive beamforming: W = R^-1 * U, Y_out = W^H * Y
+    CaponBeamResult AdaptiveBeamform(const std::complex<float>* Y,
+                                      const std::complex<float>* steering);
+
+private:
+    IBackend* backend_;
+    CaponParams params_;
+    // Internal: CovarianceMatrixOp, CaponInvertOp (Cholesky), CaponReliefOp
+};
+
+} // namespace capon
+```
+
+---
+
+## 9. Range Angle — Classes
+
+```cpp
+// modules/range_angle/include/range_angle_processor.hpp
+
+namespace range_angle {
+
+struct RangeAngleParams {
+    int   n_ant_az;       // Number of azimuth antennas
+    int   n_ant_el;       // Number of elevation antennas
+    int   n_samples;      // Samples per antenna
+    float f_start;        // LFM start frequency (Hz)
+    float f_end;          // LFM end frequency (Hz)
+    float sample_rate;    // Sample rate (Hz)
+};
+
+struct TargetInfo {
+    float range_m;        // Estimated range (meters)
+    float angle_az_deg;   // Azimuth angle (degrees)
+    float angle_el_deg;   // Elevation angle (degrees)
+    float power_db;       // Peak power (dB)
+    float snr_db;         // Signal-to-noise ratio (dB)
+};
+
+struct RangeAngleResult {
+    std::vector<TargetInfo> targets;
+    // Power cube dimensions: [n_range_bins x n_ant_az x n_ant_el]
+    std::vector<float> power_cube;
+    int n_range_bins;
+    float runtime_ms;
+};
+
+class RangeAngleProcessor {
+public:
+    explicit RangeAngleProcessor(IBackend* backend);
+    ~RangeAngleProcessor();
+
+    void Initialize(RangeAngleParams params);
+
+    RangeAngleResult Process(const std::complex<float>* signal);
+
+private:
+    IBackend* backend_;
+    RangeAngleParams params_;
+    // Internal: DechirpWindowOp, RangeFftOp, TransposeOp, BeamFftOp, PeakSearchOp
+};
+
+} // namespace range_angle
+```
+
+---
+
+## 10. UML Class Diagram (Pseudocode)
 
 ```
 ┌──────────────────────┐
@@ -605,18 +761,46 @@ private:
 
 ┌──────────────────────┐
 │  HeterodyneDechirp   │──── uses ──→ ISignalGenerator
-│  (Facade)            │──── uses ──→ FFTProcessor
-├──────────────────────┤──── uses ──→ ISpectrumProcessor
+│  (Facade)            │──── uses ──→ FFTProcessor (fft_func)
+├──────────────────────┤──── uses ──→ ISpectrumProcessor (fft_func)
 │ + SetParams()        │
 │ + Process()          │
 │ + ProcessExternal()  │
 │ - cached_conj_lfm_   │
 └──────────────────────┘
+
+┌──────────────────────────┐
+│  AntennaProcessor_v1     │──── uses ──→ StatisticsProcessor
+│  (strategies)            │──── uses ──→ hipBLAS (CGEMM)
+├──────────────────────────┤──── uses ──→ hipFFT
+│ + Initialize(config)     │──── uses ──→ PostFFT Scenario
+│ + Process(signal, weights)│
+│ - config_                │
+└──────────────────────────┘
+
+┌──────────────────────────┐
+│  CaponProcessor          │──── uses ──→ CovarianceMatrixOp (rocBLAS)
+│  (capon)                 │──── uses ──→ CaponInvertOp (Cholesky)
+├──────────────────────────┤──── uses ──→ CaponReliefOp
+│ + Initialize(params)     │
+│ + ComputeRelief(Y, steer)│
+│ + AdaptiveBeamform(Y, st)│
+│ - params_                │
+└──────────────────────────┘
+
+┌──────────────────────────┐
+│  RangeAngleProcessor     │──── uses ──→ DechirpWindowOp
+│  (range_angle)           │──── uses ──→ RangeFftOp (hipFFT)
+├──────────────────────────┤──── uses ──→ TransposeOp
+│ + Initialize(params)     │──── uses ──→ BeamFftOp (2D spatial FFT)
+│ + Process(signal)        │──── uses ──→ PeakSearchOp
+│ - params_                │
+└──────────────────────────┘
 ```
 
 ---
 
-## 9. PlantUML
+## 11. PlantUML
 
 ```plantuml
 @startuml C4_ClassDiagram
@@ -677,6 +861,10 @@ interface ISpectrumProcessor {
     +FindAllMaximaFromGPUPipeline(...)
 }
 
+note "FFTProcessor + ISpectrumProcessor\nmerged into fft_func module" as N_fft
+FFTProcessor .. N_fft
+ISpectrumProcessor .. N_fft
+
 class HeterodyneDechirp {
     +SetParams(params)
     +Process(rx_data): HeterodyneResult
@@ -694,6 +882,25 @@ class LchFarrow {
     -coefficient_matrix_[48][5]
 }
 
+class AntennaProcessor_v1 <<strategies>> {
+    +Initialize(config: AntennaProcessorConfig)
+    +Process(signal, weights): AntennaResult
+    -config_: AntennaProcessorConfig
+}
+
+class CaponProcessor <<capon>> {
+    +Initialize(params: CaponParams)
+    +ComputeRelief(Y, steering): CaponReliefResult
+    +AdaptiveBeamform(Y, steering): CaponBeamResult
+    -params_: CaponParams
+}
+
+class RangeAngleProcessor <<range_angle>> {
+    +Initialize(params: RangeAngleParams)
+    +Process(signal): RangeAngleResult
+    -params_: RangeAngleParams
+}
+
 IBackend <|-- OpenCLBackend
 IBackend <|-- ROCmBackend
 IBackend <|-- HybridBackend
@@ -707,11 +914,19 @@ HeterodyneDechirp --> FFTProcessor : FFT stage
 HeterodyneDechirp --> ISpectrumProcessor : peak find
 FirFilter --> IBackend : uses
 LchFarrow --> IBackend : uses
+AntennaProcessor_v1 --> IBackend : uses
+CaponProcessor --> IBackend : uses
+RangeAngleProcessor --> IBackend : uses
+RangeAngleProcessor --> FFTProcessor : range FFT + beam FFT
 
 @enduml
 ```
 
 ---
+
+---
+
+*Last updated: 2026-03-28*
 
 *Предыдущий уровень: [C3 — Component Diagram](Architecture_C3_Component.md)*
 *Следующий документ: [DFD — Data Flow Diagram](Architecture_DFD.md)*

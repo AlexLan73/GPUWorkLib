@@ -29,6 +29,7 @@ namespace drv_gpu_lib {
 // Зачем фасад: изолирует пользователя от hipFFT/hiprtc деталей, предоставляет
 // удобные хелперы (GenerateMSequence, auto-batching).
 // Порядок вызовов: SetParams() → PrepareReference() → Process() / RunTestPattern().
+/// @ingroup grp_fm_correlator
 class FMCorrelator {
 public:
   // backend — не владеем, backend должен жить дольше FMCorrelator.

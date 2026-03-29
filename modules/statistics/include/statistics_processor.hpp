@@ -56,6 +56,7 @@ namespace statistics {
 using StatisticsROCmProfEvents =
     std::vector<std::pair<const char*, drv_gpu_lib::ROCmProfilingData>>;
 
+/// @ingroup grp_statistics
 class StatisticsProcessor {
 public:
   // =========================================================================

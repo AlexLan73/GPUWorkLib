@@ -1,6 +1,6 @@
 # GPUWorkLib — Architecture Documentation Index
 
-> **Date**: 2026-03-03
+> **Date**: 2026-03-28
 > **Author**: Кодо (AI Assistant)
 > **Notation**: C4 Model + DFD + UML Sequence Diagrams
 
@@ -34,18 +34,20 @@
 
 ## Модули системы (текущее состояние)
 
-| Модуль | Backend | Статус | Описание |
-|--------|---------|--------|----------|
-| **FFT Processor** | OpenCL / ROCm | 🟢 Active | БПФ Complex/MagPhase |
-| **Statistics** | ROCm only | 🟢 Active | Welford mean/var, медиана, radix sort |
-| **Vector Algebra** | ROCm only | 🟢 Active | Cholesky POTRF/POTRI инверсия |
-| **FFT Maxima** | OpenCL / ROCm | 🟢 Active | Поиск спектральных максимумов |
-| **Filters** | OpenCL / ROCm | 🟢 Active | FIR, IIR, SMA/EMA/DEMA/TEMA, Kalman, KAMA |
-| **Signal Generators** | OpenCL / ROCm | 🟢 Active | CW, LFM, Noise, Form, Script |
-| **LCH Farrow** | OpenCL / ROCm | 🟢 Active | Дробная задержка Lagrange 5-pt |
-| **Heterodyne** | OpenCL / ROCm | 🟢 Active | LFM Dechirp pipeline |
-| **FM Correlator** | ROCm only | 🟢 Active | ФМ-корреляция M-последовательностями (hipFFT) |
-| **DrvGPU** | OpenCL / ROCm | 🟢 Active | Ядро: backend, память, сервисы |
+| # | Модуль | Backend | Статус | Описание |
+|---|--------|---------|--------|----------|
+| 0 | **DrvGPU** | OpenCL / ROCm / Hybrid | 🟢 Active | Ядро: backends, память, profiler, services |
+| 1 | **fft_func** | ROCm (hipFFT) | 🟢 Active | Пакетный FFT + поиск максимумов спектра |
+| 2 | **Statistics** | ROCm only | 🟢 Active | Welford mean/var, медиана, radix sort |
+| 3 | **Vector Algebra** | ROCm (rocsolver) | 🟢 Active | Cholesky POTRF/POTRI инверсия |
+| 4 | **Filters** | ROCm (HIP) | 🟢 Active | FIR, IIR, SMA/EMA/DEMA/TEMA, Kalman, KAMA |
+| 5 | **Signal Generators** | OpenCL / ROCm | 🟢 Active | CW, LFM, Noise, FormSignal, DelayedFormSignal |
+| 6 | **LCH Farrow** | OpenCL / ROCm | 🟢 Active | Дробная задержка Lagrange 48×5 |
+| 7 | **Heterodyne** | OpenCL / ROCm | 🟢 Active | LFM Dechirp → beat freq → range |
+| 8 | **FM Correlator** | ROCm (hipFFT) | 🟢 Active | M-seq LFSR, cyclic shifts, freq-domain correlation |
+| 9 | **Strategies** | ROCm (hipBLAS, hipFFT) | 🟢 Active | Цифровое ДН: CGEMM → FFT → post-FFT scenarios |
+| 10 | **Capon** | ROCm (rocBLAS, rocsolver) | 🟡 Framework | MVDR: R=YY^H → Cholesky → relief / beamform |
+| 11 | **Range Angle** | ROCm | 🟡 Beta | 3D: dechirp → range FFT → 2D beam FFT → peak |
 
 ## Предыдущие документы (справочные)
 
@@ -66,4 +68,4 @@
 
 ---
 
-*Maintained by: Кодо (AI Assistant) | Last updated: 2026-03-04*
+*Maintained by: Кодо (AI Assistant) | Last updated: 2026-03-28*

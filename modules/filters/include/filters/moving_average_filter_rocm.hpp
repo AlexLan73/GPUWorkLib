@@ -27,6 +27,7 @@
 
 namespace filters {
 
+/// @ingroup grp_filters
 class MovingAverageFilterROCm {
 public:
   explicit MovingAverageFilterROCm(drv_gpu_lib::IBackend* backend,

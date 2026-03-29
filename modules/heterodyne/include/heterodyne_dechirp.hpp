@@ -38,6 +38,7 @@ namespace drv_gpu_lib {
 
 class IBackend;
 
+/// @ingroup grp_heterodyne
 class HeterodyneDechirp {
 public:
   /**

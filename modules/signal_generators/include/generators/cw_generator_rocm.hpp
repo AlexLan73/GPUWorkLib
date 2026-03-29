@@ -33,6 +33,7 @@ namespace signal_gen {
 
 using ROCmProfEvents = std::vector<std::pair<const char*, drv_gpu_lib::ROCmProfilingData>>;
 
+/// @ingroup grp_signal_generators
 class CwGeneratorROCm {
 public:
   explicit CwGeneratorROCm(drv_gpu_lib::IBackend* backend);

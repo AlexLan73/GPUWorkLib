@@ -43,6 +43,8 @@ class MemoryManager;
  * - OpenCLBackend (см. opencl_backend.hpp)
  * - CUDABackend (будущее)
  * - VulkanBackend (будущее)
+ *
+ * @ingroup grp_drvgpu
  */
 class IBackend {
 public:

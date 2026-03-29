@@ -1,7 +1,7 @@
 # C3 — Component Diagram
 
 > **Project**: GPUWorkLib
-> **Date**: 2026-03-04
+> **Date**: 2026-03-28
 > **Reference**: [c4model.com](https://c4model.com)
 > **Level**: 3 (Component) — компоненты внутри каждого контейнера
 
@@ -133,95 +133,68 @@
 
 ---
 
-## 3. FFT Processor — Components
+## 3. fft_func — Components
 
 ```
-┌───────────────────── FFT Processor ──────────────────────────┐
-│                                                                │
-│  ┌──────────────────────────────────────────────────────┐     │
-│  │ FFTProcessor                                          │     │
-│  │                                                       │     │
-│  │ ProcessComplex(data, params) → vector<ComplexResult>   │     │
-│  │ ProcessComplex(cl_mem, params) → vector<ComplexResult> │     │
-│  │ ProcessMagPhase(data, params) → vector<MagPhaseResult>│     │
-│  │ ProcessMagPhase(cl_mem, params) → vector<MagPhaseResult│     │
-│  │                                                       │     │
-│  │ Internal GPU Buffers:                                  │     │
-│  │   pre_callback_userdata_ (32B header + data)          │     │
-│  │   fft_input_  (nFFT * batch)                          │     │
-│  │   fft_output_ (FFT result)                            │     │
-│  │   mag_output_ (Magnitude)                             │     │
-│  │   phase_output_ (Phase)                               │     │
-│  └──────────────────────────────────────────────────────┘     │
-│                                                                │
-│  ┌────────────────── Data Types ─────────────────────────┐    │
-│  │ FFTOutputMode: COMPLEX | MAG_PHASE | MAG_PHASE_FREQ   │    │
-│  │ FFTProcessorParams:                                    │    │
-│  │   { beam_count, n_point, sample_rate,                  │    │
-│  │     output_mode, use_padding }                         │    │
-│  │ FFTComplexResult: { spectrum: vector<complex<float>> } │    │
-│  │ FFTMagPhaseResult:                                     │    │
-│  │   { magnitude, phase, frequency_hz: vector<float> }    │    │
-│  └────────────────────────────────────────────────────────┘   │
-│                                                                │
-│  ┌──────────────── GPU Pipeline ─────────────────────────┐    │
-│  │  Input → [Pre-callback kernel] → [clFFT] →            │    │
-│  │          → [Post-process kernel: Mag/Phase] → Output   │    │
-│  └────────────────────────────────────────────────────────┘   │
-└────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 4. FFT Maxima (SpectrumMaximaFinder) — Components
-
-```
-┌───────────────── FFT Maxima ──────────────────────────────────┐
-│                                                                 │
-│  ┌────────────────── Interface ──────────────────────────┐     │
-│  │ ISpectrumProcessor                                     │     │
-│  │  ├── Initialize(params)                                │     │
-│  │  ├── ProcessFromCPU(data) → vector<SpectrumResult>     │     │
-│  │  ├── ProcessFromGPU(gpu_data, ...) → vector<Result>    │     │
-│  │  ├── ProcessBatch(data, start, count) → vector<Result> │     │
-│  │  ├── FindAllMaximaFromCPU(...) → AllMaximaResult       │     │
-│  │  └── FindAllMaximaFromGPUPipeline(...) → AllMaxResult   │     │
-│  └────────────────────┬──────────────────────────────────┘     │
-│                       │ implements                               │
-│       ┌───────────────┼────────────────────┐                    │
-│       ▼                                    ▼                    │
-│  ┌──────────────────────┐  ┌──────────────────────────────┐    │
-│  │ SpectrumProcessor    │  │ SpectrumProcessorROCm        │    │
-│  │ OpenCL               │  │                              │    │
-│  │                      │  │ hipFFT + ROCm kernels        │    │
-│  │ clFFT + OpenCL       │  │                              │    │
-│  │ kernels              │  │                              │    │
-│  └──────────────────────┘  └──────────────────────────────┘    │
-│                                                                 │
-│  ┌────────────── AllMaxima Pipeline ─────────────────────┐     │
-│  │  Stage 1: FFT (clFFT / hipFFT)                         │     │
-│  │  Stage 2: Magnitude computation (GPU kernel)           │     │
-│  │  Stage 3: Peak detection — threshold scan (GPU)        │     │
-│  │  Stage 4: Peak compaction — stream compact (GPU)       │     │
-│  │  Stage 5: Result readback to CPU                       │     │
-│  └────────────────────────────────────────────────────────┘    │
-│                                                                 │
-│  ┌────────────────── Data Types ─────────────────────────┐     │
-│  │ SpectrumMode: ONE_PEAK | TWO_PEAKS | ALL_MAXIMA        │     │
-│  │ SpectrumParams: { antenna_count, n_point, nFFT,        │     │
-│  │                   sample_rate, mode }                   │     │
-│  │ SpectrumResult: { antenna_idx, peak_freq_hz, peak_bin, │     │
-│  │                   peak_amplitude, peak_snr_db,          │     │
-│  │                   second_peak_* (for TWO_PEAKS) }       │     │
-│  │ AllMaximaResult: { peaks[], num_peaks, runtime_ms }     │     │
-│  │ OutputDestination: CPU | GPU                            │     │
-│  └────────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────┘
+┌───────────────────────── fft_func ──────────────────────────────────┐
+│                                                                       │
+│  ┌──────────────── FFT Processing (ROCm) ─────────────────────┐     │
+│  │ FFTProcessorROCm (Facade)                                    │     │
+│  │                                                              │     │
+│  │ Initialize(params)                                           │     │
+│  │ ProcessComplex(data, params) → vector<ComplexResult>          │     │
+│  │ ProcessMagPhase(data, params) → vector<FFTMagPhaseResult>     │     │
+│  │                                                              │     │
+│  │ ComplexToMagPhaseROCm — HIP kernel: |z|, atan2(im,re)       │     │
+│  │                                                              │     │
+│  │ Internal GPU Buffers:                                        │     │
+│  │   fft_input_  (nFFT * batch)                                 │     │
+│  │   fft_output_ (FFT result)                                   │     │
+│  │   mag_output_ (Magnitude)                                    │     │
+│  │   phase_output_ (Phase)                                      │     │
+│  └──────────────────────────────────────────────────────────────┘     │
+│                                                                       │
+│  ┌──────────────── Spectrum Maxima (ROCm) ────────────────────┐      │
+│  │ SpectrumProcessorROCm / AllMaximaPipelineROCm               │      │
+│  │                                                              │      │
+│  │ Initialize(params)                                           │      │
+│  │ ProcessFromCPU(data) → vector<SpectrumResult>                │      │
+│  │ ProcessFromGPU(gpu_data, ...) → vector<Result>               │      │
+│  │ FindAllMaximaFromCPU(...) → AllMaximaResult                  │      │
+│  │ FindAllMaximaFromGPUPipeline(...) → AllMaximaResult          │      │
+│  │                                                              │      │
+│  │ AllMaxima Pipeline:                                          │      │
+│  │   Stage 1: FFT (hipFFT)                                      │      │
+│  │   Stage 2: Magnitude computation (HIP kernel)                │      │
+│  │   Stage 3: Peak detection — threshold scan (GPU)             │      │
+│  │   Stage 4: Peak compaction — stream compact (GPU)            │      │
+│  │   Stage 5: Result readback to CPU                            │      │
+│  └──────────────────────────────────────────────────────────────┘      │
+│                                                                       │
+│  ┌──────────────── Operations (Ref03 Layer 5) ────────────────┐      │
+│  │ PadDataOp     — zero-pad input to nFFT (BufferSet<2>)       │      │
+│  │ MagPhaseOp    — magnitude + phase extraction (BufferSet<3>) │      │
+│  └──────────────────────────────────────────────────────────────┘      │
+│                                                                       │
+│  ┌────────────────── Data Types ──────────────────────────────┐      │
+│  │ FFTProcessorParams:                                         │      │
+│  │   { beam_count, n_point, sample_rate,                       │      │
+│  │     output_mode, use_padding }                              │      │
+│  │ FFTMagPhaseResult:                                          │      │
+│  │   { magnitude, phase, frequency_hz: vector<float> }         │      │
+│  │ SpectrumParams: { antenna_count, n_point, nFFT,             │      │
+│  │                   sample_rate, mode }                        │      │
+│  │ MaxValue: { bin, amplitude, frequency_hz }                  │      │
+│  │ SpectrumMode: ONE_PEAK | TWO_PEAKS | ALL_MAXIMA             │      │
+│  │ AllMaximaResult: { peaks[], num_peaks, runtime_ms }         │      │
+│  │ OutputDestination: CPU | GPU                                │      │
+│  └────────────────────────────────────────────────────────────┘      │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. Filters — Components
+## 4. Filters — Components
 
 ```
 ┌───────────────────── Filters ──────────────────────────────────┐
@@ -273,7 +246,7 @@
 
 ---
 
-## 6. Heterodyne (LFM Dechirp) — Components
+## 5. Heterodyne (LFM Dechirp) — Components
 
 ```
 ┌───────────────────── Heterodyne ──────────────────────────────────┐
@@ -323,7 +296,7 @@
 
 ---
 
-## 7. LCH Farrow (Fractional Delay) — Components
+## 6. LCH Farrow (Fractional Delay) — Components
 
 ```
 ┌───────────────────── LCH Farrow ───────────────────────────────┐
@@ -351,7 +324,7 @@
 
 ---
 
-## 8. FM Correlator — Components
+## 7. FM Correlator — Components
 
 ```
 ┌───────────────────── FM Correlator ───────────────────────────┐
@@ -398,7 +371,103 @@
 
 ---
 
-## 9. Python Bindings — Components
+## 8. Strategies — Components
+
+```
+┌──────────────────── Strategies ──────────────────────────┐
+│                                                            │
+│  ┌─────────── Facade ──────────────────┐                  │
+│  │ AntennaProcessor_v1                  │                  │
+│  │                                      │                  │
+│  │ Initialize(config) → void            │                  │
+│  │ Process(signal, weights) → Result    │                  │
+│  │ 4 HIP streams, hipBLAS CGEMM        │                  │
+│  └──────────────────────────────────────┘                  │
+│                                                            │
+│  ┌─────── Pipeline Steps (Ref03) ──────────────────────┐  │
+│  │ GemmStep          — hipBLAS CGEMM: X = W·S           │  │
+│  │ WindowFftStep     — Hamming window + hipFFT          │  │
+│  │ DebugStatsStep    — StatisticsProcessor checkpoint   │  │
+│  │ OneMaxStep        — Parabolic interpolation          │  │
+│  │ AllMaximaStep     — Stream compaction                │  │
+│  │ MinMaxStep        — Global min/max + DR(dB)          │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                                                            │
+│  ┌─────── Config / Types ──────────────────────────────┐  │
+│  │ AntennaProcessorConfig  — n_ant, n_samples, fs       │  │
+│  │ PostFftScenarioMode     — ALL_REQUIRED/ONE_MAX/...   │  │
+│  │ AntennaResult           — stats, maxima, minmax      │  │
+│  │ WeightGenerator         — delay-and-sum weights      │  │
+│  │ PipelineBuilder         — Builder pattern            │  │
+│  └──────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 9. Capon — Components
+
+```
+┌──────────────────── Capon (MVDR) ────────────────────────┐
+│                                                            │
+│  ┌─────────── Facade (Ref03 Layer 6) ──────────────────┐  │
+│  │ CaponProcessor                                       │  │
+│  │                                                      │  │
+│  │ Initialize(params) → void                            │  │
+│  │ ComputeRelief(Y, U) → CaponReliefResult             │  │
+│  │ AdaptiveBeamform(Y, U) → CaponBeamResult             │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                                                            │
+│  ┌─────── Operations (Ref03 Layer 5) ──────────────────┐  │
+│  │ CovarianceMatrixOp  — R = YY^H/N + μI (rocBLAS)     │  │
+│  │ CaponInvertOp       — R^-1 via CholeskyInverterROCm  │  │
+│  │ ComputeWeightsOp    — W = R^-1·U (rocBLAS CGEMM)    │  │
+│  │ CaponReliefOp       — z[m] = 1/Re(u^H·R^-1·u)      │  │
+│  │ AdaptBeamformOp     — Y_out = W^H·Y (rocBLAS)       │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                                                            │
+│  ┌─────── Types ───────────────────────────────────────┐  │
+│  │ CaponParams          — n_channels, n_samples, n_dir  │  │
+│  │ CaponReliefResult    — vector<float> relief[M]       │  │
+│  │ CaponBeamResult      — vector<complex> output[M×N]   │  │
+│  └──────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 10. Range Angle — Components
+
+```
+┌──────────────── Range Angle (3D) ────────────────────────┐
+│                                                            │
+│  ┌─────────── Facade (Ref03 Layer 6) ──────────────────┐  │
+│  │ RangeAngleProcessor                                  │  │
+│  │                                                      │  │
+│  │ Initialize(params) → void                            │  │
+│  │ Process(signal) → RangeAngleResult                   │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                                                            │
+│  ┌─────── Operations (Ref03 Layer 5) ──────────────────┐  │
+│  │ DechirpWindowOp  — conj(ref) × rx + Hamming          │  │
+│  │ RangeFftOp       — batched hipFFT per antenna        │  │
+│  │ TransposeOp      — rearrange [range × az × el]       │  │
+│  │ BeamFftOp        — 2D spatial FFT + fftshift          │  │
+│  │ PeakSearchOp     — 3D max reduction → TargetInfo     │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                                                            │
+│  ┌─────── Types ───────────────────────────────────────┐  │
+│  │ RangeAngleParams  — n_ant_az/el, n_samples, f_start  │  │
+│  │ TargetInfo        — range_m, az/el_deg, power_db     │  │
+│  │ RangeAngleResult  — targets[], power_cube             │  │
+│  │ PeakSearchMode    — TOP_1, TOP_N                      │  │
+│  └──────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 11. Python Bindings — Components
 
 ```
 ┌───────────────── Python Bindings ──────────────────────────────┐
@@ -440,7 +509,7 @@
 
 ---
 
-## 10. Сводная таблица всех компонентов
+## 12. Сводная таблица всех компонентов
 
 | Контейнер | Компонент | Тип | Файлы |
 |-----------|-----------|-----|-------|
@@ -468,10 +537,13 @@
 | | FormSignalGenerator | Strategy | `include/generators/form_signal_generator.hpp` |
 | | LfmConjugateGenerator | Strategy | `include/generators/lfm_conjugate_generator.hpp` |
 | | SignalGeneratorFactory | Factory | `include/signal_generator_factory.hpp` |
-| **FFT** | FFTProcessor | Class | `include/fft_processor.hpp` |
-| **Maxima** | ISpectrumProcessor | Interface | `include/processors/i_spectrum_processor.hpp` |
-| | SpectrumProcessorOpenCL | Strategy | `include/processors/spectrum_processor_opencl.hpp` |
+| **fft_func** | FFTProcessorROCm | Facade | `include/fft_processor_rocm.hpp` |
+| | ComplexToMagPhaseROCm | Class | `include/complex_to_mag_phase_rocm.hpp` |
+| | PadDataOp | GpuKernelOp | `include/operations/pad_data_op.hpp` |
+| | MagPhaseOp | GpuKernelOp | `include/operations/mag_phase_op.hpp` |
+| | ISpectrumProcessor | Interface | `include/processors/i_spectrum_processor.hpp` |
 | | SpectrumProcessorROCm | Strategy | `include/processors/spectrum_processor_rocm.hpp` |
+| | AllMaximaPipelineROCm | Class | `include/processors/all_maxima_pipeline_rocm.hpp` |
 | **Filters** | FirFilter | Class | `include/filters/fir_filter.hpp` |
 | | IirFilter | Class | `include/filters/iir_filter.hpp` |
 | | FirFilterROCm | Class | `include/filters/fir_filter_rocm.hpp` |
@@ -487,6 +559,23 @@
 | **FMCorr** | FMCorrelator | Class | `include/fm_correlator.hpp` |
 | | FMCorrelatorParams | Struct | `include/fm_correlator.hpp` |
 | | FMCorrelatorResult | Struct | `include/fm_correlator.hpp` |
+| **Strategies** | AntennaProcessor_v1 | Facade | `include/antenna_processor_v1.hpp` |
+| | AntennaProcessorConfig | Config | `include/config/antenna_processor_config.hpp` |
+| | WeightGenerator | Static | `include/weight_generator.hpp` |
+| | PipelineBuilder | Builder | `include/pipeline_builder.hpp` |
+| | GemmStep/WindowFftStep/... | Steps | `include/steps/*.hpp` |
+| **Capon** | CaponProcessor | Facade | `include/capon_processor.hpp` |
+| | CovarianceMatrixOp | GpuKernelOp | `include/operations/covariance_matrix_op.hpp` |
+| | CaponInvertOp | Op | `include/operations/capon_invert_op.hpp` |
+| | ComputeWeightsOp | GpuKernelOp | `include/operations/compute_weights_op.hpp` |
+| | CaponReliefOp | GpuKernelOp | `include/operations/capon_relief_op.hpp` |
+| | AdaptBeamformOp | GpuKernelOp | `include/operations/adapt_beam_op.hpp` |
+| **RangeAngle** | RangeAngleProcessor | Facade | `include/range_angle_processor.hpp` |
+| | DechirpWindowOp | GpuKernelOp | `include/operations/dechirp_window_op.hpp` |
+| | RangeFftOp | GpuKernelOp | `include/operations/range_fft_op.hpp` |
+| | TransposeOp | GpuKernelOp | `include/operations/transpose_op.hpp` |
+| | BeamFftOp | GpuKernelOp | `include/operations/beam_fft_op.hpp` |
+| | PeakSearchOp | GpuKernelOp | `include/operations/peak_search_op.hpp` |
 | **Python** | GPUContext | Wrapper | `python/gpu_worklib_bindings.cpp` |
 | | PySignalGenerator | Wrapper | `python/gpu_worklib_bindings.cpp` |
 | | PyFFTProcessor | Wrapper | `python/gpu_worklib_bindings.cpp` |
@@ -494,6 +583,9 @@
 | | PyFilters | Wrapper | `python/py_filters.hpp` |
 | | PyLchFarrow | Wrapper | `python/py_lch_farrow.hpp` |
 | | PyFMCorrelatorROCm | Wrapper | `python/py_fm_correlator_rocm.hpp` |
+| | PyAntennaProcessor | Wrapper | `python/py_antenna_processor.hpp` |
+| | PyCaponProcessor | Wrapper | `python/py_capon_processor.hpp` |
+| | PyRangeAngleProcessor | Wrapper | `python/py_range_angle_processor.hpp` |
 
 ---
 

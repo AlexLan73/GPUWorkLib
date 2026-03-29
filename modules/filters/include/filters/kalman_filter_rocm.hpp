@@ -29,6 +29,7 @@
 
 namespace filters {
 
+/// @ingroup grp_filters
 class KalmanFilterROCm {
 public:
   explicit KalmanFilterROCm(drv_gpu_lib::IBackend* backend,

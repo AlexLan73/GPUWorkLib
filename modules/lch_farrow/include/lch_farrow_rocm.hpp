@@ -53,6 +53,8 @@ using ROCmProfEvents =
  * auto result = processor.Process(gpu_input, antennas, points);
  * // result.data is void* (HIP device pointer)
  * @endcode
+ *
+ * @ingroup grp_lch_farrow
  */
 class LchFarrowROCm {
 public:

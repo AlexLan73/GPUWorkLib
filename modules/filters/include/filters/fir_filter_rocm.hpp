@@ -44,6 +44,7 @@ namespace filters {
 /// Список событий профилирования ROCm (имя стадии + ROCmProfilingData)
 using ROCmProfEvents = std::vector<std::pair<const char*, drv_gpu_lib::ROCmProfilingData>>;
 
+/// @ingroup grp_filters
 class FirFilterROCm {
 public:
   explicit FirFilterROCm(drv_gpu_lib::IBackend* backend);

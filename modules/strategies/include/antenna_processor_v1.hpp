@@ -45,6 +45,7 @@ namespace fft_processor { class ComplexToMagPhaseROCm; }
 
 namespace strategies {
 
+/// @ingroup grp_strategies
 class AntennaProcessor_v1 : public AntennaProcessor {
 public:
   explicit AntennaProcessor_v1(

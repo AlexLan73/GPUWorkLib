@@ -42,6 +42,7 @@
 
 namespace range_angle {
 
+/// @ingroup grp_range_angle
 class RangeAngleProcessor {
 public:
   // =========================================================================

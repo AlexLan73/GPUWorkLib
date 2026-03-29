@@ -1,7 +1,7 @@
 # C1 — System Context Diagram
 
 > **Project**: GPUWorkLib
-> **Date**: 2026-02-23
+> **Date**: 2026-03-28
 > **Reference**: [c4model.com](https://c4model.com)
 > **Level**: 1 (System Context) — самый высокий уровень абстракции
 
@@ -39,11 +39,15 @@
  │                    ║  Library                 ║                       │
  │                    ║                          ║                       │
  │                    ║  - Signal Generation     ║                       │
- │                    ║  - FFT / IFFT            ║                       │
- │                    ║  - Spectrum Analysis      ║                       │
+ │                    ║  - FFT / IFFT + Maxima   ║                       │
+ │                    ║  - Statistics (Welford)  ║                       │
  │                    ║  - FIR / IIR Filters     ║                       │
  │                    ║  - Heterodyne Dechirp    ║                       │
  │                    ║  - Fractional Delay      ║                       │
+ │                    ║  - FM Correlation        ║                       │
+ │                    ║  - Digital Beamforming   ║                       │
+ │                    ║  - MVDR Capon            ║                       │
+ │                    ║  - 3D Range-Angle        ║                       │
  │                    ╚═══════════╤══════════════╝                       │
  │                                │                                     │
  └────────────────────────────────┼─────────────────────────────────────┘

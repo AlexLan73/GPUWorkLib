@@ -30,6 +30,7 @@
 
 namespace filters {
 
+/// @ingroup grp_filters
 class KaufmanFilterROCm {
 public:
   explicit KaufmanFilterROCm(drv_gpu_lib::IBackend* backend,

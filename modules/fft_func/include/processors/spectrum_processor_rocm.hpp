@@ -53,6 +53,8 @@ using ROCmProfEvents = std::vector<std::pair<const char*, drv_gpu_lib::ROCmProfi
  *   2. Initialize(params) — allocates buffers, creates FFT plan, compiles kernels
  *   3. ProcessFromCPU / ProcessFromGPU / FindAllMaxima...
  *   4. Destructor releases all resources
+ *
+ * @ingroup grp_fft_func
  */
 class SpectrumProcessorROCm : public ISpectrumProcessor {
 public:

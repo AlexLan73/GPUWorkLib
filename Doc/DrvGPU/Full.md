@@ -700,6 +700,8 @@ stat = gpuworklib.StatisticsProcessor(ctx)
 | `test_rocm_external_context.hpp` | ROCmBackend::InitializeFromExternalStream | Внешний hipStream_t | `OwnsResources()==false`, не вызывает hipStreamDestroy |
 | `test_hybrid_external_context.hpp` | HybridBackend::InitializeFromExternalContexts | Внешние cl_ctx + hipStream | Оба флага `owns_resources_=false` |
 | `test_drv_gpu_external.hpp` | DrvGPU::CreateFromExternal*() factory | Внешние хэндлы | `IsInitialized()==true`, нет double-free при деструкции |
+| `test_clmem_gpu_va_probe.cpp` | cl_mem ↔ GPU VA зондирование (DMA-buf export) | AMD GPU с RDNA4 | GPU Virtual Address cl_mem совпадает с ожидаемым диапазоном VRAM |
+| `test_zerocopy_rdna4.cpp` | ZeroCopy RDNA4: cl_mem → hipStream_t без CPU copy | 1M float на RDNA4 gfx1201 | D2H после zero-copy совпадает с оригиналом, CPU не задействован |
 
 #### Детали ключевых тестов
 
@@ -798,6 +800,8 @@ DrvGPU/
     ├── test_rocm_external_context.hpp
     ├── test_hybrid_external_context.hpp
     ├── test_drv_gpu_external.hpp
+    ├── test_clmem_gpu_va_probe.cpp      # RDNA4: cl_mem GPU VA probe
+    ├── test_zerocopy_rdna4.cpp          # RDNA4: ZeroCopy без CPU round-trip
     └── example_external_context_usage.hpp
 
 include/
@@ -823,4 +827,4 @@ configGPU.json                        # Конфигурация GPU (device ind
 
 ---
 
-*Создано: 2026-03-09 | Автор: Кодо*
+*Создано: 2026-03-09 | Обновлено: 2026-03-28 | Автор: Кодо*

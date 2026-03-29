@@ -412,22 +412,71 @@ __global__ void complex_to_mag_phase(
 
 `compact_maxima` заполняет `MaxValue`: index, real, imag, magnitude, **phase в градусах**, refined_frequency (без параболической интерполяции — `index × fs/nFFT`).
 
+### 4.5 Op-классы — Ref03 Layer 5
+
+Все HIP-ядра оборачиваются в Op-классы (наследники `drv_gpu_lib::GpuKernelOp`). Каждый Op — отдельный заголовочный файл в `include/operations/`, один ответственный за один kernel.
+
+| Op-класс | Namespace | Файл | Kernel | Используется в |
+|----------|-----------|------|--------|----------------|
+| `PadDataOp` | `fft_processor` | `pad_data_op.hpp` | `pad_data` (2D grid) | `FFTProcessorROCm` |
+| `MagPhaseOp` | `fft_processor` | `mag_phase_op.hpp` | `complex_to_mag_phase` (interleaved) | `FFTProcessorROCm`, `ComplexToMagPhaseROCm` |
+| `MagnitudeOp` | `fft_processor` | `magnitude_op.hpp` | `complex_to_magnitude` (float + inv_n) | `ComplexToMagPhaseROCm` |
+| `SpectrumPadOp` | `antenna_fft` | `spectrum_pad_op.hpp` | `pad_data` (с `beam_offset`) | `SpectrumProcessorROCm` |
+| `ComputeMagnitudesOp` | `antenna_fft` | `compute_magnitudes_op.hpp` | `compute_magnitudes` | `SpectrumProcessorROCm` |
+| `SpectrumPostOp` | `antenna_fft` | `spectrum_post_op.hpp` | `post_kernel` (ONE/TWO_PEAKS) | `SpectrumProcessorROCm` |
+
+**MagnitudeOp** (добавлен 2026-03-22) — отдельный Op для пути "только амплитуда без фазы". Принимает `inv_n` для нормировки прямо в kernel:
+
+```hip
+__global__ void complex_to_magnitude(
+    const float2* __restrict__ in, float* __restrict__ out,
+    float inv_n, int total)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= total) return;
+    out[i] = __fsqrt_rn(in[i].x * in[i].x + in[i].y * in[i].y) * inv_n;
+}
+```
+
+**SpectrumPadOp** отличается от `PadDataOp` параметром `beam_offset` для batch-обработки. Перед padding выполняет `hipMemsetAsync` всего FFT-буфера.
+
 ---
 
 ## 5. Архитектура C4
 
 ### Ref03 Unified Architecture (Layer 1-6)
 
-`FFTProcessorROCm` полностью перешёл на Ref03:
+**FFTProcessorROCm** — полностью на Ref03:
 
 | Слой | Что используется |
 |------|-----------------|
-| 1 — GpuContext | `GpuContext ctx_` — per-module, компилирует kernels |
-| 2 — IGpuOperation | — |
+| 1 — GpuContext | `GpuContext ctx_` — per-module, компилирует pad_data + complex_to_mag_phase |
 | 3 — GpuKernelOp | `PadDataOp`, `MagPhaseOp` |
-| 4 — BufferSet\<4\> | `kInputBuf / kFftInput / kFftOutput / kMagPhaseInterleaved` |
+| 4 — BufferSet\<3\> | `kInputBuf / kFftBuf / kMagPhaseInterleaved` |
 | 5 — Concrete Ops | `PadDataOp`, `MagPhaseOp` |
 | 6 — Facade | `FFTProcessorROCm` (тонкий facade, API неизменен) |
+
+**Важно**: `kFftBuf` — in-place буфер: служит и padded-входом, и FFT-выходом. `hipfftExecC2C(idata==odata)` поддерживается. Уменьшает аллокации с 4 до 3 буферов.
+
+**ComplexToMagPhaseROCm** — переведён на Ref03:
+
+| Слой | Что используется |
+|------|-----------------|
+| 1 — GpuContext | `GpuContext ctx_` — компилирует complex_to_mag_phase + complex_to_magnitude |
+| 3 — GpuKernelOp | `MagPhaseOp`, `MagnitudeOp` |
+| 4 — BufferSet\<3\> | `kInput / kOutput / kMagOnly` |
+| 5 — Concrete Ops | `MagPhaseOp` (Process/ProcessToGPU), `MagnitudeOp` (ProcessMagnitude*) |
+| 6 — Facade | `ComplexToMagPhaseROCm` |
+
+**SpectrumProcessorROCm** — частично Ref03 (GpuContext + Op-классы, буферы ещё raw `void*`):
+
+| Слой | Что используется |
+|------|-----------------|
+| 1 — GpuContext | `GpuContext ctx_` — компилирует pad + compute_magnitudes + post_kernel |
+| 5 — Concrete Ops | `SpectrumPadOp`, `ComputeMagnitudesOp`, `SpectrumPostOp` |
+| 6 — Facade (Strategy) | `SpectrumProcessorROCm` реализует `ISpectrumProcessor` |
+
+GPU буферы `SpectrumProcessorROCm` (input_buffer_, fft_input_, fft_output_, maxima_output_, magnitudes_buffer_) остаются raw `void*` — планируется миграция на `BufferSet<N>` в будущем.
 
 ### C1 — System Context
 
@@ -880,36 +929,35 @@ find_all_maxima(
 
 **test_fft_processor_rocm.hpp** — `test_fft_processor_rocm::run()`
 
-| # | Тест | Параметры | Что проверяет | Порог |
-|---|------|-----------|---------------|-------|
-| 1 | `test_single_beam_complex` | f=100 Hz, N=1024, fs=1000 | hipFFT пик на ожидаемом бине | peak_bin == expected_bin |
-| 2 | `test_multi_beam_batch` | 8 beams, base_f=50, step=25, N=1024, fs=1000 | Каждый луч в правильном бине | \|peak_bin − expected\| ≤ 1 |
-| 3 | `test_mag_phase_consistency` | f=200, N=512, fs=1000 | ROCm mag/phase vs complex ROCm | max_err < 1e-2 |
-| 4 | `test_mag_phase_freq` | f=150, N=1024, fs=1000 | freq[k] = k × fs / nFFT | \|freq[k] − expected\| < 1e-4 |
-| 5 | `test_gpu_input` | f=100, N=1024, fs=1000 | void* вход — без upload | peak_bin == expected_bin |
+| # | Тест | Параметры | Что проверяет | Почему такие входные данные | Порог |
+|---|------|-----------|---------------|-----------------------------|-------|
+| 1 | `single_beam_complex` | f=100 Hz, N=1024, fs=1000 | hipFFT пик на ожидаемом бине | 100/1000×1024=102.4 — точный бин без интерполяции; простейший базовый случай | peak_bin == expected_bin |
+| 2 | `multi_beam_batch` | 8 beams, f₀=50 Hz, Δf=25 Hz, N=1024, fs=1000 | Каждый луч в правильном бине | Разные частоты (Δf=25 Hz, ≈25 бин) — ловит cross-beam pollution при неверном смещении буфера | \|peak − expected\| ≤ 1 |
+| 3 | `mag_phase_consistency` | f=200 Hz, N=512, fs=1000 | GPU intrinsics (`__fsqrt_rn`, `atan2f`) vs CPU (`std::abs`, `std::arg`) | N=512 (nextPow2=512) — тест без zero-padding; порог 1e-2 из-за fast math vs IEEE double | max_err < 1e-2 |
+| 4 | `mag_phase_freq` | f=150 Hz, N=1024, fs=1000 | freq[k] = k×fs/nFFT — точность частотной оси | Проверяет формулу freq-массива, построенного на CPU; ошибка 1e-4 — предел float32 | \|freq − expected\| < 1e-4 |
+| 5 | `gpu_input` | f=100 Hz, N=1024, fs=1000 | void* device pointer вход без H2D upload | Ловит баг неверного смещения при GPU-входе в ProcessComplex(void*) | peak_bin == expected_bin |
 
 **test_complex_to_mag_phase_rocm.hpp** — `test_complex_to_mag_phase_rocm::run()`
 
-| # | Тест | Параметры | Что проверяет | Порог |
-|---|------|-----------|---------------|-------|
-| 1 | `test_single_beam_cpu` | amp=2.5, f=100, N=4096, fs=1000 | CPU→CPU: mag/phase vs std::abs/arg | mag < 1e-3, phase < 1e-3 |
-| 2 | `test_multi_beam_cpu` | 8 beams, N=4096, f=500, fs=12000 | 8 лучей разные амплитуды | max_mag_err < 1e-3 |
-| 3 | `test_gpu_input` | f=200, N=2048, fs=1000 | void* вход → CPU | max_mag_err < 1e-3 |
-| 4 | `test_process_to_gpu_cpu` | amp=3.0, f=300, N=1024, fs=2000 | CPU→GPU interleaved layout | mag < 1e-3, phase < 1e-3 |
-| 5 | `test_process_to_gpu_gpu` | 4 beams, N=2048, f=150 | GPU→GPU zero-copy | max_mag_err < 1e-3 |
-| 6 | `test_accuracy` | 16 граничных случаев (0, ±re, {3,4,5}) | Граничные: ноль, большие, малые | mag < 1e-2, phase < 1e-2 |
+| # | Тест | Параметры | Что проверяет | Почему такие входные данные | Порог |
+|---|------|-----------|---------------|-----------------------------|-------|
+| 1 | `single_beam_cpu` | amp=2.5, f=100 Hz, N=4096, fs=1000 | CPU→CPU: GPU `__fsqrt_rn`/`atan2f` vs `std::abs`/`std::arg` | amp=2.5 (не 1.0) — ловит ошибку нормировки; N=4096 — большой буфер | mag < 1e-3, phase < 1e-3 |
+| 2 | `multi_beam_cpu` | 8 beams, N=4096, f=500 Hz, fs=12000, amp=0.5+b×0.5 | 8 лучей с разными амплитудами | Возрастающие амплитуды — ловит смещение буфера луча (beam×n_point) | max_mag_err < 1e-3 |
+| 3 | `gpu_input` | f=200 Hz, N=2048, fs=1000 | GPU void* вход → CPU выход | Минимальный путь D2D copy + kernel | max_mag_err < 1e-3 |
+| 4 | `cpu_to_gpu` | amp=3.0, f=300 Hz, N=1024, fs=2000 | CPU→GPU: interleaved `{raw[k*2]=mag, raw[k*2+1]=phase}` | Проверяет interleaved-раскладку вручную скачанного float-массива | mag < 1e-3, phase < 1e-3 |
+| 5 | `gpu_to_gpu` | 4 beams, N=2048, f=150 Hz, amp=1..4 | GPU→GPU: ProcessToGPU(void*) zero-copy | amp=1..4 — ловит смешение лучей при GPU-GPU пути | max_mag_err < 1e-3 |
+| 6 | `accuracy` | 16 специальных значений | Граничные: (0,0), (±1,0), (0,±1), {3,4,5}, 1e-6, 1000+2000j | `__fsqrt_rn(0)` может дать -0/NaN; {3,4}: mag должна быть ровно 5 | mag < 1e-2; mag{3,4}=5 ±1e-3 |
 
 **test_process_magnitude_rocm.hpp** — `test_process_magnitude_rocm::run()` (Ref03 ProcessMagnitude)
 
-| # | Тест | Что проверяет |
-|---|------|---------------|
-| 1 | `single_beam_no_norm` | GPU mag ≈ np.abs(iq), norm_coeff=1 |
-| 2 | `single_beam_norm_n` | GPU mag ≈ np.abs(iq)/n, norm_coeff=-1 |
-| 3 | `multi_beam` | 4 лучей, каждый верифицирован |
-| 4 | `zero_signal` | Нулевой вход → magnitude = 0 |
-| 5 | `norm_coeff_custom` | norm_coeff=0.5 → ×0.5 |
-| 6 | `pipeline_to_stats` | ProcessMagnitude → compute_statistics_float |
-| 7 | `pipeline_to_median` | ProcessMagnitude → compute_median_float |
+| # | Тест | Параметры | Что проверяет | Почему такие входные данные | Порог |
+|---|------|-----------|---------------|-----------------------------|-------|
+| 1 | `gpu_input_no_norm` | N=4096, amp=2.5, norm=1.0, hipMalloc | GPU void* вход, inv_n=1.0 без нормировки | hipMalloc (не managed) — тест non-unified memory path; amp=2.5 проверяет non-unit амплитуду | AllClose(atol=1e-4) |
+| 2 | `managed_norm_by_n` | N=2048, amp=3.0, norm=-1.0, hipMallocManaged | Managed memory, div by N (inv_n=1/N) | Managed memory проходит другой код-путь в `ProcessMagnitude(void*)` | AllClose(atol=1e-4) |
+| 3 | `norm_zero_signal` | N=512, zeros, norm=0.0 | Нулевой вход → все magnitude=0 | Проверяет что `norm_coeff=0` работает как ×1, не как "всё в ноль" | sum < 1e-6 |
+| 4 | `to_gpu` | N=1024, amp=1.0, norm=1.0 | ProcessMagnitudeToGPU: float[] остаётся на GPU | CALLER OWNS: проверяет что указатель валиден и данные корректны | AllClose(atol=1e-4) |
+| 5 | `multi_beam_managed` | B=4, N=4096, amp=0.5..2.0, norm=-1.0 | 4 луча managed memory + нормировка на N | Комбинация multi-beam + managed + division by N — тест пути для pipeline статистики | AllClose(atol=1e-4) |
+| 6 | `to_buffer` | B=2, N=2048, amp=1.5, norm=0.0 | ProcessMagnitudeToBuffer vs ProcessMagnitudeToGPU | Zero-alloc путь должен давать идентичный результат с allocating путём | AllClose(buf vs ref) |
 
 **test_fft_matrix_rocm.hpp** — `test_fft_matrix_rocm::run()`
 
@@ -927,12 +975,12 @@ find_all_maxima(
 
 | # | Тест | Параметры | Что проверяет | Порог |
 |---|------|-----------|---------------|-------|
-| 16 | ROCm OnePeak | N=1000, fs=10000, 4 ant, 100 Hz | ONE_PEAK | error < 5 Hz |
-| 17 | ROCm TwoPeaks | N=1000, fs=10000, 2 ant, [100,300] Hz | TWO_PEAKS | корректность |
-| 18 | ROCm FindAllMaxima | N=1024, fs=1000, 2 ant, [50,120,200] Hz | FindAllMaxima ≥3 peaks | num_maxima ≥ 3 |
-| 19 | ROCm AllMaximaFromCPU | nFFT=1024, синтетич. спектр | AllMaxima ≥3 peaks | total_maxima ≥ 3 |
-| 20 | ROCm BatchProcessing | 16 ant, N=1000, freq=100+b×10 | Batch 16 лучей | error < 10 Hz |
-| 21 | ROCm CompareWithOpenCL | 4 ant, N=1000, 100 Hz | ROCm vs OpenCL (если доступен) | diff < 5 Hz |
+| 1 | `one_peak` | N=1000, fs=10000, 4 ant, 100 Hz | ONE_PEAK, частота vs эталон | error < 5 Hz |
+| 2 | `two_peaks` | N=1000, fs=10000, 2 ant, [100,300] Hz | TWO_PEAKS: results.size()==4 | count == 4 |
+| 3 | `find_all_maxima` | N=1024, fs=1000, 2 ant, [50,120,200] Hz | FindAllMaximaFromCPU ≥3 peaks | num_maxima ≥ 3 |
+| 4 | `all_maxima_fft` | nFFT=1024, синтетич. спектр (бины 50/120/200) | AllMaximaFromCPU (без FFT): detect+scan+compact | total_maxima ≥ 3 |
+| 5 | `batch_16_beams` | 16 ant, N=1000, freq=100+b×10 Hz, fs=10000 | Batch 16 лучей, каждый на своей частоте | error < 10 Hz/луч |
+| 6 | `compare_opencl` | — | SkipTest (OpenCL не доступен в этом тесте) | — |
 
 ### 7.2 C++ тесты — только ветка nvidia / ENABLE_CLFFT
 
@@ -948,14 +996,40 @@ find_all_maxima(
 
 Размещены в `Python_test/fft_func/`.
 
-| Файл | Тесты | Описание |
-|------|-------|----------|
-| `test_process_magnitude_rocm.py` | 7 | ComplexToMagROCm vs NumPy |
-| `test_spectrum_find_all_maxima_rocm.py` | — | SpectrumMaximaFinder ROCm |
-| `test_spectrum_maxima_finder_rocm.py` | — | SpectrumMaximaFinder ROCm, дополнительные сценарии |
+| Файл | Классы | Кол-во тестов | Описание |
+|------|--------|---------------|----------|
+| `test_process_magnitude_rocm.py` | `TestProcessMagnitude` | 7 | `ComplexToMagROCm.process_magnitude` vs NumPy; pipeline → statistics; pipeline → median |
+| `test_spectrum_find_all_maxima_rocm.py` | 2 функции | 2 | ROCmGPUContext создаётся; косвенная проверка spectrum pipeline через HeterodyneDechirp |
+| `test_spectrum_maxima_finder_rocm.py` | `TestNumPyReference` + `TestSpectrumMaximaFinderROCm` | 8+6 | NumPy-эталон (всегда) + GPU тесты (skip без `SpectrumMaximaFinderROCm`) |
+
+**TestNumPyReference** (8 тестов, GPU не нужен — математический эталон):
+
+| # | Тест | Что проверяет |
+|---|------|---------------|
+| 1 | `test_single_tone_peak_position` | FFT единичного тона: пик в правильном бине |
+| 2 | `test_two_tones_peaks_found` | scipy.find_peaks находит оба тона |
+| 3 | `test_noise_floor_no_strong_peaks` | Белый шум: нет пика > 25×mean |
+| 4 | `test_freq_resolution_formula` | Δf = fs/nFFT (точная формула) |
+| 5 | `test_parabolic_interpolation` | δ ≈ 0 для точного тона (пик ровно в бине) |
+| 6 | `test_all_maxima_count` | Двухтональный: ≥ 2 пика через scipy.find_peaks |
+| 7 | `test_single_tone_magnitude` | \|FFT\|_peak = N (ненормализованный FFT) |
+| 8 | `test_multi_beam_independence` | Каждый луч независим: 3 луча × 3 частоты |
+
+**TestSpectrumMaximaFinderROCm** (6 GPU тестов, skip без `SpectrumMaximaFinderROCm`):
+
+| # | Тест | Что проверяет | Порог |
+|---|------|---------------|-------|
+| 1 | `test_process_single_beam_peak_freq` | ONE_PEAK: freq_hz близка к эталону | < 2% |
+| 2 | `test_process_multi_beam_list` | multi-beam → list[dict] | len == beams |
+| 3 | `test_process_result_fields` | Поля: freq_hz, magnitude, phase, index, freq_offset | все присутствуют |
+| 4 | `test_find_all_maxima_two_tones` | Двухтональный спектр → num_maxima ≥ 2 | ≥ 2 |
+| 5 | `test_find_all_maxima_opencl_compat_format` | Поля: positions, magnitudes, frequencies, num_maxima | все присутствуют |
+| 6 | `test_find_all_maxima_peak_frequency` | Найденная частота < 2×Δf от эталона | min_err < 2×(fs/N) |
 
 Запуск:
 ```bash
+python Python_test/fft_func/test_process_magnitude_rocm.py
+python Python_test/fft_func/test_spectrum_maxima_finder_rocm.py
 PYTHONPATH=build/debian-radeon9070/python python run_tests.py -m fft_func
 ```
 
@@ -1013,8 +1087,12 @@ modules/fft_func/
 │   ├── factory/
 │   │   └── spectrum_processor_factory.hpp     # Create(BackendType, IBackend*)
 │   ├── operations/
-│   │   ├── pad_data_op.hpp                    # Ref03 Layer 5: PadDataOp
-│   │   └── mag_phase_op.hpp                   # Ref03 Layer 5: MagPhaseOp
+│   │   ├── pad_data_op.hpp                    # Ref03 Layer 5: PadDataOp (2D grid)
+│   │   ├── mag_phase_op.hpp                   # Ref03 Layer 5: MagPhaseOp (interleaved {mag,phase})
+│   │   ├── magnitude_op.hpp                   # Ref03 Layer 5: MagnitudeOp (float, inv_n) [2026-03-22]
+│   │   ├── spectrum_pad_op.hpp                # Ref03 Layer 5: SpectrumPadOp (с beam_offset)
+│   │   ├── compute_magnitudes_op.hpp          # Ref03 Layer 5: ComputeMagnitudesOp
+│   │   └── spectrum_post_op.hpp               # Ref03 Layer 5: SpectrumPostOp (ONE/TWO_PEAKS)
 │   ├── pipelines/
 │   │   └── all_maxima_pipeline_rocm.hpp       # Detect+Scan+Compact (ROCm)
 │   ├── processors/
@@ -1130,6 +1208,6 @@ Doc/Modules/~!/                                  # Архив старой до�
 
 ---
 
-*Обновлено: 2026-03-17*
+*Обновлено: 2026-03-28*
 
 *См. также: [Quick.md](Quick.md) — краткий справочник | [API.md](API.md) — API-справочник*

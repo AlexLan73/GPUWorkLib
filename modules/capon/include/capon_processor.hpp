@@ -62,6 +62,7 @@
 
 namespace capon {
 
+/// @ingroup grp_capon
 class CaponProcessor {
 public:
   // =========================================================================

@@ -603,6 +603,28 @@ if (result.gpu_counts) hipFree(result.gpu_counts);
 
 ---
 
-*Обновлено: 2026-03-17*
+## 7.5 Op-классы — Ref03 Layer 5
+
+Op-классы не являются публичным API — используются внутри процессорных классов. Документируются для понимания архитектуры.
+
+**Заголовки**: `include/operations/*.hpp` | **Требует**: `ENABLE_ROCM=1`
+
+Все Op-классы наследуют `drv_gpu_lib::GpuKernelOp`:
+- `Initialize(GpuContext*)` — привязка к контексту
+- `kernel(name)` → `hipFunction_t` — получить функцию по имени
+- `stream()` → `hipStream_t` — текущий поток из GpuContext
+
+| Op-класс | Namespace | Kernel | Сигнатура Execute |
+|----------|-----------|--------|-------------------|
+| `PadDataOp` | `fft_processor` | `pad_data` | `Execute(in, out, beam_count, n_point, nFFT)` |
+| `MagPhaseOp` | `fft_processor` | `complex_to_mag_phase` | `Execute(in, out, total)` |
+| `MagnitudeOp` | `fft_processor` | `complex_to_magnitude` | `Execute(in, out, total, inv_n)` |
+| `SpectrumPadOp` | `antenna_fft` | `pad_data` | `Execute(in, out, beam_count, n_point, nFFT, beam_offset=0)` |
+| `ComputeMagnitudesOp` | `antenna_fft` | `compute_magnitudes` | `Execute(fft_out, mag_buf, total)` |
+| `SpectrumPostOp` | `antenna_fft` | `post_kernel` | `Execute(mag, fft, maxima, beam_count, nFFT, search_range)` |
+
+---
+
+*Обновлено: 2026-03-28*
 
 *См. также: [Full.md](Full.md) | [Quick.md](Quick.md)*

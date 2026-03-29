@@ -70,6 +70,8 @@ namespace drv_gpu_lib {
  * - Фоновый рабочий поток для агрегации
  * - Неблокирующий Record() для потоков GPU
  * - Потокобезопасный доступ к статистике через GetStats()
+ *
+ * @ingroup grp_drvgpu
  */
 class GPUProfiler : public AsyncServiceBase<ProfilingMessage> {
 public:

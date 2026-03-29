@@ -1,6 +1,6 @@
 # IN PROGRESS — Текущие задачи
 
-> **Обновлено**: 2026-03-23
+> **Обновлено**: 2026-03-29
 
 ---
 
@@ -32,4 +32,21 @@
 - [ ] SpectrumMaxima multi-beam test: 1 fail (beam frequency detection)
 - [ ] Non-square матрица 2500×100 для strategies
 
-*Последнее обновление: 2026-03-23*
+---
+
+## 🟠 LibGPU Integration — запланировано на 2026-03-30
+
+> **Таск**: `TASK_LibGPU_Integration.md`
+> **План**: `MemoryBank/research/cmake_libgpu_integration_plan.md`
+
+Создать промежуточный репозиторий LibGPU для передачи GPUWorkLib в закрытый проект.
+
+**Блоки работ:**
+- **A** — Подготовка GPUWorkLib: DrvGPU install() + sync_to_libgpu.py
+- **B** — Создание LibGPU: CMakeLists.txt + Presets + Config + README
+- **C** — Первая синхронизация + smoke-тест сборки
+- **D** — Интеграция в закрытый проект (git submodule на сервере)
+
+**Ключевое правило:** LibGPU = конверт, проект остаётся GPUWorkLib. Код НЕ переписывается.
+
+*Последнее обновление: 2026-03-29*
