@@ -1,0 +1,69 @@
+# VectorAlgebra — Cholesky-инверсия HPD-матриц (rocsolver)
+
+PROJECT_NAME           = "VectorAlgebra"
+PROJECT_BRIEF          = "Cholesky-инверсия HPD-матриц (rocsolver)"
+PROJECT_NUMBER         = "1.1.0"
+
+INPUT                  = ../../../../modules/vector_algebra/include \
+                         ../../../../modules/vector_algebra/src \
+                         ../../../../modules/vector_algebra/tests \
+                         pages
+FILE_PATTERNS          = *.hpp *.h *.cpp *.hip *.cl *.md
+RECURSIVE              = YES
+
+OUTPUT_DIRECTORY       = .
+HTML_OUTPUT            = html
+HTML_COLORSTYLE        = DARK
+
+# --- TAGFILE ---
+GENERATE_TAGFILE       = vector_algebra.tag
+
+# --- TAGFILES: подключаем DrvGPU ---
+TAGFILES               = ../../DrvGPU/drvgpu.tag=../../DrvGPU/html
+
+# --- Формулы ---
+USE_MATHJAX            = YES
+MATHJAX_VERSION        = MathJax_3
+
+# --- Картинки ---
+IMAGE_PATH             = ../../../../Doc/Modules/vector_algebra/images \
+                         ../../../../Results/Plots/vector_algebra
+
+# --- Общие настройки ---
+OUTPUT_LANGUAGE        = Russian
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = YES
+SOURCE_BROWSER         = YES
+GENERATE_LATEX         = NO
+GENERATE_XML           = NO
+
+WARN_IF_UNDOCUMENTED   = NO
+WARN_IF_DOC_ERROR      = YES
+
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+PREDEFINED             = ENABLE_ROCM=1 \
+                         __HIP_PLATFORM_AMD__=1 \
+                         CL_VERSION_3_0=1
+INCLUDE_PATH           = ../../../../include ../../../../DrvGPU/include
+EXTENSION_MAPPING      = hip=C++
+
+HAVE_DOT               = YES
+DOT_PATH               =
+DOT_NUM_THREADS        = 4
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES
+CLASS_GRAPH            = YES
+COLLABORATION_GRAPH    = YES
+INCLUDE_GRAPH          = YES
+GRAPHICAL_HIERARCHY    = YES
+
+GENERATE_TREEVIEW      = YES
+SEARCHENGINE           = YES
+MARKDOWN_SUPPORT       = YES
+BUILTIN_STL_SUPPORT    = YES
+
+SORT_MEMBER_DOCS       = YES
+SORT_MEMBERS_CTORS_1ST = YES
+ALPHABETICAL_INDEX     = YES
+QUIET                  = YES

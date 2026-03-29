@@ -112,3 +112,8 @@ amdgpu-install*
 setup_github_mcp.zip
 setup_github_mcp.md
 
+# Doxygen generated output (rebuild with build_docs.bat/sh)
+Doc/Doxygen/**/html/
+Doc/Doxygen/**/*.tag
+Results/Profiler/
+

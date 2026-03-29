@@ -1,0 +1,244 @@
+# Doxyfile — GPUWorkLib (ГЛАВНЫЙ)
+# Подключает ВСЕ .tag файлы модулей для перекрёстных ссылок
+# Сборка: build_docs.bat (порядок: DrvGPU → модули → главный)
+
+#---------------------------------------------------------------------------
+# Project identity
+#---------------------------------------------------------------------------
+
+PROJECT_NAME           = "GPUWorkLib"
+PROJECT_NUMBER         = "1.1.0"
+PROJECT_BRIEF          = "GPU-вычисления для обработки сигналов (OpenCL / ROCm / HIP)"
+PROJECT_LOGO           =
+
+#---------------------------------------------------------------------------
+# Output
+#---------------------------------------------------------------------------
+
+OUTPUT_DIRECTORY       = .
+HTML_OUTPUT            = html
+OUTPUT_LANGUAGE        = Russian
+CREATE_SUBDIRS         = NO
+ALLOW_UNICODE_NAMES    = YES
+
+#---------------------------------------------------------------------------
+# Input: все модули проекта
+#---------------------------------------------------------------------------
+
+INPUT                  = \
+    pages                                          \
+    ../../Doc/Architecture                          \
+    DrvGPU/pages                                    \
+    modules/signal_generators/pages                 \
+    modules/fft_func/pages                          \
+    modules/filters/pages                           \
+    modules/statistics/pages                        \
+    modules/heterodyne/pages                        \
+    modules/vector_algebra/pages                    \
+    modules/capon/pages                             \
+    modules/range_angle/pages                       \
+    ../../Doc/Modules/range_angle/3fft_lfm_processing_simple.md    \
+    ../../Doc/Modules/range_angle/3fft_lfm_processing_technical.md \
+    modules/fm_correlator/pages                     \
+    modules/strategies/pages                        \
+    modules/lch_farrow/pages                        \
+    ../../include/                                   \
+    ../../DrvGPU/include                             \
+    ../../DrvGPU/interface                           \
+    ../../DrvGPU/backends                            \
+    ../../DrvGPU/services                            \
+    ../../DrvGPU/memory                              \
+    ../../DrvGPU/common                              \
+    ../../DrvGPU/tests                               \
+    ../../modules/fft_func/include                   \
+    ../../modules/fft_func/tests                     \
+    ../../modules/statistics/include                 \
+    ../../modules/statistics/tests                   \
+    ../../modules/vector_algebra/include             \
+    ../../modules/vector_algebra/tests               \
+    ../../modules/filters/include                    \
+    ../../modules/filters/tests                      \
+    ../../modules/signal_generators/include          \
+    ../../modules/signal_generators/tests            \
+    ../../modules/lch_farrow/include                 \
+    ../../modules/lch_farrow/tests                   \
+    ../../modules/heterodyne/include                 \
+    ../../modules/heterodyne/tests                   \
+    ../../modules/fm_correlator/include              \
+    ../../modules/fm_correlator/tests                \
+    ../../modules/strategies/include                 \
+    ../../modules/strategies/tests                   \
+    ../../modules/capon/include                      \
+    ../../modules/capon/tests                        \
+    ../../modules/range_angle/include                \
+    ../../modules/range_angle/tests
+
+FILE_PATTERNS          = *.hpp *.h *.cpp *.hip *.md *.py
+
+RECURSIVE              = YES
+
+EXCLUDE_PATTERNS       = \
+    */kernels/bin/*     \
+    */kernels/*.cl      \
+    */.claude/*         \
+    */MemoryBank/*      \
+    */build/*           \
+    */third_party/*
+
+EXTENSION_MAPPING      = hip=C++
+
+#---------------------------------------------------------------------------
+# TAGFILES — перекрёстные ссылки между модулями
+#---------------------------------------------------------------------------
+
+TAGFILES = \
+    DrvGPU/drvgpu.tag=DrvGPU/html \
+    modules/signal_generators/signal_generators.tag=modules/signal_generators/html \
+    modules/fft_func/fft_func.tag=modules/fft_func/html \
+    modules/filters/filters.tag=modules/filters/html \
+    modules/statistics/statistics.tag=modules/statistics/html \
+    modules/heterodyne/heterodyne.tag=modules/heterodyne/html \
+    modules/vector_algebra/vector_algebra.tag=modules/vector_algebra/html \
+    modules/capon/capon.tag=modules/capon/html \
+    modules/range_angle/range_angle.tag=modules/range_angle/html \
+    modules/fm_correlator/fm_correlator.tag=modules/fm_correlator/html \
+    modules/strategies/strategies.tag=modules/strategies/html \
+    modules/lch_farrow/lch_farrow.tag=modules/lch_farrow/html
+
+#---------------------------------------------------------------------------
+# Извлечение документации
+#---------------------------------------------------------------------------
+
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_PACKAGE        = NO
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+EXTRACT_ANON_NSPACES   = NO
+
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+HIDE_FRIEND_COMPOUNDS  = YES
+
+WARN_IF_UNDOCUMENTED   = NO
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = NO
+
+#---------------------------------------------------------------------------
+# HTML
+#---------------------------------------------------------------------------
+
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_RTF           = NO
+GENERATE_XML           = NO
+GENERATE_DOCBOOK       = NO
+GENERATE_MAN           = NO
+
+HTML_FILE_EXTENSION    = .html
+HTML_COLORSTYLE        = DARK
+
+USE_MATHJAX            = YES
+MATHJAX_VERSION        = MathJax_3
+
+IMAGE_PATH             = \
+    ../Modules/fft_func/images            \
+    ../Modules/filters/images             \
+    ../Modules/heterodyne/images          \
+    ../Modules/signal_generators/images   \
+    ../Modules/statistics/images          \
+    ../Modules/strategies/images          \
+    ../Modules/vector_algebra/images      \
+    ../Modules/capon/images               \
+    ../Modules/range_angle/images         \
+    ../Modules/fm_correlator/images       \
+    ../Modules/lch_farrow/images          \
+    ../Modules/integration/images         \
+    ../../Results/Plots/fft_maxima         \
+    ../../Results/Plots/filters           \
+    ../../Results/Plots/heterodyne        \
+    ../../Results/Plots/signal_generators \
+    ../../Results/Plots/statistics         \
+    ../../Results/Plots/strategies         \
+    ../../Results/Plots/integration
+
+HTML_DYNAMIC_SECTIONS  = YES
+HTML_INDEX_NUM_ENTRIES  = 100
+GENERATE_TREEVIEW      = YES
+TREEVIEW_WIDTH         = 250
+
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+STRIP_CODE_COMMENTS    = YES
+REFERENCED_BY_RELATION = NO
+REFERENCES_RELATION    = NO
+
+ALPHABETICAL_INDEX     = YES
+
+#---------------------------------------------------------------------------
+# Препроцессор
+#---------------------------------------------------------------------------
+
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = NO
+SEARCH_INCLUDES        = YES
+INCLUDE_PATH           = ../../include/ ../../DrvGPU/include
+
+PREDEFINED             = \
+    ENABLE_ROCM=1           \
+    __HIP_PLATFORM_AMD__=1  \
+    CL_VERSION_3_0=1        \
+    DOXYGEN_SHOULD_SKIP_THIS=
+
+SKIP_FUNCTION_MACROS   = YES
+
+#---------------------------------------------------------------------------
+# Диаграммы (Graphviz)
+#---------------------------------------------------------------------------
+
+HAVE_DOT               = YES
+DOT_PATH               =
+DOT_NUM_THREADS        = 4
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES
+
+CLASS_GRAPH            = YES
+COLLABORATION_GRAPH    = YES
+GROUP_GRAPHS           = YES
+UML_LOOK               = NO
+INCLUDE_GRAPH          = YES
+INCLUDED_BY_GRAPH      = NO
+CALL_GRAPH             = NO
+CALLER_GRAPH           = NO
+GRAPHICAL_HIERARCHY    = YES
+DIRECTORY_GRAPH        = YES
+DOT_GRAPH_MAX_NODES    = 100
+MAX_DOT_GRAPH_DEPTH    = 4
+
+#---------------------------------------------------------------------------
+# Поиск и оформление
+#---------------------------------------------------------------------------
+
+SEARCHENGINE           = YES
+SERVER_BASED_SEARCH    = NO
+
+SORT_MEMBER_DOCS       = YES
+SORT_BRIEF_DOCS        = NO
+SORT_MEMBERS_CTORS_1ST = YES
+SORT_GROUP_NAMES       = YES
+
+SHOW_USED_FILES        = YES
+SHOW_FILES             = YES
+SHOW_NAMESPACES        = YES
+
+QUIET                  = YES
+WARNINGS               = YES
+WARN_FORMAT            = "$file:$line: $text"
+
+TYPEDEF_HIDES_STRUCT   = YES
+OPTIMIZE_OUTPUT_FOR_C  = NO
+MARKDOWN_SUPPORT       = YES
+AUTOLINK_SUPPORT       = YES
+BUILTIN_STL_SUPPORT    = YES
+CPP_CLI_SUPPORT        = NO
