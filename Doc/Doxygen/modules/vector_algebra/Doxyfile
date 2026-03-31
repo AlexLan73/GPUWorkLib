@@ -19,7 +19,7 @@ HTML_COLORSTYLE        = DARK
 GENERATE_TAGFILE       = vector_algebra.tag
 
 # --- TAGFILES: подключаем DrvGPU ---
-TAGFILES               = ../../DrvGPU/drvgpu.tag=../../DrvGPU/html
+TAGFILES               = ../../DrvGPU/drvgpu.tag=../../../DrvGPU/html
 
 # --- Формулы ---
 USE_MATHJAX            = YES
@@ -52,10 +52,10 @@ HAVE_DOT               = YES
 DOT_PATH               =
 DOT_NUM_THREADS        = 4
 DOT_IMAGE_FORMAT       = svg
-INTERACTIVE_SVG        = YES
+INTERACTIVE_SVG        = NO
 CLASS_GRAPH            = YES
-COLLABORATION_GRAPH    = YES
-INCLUDE_GRAPH          = YES
+COLLABORATION_GRAPH    = NO
+INCLUDE_GRAPH          = NO
 GRAPHICAL_HIERARCHY    = YES
 
 GENERATE_TREEVIEW      = YES

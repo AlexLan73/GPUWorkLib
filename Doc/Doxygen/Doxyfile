@@ -92,18 +92,18 @@ EXTENSION_MAPPING      = hip=C++
 #---------------------------------------------------------------------------
 
 TAGFILES = \
-    DrvGPU/drvgpu.tag=DrvGPU/html \
-    modules/signal_generators/signal_generators.tag=modules/signal_generators/html \
-    modules/fft_func/fft_func.tag=modules/fft_func/html \
-    modules/filters/filters.tag=modules/filters/html \
-    modules/statistics/statistics.tag=modules/statistics/html \
-    modules/heterodyne/heterodyne.tag=modules/heterodyne/html \
-    modules/vector_algebra/vector_algebra.tag=modules/vector_algebra/html \
-    modules/capon/capon.tag=modules/capon/html \
-    modules/range_angle/range_angle.tag=modules/range_angle/html \
-    modules/fm_correlator/fm_correlator.tag=modules/fm_correlator/html \
-    modules/strategies/strategies.tag=modules/strategies/html \
-    modules/lch_farrow/lch_farrow.tag=modules/lch_farrow/html
+    DrvGPU/drvgpu.tag=../DrvGPU/html \
+    modules/signal_generators/signal_generators.tag=../modules/signal_generators/html \
+    modules/fft_func/fft_func.tag=../modules/fft_func/html \
+    modules/filters/filters.tag=../modules/filters/html \
+    modules/statistics/statistics.tag=../modules/statistics/html \
+    modules/heterodyne/heterodyne.tag=../modules/heterodyne/html \
+    modules/vector_algebra/vector_algebra.tag=../modules/vector_algebra/html \
+    modules/capon/capon.tag=../modules/capon/html \
+    modules/range_angle/range_angle.tag=../modules/range_angle/html \
+    modules/fm_correlator/fm_correlator.tag=../modules/fm_correlator/html \
+    modules/strategies/strategies.tag=../modules/strategies/html \
+    modules/lch_farrow/lch_farrow.tag=../modules/lch_farrow/html
 
 #---------------------------------------------------------------------------
 # Извлечение документации
@@ -163,7 +163,7 @@ IMAGE_PATH             = \
     ../../Results/Plots/integration
 
 HTML_DYNAMIC_SECTIONS  = YES
-HTML_INDEX_NUM_ENTRIES  = 100
+HTML_INDEX_NUM_ENTRIES  = 0
 GENERATE_TREEVIEW      = YES
 TREEVIEW_WIDTH         = 250
 
@@ -201,20 +201,20 @@ HAVE_DOT               = YES
 DOT_PATH               =
 DOT_NUM_THREADS        = 4
 DOT_IMAGE_FORMAT       = svg
-INTERACTIVE_SVG        = YES
+INTERACTIVE_SVG        = NO
 
 CLASS_GRAPH            = YES
-COLLABORATION_GRAPH    = YES
+COLLABORATION_GRAPH    = NO
 GROUP_GRAPHS           = YES
 UML_LOOK               = NO
-INCLUDE_GRAPH          = YES
+INCLUDE_GRAPH          = NO
 INCLUDED_BY_GRAPH      = NO
 CALL_GRAPH             = NO
 CALLER_GRAPH           = NO
 GRAPHICAL_HIERARCHY    = YES
-DIRECTORY_GRAPH        = YES
-DOT_GRAPH_MAX_NODES    = 100
-MAX_DOT_GRAPH_DEPTH    = 4
+DIRECTORY_GRAPH        = NO
+DOT_GRAPH_MAX_NODES    = 50
+MAX_DOT_GRAPH_DEPTH    = 3
 
 #---------------------------------------------------------------------------
 # Поиск и оформление

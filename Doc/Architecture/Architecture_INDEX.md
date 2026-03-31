@@ -53,9 +53,9 @@
 
 | Документ | Описание |
 |----------|----------|
-| [DrvGPU_Design_C4.md](DrvGPU_Design_C4.md) | C4 только для DrvGPU (ранняя версия) |
-| [GPUWorkLib_Design_C4_Full.md](GPUWorkLib_Design_C4_Full.md) | Предыдущая полная C4 (до Statistics/VectorAlgebra) |
-| [Disane C4.md](Disane%20C4.md) | Справочный пример C4-модели |
+| DrvGPU_Design_C4.md | C4 только для DrvGPU (ранняя версия, удалён) |
+| GPUWorkLib_Design_C4_Full.md | Предыдущая полная C4 (до Statistics/VectorAlgebra, удалён) |
+| Disane C4.md | Справочный пример C4-модели (удалён) |
 
 ---
 

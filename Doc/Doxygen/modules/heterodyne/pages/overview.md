@@ -16,7 +16,7 @@
 |-------|----------|-----------|
 | @ref drv_gpu_lib::HeterodyneDechirp | Facade: SetParams, Dechirp, Correct, Process | `heterodyne_dechirp.hpp` |
 | @ref drv_gpu_lib::IHeterodyneProcessor | Strategy interface -- абстракция backend'а | `i_heterodyne_processor.hpp` |
-| @ref drv_gpu_lib::HeterodyneProcessorOpenCL | OpenCL backend: cl kernels dechirp_multiply, dechirp_correct | `heterodyne_processor_opencl.hpp` |
+| HeterodyneProcessorOpenCL | OpenCL backend: cl kernels dechirp_multiply, dechirp_correct (planned) | `heterodyne_processor_opencl.hpp` |
 | @ref drv_gpu_lib::HeterodyneProcessorROCm | ROCm backend: HIP kernels, hipEvent timing | `heterodyne_processor_rocm.hpp` |
 
 @section het_overview_arch Архитектура
