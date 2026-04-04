@@ -1,0 +1,56 @@
+---
+description: pytest ЗАПРЕЩЁН навсегда — использовать только TestRunner
+alwaysApply: true
+---
+
+# 🚫 АБСОЛЮТНЫЙ ЗАПРЕТ — pytest
+
+**pytest ЗАПРЕЩЁН** в любом виде. Нарушение = потеря 3 дней работы.
+
+## Запрещено писать где-либо
+
+```python
+# ❌ ЗАПРЕЩЕНО
+import pytest
+pytest.skip(...)
+@pytest.fixture
+@pytest.mark.parametrize
+# В консоли: pytest Python_test/... -v
+```
+
+## Правильная замена
+
+```python
+# ✅ ПРАВИЛЬНО — инфраструктура тестов
+from common.runner import TestRunner, SkipTest
+
+class TestMyModule:
+    def test_basic(self):
+        result = my_func(42)
+        assert result == expected
+
+    def test_skip_example(self):
+        raise SkipTest("GPU не доступен")
+
+if __name__ == "__main__":
+    runner = TestRunner()
+    results = runner.run(TestMyModule())
+    runner.print_summary(results)
+```
+
+## Запуск тестов
+
+```bash
+# ✅ ПРАВИЛЬНО
+python Python_test/module/test_xxx.py
+
+# ❌ ЗАПРЕЩЕНО
+pytest Python_test/module/test_xxx.py
+```
+
+## Тест-классы
+
+- Обычные Python классы (без наследования от unittest.TestCase)
+- Методы называются `test_*`
+- Без декораторов `@pytest.*`
+- Запуск только через `TestRunner` в блоке `if __name__ == "__main__"`

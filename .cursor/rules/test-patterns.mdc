@@ -1,0 +1,79 @@
+---
+description: Паттерны C++ и Python тестов GPUWorkLib
+alwaysApply: true
+---
+
+# Паттерны тестов GPUWorkLib
+
+## C++ тесты
+
+### Структура файлов
+```
+modules/{module}/tests/
+├── all_test.hpp          # 🗂️ Точка входа — все тесты модуля
+├── README.md             # 📖 Описание тестов (обязательно!)
+├── test_xxx.hpp          # Unit/integration тесты
+└── xxx_benchmark.hpp     # Benchmark тесты (GpuBenchmarkBase)
+```
+
+### Вызов из main
+```cpp
+// src/main.cpp не вызывает тесты напрямую!
+#include "modules/fft_func/tests/all_test.hpp"
+#include "modules/filters/tests/all_test.hpp"
+// ...
+```
+
+### Benchmark тесты
+```cpp
+// Наследоваться от GpuBenchmarkBase
+class MyBenchmark : public GpuBenchmarkBase {
+    void Run() override { /* ... */ }
+};
+```
+
+## Python тесты
+
+### Структура файлов
+```
+Python_test/{module}/
+├── conftest.py           # Shared fixtures (без pytest!)
+├── test_xxx.py           # Тесты модуля
+└── test_xxx_rocm.py      # ROCm-специфичные тесты
+```
+
+### Паттерн теста
+```python
+from common.runner import TestRunner, SkipTest
+from common.test_base import TestBase
+
+class TestMyModule(TestBase):
+    def test_basic(self):
+        result = self.gpu.process(data)
+        self.assert_close(result, expected, rtol=1e-4)
+
+    def test_gpu_not_available(self):
+        if not self.gpu_available:
+            raise SkipTest("GPU не доступен")
+
+if __name__ == "__main__":
+    runner = TestRunner()
+    results = runner.run(TestMyModule())
+    runner.print_summary(results)
+```
+
+### Где хранить результаты
+```
+Results/Plots/{module}/     # Графики (fft_maxima, filters, signal_generators...)
+Results/JSON/               # JSON результаты тестов
+Results/Profiler/           # Данные профилирования (в .gitignore)
+```
+
+## Две ветки — параллельная жизнь
+
+| Ветка | Платформа | FFT |
+|-------|-----------|-----|
+| `main` | Linux, AMD GPU | ROCm/hipFFT |
+| `nvidia` | Windows, NVIDIA | OpenCL/clFFT |
+
+Ветки **не объединяются** — параллельное развитие.

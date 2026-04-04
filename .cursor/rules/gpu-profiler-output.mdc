@@ -12,16 +12,26 @@ alwaysApply: true
 - `profiler.ExportMarkdown(path)` — экспорт в .md
 - `profiler.ExportJSON(path)` — экспорт в .json
 
-## Запрещено
+## Обязательно перед Start()
 
-- `profiler.GetStats()` + цикл + `con.Print()` или `std::cout`
-- Вручную выводить GPU name, driver, статистику событий
-
-## Пример
+**Всегда вызывать `SetGPUInfo()` перед `profiler.Start()`** — иначе в отчёте будет «Unknown» и «нет информации о драйверах».
 
 ```cpp
+profiler.SetGPUInfo(gpu_name, driver_version, platform_name);
+profiler.Start("MyKernel");
+// ... kernel execution ...
 profiler.Stop();
 profiler.PrintReport();
 profiler.ExportMarkdown("Results/Profiler/report.md");
 profiler.ExportJSON("Results/Profiler/report.json");
 ```
+
+## Запрещено
+
+- `profiler.GetStats()` + цикл + `con.Print()` или `std::cout`
+- Вручную выводить GPU name, driver, статистику событий
+- Запускать `profiler.Start()` без предварительного `SetGPUInfo()`
+
+## Папка результатов
+
+Все отчёты сохранять в `Results/Profiler/` — эта папка в `.gitignore` (артефакты).

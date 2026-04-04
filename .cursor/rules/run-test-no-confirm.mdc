@@ -5,6 +5,23 @@ alwaysApply: true
 
 # run_test: без подтверждения
 
-При запуске тестов (`./run_test`, `run_agent_tests.sh`):
+При запуске тестов:
 - **Не спрашивать** подтверждение перед выполнением — запускать сразу
 - **Спрашивать** только при ошибке, проблеме или неясности в задаче
+
+## C++ тесты
+
+```bash
+./run_test         # основной бинарник
+./run_test --module fft_func
+```
+
+## Python тесты — ТОЛЬКО прямой вызов Python
+
+```bash
+python Python_test/module/test_xxx.py
+python Python_test/statistics/test_statistics_rocm.py
+python Python_test/fft_func/test_spectrum_find_all_maxima_rocm.py
+```
+
+**НЕ использовать pytest** — см. правило `no-pytest.mdc`.
