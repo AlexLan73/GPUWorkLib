@@ -51,15 +51,17 @@
 | fft_func | 42 | 5 | 2 | 2 | `fft_processor`, `antenna_fft` | ROCm (hipFFT) |
 | filters | 21 | 5 | 0 | 5 | `filters` | OpenCL + ROCm |
 | statistics | 15 | 1 | 1 | 0 | `statistics` | ROCm only |
-| heterodyne | 11 | 2 | 0 | 1 | `drv_gpu_lib` | OpenCL + ROCm |
+| heterodyne | 11 | 2 | 0 | 1 | `drv_gpu_lib` * | OpenCL + ROCm |
 | vector_algebra | 13 | 4 | 0 | 0 | `vector_algebra` | ROCm (rocSOLVER) |
 | capon | 16 | 1 | 0 | 1 | `capon` | ROCm only |
 | range_angle | 12 | 1 | 3 | 0 | `range_angle` | ROCm only |
-| fm_correlator | 11 | 2 | 0 | 1 | `drv_gpu_lib` | ROCm only |
+| fm_correlator | 11 | 2 | 0 | 1 | `drv_gpu_lib` * | ROCm only |
 | strategies | 38 | 2 | 0 | 1 | `strategies` | ROCm only |
 | lch_farrow | 7 | 1 | 0 | 2 | `lch_farrow` | OpenCL + ROCm |
 | test_utils | 12 | 0 | 0 | 0 | — | Support |
 | **ИТОГО** | **243** | **34** | **7** | **19** | — | — |
+
+> \* `drv_gpu_lib` — legacy namespace. Тесты уже используют `heterodyne::tests` / `fm_correlator::tests`. Миграция production-кода на модульные namespaces — в планах.
 
 ---
 
@@ -139,28 +141,40 @@ class IBackend {
 ## 5. Граф зависимостей между модулями
 
 ```
-                        ┌──────────┐
-                        │  DrvGPU  │ ← все модули зависят
-                        └─────┬────┘
-              ┌───────────────┼───────────────────────┐
-              │               │                       │
-        ┌─────┴──────┐ ┌─────┴──────┐ ┌──────────────┴──────────┐
-        │ fft_func   │ │ statistics │ │  vector_algebra         │
-        │ (hipFFT)   │ │ (Welford)  │ │  (rocBLAS + rocSOLVER)  │
-        └─────┬──────┘ └─────┬──────┘ └──────────┬──────────────┘
-              │               │                   │
-              ▼               ▼                   ▼
-        ┌─────────────────────────┐         ┌─────────┐
-        │      strategies         │         │  capon   │
-        │ (fft + statistics +     │         │ (MVDR)   │
-        │  CGEMM pipeline)        │         └─────────┘
+                           ┌──────────┐
+                           │  DrvGPU  │ ← все модули зависят
+                           └─────┬────┘
+              ┌──────────────────┼──────────────────────────┐
+              │                  │                          │
+        ┌─────┴──────┐    ┌─────┴──────┐    ┌──────────────┴──────────┐
+        │ fft_func   │    │ statistics │    │  vector_algebra         │
+        │ (hipFFT)   │    │ (Welford)  │    │  (rocBLAS + rocSOLVER)  │
+        └─────┬──────┘    └─────┬──────┘    └──────────┬──────────────┘
+              │                 │                       │
+              ├─────────────────┤                       │
+              ▼                 ▼                       ▼
+        ┌─────────────────────────┐              ┌─────────┐
+        │      strategies         │              │  capon   │
+        │ (fft + statistics +     │              │ (MVDR)   │
+        │  CGEMM pipeline)        │              └─────────┘
         └─────────────────────────┘
 
   ┌──────────────┐    ┌─────────────┐
   │ lch_farrow   │◄───│ signal_gen  │ (DelayedFormSignal uses LchFarrow)
-  └──────────────┘    └─────────────┘
+  └──────────────┘    └──────┬──────┘
+                             │
+                  ┌──────────┘
+                  │  signal_gen + fft_func
+                  ▼
+            ┌─────────────┐
+            │  heterodyne  │ (LFM Dechirp pipeline)
+            └─────────────┘
 
-  Независимые: filters, heterodyne, fm_correlator, range_angle
+  Используют hipFFT напрямую (без fft_func target):
+    range_angle   — hipFFT (Range FFT + Beam FFT)
+    fm_correlator — hipFFT (R2C/C2R correlation)
+
+  Независимые: filters, lch_farrow
   (зависят только от DrvGPU)
 ```
 
@@ -201,27 +215,32 @@ class IBackend {
 
 ---
 
-## 7. Python Bindings (19 классов через pybind11)
+## 7. Python Bindings (pybind11)
+
+### 7.1 Реализовано (9 классов в gpu_worklib_bindings.cpp)
 
 | Категория | Класс | Модуль Python |
 |-----------|-------|---------------|
-| **Генераторы** | FormSignalGeneratorROCm | `gw.FormSignalGeneratorROCm` |
-| | DelayedFormSignalGeneratorROCm | `gw.DelayedFormSignalGeneratorROCm` |
-| | LfmAnalyticalDelayROCm | `gw.LfmAnalyticalDelayROCm` |
-| **FFT** | FFTProcessorROCm | `gw.FFTProcessorROCm` |
-| | ComplexToMagROCm | `gw.ComplexToMagROCm` |
-| | SpectrumMaximaFinderROCm | `gw.SpectrumMaximaFinderROCm` |
-| **Фильтры** | FirFilterROCm, IirFilterROCm | `gw.FirFilterROCm` |
-| | MovingAverageFilterROCm | `gw.MovingAverageFilterROCm` |
-| | KalmanFilterROCm | `gw.KalmanFilterROCm` |
-| | KaufmanFilterROCm | `gw.KaufmanFilterROCm` |
-| **Обработка** | HeterodyneROCm | `gw.HeterodyneROCm` |
-| | LchFarrowROCm | `gw.LchFarrowROCm` |
-| | FMCorrelatorROCm | `gw.FMCorrelatorROCm` |
-| **Алгебра** | StatisticsProcessor | `gw.StatisticsProcessor` |
-| | CholeskyInverterROCm | `gw.CholeskyInverterROCm` |
-| **Pipeline** | AntennaProcessorTest | `gw.AntennaProcessorTest` |
-| | RangeAngleProcessor | `gw.RangeAngleProcessor` |
+| **Контекст** | GPUContext | `gw.GPUContext` |
+| | ROCmGPUContext | `gw.ROCmGPUContext` |
+| | HybridGPUContext | `gw.HybridGPUContext` |
+| **Буферы** | GPUBuffer (PyGPUBuffer) | `gw.GPUBuffer` |
+| **Генераторы** | SignalGenerator (PySignalGenerator) | `gw.SignalGenerator` |
+| | ScriptGenerator (PyScriptGenerator) | `gw.ScriptGenerator` |
+| | FormSignalGenerator (PyFormSignalGenerator) | `gw.FormSignalGenerator` |
+| | FormScriptGenerator (PyFormScriptGenerator) | `gw.FormScriptGenerator` |
+| | DelayedFormSignalGenerator | `gw.DelayedFormSignalGenerator` |
+
+### 7.2 Планируется (ещё не в gpu_worklib_bindings.cpp)
+
+| Категория | Класс | Статус |
+|-----------|-------|--------|
+| **FFT** | FFTProcessorROCm, ComplexToMagROCm, SpectrumMaximaFinderROCm | ⚪ Planned |
+| **Фильтры** | FirFilterROCm, IirFilterROCm, MovingAverageFilterROCm | ⚪ Planned |
+| | KalmanFilterROCm, KaufmanFilterROCm | ⚪ Planned |
+| **Обработка** | HeterodyneROCm, LchFarrowROCm, FMCorrelatorROCm | ⚪ Planned |
+| **Алгебра** | StatisticsProcessor, CholeskyInverterROCm | ⚪ Planned |
+| **Pipeline** | AntennaProcessorTest, RangeAngleProcessor | ⚪ Planned |
 
 ---
 
@@ -290,4 +309,4 @@ class IBackend {
 
 ---
 
-*Сгенерировано: 2026-04-05 | GPUWorkLib v1.1.0 | 880 файлов, 110,177 LOC*
+*Сгенерировано: 2026-04-05 | Обновлено: 2026-04-05 (code review) | GPUWorkLib v1.1.0 | 880 файлов, 110,177 LOC*

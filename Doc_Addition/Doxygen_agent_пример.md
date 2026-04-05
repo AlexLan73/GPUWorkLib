@@ -77,20 +77,28 @@ Doc/Doxygen/
 | signal_generators | signal_generators/ | signal_generators/images/ |
 | statistics | statistics/ | statistics/images/ |
 | strategies | strategies/ | strategies/images/ |
-| остальные | совпадают по имени | {module}/images/ |
+| lch_farrow | lch_farrow/ | lch_farrow/images/ |
+| capon | — (нет графиков) | capon/images/ |
+| vector_algebra | — (нет графиков) | vector_algebra/images/ |
+| range_angle | — (нет графиков) | range_angle/images/ |
+| fm_correlator | — (нет графиков) | fm_correlator/images/ |
 
 ## Сборка
 
 ```bash
-# Windows
-cd Doc/Doxygen
-.\build_docs.bat
-
 # Linux
 cd Doc/Doxygen
 ./copy_images.sh    # сначала скопировать графики
 ./build_docs.sh     # потом собрать
+
+# Windows (copy_images.bat нет — графики копировать вручную или через WSL)
+cd Doc\Doxygen
+.\build_docs.bat
 ```
+
+> **Windows**: `build_docs.bat` НЕ копирует графики автоматически.
+> Для графиков на Windows — запустить `copy_images.sh` через WSL/Git Bash,
+> или скопировать `Results/Plots/*` → `Doc/Modules/{module}/images/` вручную.
 
 Порядок сборки: **clean → DrvGPU (.tag) → 11 модулей (.tag) → главный (TAGFILES)**
 
@@ -114,6 +122,10 @@ cd Doc/Doxygen
 - `@image html` — только имя файла (Doxygen ищет по IMAGE_PATH)
 - Graphviz: `build_docs.bat` добавляет в PATH автоматически
 
+## Дополнительно
+
+- `Doc/Doxygen/CREATE_DOXYGEN_PROMPT.md` — промпт для создания Doxygen-конфигурации нового модуля с нуля (используется агентом как шаблон)
+
 ---
 
-*Создано: 2026-03-29*
+*Создано: 2026-03-29 | Обновлено: 2026-04-05 (code review)*
