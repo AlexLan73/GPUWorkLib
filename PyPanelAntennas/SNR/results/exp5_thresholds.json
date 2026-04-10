@@ -1,0 +1,85 @@
+{
+  "low_to_mid_db": 15.0,
+  "mid_to_high_db": 30.0,
+  "hysteresis_db": 2.0,
+  "p_correct": 0.9787254901960785,
+  "default_combo": {
+    "window": "hann",
+    "estimator": "mean"
+  },
+  "all_combinations": {
+    "rect + mean": {
+      "window": "rect",
+      "estimator": "mean",
+      "low_to_mid_db": 16.0,
+      "mid_to_high_db": 28.0,
+      "p_correct": 0.976764705882353
+    },
+    "rect + median": {
+      "window": "rect",
+      "estimator": "median",
+      "low_to_mid_db": 17.0,
+      "mid_to_high_db": 30.0,
+      "p_correct": 0.9700980392156863
+    },
+    "hann + mean": {
+      "window": "hann",
+      "estimator": "mean",
+      "low_to_mid_db": 15.0,
+      "mid_to_high_db": 30.0,
+      "p_correct": 0.9787254901960785
+    },
+    "hann + median": {
+      "window": "hann",
+      "estimator": "median",
+      "low_to_mid_db": 16.0,
+      "mid_to_high_db": 31.0,
+      "p_correct": 0.9722549019607843
+    },
+    "hamming + mean": {
+      "window": "hamming",
+      "estimator": "mean",
+      "low_to_mid_db": 15.0,
+      "mid_to_high_db": 30.0,
+      "p_correct": 0.9788235294117648
+    },
+    "hamming + median": {
+      "window": "hamming",
+      "estimator": "median",
+      "low_to_mid_db": 17.0,
+      "mid_to_high_db": 32.0,
+      "p_correct": 0.9718627450980392
+    },
+    "blackman + mean": {
+      "window": "blackman",
+      "estimator": "mean",
+      "low_to_mid_db": 14.0,
+      "mid_to_high_db": 29.0,
+      "p_correct": 0.9739215686274509
+    },
+    "blackman + median": {
+      "window": "blackman",
+      "estimator": "median",
+      "low_to_mid_db": 16.0,
+      "mid_to_high_db": 31.0,
+      "p_correct": 0.9706862745098039
+    }
+  },
+  "calibration_parameters": {
+    "n_samples": 5000,
+    "n_antennas": 5,
+    "target_n_fft": 2048,
+    "n_trials_per_snr": 200,
+    "snr_in_range_db": [
+      -30.0,
+      20.0
+    ],
+    "guard_bins": 5,
+    "ref_bins": 16
+  },
+  "true_branch_definition": {
+    "Low": "SNR_in < -15 dB",
+    "Mid": "-15 <= SNR_in < 0 dB",
+    "High": "SNR_in >= 0 dB"
+  }
+}

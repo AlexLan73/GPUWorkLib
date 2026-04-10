@@ -1,0 +1,303 @@
+{
+  "n_samples": 5000,
+  "snr_in_db": 10.0,
+  "n_ants_list": [
+    2,
+    5,
+    10,
+    20,
+    50,
+    100
+  ],
+  "n_trials": 20,
+  "combinations": {
+    "rect + mean": {
+      "window": "rect",
+      "estimator": "mean",
+      "variance_by_n_ants": [
+        {
+          "n_ants": 2,
+          "median_mean_db": 30.084032249450683,
+          "median_std_db": 0.16599375342947886
+        },
+        {
+          "n_ants": 5,
+          "median_mean_db": 31.0307954788208,
+          "median_std_db": 0.18788458315744552
+        },
+        {
+          "n_ants": 10,
+          "median_mean_db": 31.115791702270506,
+          "median_std_db": 0.09265657208679867
+        },
+        {
+          "n_ants": 20,
+          "median_mean_db": 30.83706340789795,
+          "median_std_db": 0.08953646712324255
+        },
+        {
+          "n_ants": 50,
+          "median_mean_db": 30.847205448150635,
+          "median_std_db": 0.08828045301273078
+        },
+        {
+          "n_ants": 100,
+          "median_mean_db": 30.871787548065186,
+          "median_std_db": 0.07066038280134465
+        }
+      ]
+    },
+    "rect + median": {
+      "window": "rect",
+      "estimator": "median",
+      "variance_by_n_ants": [
+        {
+          "n_ants": 2,
+          "median_mean_db": 32.63494157791138,
+          "median_std_db": 0.5360017849842392
+        },
+        {
+          "n_ants": 5,
+          "median_mean_db": 33.100934219360354,
+          "median_std_db": 0.380083772480332
+        },
+        {
+          "n_ants": 10,
+          "median_mean_db": 33.27170104980469,
+          "median_std_db": 0.29800907756122996
+        },
+        {
+          "n_ants": 20,
+          "median_mean_db": 33.174821853637695,
+          "median_std_db": 0.1792179965079328
+        },
+        {
+          "n_ants": 50,
+          "median_mean_db": 33.20777778625488,
+          "median_std_db": 0.12719686942567368
+        },
+        {
+          "n_ants": 100,
+          "median_mean_db": 33.245106315612794,
+          "median_std_db": 0.12905999389857634
+        }
+      ]
+    },
+    "hann + mean": {
+      "window": "hann",
+      "estimator": "mean",
+      "variance_by_n_ants": [
+        {
+          "n_ants": 2,
+          "median_mean_db": 39.991690444946286,
+          "median_std_db": 0.9476588134004967
+        },
+        {
+          "n_ants": 5,
+          "median_mean_db": 40.14739151000977,
+          "median_std_db": 0.6310430615184731
+        },
+        {
+          "n_ants": 10,
+          "median_mean_db": 40.31329708099365,
+          "median_std_db": 0.41013364779880895
+        },
+        {
+          "n_ants": 20,
+          "median_mean_db": 40.29143524169922,
+          "median_std_db": 0.3175712121459516
+        },
+        {
+          "n_ants": 50,
+          "median_mean_db": 40.2283935546875,
+          "median_std_db": 0.23870947971619272
+        },
+        {
+          "n_ants": 100,
+          "median_mean_db": 40.249192810058595,
+          "median_std_db": 0.16540980341820816
+        }
+      ]
+    },
+    "hann + median": {
+      "window": "hann",
+      "estimator": "median",
+      "variance_by_n_ants": [
+        {
+          "n_ants": 2,
+          "median_mean_db": 41.486808395385744,
+          "median_std_db": 1.1287346734925836
+        },
+        {
+          "n_ants": 5,
+          "median_mean_db": 41.711293411254886,
+          "median_std_db": 0.994715996504975
+        },
+        {
+          "n_ants": 10,
+          "median_mean_db": 41.683323287963866,
+          "median_std_db": 0.4621332636796436
+        },
+        {
+          "n_ants": 20,
+          "median_mean_db": 41.64341220855713,
+          "median_std_db": 0.4090944942036891
+        },
+        {
+          "n_ants": 50,
+          "median_mean_db": 41.66394462585449,
+          "median_std_db": 0.20778940993340622
+        },
+        {
+          "n_ants": 100,
+          "median_mean_db": 41.770225524902344,
+          "median_std_db": 0.2133541859978313
+        }
+      ]
+    },
+    "hamming + mean": {
+      "window": "hamming",
+      "estimator": "mean",
+      "variance_by_n_ants": [
+        {
+          "n_ants": 2,
+          "median_mean_db": 39.71975879669189,
+          "median_std_db": 0.8128696945556556
+        },
+        {
+          "n_ants": 5,
+          "median_mean_db": 39.954225730896,
+          "median_std_db": 0.5456984709353511
+        },
+        {
+          "n_ants": 10,
+          "median_mean_db": 40.10033473968506,
+          "median_std_db": 0.3332752275139934
+        },
+        {
+          "n_ants": 20,
+          "median_mean_db": 40.107806015014646,
+          "median_std_db": 0.2711691625984792
+        },
+        {
+          "n_ants": 50,
+          "median_mean_db": 40.03562698364258,
+          "median_std_db": 0.2030922429816107
+        },
+        {
+          "n_ants": 100,
+          "median_mean_db": 40.06305294036865,
+          "median_std_db": 0.1353390785349488
+        }
+      ]
+    },
+    "hamming + median": {
+      "window": "hamming",
+      "estimator": "median",
+      "variance_by_n_ants": [
+        {
+          "n_ants": 2,
+          "median_mean_db": 41.02559280395508,
+          "median_std_db": 0.962308800418417
+        },
+        {
+          "n_ants": 5,
+          "median_mean_db": 41.35183277130127,
+          "median_std_db": 0.7181847050719663
+        },
+        {
+          "n_ants": 10,
+          "median_mean_db": 41.46202068328857,
+          "median_std_db": 0.4461123813307932
+        },
+        {
+          "n_ants": 20,
+          "median_mean_db": 41.480108451843265,
+          "median_std_db": 0.2642154920818606
+        },
+        {
+          "n_ants": 50,
+          "median_mean_db": 41.51267795562744,
+          "median_std_db": 0.20181899083235674
+        },
+        {
+          "n_ants": 100,
+          "median_mean_db": 41.56824264526367,
+          "median_std_db": 0.17843079213307161
+        }
+      ]
+    },
+    "blackman + mean": {
+      "window": "blackman",
+      "estimator": "mean",
+      "variance_by_n_ants": [
+        {
+          "n_ants": 2,
+          "median_mean_db": 39.52392463684082,
+          "median_std_db": 1.0624800839506068
+        },
+        {
+          "n_ants": 5,
+          "median_mean_db": 39.66151123046875,
+          "median_std_db": 0.7377119169261895
+        },
+        {
+          "n_ants": 10,
+          "median_mean_db": 39.77663440704346,
+          "median_std_db": 0.45857381213954973
+        },
+        {
+          "n_ants": 20,
+          "median_mean_db": 39.743479347229005,
+          "median_std_db": 0.34952477097770274
+        },
+        {
+          "n_ants": 50,
+          "median_mean_db": 39.73354549407959,
+          "median_std_db": 0.284328369123401
+        },
+        {
+          "n_ants": 100,
+          "median_mean_db": 39.76424427032471,
+          "median_std_db": 0.16188185644998285
+        }
+      ]
+    },
+    "blackman + median": {
+      "window": "blackman",
+      "estimator": "median",
+      "variance_by_n_ants": [
+        {
+          "n_ants": 2,
+          "median_mean_db": 40.97017364501953,
+          "median_std_db": 1.2629241967127778
+        },
+        {
+          "n_ants": 5,
+          "median_mean_db": 41.192096900939944,
+          "median_std_db": 0.9540542078668435
+        },
+        {
+          "n_ants": 10,
+          "median_mean_db": 41.11526527404785,
+          "median_std_db": 0.533755354582845
+        },
+        {
+          "n_ants": 20,
+          "median_mean_db": 41.12363815307617,
+          "median_std_db": 0.4837015030270342
+        },
+        {
+          "n_ants": 50,
+          "median_mean_db": 41.106877136230466,
+          "median_std_db": 0.2693918116672496
+        },
+        {
+          "n_ants": 100,
+          "median_mean_db": 41.324002265930176,
+          "median_std_db": 0.23964375967160703
+        }
+      ]
+    }
+  }
+}

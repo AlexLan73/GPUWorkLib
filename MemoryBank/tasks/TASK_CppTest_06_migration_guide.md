@@ -1,6 +1,6 @@
 # TASK_CppTest_06 — Инструкция миграции тестов на test_utils
 
-> **Статус**: statistics ✅ DONE (эталон) | остальные модули ⬜ TODO
+> **Статус**: statistics ✅ | signal_generators ✅ | filters ✅ | fft_func ✅ | heterodyne ✅ | lch_farrow ⬜ | vector_algebra ⬜ | fm_correlator ⬜ | capon ⬜ | range_angle ⬜ | strategies ⬜
 > **Эталон**: `modules/statistics/tests/test_statistics_rocm.hpp` — полностью мигрирован
 > **Дата**: 2026-03-21
 

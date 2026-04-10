@@ -15,6 +15,8 @@
 
 #include "statistics_processor.hpp"
 #include "kernels/statistics_kernels_rocm.hpp"
+#include "kernels/gather_decimated_kernel.hpp"  // SNR_03
+#include "kernels/peak_cfar_kernel.hpp"         // SNR_05
 #include "rocm_profiling_helpers.hpp"
 
 #include "services/console_output.hpp"
@@ -22,10 +24,11 @@
 #include <stdexcept>
 #include <cstring>
 #include <complex>
+#include <string>
 
 using fft_func_utils::MakeROCmDataFromEvents;
 
-// All kernel names used by statistics module
+// All kernel names used by statistics module (+ SNR-estimator kernels SNR_03/SNR_05)
 static const std::vector<std::string> kKernelNames = {
   "compute_magnitudes",
   "mean_reduce_phase1",
@@ -36,7 +39,9 @@ static const std::vector<std::string> kKernelNames = {
   "welford_float",
   "histogram_median_pass",
   "histogram_median_pass_complex",
-  "find_median_bucket"
+  "find_median_bucket",
+  "gather_decimated",   // SNR_03
+  "peak_cfar"           // SNR_05
 };
 
 static constexpr unsigned int kBlockSize = 256;
@@ -48,7 +53,7 @@ namespace statistics {
 // =========================================================================
 
 StatisticsProcessor::StatisticsProcessor(drv_gpu_lib::IBackend* backend)
-    : ctx_(backend, "Statistics", "modules/statistics/kernels") {
+    : backend_(backend), ctx_(backend, "Statistics", "modules/statistics/kernels") {
 }
 
 StatisticsProcessor::~StatisticsProcessor() {
@@ -59,17 +64,26 @@ StatisticsProcessor::~StatisticsProcessor() {
   median_sort_op_.Release();
   median_hist_op_.Release();
   median_hist_complex_op_.Release();
+  if (snr_op_initialized_) {
+    snr_estimator_op_.Release();
+    snr_op_initialized_ = false;
+  }
 }
 
 StatisticsProcessor::StatisticsProcessor(StatisticsProcessor&& other) noexcept
-    : ctx_(std::move(other.ctx_))
+    : backend_(other.backend_)
+    , ctx_(std::move(other.ctx_))
     , mean_op_(std::move(other.mean_op_))
     , welford_fused_op_(std::move(other.welford_fused_op_))
     , welford_float_op_(std::move(other.welford_float_op_))
     , median_sort_op_(std::move(other.median_sort_op_))
     , median_hist_op_(std::move(other.median_hist_op_))
     , median_hist_complex_op_(std::move(other.median_hist_complex_op_))
+    , snr_estimator_op_(std::move(other.snr_estimator_op_))
+    , snr_op_initialized_(other.snr_op_initialized_)
     , compiled_(other.compiled_) {
+  other.backend_ = nullptr;
+  other.snr_op_initialized_ = false;
   other.compiled_ = false;
 }
 
@@ -81,7 +95,12 @@ StatisticsProcessor& StatisticsProcessor::operator=(StatisticsProcessor&& other)
     median_sort_op_.Release();
     median_hist_op_.Release();
     median_hist_complex_op_.Release();
+    if (snr_op_initialized_) {
+      snr_estimator_op_.Release();
+      snr_op_initialized_ = false;
+    }
 
+    backend_ = other.backend_;
     ctx_ = std::move(other.ctx_);
     mean_op_ = std::move(other.mean_op_);
     welford_fused_op_ = std::move(other.welford_fused_op_);
@@ -89,7 +108,12 @@ StatisticsProcessor& StatisticsProcessor::operator=(StatisticsProcessor&& other)
     median_sort_op_ = std::move(other.median_sort_op_);
     median_hist_op_ = std::move(other.median_hist_op_);
     median_hist_complex_op_ = std::move(other.median_hist_complex_op_);
+    snr_estimator_op_ = std::move(other.snr_estimator_op_);
+    snr_op_initialized_ = other.snr_op_initialized_;
     compiled_ = other.compiled_;
+
+    other.backend_ = nullptr;
+    other.snr_op_initialized_ = false;
     other.compiled_ = false;
   }
   return *this;
@@ -107,7 +131,16 @@ void StatisticsProcessor::EnsureCompiled() {
     "-DBLOCK_SIZE=" + std::to_string(kBlockSize)
   };
 
-  ctx_.CompileModule(kernels::GetStatisticsKernelSource(), kKernelNames, defines);
+  // Concatenate all kernel sources into one hiprtc compile unit.
+  // Order matters only for typedef visibility: main stats source defines
+  // struct float2_t — gather/peak kernels rely on it (не переопределяют).
+  std::string combined_source;
+  combined_source.reserve(16384);
+  combined_source += kernels::GetStatisticsKernelSource();
+  combined_source += statistics::kernels::GetGatherDecimatedKernelSource();  // SNR_03
+  combined_source += statistics::kernels::GetPeakCfarKernelSource();         // SNR_05
+
+  ctx_.CompileModule(combined_source.c_str(), kKernelNames, defines);
 
   // Initialize all Ops with the compiled context
   mean_op_.Initialize(ctx_);
@@ -683,6 +716,103 @@ std::vector<FullStatisticsResult> StatisticsProcessor::ComputeAllFloat(
   for (auto& r : stats) r.mean = std::complex<float>(0.0f, 0.0f);
   auto medians = ReadMedianResults(params.beam_count);
   return MergeResults(stats, medians);
+}
+
+// =========================================================================
+// SNR estimation (SNR_06) — CA-CFAR SNR-estimator facade
+// =========================================================================
+
+namespace {
+  /// Проверка что данные + scratch поместятся в свободный VRAM (с запасом 20%).
+  void CheckVramAvailable(size_t required_bytes, const std::string& context) {
+    size_t free_vram = 0, total_vram = 0;
+    hipError_t err = hipMemGetInfo(&free_vram, &total_vram);
+    if (err != hipSuccess) {
+      // Если hip не отвечает — пропускаем проверку (не блокируем production)
+      return;
+    }
+    // 80% от свободного VRAM: оставляем 20% запаса под фрагментацию/другие буферы.
+    if (required_bytes > (free_vram * 8u) / 10u) {
+      throw std::runtime_error(
+          context + ": need " +
+          std::to_string(required_bytes / (1024u * 1024u)) + " MB, only " +
+          std::to_string(free_vram / (1024u * 1024u)) + " MB free VRAM");
+    }
+  }
+}  // namespace
+
+SnrEstimationResult StatisticsProcessor::ComputeSnrDb(
+    const std::vector<std::complex<float>>& data,
+    uint32_t n_antennas, uint32_t n_samples,
+    const SnrEstimationConfig& config)
+{
+  if (data.size() != static_cast<size_t>(n_antennas) * n_samples) {
+    throw std::invalid_argument(
+        "ComputeSnrDb (CPU): data.size()=" + std::to_string(data.size()) +
+        " != n_antennas*n_samples=" +
+        std::to_string(static_cast<size_t>(n_antennas) * n_samples));
+  }
+
+  config.Validate();
+
+  // Memory check (грубая оценка: input + ~input для scratch)
+  const size_t input_bytes = data.size() * sizeof(std::complex<float>);
+  CheckVramAvailable(input_bytes * 2u, "ComputeSnrDb (CPU)");
+
+  EnsureCompiled();
+
+  // Upload → kInput shared slot
+  UploadComplexData(data.data(), data.size());
+
+  // Delegate to GPU overload — данные уже на GPU в kInput слоте.
+  return ComputeSnrDb(
+      ctx_.GetShared(shared_buf::kInput),
+      n_antennas, n_samples, config);
+}
+
+SnrEstimationResult StatisticsProcessor::ComputeSnrDb(
+    void* gpu_data,
+    uint32_t n_antennas, uint32_t n_samples,
+    const SnrEstimationConfig& config)
+{
+  if (!gpu_data) {
+    throw std::invalid_argument("ComputeSnrDb (GPU): null gpu_data");
+  }
+
+  config.Validate();
+
+  // Memory check — только scratch буферы.
+  // НЕ учитываем n_antennas*n_samples — gpu_data уже на GPU у caller'а
+  // (double-count даст ложный OOM при больших входах).
+  //
+  // Оценка scratch: gather_out (complex) + mag_sq (float) + snr_per_ant (float)
+  const uint32_t target_n_fft = (config.target_n_fft > 0)
+      ? config.target_n_fft
+      : snr_defaults::kTargetNFft;
+  const uint32_t n_ant_used_est =
+      (n_antennas + snr_defaults::kTargetAntennasMedian - 1u) /
+      snr_defaults::kTargetAntennasMedian;
+  const uint32_t step_samples_est = (n_samples + target_n_fft - 1u) / target_n_fft;
+  const uint32_t n_actual_est = (step_samples_est > 0) ? (n_samples / step_samples_est) : n_samples;
+
+  const size_t est_scratch =
+        (size_t)n_ant_used_est * n_actual_est * sizeof(float) * 2u   // gather complex
+      + (size_t)n_ant_used_est * target_n_fft * sizeof(float)        // mag_sq float
+      + (size_t)n_ant_used_est * sizeof(float);                      // snr per antenna
+  CheckVramAvailable(est_scratch, "ComputeSnrDb (GPU)");
+
+  EnsureCompiled();
+
+  // Ленивая инициализация SNR-estimator (один раз за жизнь facade'а).
+  if (!snr_op_initialized_) {
+    snr_estimator_op_.Initialize(ctx_);
+    snr_estimator_op_.SetupFft(backend_);
+    snr_op_initialized_ = true;
+  }
+
+  SnrEstimationResult result;
+  snr_estimator_op_.Execute(gpu_data, n_antennas, n_samples, config, result);
+  return result;
 }
 
 }  // namespace statistics

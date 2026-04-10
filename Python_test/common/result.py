@@ -77,3 +77,27 @@ class TestResult:
         if self.error:
             lines.append(f"  ERROR: {self.error}")
         return "\n".join(lines)
+
+    def to_dict(self) -> dict:
+        """Сериализация TestResult → plain dict (для JSON / ResultStore).
+
+        Используется в:
+            common/io/result_store.py ResultStore.save_test_result()
+            common/reporters.py        JSONReporter._add_record() (косвенно)
+        """
+        return {
+            "test_name": self.test_name,
+            "passed": self.passed,
+            "validations": [
+                {
+                    "metric": v.metric_name,
+                    "passed": v.passed,
+                    "actual": v.actual_value,
+                    "threshold": v.threshold,
+                    "message": v.message,
+                }
+                for v in self.validations
+            ],
+            "error": str(self.error) if self.error is not None else None,
+            "metadata": self.metadata,
+        }

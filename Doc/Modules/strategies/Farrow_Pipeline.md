@@ -837,7 +837,7 @@ def test_mvdr_jammer_suppression():
 - **ML-based beamforming** — нейросетевые веса
 - **Когерентный MIMO** — несколько TX + RX решёток
 - **Real-time визуализация** — Dear PyGui + streaming GPU данные
-- **Интеграция с PyPanelAantenns** — визуализация поля через UDP
+- **Интеграция с PyPanelAntennas** — визуализация поля через UDP
 
 ---
 

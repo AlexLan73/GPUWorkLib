@@ -17,6 +17,7 @@
 
 #include "statistics_processor.hpp"
 #include "statistics_types.hpp"
+#include "branch_selector.hpp"  // SNR_07
 
 // ============================================================================
 // PyStatisticsProcessor — GPU statistics on complex signal data (ROCm)
@@ -263,6 +264,41 @@ public:
     return out;
   }
 
+  // ==========================================================================
+  // SNR_07: compute_snr_db (SNR-estimator, CA-CFAR)
+  // ==========================================================================
+
+  statistics::SnrEstimationResult compute_snr_db(
+      py::array_t<std::complex<float>, py::array::c_style | py::array::forcecast> data_np,
+      uint32_t n_antennas,
+      uint32_t n_samples,
+      const statistics::SnrEstimationConfig& config)
+  {
+    if (data_np.ndim() != 2) {
+      throw std::invalid_argument("compute_snr_db: expected 2D numpy array");
+    }
+    if (static_cast<uint32_t>(data_np.shape(0)) != n_antennas ||
+        static_cast<uint32_t>(data_np.shape(1)) != n_samples) {
+      throw std::invalid_argument(
+          "compute_snr_db: shape mismatch — got (" +
+          std::to_string(data_np.shape(0)) + "," +
+          std::to_string(data_np.shape(1)) + "), expected (" +
+          std::to_string(n_antennas) + "," + std::to_string(n_samples) + ")");
+    }
+
+    // Numpy → flat std::vector<complex<float>> (C-order contiguous)
+    auto buf = data_np.request();
+    const std::complex<float>* ptr = static_cast<const std::complex<float>*>(buf.ptr);
+    std::vector<std::complex<float>> data(ptr, ptr + data_np.size());
+
+    statistics::SnrEstimationResult result;
+    {
+      py::gil_scoped_release release;
+      result = proc_.ComputeSnrDb(data, n_antennas, n_samples, config);
+    }
+    return result;
+  }
+
 private:
   // Конвертирует numpy (любой формы) в flat vector. StatisticsProcessor ожидает
   // данные в beam-major порядке: сначала все samples beam[0], потом beam[1]...
@@ -309,10 +345,81 @@ private:
 };
 
 // ============================================================================
+// SNR-estimator types (SNR_07) — регистрация enum/struct для Python
+// ============================================================================
+
+inline void register_snr_types(py::module& m) {
+  using namespace statistics;
+
+  // ── BranchType enum ────────────────────────────────────────────────────
+  py::enum_<BranchType>(m, "BranchType",
+      "SNR branch category for Low/Mid/High processing paths.")
+    .value("Low",  BranchType::Low)
+    .value("Mid",  BranchType::Mid)
+    .value("High", BranchType::High)
+    .export_values();
+
+  // ── BranchThresholds ───────────────────────────────────────────────────
+  py::class_<BranchThresholds>(m, "BranchThresholds",
+      "Пороги переключения branch'ей (калибровано Python Эксп.5).\n\n"
+      "Defaults: low_to_mid=15 dB, mid_to_high=30 dB, hysteresis=2 dB.")
+    .def(py::init<>())
+    .def_readwrite("low_to_mid_db",  &BranchThresholds::low_to_mid_db)
+    .def_readwrite("mid_to_high_db", &BranchThresholds::mid_to_high_db)
+    .def_readwrite("hysteresis_db",  &BranchThresholds::hysteresis_db);
+
+  // ── SnrEstimationConfig ────────────────────────────────────────────────
+  py::class_<SnrEstimationConfig>(m, "SnrEstimationConfig",
+      "Config для SNR-estimator (CA-CFAR). Все 0-поля → auto режим.\n\n"
+      "target_n_fft=0 → 2048, step_samples=0 → auto, step_antennas=0 → auto.\n"
+      "Default window=Hann (решает sinc sidelobes).")
+    .def(py::init<>())
+    .def_readwrite("target_n_fft",         &SnrEstimationConfig::target_n_fft)
+    .def_readwrite("step_samples",         &SnrEstimationConfig::step_samples)
+    .def_readwrite("step_antennas",        &SnrEstimationConfig::step_antennas)
+    .def_readwrite("guard_bins",           &SnrEstimationConfig::guard_bins)
+    .def_readwrite("ref_bins",             &SnrEstimationConfig::ref_bins)
+    .def_readwrite("search_full_spectrum", &SnrEstimationConfig::search_full_spectrum)
+    .def_readwrite("with_dechirp",         &SnrEstimationConfig::with_dechirp)
+    .def_readwrite("thresholds",           &SnrEstimationConfig::thresholds)
+    .def("validate", &SnrEstimationConfig::Validate,
+         "Validate invariants, throws ValueError on error.");
+
+  // ── SnrEstimationResult (readonly, БЕЗ BranchType!) ───────────────────
+  py::class_<SnrEstimationResult>(m, "SnrEstimationResult",
+      "Result SNR-estimator.\n\n"
+      "NB: Нет поля branch — классификация через BranchSelector.")
+    .def(py::init<>())
+    .def_readonly("snr_db_global",       &SnrEstimationResult::snr_db_global)
+    .def_readonly("snr_db_per_antenna",  &SnrEstimationResult::snr_db_per_antenna)
+    .def_readonly("used_antennas",       &SnrEstimationResult::used_antennas)
+    .def_readonly("used_bins",           &SnrEstimationResult::used_bins)
+    .def_readonly("actual_step_samples", &SnrEstimationResult::actual_step_samples)
+    .def_readonly("n_actual",            &SnrEstimationResult::n_actual);
+
+  // ── BranchSelector (stateful, hysteresis) ─────────────────────────────
+  py::class_<BranchSelector>(m, "BranchSelector",
+      "Stateful branch selector с hysteresis.\n\n"
+      "Один экземпляр на поток/pipeline. Держит state между Select() calls.")
+    .def(py::init<>())
+    .def("select",  &BranchSelector::Select,
+         py::arg("snr_db"), py::arg("thresholds"),
+         "Select branch c hysteresis, updates state. NaN/Inf → current.")
+    .def("current", &BranchSelector::Current,
+         "Get current branch без изменения state.")
+    .def("reset",   &BranchSelector::Reset,
+         py::arg("to") = BranchType::Low,
+         "Reset state (start of new session).");
+}
+
+// ============================================================================
 // Binding registration
 // ============================================================================
 
 inline void register_statistics(py::module& m) {
+  // SNR types register first — нужны для .def("compute_snr_db", ...) ниже
+  register_snr_types(m);
+
   py::class_<PyStatisticsProcessor>(m, "StatisticsProcessor",
       "GPU statistics processor (ROCm).\n\n"
       "Computes per-beam statistics on complex float signal data.\n\n"
@@ -400,6 +507,22 @@ inline void register_statistics(py::module& m) {
            "  beam_count: number of beams (default 1)\n\n"
            "Returns:\n"
            "  list of dicts: [{'beam_id':int, 'median_magnitude':float}, ...]")
+
+      // ── SNR_07: compute_snr_db (CA-CFAR SNR-estimator) ───────────────
+      .def("compute_snr_db", &PyStatisticsProcessor::compute_snr_db,
+           py::arg("data"), py::arg("n_antennas"),
+           py::arg("n_samples"), py::arg("config"),
+           "Compute SNR (dB) from numpy complex64 array via CA-CFAR.\n\n"
+           "Args:\n"
+           "  data:       numpy complex64 2D array, shape (n_antennas, n_samples)\n"
+           "  n_antennas: number of input antennas\n"
+           "  n_samples:  samples per antenna\n"
+           "  config:     SnrEstimationConfig (см. snr_defaults)\n\n"
+           "Returns:\n"
+           "  SnrEstimationResult — snr_db_global, used_antennas, used_bins, ...\n"
+           "  NB: НЕТ поля branch — использовать BranchSelector для классификации.\n\n"
+           "Pipeline: upload → gather → FFT(Hann)|X|² → CA-CFAR → median.\n"
+           "Калибровано Python моделью (PyPanelAntennas/SNR/, P_correct=97.9%).")
 
       .def("__repr__", [](const PyStatisticsProcessor&) {
           return "<StatisticsProcessor>";

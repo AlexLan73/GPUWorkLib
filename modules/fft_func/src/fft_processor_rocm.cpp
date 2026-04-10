@@ -32,9 +32,13 @@ using fft_func_utils::MakeROCmDataFromClock;
 namespace fft_processor {
 
 // All kernel names used by FFT module
+// SNR_02/02b/04: added pad_data_windowed + magnitude kernels for ProcessMagnitudesToGPU.
 static const std::vector<std::string> kKernelNames = {
   "pad_data",
-  "complex_to_mag_phase"
+  "pad_data_windowed",           // SNR_02b: Hann/Hamming/Blackman window
+  "complex_to_mag_phase",
+  "complex_to_magnitude",        // SNR_04: |X| output for ProcessMagnitudesToGPU
+  "complex_to_magnitude_squared" // SNR_02:  |X|² output (square-law, no sqrt)
 };
 
 // =========================================================================
@@ -48,6 +52,7 @@ FFTProcessorROCm::FFTProcessorROCm(drv_gpu_lib::IBackend* backend)
 FFTProcessorROCm::~FFTProcessorROCm() {
   pad_op_.Release();
   mag_phase_op_.Release();
+  mag_op_.Release();
   ReleasePlans();
 }
 
@@ -56,6 +61,7 @@ FFTProcessorROCm::FFTProcessorROCm(FFTProcessorROCm&& other) noexcept
     , bufs_(std::move(other.bufs_))
     , pad_op_(std::move(other.pad_op_))
     , mag_phase_op_(std::move(other.mag_phase_op_))
+    , mag_op_(std::move(other.mag_op_))
     , compiled_(other.compiled_)
     , plan_(other.plan_)
     , plan_created_(other.plan_created_)
@@ -78,12 +84,14 @@ FFTProcessorROCm& FFTProcessorROCm::operator=(FFTProcessorROCm&& other) noexcept
   if (this != &other) {
     pad_op_.Release();
     mag_phase_op_.Release();
+    mag_op_.Release();
     ReleasePlans();
 
     ctx_ = std::move(other.ctx_);
     bufs_ = std::move(other.bufs_);
     pad_op_ = std::move(other.pad_op_);
     mag_phase_op_ = std::move(other.mag_phase_op_);
+    mag_op_ = std::move(other.mag_op_);
     compiled_ = other.compiled_;
     plan_ = other.plan_;
     plan_created_ = other.plan_created_;
@@ -114,6 +122,7 @@ void FFTProcessorROCm::EnsureCompiled() {
   ctx_.CompileModule(kernels::GetHIPKernelSource(), kKernelNames);
   pad_op_.Initialize(ctx_);
   mag_phase_op_.Initialize(ctx_);
+  mag_op_.Initialize(ctx_);  // SNR_04
   compiled_ = true;
 }
 
@@ -548,6 +557,96 @@ std::vector<FFTMagPhaseResult> FFTProcessorROCm::ProcessMagPhase(
     for (auto& r : batch_results) all_results.push_back(std::move(r));
   }
   return all_results;
+}
+
+// =========================================================================
+// Public API — ProcessMagnitudesToGPU (SNR_04)
+// =========================================================================
+//
+// Записывает |X| или |X|² прямо в caller-provided GPU буфер, без D2H.
+// Используется SnrEstimatorOp — полный pipeline gather → FFT → CFAR на GPU.
+
+void FFTProcessorROCm::ProcessMagnitudesToGPU(
+    void* gpu_data,
+    void* gpu_out_magnitudes,
+    const FFTProcessorParams& params,
+    bool squared,
+    WindowType window,
+    ROCmProfEvents* prof_events)
+{
+  if (!gpu_data) {
+    throw std::invalid_argument("ProcessMagnitudesToGPU: gpu_data is null");
+  }
+  if (!gpu_out_magnitudes) {
+    throw std::invalid_argument("ProcessMagnitudesToGPU: gpu_out_magnitudes is null");
+  }
+
+  // 1. nFFT + kernels compilation
+  CalculateNFFT(params);
+  EnsureCompiled();
+
+  // 2. Allocate pipeline buffers. Используем COMPLEX mode — kMagPhaseInterleaved
+  //    не выделяется, выход идёт напрямую в caller-provided gpu_out_magnitudes.
+  AllocateBuffers(params.beam_count, FFTOutputMode::COMPLEX);
+
+  // 3. hipFFT plan (LRU-2 cache)
+  CreateFFTPlan(params.beam_count);
+
+  // 4. Copy input → kInputBuf (D2D)
+  CopyGpuData(gpu_data, 0,
+              static_cast<size_t>(params.beam_count) * params.n_point);
+
+  // Optional profiling events
+  hipEvent_t ev_pad_s = nullptr, ev_pad_e = nullptr;
+  hipEvent_t ev_fft_s = nullptr, ev_fft_e = nullptr;
+  hipEvent_t ev_mag_s = nullptr, ev_mag_e = nullptr;
+  if (prof_events) {
+    hipEventCreate(&ev_pad_s); hipEventCreate(&ev_pad_e);
+    hipEventCreate(&ev_fft_s); hipEventCreate(&ev_fft_e);
+    hipEventCreate(&ev_mag_s); hipEventCreate(&ev_mag_e);
+  }
+
+  // 5. Pad (+ optional window) → kFftBuf
+  if (prof_events) hipEventRecord(ev_pad_s, ctx_.stream());
+  pad_op_.Execute(bufs_.Get(kInputBuf), bufs_.Get(kFftBuf),
+                  params.beam_count, n_point_, nFFT_,
+                  window);  // SNR_02b: window function (default None)
+  if (prof_events) hipEventRecord(ev_pad_e, ctx_.stream());
+
+  // 6. FFT in-place in kFftBuf
+  if (prof_events) hipEventRecord(ev_fft_s, ctx_.stream());
+  hipfftResult fft_err = hipfftExecC2C(
+      plan_,
+      static_cast<hipfftComplex*>(bufs_.Get(kFftBuf)),
+      static_cast<hipfftComplex*>(bufs_.Get(kFftBuf)),
+      HIPFFT_FORWARD);
+  if (fft_err != HIPFFT_SUCCESS) {
+    throw std::runtime_error("ProcessMagnitudesToGPU: hipfftExecC2C failed: " +
+                              std::to_string(static_cast<int>(fft_err)));
+  }
+  if (prof_events) hipEventRecord(ev_fft_e, ctx_.stream());
+
+  // 7. Magnitude (|X| или |X|²) → caller-provided gpu_out_magnitudes
+  //    inv_n = 1.0f: raw output, caller сам нормирует если нужно.
+  //    Для CFAR SNR-estimator нормировка не нужна — ratio сокращает её.
+  size_t total = static_cast<size_t>(params.beam_count) * nFFT_;
+  if (prof_events) hipEventRecord(ev_mag_s, ctx_.stream());
+  mag_op_.Execute(bufs_.Get(kFftBuf), gpu_out_magnitudes,
+                  total, 1.0f, squared);
+  if (prof_events) hipEventRecord(ev_mag_e, ctx_.stream());
+
+  hipStreamSynchronize(ctx_.stream());
+
+  if (prof_events) {
+    prof_events->push_back({"Pad",
+        MakeROCmDataFromEvents(ev_pad_s, ev_pad_e, 0, "pad (+window)")});
+    prof_events->push_back({"FFT",
+        MakeROCmDataFromEvents(ev_fft_s, ev_fft_e, 0, "hipfftExecC2C")});
+    prof_events->push_back({"Magnitude",
+        MakeROCmDataFromEvents(ev_mag_s, ev_mag_e, 0,
+                               squared ? "complex_to_magnitude_squared"
+                                       : "complex_to_magnitude")});
+  }
 }
 
 // =========================================================================

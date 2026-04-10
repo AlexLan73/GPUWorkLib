@@ -2,9 +2,52 @@
 
 > **Фаза**: 2 (приоритет MEDIUM)
 > **Зависимости**: TASK_Arch_04 (validators — для сохранения TestResult)
-> **Статус**: ⬜ TODO
+> **Статус**: ✅ DONE 2026-04-09
 > **Оценка**: ~1.5 часа
 > **Паттерны**: GoF Repository, GoF Strategy, GRASP Information Expert/High Cohesion, SOLID SRP
+
+## ✅ Итог реализации (2026-04-09)
+
+- Шаг 0 выполнен: `TestResult.to_dict()` добавлен в `common/result.py`.
+- 5 файлов созданы в `Python_test/common/io/`: `base.py`, `numpy_store.py`,
+  `json_store.py`, `result_store.py`, `__init__.py`.
+- `_find_repo_root()` через маркер `.git` → путь корректно резолвится
+  в `E:\C++\GPUWorkLib` (не в `Python_test/`).
+- `NumpyStore.exists()` проверяет оба расширения — `.npy` **И** `.npz`.
+- `ResultStore.save_test_result()` использует `result.test_name` напрямую,
+  кидает `ValueError`/`TypeError` при невалидных аргументах.
+- `JsonStore(add_timestamp=True)` — опциональный `saved_at` для стабильных
+  diff-файлов в CI/регрессиях.
+- Smoke-тесты: `Python_test/common/io/test_smoke.py` — **9/9 PASS**.
+
+---
+
+## ⚠️ ШАГ 0 (ПРЕДУСЛОВИЕ) — `TestResult.to_dict()`
+
+`ResultStore.save_test_result` зависит от `TestResult.to_dict()`, которого
+раньше не было. Убедиться, что в `Python_test/common/result.py` присутствует:
+
+```python
+def to_dict(self) -> dict:
+    return {
+        "test_name": self.test_name,
+        "passed": self.passed,
+        "validations": [
+            {
+                "metric": v.metric_name,
+                "passed": v.passed,
+                "actual": v.actual_value,
+                "threshold": v.threshold,
+                "message": v.message,
+            }
+            for v in self.validations
+        ],
+        "error": str(self.error) if self.error is not None else None,
+        "metadata": self.metadata,
+    }
+```
+
+Если метод отсутствует — добавить ПЕРЕД выполнением остальных шагов TASK_05.
 
 ---
 
@@ -154,7 +197,9 @@ class NumpyStore(IDataStore):
         return {k: npz[k] for k in npz.files}
 
     def exists(self, name: str, subdir: str = "") -> bool:
-        return self._resolve(name, subdir, ext=".npy").exists()
+        """True если существует .npy ИЛИ .npz с таким именем."""
+        return (self._resolve(name, subdir, ext=".npy").exists()
+                or self._resolve(name, subdir, ext=".npz").exists())
 
     def list(self, subdir: str = "") -> list[str]:
         """Список всех .npy/.npz файлов в subdir (без расширения)."""
@@ -191,21 +236,26 @@ class JsonStore(IDataStore):
         {base_dir}/{subdir}/{name}.json
     """
 
-    def __init__(self, base_dir: str | Path = "Results/JSON"):
+    def __init__(self, base_dir: str | Path = "Results/JSON",
+                 add_timestamp: bool = True):
+        """
+        Args:
+            base_dir:       корень хранилища JSON
+            add_timestamp:  True → добавлять "saved_at" (ISO ts).
+                            Выключить, если нужны стабильные diff-файлы
+                            между прогонами (CI, регрессионные сравнения).
+        """
         self._base = Path(base_dir)
+        self._add_ts = add_timestamp
 
     def save(self, data: dict, name: str, subdir: str = "") -> Path:
-        """
-        Сохраняет dict в JSON.
-
-        Автоматически добавляет "saved_at": ISO timestamp.
-        """
+        """Сохраняет dict в JSON."""
         path = self._resolve(name, subdir)
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "saved_at": datetime.now().isoformat(),
-            **data,
-        }
+        if self._add_ts:
+            payload = {"saved_at": datetime.now().isoformat(), **data}
+        else:
+            payload = dict(data)
         with path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False, default=str)
         return path
@@ -242,13 +292,30 @@ from .numpy_store import NumpyStore
 from .json_store import JsonStore
 import numpy as np
 
+
+def _find_repo_root() -> Path:
+    """
+    Находит корень репозитория (по маркеру .git).
+
+    Не используем hardcoded `parents[N]` — количество уровней меняется,
+    если файл переедет. Fallback — 4 уровня вверх
+    (Python_test/common/io/result_store.py → корень репо).
+    """
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / ".git").exists() or (parent / ".git").is_file():
+            return parent
+    # fallback: считаем структуру Python_test/common/io/result_store.py
+    return here.parents[3]
+
+
 class ResultStore:
     """
     GoF Repository: единая точка доступа к результатам тестов.
     GRASP Information Expert: знает правила именования и расположения файлов.
     GRASP High Cohesion: весь I/O тестов — здесь.
 
-    Структура Results/:
+    Структура Results/ (в корне репозитория):
         Results/
         ├── Arrays/{module}/{name}.npy     ← numpy данные (GPU output, ref)
         ├── JSON/{module}/{name}.json      ← TestResult, конфигурации
@@ -269,9 +336,8 @@ class ResultStore:
         prev = store.load_array("cw_4096", module="signal_generators")
     """
 
-    # Абсолютный путь: корень проекта / Results
-    # Не ломается если тест запущен из другого каталога
-    _PROJECT_ROOT = Path(__file__).parents[2]
+    # Корень репозитория (ищется по .git маркеру — устойчиво к перемещениям)
+    _PROJECT_ROOT = _find_repo_root()
 
     def __init__(self, base_dir: str | Path | None = None):
         if base_dir is None:
@@ -325,15 +391,25 @@ class ResultStore:
         Путь: Results/JSON/{module}/{result.test_name}.json
 
         Args:
-            result: TestResult или dict
+            result: TestResult (ожидается, что есть .to_dict() и .test_name)
+                    или dict с ключом "test_name"
         """
-        if hasattr(result, "to_dict"):
+        # TestResult — основной путь
+        if hasattr(result, "to_dict") and hasattr(result, "test_name"):
             data = result.to_dict()
+            name = result.test_name
         elif isinstance(result, dict):
             data = result
+            name = data.get("test_name")
+            if not name:
+                raise ValueError(
+                    "dict result должен содержать ключ 'test_name'"
+                )
         else:
-            data = {"result": str(result)}
-        name = data.get("test_name", "unknown")
+            raise TypeError(
+                f"save_test_result принимает TestResult или dict, "
+                f"получено: {type(result).__name__}"
+            )
         return self._json.save(data, name, subdir=module)
 
     def save_config(self, config, name: str, module: str = "") -> Path:
@@ -434,23 +510,30 @@ class JSONReporter(IReporter):
 
 ## ✅ Критерии завершения
 
+- [ ] **ШАГ 0 выполнен**: `TestResult.to_dict()` присутствует в `common/result.py`
 - [ ] Все 5 файлов созданы
 - [ ] `from common.io import ResultStore` работает
 - [ ] `store.save_array(np.ones(100), "test", "module")` → создаёт файл
 - [ ] `store.load_array("test", "module")` → загружает обратно
 - [ ] `store.save_comparison(gpu, ref, "name")` → .npz с ключами "gpu", "ref"
-- [ ] `store.save_test_result(result, "module")` → JSON файл
+- [ ] `store.array_exists("name", "module")` → **True для `.npz`** (не только `.npy`)
+- [ ] `store.save_test_result(testresult, "module")` → JSON с `test_name` как имя файла
 - [ ] `store.save_benchmark({"ms": 1.5}, "fft", "module")` → bench_fft.json
 - [ ] `store.list_arrays("module")` → список имён
-- [ ] Создаются правильные пути: `Results/Arrays/{module}/{name}.npy`
+- [ ] Пути создаются от **корня репозитория**: `{repo}/Results/Arrays/{module}/{name}.npy`
+      (проверить: `_find_repo_root()` находит `.git`)
 
 ## 🧪 Проверка без GPU
 
 ```python
 # python Python_test/common/io/test_io_smoke.py
+import sys
+from pathlib import Path
+# Bootstrap: Python_test/ в sys.path (файл живёт внутри common/io/)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import numpy as np
 import tempfile
-from pathlib import Path
 from common.runner import TestRunner
 from common.result import TestResult, ValidationResult
 from common.io import ResultStore
@@ -476,6 +559,7 @@ class TestIOSmoke:
         return result
 
     def test_save_comparison(self):
+        """Проверяем не только ключи, но и совпадение данных."""
         result = TestResult(test_name="save_comparison")
         with tempfile.TemporaryDirectory() as tmp:
             store = ResultStore(base_dir=tmp)
@@ -483,11 +567,23 @@ class TestIOSmoke:
             ref = np.ones(100, np.float32)
             store.save_comparison(data, ref, "comparison", "mymodule")
             cmp = store.load_comparison("comparison", "mymodule")
-            ok = "gpu" in cmp and "ref" in cmp
+            ok = (
+                "gpu" in cmp and "ref" in cmp
+                and np.allclose(cmp["gpu"], data)
+                and np.allclose(cmp["ref"], ref)
+            )
             result.add(ValidationResult(
                 passed=ok,
-                metric_name="keys",
+                metric_name="roundtrip_keys_and_data",
                 actual_value=1.0 if ok else 0.0,
+                threshold=1.0
+            ))
+            # Проверка exists() после save_many — должен видеть .npz
+            exists_ok = store.array_exists("comparison", "mymodule")
+            result.add(ValidationResult(
+                passed=exists_ok,
+                metric_name="exists_sees_npz",
+                actual_value=1.0 if exists_ok else 0.0,
                 threshold=1.0
             ))
         return result
@@ -504,6 +600,32 @@ class TestIOSmoke:
                 metric_name="json_roundtrip",
                 actual_value=j.get("ms_per_call", 0),
                 threshold=1.23
+            ))
+        return result
+
+    def test_save_test_result(self):
+        """TestResult → JSON через ResultStore.save_test_result."""
+        result = TestResult(test_name="save_test_result_smoke")
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ResultStore(base_dir=tmp)
+            inner = TestResult(test_name="inner_example")
+            inner.add(ValidationResult(
+                passed=True, metric_name="dummy",
+                actual_value=0.0, threshold=1.0,
+            ))
+            path = store.save_test_result(inner, "mymodule")
+            loaded = store.load_json("inner_example", "mymodule")
+            ok = (
+                path.exists()
+                and loaded["test_name"] == "inner_example"
+                and loaded["passed"] is True
+            )
+            result.add(ValidationResult(
+                passed=ok,
+                metric_name="testresult_roundtrip",
+                actual_value=1.0 if ok else 0.0,
+                threshold=1.0,
+                message=f"path={path}"
             ))
         return result
 

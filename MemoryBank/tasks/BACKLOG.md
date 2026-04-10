@@ -1,6 +1,6 @@
 # BACKLOG — Очередь задач
 
-> **Обновлено**: 2026-03-24
+> **Обновлено**: 2026-04-09
 > **Главный план**: `MemoryBank/tasks/MODULES_WORK_PLAN.md`
 
 ---
@@ -16,19 +16,16 @@
 ## 🏗️ Python_test — Архитектурный рефакторинг v2
 
 > **Индекс**: [`TASK_PythonArch_INDEX.md`](TASK_PythonArch_INDEX.md)
-> **Исследование**: [`research/python_test_refactoring_plan.md`](../research/python_test_refactoring_plan.md)
-> **Добавлено**: 2026-03-21
+> **Добавлено**: 2026-03-21 | ✅ Фаза 1 выполнена (Arch-01/02/03)
 
 | # | Файл | Фаза | Приоритет | Что |
 |---|------|------|-----------|-----|
-| Arch-01 | [TASK_PythonArch_01](TASK_PythonArch_01_core_generators.md) | 1 | 🔴 HIGH | `Core/generators/` — CwGenerator, LfmGenerator, NoiseGenerator (Adapter+Factory) |
-| Arch-02 | [TASK_PythonArch_02](TASK_PythonArch_02_core_processing.md) | 1 | 🔴 HIGH | `Core/processing/` — StatisticsAdapter, HeterodyneAdapter, FftAdapter |
-| Arch-03 | [TASK_PythonArch_03](TASK_PythonArch_03_references.md) | 1 | 🔴 HIGH | `common/references/` — SignalReferences, FilterReferences (устранить дублирование) |
+| ~~Arch-01~~ | ~~Core/generators/~~ | 1 | ✅ DONE | ~~CwGenerator, LfmGenerator, NoiseGenerator~~ |
+| ~~Arch-02~~ | ~~Core/processing/~~ | 1 | ✅ DONE | ~~StatisticsAdapter, HeterodyneAdapter, FftAdapter~~ |
+| ~~Arch-03~~ | ~~common/references/~~ | 1 | ✅ DONE | ~~SignalReferences, FilterReferences~~ |
 | Arch-04 | [TASK_PythonArch_04](TASK_PythonArch_04_validators.md) | 2 | 🟠 MED | `common/validators/` — иерархия + CompositeValidator (backward compat!) |
 | Arch-05 | [TASK_PythonArch_05](TASK_PythonArch_05_io_store.md) | 2 | 🟠 MED | `common/io/` — ResultStore, NumpyStore, JsonStore |
 | Arch-06 | [TASK_PythonArch_06](TASK_PythonArch_06_plotting.md) | 3 | 🟡 LOW | `common/plotting/` — PlotterFactory, SpectrumPlotter, TimePlotter |
-
-**Начинать с Фазы 1**: Arch-03 ∥ Arch-01 → Arch-02 (03 и 01 параллельно, 02 после 01)
 
 ---
 

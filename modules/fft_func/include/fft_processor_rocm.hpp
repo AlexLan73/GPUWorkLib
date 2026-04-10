@@ -23,6 +23,7 @@
 #if ENABLE_ROCM
 
 #include "fft_processor_types.hpp"
+#include "types/window_type.hpp"
 #include "interface/i_backend.hpp"
 #include "interface/gpu_context.hpp"
 #include "services/buffer_set.hpp"
@@ -32,6 +33,7 @@
 // Op classes (Layer 5)
 #include "operations/pad_data_op.hpp"
 #include "operations/mag_phase_op.hpp"
+#include "operations/magnitude_op.hpp"
 
 #include <hip/hip_runtime.h>
 #include <hipfft/hipfft.h>
@@ -92,6 +94,34 @@ public:
       void* gpu_data,
       const FFTProcessorParams& params,
       size_t gpu_memory_bytes = 0);
+
+  // =========================================================================
+  // Public API -- Magnitudes directly to caller-provided GPU buffer (SNR_04)
+  // =========================================================================
+
+  /**
+   * @brief Process FFT and write magnitudes directly to caller GPU buffer.
+   *
+   * Pipeline: PadDataOp(window) → hipfftExecC2C → MagnitudeOp(squared).
+   * NO D2H copy — output goes straight to caller-provided GPU buffer.
+   *
+   * @param gpu_data            GPU input [beam_count × n_point × complex<float>]
+   * @param gpu_out_magnitudes  GPU output [beam_count × nFFT × float] (caller owns)
+   * @param params              FFT params (beam_count, n_point, sample_rate, ...)
+   * @param squared             false = |X| (default), true = |X|² (square-law, no sqrt)
+   * @param window              WindowType::None (default) / Hann / Hamming / Blackman
+   *                            Для SNR-estimator использовать Hann (решает sinc sidelobes).
+   * @param prof_events         Optional profiling events collector
+   *
+   * Используется SnrEstimatorOp — нужны магнитуды сразу на GPU, без D2H roundtrip.
+   */
+  void ProcessMagnitudesToGPU(
+      void* gpu_data,
+      void* gpu_out_magnitudes,
+      const FFTProcessorParams& params,
+      bool squared = false,
+      WindowType window = WindowType::None,
+      ROCmProfEvents* prof_events = nullptr);
 
   // =========================================================================
   // Information
@@ -163,6 +193,7 @@ private:
   // Op instances (Layer 5)
   PadDataOp pad_op_;
   MagPhaseOp mag_phase_op_;
+  MagnitudeOp mag_op_;  ///< SNR_04: magnitude-only kernel for ProcessMagnitudesToGPU
 
   bool compiled_ = false;
 

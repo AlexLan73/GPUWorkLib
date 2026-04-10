@@ -18,6 +18,10 @@
 #include "test_statistics_float_rocm.hpp"
 #include "statistics_compute_all_benchmark.hpp"
 #include "test_statistics_compute_all_benchmark.hpp"
+// SNR-estimator (SNR_08, SNR_09) — запуск в понедельник на Debian/AMD
+#include "test_snr_estimator_rocm.hpp"
+#include "snr_estimator_benchmark.hpp"
+#include "test_snr_estimator_benchmark.hpp"
 #endif
 
 namespace statistics_all_test {
@@ -30,6 +34,10 @@ inline void run() {
   test_statistics_float_rocm::run();
   // ComputeAll benchmark (раскомментировать для профилирования):
   // test_statistics_compute_all_benchmark::run();
+
+  // SNR-estimator: написано 2026-04-09, запуск в понедельник на Debian/AMD
+  // test_snr_estimator_rocm::run_all();
+  // test_snr_estimator_benchmark::run_benchmark();
 #endif
 }
 

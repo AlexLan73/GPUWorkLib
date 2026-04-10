@@ -1,0 +1,82 @@
+{
+  "n_samples": 5000,
+  "snr_in_db": 20.0,
+  "n_actual": 5000,
+  "n_fft": 8192,
+  "theory_db": 56.98970004336019,
+  "n_trials": 20,
+  "results": {
+    "rect + mean": {
+      "window": "rect",
+      "estimator": "mean",
+      "snr_mean_db": 28.887622969758002,
+      "snr_std_db": 0.05191800791195381,
+      "bias_vs_theory_db": -28.102077073602185,
+      "h0_mean_db": 9.759918104279759,
+      "h0_std_db": 1.08221881466189
+    },
+    "rect + median": {
+      "window": "rect",
+      "estimator": "median",
+      "snr_mean_db": 31.402140808546932,
+      "snr_std_db": 0.14680950616049143,
+      "bias_vs_theory_db": -25.587559234813256,
+      "h0_mean_db": 11.224446660383276,
+      "h0_std_db": 1.2569340358087737
+    },
+    "hann + mean": {
+      "window": "hann",
+      "estimator": "mean",
+      "snr_mean_db": 51.79911956238849,
+      "snr_std_db": 0.6585108106678313,
+      "bias_vs_theory_db": -5.190580480971697,
+      "h0_mean_db": 9.570127220154783,
+      "h0_std_db": 1.4091525753358967
+    },
+    "hann + median": {
+      "window": "hann",
+      "estimator": "median",
+      "snr_mean_db": 55.58210956480788,
+      "snr_std_db": 1.3642428596066192,
+      "bias_vs_theory_db": -1.407590478552308,
+      "h0_mean_db": 10.958104142433772,
+      "h0_std_db": 1.614579844837099
+    },
+    "hamming + mean": {
+      "window": "hamming",
+      "estimator": "mean",
+      "snr_mean_db": 47.246744677963534,
+      "snr_std_db": 0.23768539338303019,
+      "bias_vs_theory_db": -9.742955365396654,
+      "h0_mean_db": 9.83048079689205,
+      "h0_std_db": 1.248877705001694
+    },
+    "hamming + median": {
+      "window": "hamming",
+      "estimator": "median",
+      "snr_mean_db": 48.73479874445846,
+      "snr_std_db": 0.6916091033284577,
+      "bias_vs_theory_db": -8.254901298901729,
+      "h0_mean_db": 11.024105974157731,
+      "h0_std_db": 1.5832727162195586
+    },
+    "blackman + mean": {
+      "window": "blackman",
+      "estimator": "mean",
+      "snr_mean_db": 54.34617568948734,
+      "snr_std_db": 1.2896758170530962,
+      "bias_vs_theory_db": -2.6435243538728486,
+      "h0_mean_db": 9.598034106971278,
+      "h0_std_db": 1.2228996800616907
+    },
+    "blackman + median": {
+      "window": "blackman",
+      "estimator": "median",
+      "snr_mean_db": 56.126513469197036,
+      "snr_std_db": 1.5810437576288052,
+      "bias_vs_theory_db": -0.8631865741631515,
+      "h0_mean_db": 10.771843610084769,
+      "h0_std_db": 1.3126343051471538
+    }
+  }
+}

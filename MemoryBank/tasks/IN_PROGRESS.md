@@ -1,6 +1,6 @@
 # IN PROGRESS — Текущие задачи
 
-> **Обновлено**: 2026-03-29
+> **Обновлено**: 2026-04-09
 
 ---
 
@@ -31,6 +31,12 @@
 - [ ] `py::keep_alive<>()` в Python bindings — защита от GC ctx lifetime
 - [ ] SpectrumMaxima multi-beam test: 1 fail (beam frequency detection)
 - [ ] Non-square матрица 2500×100 для strategies
+
+---
+
+## ✅ ZeroCopy OpenCL → ROCm — DONE (2026-03-24)
+> Реализован в `DrvGPU/backends/rocm/zero_copy_bridge.hpp/.cpp`
+> 4 метода: HSA Probe, DMA-BUF, GPU Copy, SVM fallback
 
 ---
 

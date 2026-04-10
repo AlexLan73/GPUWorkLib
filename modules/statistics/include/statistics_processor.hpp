@@ -42,6 +42,7 @@
 #include "operations/median_radix_sort_op.hpp"
 #include "operations/median_histogram_op.hpp"
 #include "operations/median_histogram_complex_op.hpp"
+#include "operations/snr_estimator_op.hpp"  // SNR_05
 
 #include "interface/i_backend.hpp"
 
@@ -164,6 +165,45 @@ public:
       const std::vector<float>& data,
       const StatisticsParams& params);
 
+  // =========================================================================
+  // Public API -- SNR estimation (SNR_06)
+  // =========================================================================
+
+  /**
+   * @brief Compute SNR (dB) from CPU data via CA-CFAR
+   *
+   * Pipeline: upload → gather → FFT(Hann)|X|² → CFAR → median.
+   *
+   * @param data        CPU complex<float> [n_antennas × n_samples] (row-major)
+   * @param n_antennas  Number of antennas
+   * @param n_samples   Samples per antenna
+   * @param config      SNR estimation config (см. snr_defaults::)
+   * @return Result with snr_db_global, used_antennas, used_bins, n_actual
+   *
+   * @note Result НЕ содержит BranchType — классификация через BranchSelector.
+   */
+  SnrEstimationResult ComputeSnrDb(
+      const std::vector<std::complex<float>>& data,
+      uint32_t n_antennas,
+      uint32_t n_samples,
+      const SnrEstimationConfig& config);
+
+  /**
+   * @brief Compute SNR (dB) from GPU data (production path)
+   *
+   * Pipeline: gather → FFT(Hann)|X|² → CFAR → median (данные уже на GPU).
+   *
+   * @param gpu_data    GPU complex<float>* [n_antennas × n_samples]
+   * @param n_antennas  Number of antennas
+   * @param n_samples   Samples per antenna
+   * @param config      SNR estimation config
+   */
+  SnrEstimationResult ComputeSnrDb(
+      void* gpu_data,
+      uint32_t n_antennas,
+      uint32_t n_samples,
+      const SnrEstimationConfig& config);
+
 private:
   // =========================================================================
   // Ref03: GpuContext + Op instances
@@ -200,6 +240,7 @@ private:
 
   // ── Members ───────────────────────────────────────────────────────────
 
+  drv_gpu_lib::IBackend* backend_ = nullptr;  ///< сохранён из конструктора (нужен для SnrEstimatorOp::SetupFft)
   drv_gpu_lib::GpuContext ctx_;     ///< Per-module context (stream, kernels, shared bufs)
 
   // Op instances (Layer 5) — member variables, not unique_ptr
@@ -209,6 +250,10 @@ private:
   MedianRadixSortOp       median_sort_op_;
   MedianHistogramOp       median_hist_op_;
   MedianHistogramComplexOp median_hist_complex_op_;
+
+  // SNR-estimator (SNR_05/06) — ленивая инициализация
+  SnrEstimatorOp snr_estimator_op_;
+  bool snr_op_initialized_ = false;
 
   bool compiled_ = false;
 

@@ -21,9 +21,21 @@ Usage:
 """
 
 import os
+import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
+
+
+def _slugify(name: str) -> str:
+    """Безопасное имя файла: убирает спец-символы, запрещённые в Windows.
+
+    Windows запрещает: < > : " / \\ | ? *   — плюс пробелы нежелательны.
+    Всё, кроме букв/цифр/подчёркиваний/точек/дефисов, заменяется на "_".
+    Возвращает "unnamed" для пустого результата.
+    """
+    s = re.sub(r"[^\w\-.]+", "_", name)
+    return s.strip("_") or "unnamed"
 
 
 @dataclass
@@ -38,6 +50,9 @@ class PlotConfig:
         show:       показывать ли интерактивное окно
         save:       сохранять ли файл
         fmt:        формат файла ("png" / "svg" / "pdf")
+        verbose:    печатать ли "[Plotter] Saved: …" при сохранении.
+                    Отключить при параллельном прогоне тестов, чтобы
+                    stdout не смешивался между потоками.
     """
     out_dir: str = "Results/Plots"
     dpi: int = 120
@@ -46,6 +61,7 @@ class PlotConfig:
     show: bool = False
     save: bool = True
     fmt: str = "png"
+    verbose: bool = True
 
     def filepath(self, name: str) -> str:
         """Полный путь к файлу графика."""
@@ -81,31 +97,28 @@ class IPlotter(ABC):
         ...
 
     def save_fig(self, fig, name: str) -> str:
-        """Сохранить фигуру matplotlib в файл.
+        """Сохранить фигуру, показать (опционально), закрыть.
+
+        Имя автоматически slugify-тся — в name можно передавать любые
+        заголовки (даже с ``:``, ``/``, пробелами и юникодом).
 
         Args:
             fig:  matplotlib Figure
-            name: имя файла (без расширения)
+            name: имя файла (без расширения), будет слагифицировано.
 
         Returns:
-            Путь к файлу.
+            Абсолютный путь к сохранённому файлу (или пустая строка если
+            ``config.save=False``).
         """
-        path = self.config.filepath(name)
-        fig.savefig(path, dpi=self.config.dpi, bbox_inches="tight")
-        print(f"[Plotter] Saved: {path}")
-        return path
+        import matplotlib.pyplot as plt  # lazy import
 
-    def _apply_style(self):
-        """Применить стиль matplotlib перед построением."""
-        try:
-            import matplotlib
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-            if self.config.style:
-                plt.style.use(self.config.style)
-            return plt
-        except ImportError:
-            raise ImportError(
-                "matplotlib не установлен. "
-                "Установите: pip install matplotlib"
-            )
+        safe = _slugify(name)
+        path = self.config.filepath(safe)
+        if self.config.save:
+            fig.savefig(path, dpi=self.config.dpi, bbox_inches="tight")
+            if self.config.verbose:
+                print(f"[Plotter] Saved: {path}")
+        if self.config.show:
+            plt.show()
+        plt.close(fig)
+        return path if self.config.save else ""

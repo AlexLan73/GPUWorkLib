@@ -117,3 +117,6 @@ Doc/Doxygen/**/html/
 Doc/Doxygen/**/*.tag
 Results/Profiler/
 
+# Config files with secrets (MCP tokens, API keys)
+claude_desktop_config.json
+
