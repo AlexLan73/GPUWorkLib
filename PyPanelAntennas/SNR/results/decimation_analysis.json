@@ -1,0 +1,2821 @@
+{
+  "part_a": {
+    "n_full": 1300000,
+    "f_norm": 0.15,
+    "window": "hann",
+    "guard_bins": 5,
+    "ref_bins": 16,
+    "n_fft_baseline": 2097152,
+    "snr_levels": [
+      5,
+      10,
+      15,
+      20,
+      25,
+      30,
+      35,
+      40,
+      45,
+      50
+    ],
+    "target_n_fft_values": [
+      1024,
+      2048,
+      4096,
+      8192,
+      16384,
+      32768,
+      65536,
+      131072,
+      262144,
+      524288,
+      1048576
+    ],
+    "data": {
+      "5": {
+        "baseline": {
+          "step": 1,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 54.95944189083117,
+          "theory_db": 64.37943352306836
+        },
+        "decimated": [
+          {
+            "target_n_fft": 1024,
+            "step": 1270,
+            "n_actual": 1023,
+            "n_fft": 1024,
+            "cfar_snr_db": 32.825098655608834,
+            "delta_from_baseline_db": -22.13434323522234,
+            "theory_cfar_db": 33.3387563371216,
+            "theory_delta_db": -31.040677185946755
+          },
+          {
+            "target_n_fft": 2048,
+            "step": 635,
+            "n_actual": 2047,
+            "n_fft": 2048,
+            "cfar_snr_db": 35.49818566887057,
+            "delta_from_baseline_db": -19.461256221960603,
+            "theory_cfar_db": 36.35117842662506,
+            "theory_delta_db": -28.028255096443296
+          },
+          {
+            "target_n_fft": 4096,
+            "step": 318,
+            "n_actual": 4088,
+            "n_fft": 4096,
+            "cfar_snr_db": 39.321376804984105,
+            "delta_from_baseline_db": -15.638065085847067,
+            "theory_cfar_db": 39.355108871266566,
+            "theory_delta_db": -25.02432465180179
+          },
+          {
+            "target_n_fft": 8192,
+            "step": 159,
+            "n_actual": 8176,
+            "n_fft": 8192,
+            "cfar_snr_db": 41.76343609314405,
+            "delta_from_baseline_db": -13.196005797687121,
+            "theory_cfar_db": 42.36540882790638,
+            "theory_delta_db": -22.01402469516198
+          },
+          {
+            "target_n_fft": 16384,
+            "step": 80,
+            "n_actual": 16250,
+            "n_fft": 16384,
+            "cfar_snr_db": 46.89062971681349,
+            "delta_from_baseline_db": -8.06881217401768,
+            "theory_cfar_db": 45.348533653148934,
+            "theory_delta_db": -19.030899869919423
+          },
+          {
+            "target_n_fft": 32768,
+            "step": 40,
+            "n_actual": 32500,
+            "n_fft": 32768,
+            "cfar_snr_db": 49.56916982484138,
+            "delta_from_baseline_db": -5.390272065989791,
+            "theory_cfar_db": 48.358833609788746,
+            "theory_delta_db": -16.02059991327961
+          },
+          {
+            "target_n_fft": 65536,
+            "step": 20,
+            "n_actual": 65000,
+            "n_fft": 65536,
+            "cfar_snr_db": 51.68193803260546,
+            "delta_from_baseline_db": -3.277503858225714,
+            "theory_cfar_db": 51.36913356642856,
+            "theory_delta_db": -13.010299956639798
+          },
+          {
+            "target_n_fft": 131072,
+            "step": 10,
+            "n_actual": 130000,
+            "n_fft": 131072,
+            "cfar_snr_db": 55.280825372018825,
+            "delta_from_baseline_db": 0.32138348118765236,
+            "theory_cfar_db": 54.37943352306837,
+            "theory_delta_db": -9.999999999999986
+          },
+          {
+            "target_n_fft": 262144,
+            "step": 5,
+            "n_actual": 260000,
+            "n_fft": 262144,
+            "cfar_snr_db": 57.635627654854176,
+            "delta_from_baseline_db": 2.6761857640230033,
+            "theory_cfar_db": 57.389733479708184,
+            "theory_delta_db": -6.989700043360173
+          },
+          {
+            "target_n_fft": 524288,
+            "step": 3,
+            "n_actual": 433333,
+            "n_fft": 524288,
+            "cfar_snr_db": 57.68822380892138,
+            "delta_from_baseline_db": 2.728781918090206,
+            "theory_cfar_db": 59.60821763514368,
+            "theory_delta_db": -4.771215887924676
+          },
+          {
+            "target_n_fft": 1048576,
+            "step": 2,
+            "n_actual": 650000,
+            "n_fft": 1048576,
+            "cfar_snr_db": 54.464691831509064,
+            "delta_from_baseline_db": -0.4947500593221079,
+            "theory_cfar_db": 61.36913356642856,
+            "theory_delta_db": -3.0102999566397983
+          }
+        ]
+      },
+      "10": {
+        "baseline": {
+          "step": 1,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.19409435697394,
+          "theory_db": 69.37943352306836
+        },
+        "decimated": [
+          {
+            "target_n_fft": 1024,
+            "step": 1270,
+            "n_actual": 1023,
+            "n_fft": 1024,
+            "cfar_snr_db": 37.74580902368988,
+            "delta_from_baseline_db": -17.448285333284062,
+            "theory_cfar_db": 38.3387563371216,
+            "theory_delta_db": -31.040677185946755
+          },
+          {
+            "target_n_fft": 2048,
+            "step": 635,
+            "n_actual": 2047,
+            "n_fft": 2048,
+            "cfar_snr_db": 40.46294891248138,
+            "delta_from_baseline_db": -14.731145444492562,
+            "theory_cfar_db": 41.35117842662506,
+            "theory_delta_db": -28.028255096443296
+          },
+          {
+            "target_n_fft": 4096,
+            "step": 318,
+            "n_actual": 4088,
+            "n_fft": 4096,
+            "cfar_snr_db": 44.29347698996553,
+            "delta_from_baseline_db": -10.900617367008415,
+            "theory_cfar_db": 44.355108871266566,
+            "theory_delta_db": -25.02432465180179
+          },
+          {
+            "target_n_fft": 8192,
+            "step": 159,
+            "n_actual": 8176,
+            "n_fft": 8192,
+            "cfar_snr_db": 46.76137738780788,
+            "delta_from_baseline_db": -8.432716969166059,
+            "theory_cfar_db": 47.36540882790638,
+            "theory_delta_db": -22.01402469516198
+          },
+          {
+            "target_n_fft": 16384,
+            "step": 80,
+            "n_actual": 16250,
+            "n_fft": 16384,
+            "cfar_snr_db": 51.888731396400175,
+            "delta_from_baseline_db": -3.305362960573767,
+            "theory_cfar_db": 50.348533653148934,
+            "theory_delta_db": -19.030899869919423
+          },
+          {
+            "target_n_fft": 32768,
+            "step": 40,
+            "n_actual": 32500,
+            "n_fft": 32768,
+            "cfar_snr_db": 54.56378177741922,
+            "delta_from_baseline_db": -0.6303125795547189,
+            "theory_cfar_db": 53.358833609788746,
+            "theory_delta_db": -16.02059991327961
+          },
+          {
+            "target_n_fft": 65536,
+            "step": 20,
+            "n_actual": 65000,
+            "n_fft": 65536,
+            "cfar_snr_db": 56.66113755750693,
+            "delta_from_baseline_db": 1.4670432005329914,
+            "theory_cfar_db": 56.36913356642856,
+            "theory_delta_db": -13.010299956639798
+          },
+          {
+            "target_n_fft": 131072,
+            "step": 10,
+            "n_actual": 130000,
+            "n_fft": 131072,
+            "cfar_snr_db": 60.20630986713637,
+            "delta_from_baseline_db": 5.012215510162427,
+            "theory_cfar_db": 59.37943352306837,
+            "theory_delta_db": -9.999999999999986
+          },
+          {
+            "target_n_fft": 262144,
+            "step": 5,
+            "n_actual": 260000,
+            "n_fft": 262144,
+            "cfar_snr_db": 62.54249209068753,
+            "delta_from_baseline_db": 7.34839773371359,
+            "theory_cfar_db": 62.38973347970818,
+            "theory_delta_db": -6.98970004336018
+          },
+          {
+            "target_n_fft": 524288,
+            "step": 3,
+            "n_actual": 433333,
+            "n_fft": 524288,
+            "cfar_snr_db": 60.003752854512776,
+            "delta_from_baseline_db": 4.809658497538834,
+            "theory_cfar_db": 64.60821763514367,
+            "theory_delta_db": -4.771215887924683
+          },
+          {
+            "target_n_fft": 1048576,
+            "step": 2,
+            "n_actual": 650000,
+            "n_fft": 1048576,
+            "cfar_snr_db": 55.07161110790297,
+            "delta_from_baseline_db": -0.12248324907097441,
+            "theory_cfar_db": 66.36913356642854,
+            "theory_delta_db": -3.0102999566398125
+          }
+        ]
+      },
+      "15": {
+        "baseline": {
+          "step": 1,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.26262662943937,
+          "theory_db": 74.37943352306836
+        },
+        "decimated": [
+          {
+            "target_n_fft": 1024,
+            "step": 1270,
+            "n_actual": 1023,
+            "n_fft": 1024,
+            "cfar_snr_db": 42.69999238848249,
+            "delta_from_baseline_db": -12.562634240956875,
+            "theory_cfar_db": 43.3387563371216,
+            "theory_delta_db": -31.040677185946755
+          },
+          {
+            "target_n_fft": 2048,
+            "step": 635,
+            "n_actual": 2047,
+            "n_fft": 2048,
+            "cfar_snr_db": 45.44246798475744,
+            "delta_from_baseline_db": -9.820158644681925,
+            "theory_cfar_db": 46.35117842662506,
+            "theory_delta_db": -28.028255096443296
+          },
+          {
+            "target_n_fft": 4096,
+            "step": 318,
+            "n_actual": 4088,
+            "n_fft": 4096,
+            "cfar_snr_db": 49.23458479971954,
+            "delta_from_baseline_db": -6.028041829719825,
+            "theory_cfar_db": 49.355108871266566,
+            "theory_delta_db": -25.02432465180179
+          },
+          {
+            "target_n_fft": 8192,
+            "step": 159,
+            "n_actual": 8176,
+            "n_fft": 8192,
+            "cfar_snr_db": 51.73413243636869,
+            "delta_from_baseline_db": -3.528494193070678,
+            "theory_cfar_db": 52.36540882790638,
+            "theory_delta_db": -22.01402469516198
+          },
+          {
+            "target_n_fft": 16384,
+            "step": 80,
+            "n_actual": 16250,
+            "n_fft": 16384,
+            "cfar_snr_db": 56.870306623761124,
+            "delta_from_baseline_db": 1.6076799943217566,
+            "theory_cfar_db": 55.348533653148934,
+            "theory_delta_db": -19.030899869919423
+          },
+          {
+            "target_n_fft": 32768,
+            "step": 40,
+            "n_actual": 32500,
+            "n_fft": 32768,
+            "cfar_snr_db": 59.533635090231996,
+            "delta_from_baseline_db": 4.271008460792629,
+            "theory_cfar_db": 58.358833609788746,
+            "theory_delta_db": -16.02059991327961
+          },
+          {
+            "target_n_fft": 65536,
+            "step": 20,
+            "n_actual": 65000,
+            "n_fft": 65536,
+            "cfar_snr_db": 61.6000991038068,
+            "delta_from_baseline_db": 6.337472474367431,
+            "theory_cfar_db": 61.36913356642856,
+            "theory_delta_db": -13.010299956639798
+          },
+          {
+            "target_n_fft": 131072,
+            "step": 10,
+            "n_actual": 130000,
+            "n_fft": 131072,
+            "cfar_snr_db": 65.04050080269087,
+            "delta_from_baseline_db": 9.777874173251504,
+            "theory_cfar_db": 64.37943352306836,
+            "theory_delta_db": -10.0
+          },
+          {
+            "target_n_fft": 262144,
+            "step": 5,
+            "n_actual": 260000,
+            "n_fft": 262144,
+            "cfar_snr_db": 67.32767762417573,
+            "delta_from_baseline_db": 12.065050994736367,
+            "theory_cfar_db": 67.38973347970817,
+            "theory_delta_db": -6.9897000433601875
+          },
+          {
+            "target_n_fft": 524288,
+            "step": 3,
+            "n_actual": 433333,
+            "n_fft": 524288,
+            "cfar_snr_db": 61.06859640000506,
+            "delta_from_baseline_db": 5.805969770565696,
+            "theory_cfar_db": 69.60821763514367,
+            "theory_delta_db": -4.771215887924683
+          },
+          {
+            "target_n_fft": 1048576,
+            "step": 2,
+            "n_actual": 650000,
+            "n_fft": 1048576,
+            "cfar_snr_db": 55.25172146119783,
+            "delta_from_baseline_db": -0.010905168241535534,
+            "theory_cfar_db": 71.36913356642854,
+            "theory_delta_db": -3.0102999566398125
+          }
+        ]
+      },
+      "20": {
+        "baseline": {
+          "step": 1,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.27974660574091,
+          "theory_db": 79.37943352306836
+        },
+        "decimated": [
+          {
+            "target_n_fft": 1024,
+            "step": 1270,
+            "n_actual": 1023,
+            "n_fft": 1024,
+            "cfar_snr_db": 47.67183607181725,
+            "delta_from_baseline_db": -7.607910533923658,
+            "theory_cfar_db": 48.3387563371216,
+            "theory_delta_db": -31.040677185946755
+          },
+          {
+            "target_n_fft": 2048,
+            "step": 635,
+            "n_actual": 2047,
+            "n_fft": 2048,
+            "cfar_snr_db": 50.42968820194864,
+            "delta_from_baseline_db": -4.850058403792268,
+            "theory_cfar_db": 51.35117842662506,
+            "theory_delta_db": -28.028255096443296
+          },
+          {
+            "target_n_fft": 4096,
+            "step": 318,
+            "n_actual": 4088,
+            "n_fft": 4096,
+            "cfar_snr_db": 54.09963768471069,
+            "delta_from_baseline_db": -1.180108921030218,
+            "theory_cfar_db": 54.355108871266566,
+            "theory_delta_db": -25.02432465180179
+          },
+          {
+            "target_n_fft": 8192,
+            "step": 159,
+            "n_actual": 8176,
+            "n_fft": 8192,
+            "cfar_snr_db": 56.62513385628018,
+            "delta_from_baseline_db": 1.345387250539268,
+            "theory_cfar_db": 57.36540882790638,
+            "theory_delta_db": -22.01402469516198
+          },
+          {
+            "target_n_fft": 16384,
+            "step": 80,
+            "n_actual": 16250,
+            "n_fft": 16384,
+            "cfar_snr_db": 61.81493843882271,
+            "delta_from_baseline_db": 6.535191833081797,
+            "theory_cfar_db": 60.348533653148934,
+            "theory_delta_db": -19.030899869919423
+          },
+          {
+            "target_n_fft": 32768,
+            "step": 40,
+            "n_actual": 32500,
+            "n_fft": 32768,
+            "cfar_snr_db": 64.44292588925413,
+            "delta_from_baseline_db": 9.163179283513216,
+            "theory_cfar_db": 63.35883360978874,
+            "theory_delta_db": -16.020599913279618
+          },
+          {
+            "target_n_fft": 65536,
+            "step": 20,
+            "n_actual": 65000,
+            "n_fft": 65536,
+            "cfar_snr_db": 66.43892123290148,
+            "delta_from_baseline_db": 11.159174627160567,
+            "theory_cfar_db": 66.36913356642854,
+            "theory_delta_db": -13.010299956639813
+          },
+          {
+            "target_n_fft": 131072,
+            "step": 10,
+            "n_actual": 130000,
+            "n_fft": 131072,
+            "cfar_snr_db": 69.65419243721658,
+            "delta_from_baseline_db": 14.374445831475668,
+            "theory_cfar_db": 69.37943352306836,
+            "theory_delta_db": -10.0
+          },
+          {
+            "target_n_fft": 262144,
+            "step": 5,
+            "n_actual": 260000,
+            "n_fft": 262144,
+            "cfar_snr_db": 71.79878136698258,
+            "delta_from_baseline_db": 16.51903476124167,
+            "theory_cfar_db": 72.38973347970817,
+            "theory_delta_db": -6.9897000433601875
+          },
+          {
+            "target_n_fft": 524288,
+            "step": 3,
+            "n_actual": 433333,
+            "n_fft": 524288,
+            "cfar_snr_db": 61.449284762567245,
+            "delta_from_baseline_db": 6.169538156826334,
+            "theory_cfar_db": 74.60821763514367,
+            "theory_delta_db": -4.771215887924683
+          },
+          {
+            "target_n_fft": 1048576,
+            "step": 2,
+            "n_actual": 650000,
+            "n_fft": 1048576,
+            "cfar_snr_db": 55.29266371313937,
+            "delta_from_baseline_db": 0.012917107398457972,
+            "theory_cfar_db": 76.36913356642854,
+            "theory_delta_db": -3.0102999566398125
+          }
+        ]
+      },
+      "25": {
+        "baseline": {
+          "step": 1,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.28247887383608,
+          "theory_db": 84.37943352306836
+        },
+        "decimated": [
+          {
+            "target_n_fft": 1024,
+            "step": 1270,
+            "n_actual": 1023,
+            "n_fft": 1024,
+            "cfar_snr_db": 52.651597863222264,
+            "delta_from_baseline_db": -2.6308810106138125,
+            "theory_cfar_db": 53.3387563371216,
+            "theory_delta_db": -31.040677185946755
+          },
+          {
+            "target_n_fft": 2048,
+            "step": 635,
+            "n_actual": 2047,
+            "n_fft": 2048,
+            "cfar_snr_db": 55.420186280243286,
+            "delta_from_baseline_db": 0.13770740640720902,
+            "theory_cfar_db": 56.35117842662506,
+            "theory_delta_db": -28.028255096443296
+          },
+          {
+            "target_n_fft": 4096,
+            "step": 318,
+            "n_actual": 4088,
+            "n_fft": 4096,
+            "cfar_snr_db": 58.77351196063107,
+            "delta_from_baseline_db": 3.4910330867949924,
+            "theory_cfar_db": 59.355108871266566,
+            "theory_delta_db": -25.02432465180179
+          },
+          {
+            "target_n_fft": 8192,
+            "step": 159,
+            "n_actual": 8176,
+            "n_fft": 8192,
+            "cfar_snr_db": 61.26444682580953,
+            "delta_from_baseline_db": 5.981967951973452,
+            "theory_cfar_db": 62.36540882790637,
+            "theory_delta_db": -22.014024695161986
+          },
+          {
+            "target_n_fft": 16384,
+            "step": 80,
+            "n_actual": 16250,
+            "n_fft": 16384,
+            "cfar_snr_db": 66.66156671245369,
+            "delta_from_baseline_db": 11.379087838617615,
+            "theory_cfar_db": 65.34853365314892,
+            "theory_delta_db": -19.030899869919438
+          },
+          {
+            "target_n_fft": 32768,
+            "step": 40,
+            "n_actual": 32500,
+            "n_fft": 32768,
+            "cfar_snr_db": 69.18723233311925,
+            "delta_from_baseline_db": 13.904753459283178,
+            "theory_cfar_db": 68.35883360978873,
+            "theory_delta_db": -16.020599913279625
+          },
+          {
+            "target_n_fft": 65536,
+            "step": 20,
+            "n_actual": 65000,
+            "n_fft": 65536,
+            "cfar_snr_db": 71.0176698156109,
+            "delta_from_baseline_db": 15.735190941774825,
+            "theory_cfar_db": 71.36913356642854,
+            "theory_delta_db": -13.010299956639813
+          },
+          {
+            "target_n_fft": 131072,
+            "step": 10,
+            "n_actual": 130000,
+            "n_fft": 131072,
+            "cfar_snr_db": 73.76297075433266,
+            "delta_from_baseline_db": 18.48049188049658,
+            "theory_cfar_db": 74.37943352306836,
+            "theory_delta_db": -10.0
+          },
+          {
+            "target_n_fft": 262144,
+            "step": 5,
+            "n_actual": 260000,
+            "n_fft": 262144,
+            "cfar_snr_db": 75.56506928177599,
+            "delta_from_baseline_db": 20.282590407939914,
+            "theory_cfar_db": 77.38973347970817,
+            "theory_delta_db": -6.9897000433601875
+          },
+          {
+            "target_n_fft": 524288,
+            "step": 3,
+            "n_actual": 433333,
+            "n_fft": 524288,
+            "cfar_snr_db": 61.56602000807601,
+            "delta_from_baseline_db": 6.2835411342399325,
+            "theory_cfar_db": 79.60821763514367,
+            "theory_delta_db": -4.771215887924683
+          },
+          {
+            "target_n_fft": 1048576,
+            "step": 2,
+            "n_actual": 650000,
+            "n_fft": 1048576,
+            "cfar_snr_db": 55.29577745864782,
+            "delta_from_baseline_db": 0.013298584811742842,
+            "theory_cfar_db": 81.36913356642854,
+            "theory_delta_db": -3.0102999566398125
+          }
+        ]
+      },
+      "30": {
+        "baseline": {
+          "step": 1,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.28182561031998,
+          "theory_db": 89.37943352306836
+        },
+        "decimated": [
+          {
+            "target_n_fft": 1024,
+            "step": 1270,
+            "n_actual": 1023,
+            "n_fft": 1024,
+            "cfar_snr_db": 57.632085352331515,
+            "delta_from_baseline_db": 2.350259742011538,
+            "theory_cfar_db": 58.3387563371216,
+            "theory_delta_db": -31.040677185946755
+          },
+          {
+            "target_n_fft": 2048,
+            "step": 635,
+            "n_actual": 2047,
+            "n_fft": 2048,
+            "cfar_snr_db": 60.410585415247084,
+            "delta_from_baseline_db": 5.128759804927107,
+            "theory_cfar_db": 61.35117842662506,
+            "theory_delta_db": -28.028255096443296
+          },
+          {
+            "target_n_fft": 4096,
+            "step": 318,
+            "n_actual": 4088,
+            "n_fft": 4096,
+            "cfar_snr_db": 62.9891729802361,
+            "delta_from_baseline_db": 7.707347369916121,
+            "theory_cfar_db": 64.35510887126655,
+            "theory_delta_db": -25.024324651801805
+          },
+          {
+            "target_n_fft": 8192,
+            "step": 159,
+            "n_actual": 8176,
+            "n_fft": 8192,
+            "cfar_snr_db": 65.24471849935536,
+            "delta_from_baseline_db": 9.96289288903538,
+            "theory_cfar_db": 67.36540882790636,
+            "theory_delta_db": -22.014024695161993
+          },
+          {
+            "target_n_fft": 16384,
+            "step": 80,
+            "n_actual": 16250,
+            "n_fft": 16384,
+            "cfar_snr_db": 71.2438677135384,
+            "delta_from_baseline_db": 15.96204210321843,
+            "theory_cfar_db": 70.34853365314892,
+            "theory_delta_db": -19.030899869919438
+          },
+          {
+            "target_n_fft": 32768,
+            "step": 40,
+            "n_actual": 32500,
+            "n_fft": 32768,
+            "cfar_snr_db": 73.50129525499733,
+            "delta_from_baseline_db": 18.219469644677353,
+            "theory_cfar_db": 73.35883360978873,
+            "theory_delta_db": -16.020599913279625
+          },
+          {
+            "target_n_fft": 65536,
+            "step": 20,
+            "n_actual": 65000,
+            "n_fft": 65536,
+            "cfar_snr_db": 74.98136370258361,
+            "delta_from_baseline_db": 19.69953809226363,
+            "theory_cfar_db": 76.36913356642854,
+            "theory_delta_db": -13.010299956639813
+          },
+          {
+            "target_n_fft": 131072,
+            "step": 10,
+            "n_actual": 130000,
+            "n_fft": 131072,
+            "cfar_snr_db": 76.9251694347371,
+            "delta_from_baseline_db": 21.643343824417123,
+            "theory_cfar_db": 79.37943352306836,
+            "theory_delta_db": -10.0
+          },
+          {
+            "target_n_fft": 262144,
+            "step": 5,
+            "n_actual": 260000,
+            "n_fft": 262144,
+            "cfar_snr_db": 78.16610367514629,
+            "delta_from_baseline_db": 22.88427806482631,
+            "theory_cfar_db": 82.38973347970817,
+            "theory_delta_db": -6.9897000433601875
+          },
+          {
+            "target_n_fft": 524288,
+            "step": 3,
+            "n_actual": 433333,
+            "n_fft": 524288,
+            "cfar_snr_db": 61.59738287924075,
+            "delta_from_baseline_db": 6.31555726892077,
+            "theory_cfar_db": 84.60821763514367,
+            "theory_delta_db": -4.771215887924683
+          },
+          {
+            "target_n_fft": 1048576,
+            "step": 2,
+            "n_actual": 650000,
+            "n_fft": 1048576,
+            "cfar_snr_db": 55.29119402887943,
+            "delta_from_baseline_db": 0.009368418559454028,
+            "theory_cfar_db": 86.36913356642854,
+            "theory_delta_db": -3.0102999566398125
+          }
+        ]
+      },
+      "35": {
+        "baseline": {
+          "step": 1,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.2807658479605,
+          "theory_db": 94.37943352306836
+        },
+        "decimated": [
+          {
+            "target_n_fft": 1024,
+            "step": 1270,
+            "n_actual": 1023,
+            "n_fft": 1024,
+            "cfar_snr_db": 62.6057676632876,
+            "delta_from_baseline_db": 7.325001815327099,
+            "theory_cfar_db": 63.3387563371216,
+            "theory_delta_db": -31.040677185946755
+          },
+          {
+            "target_n_fft": 2048,
+            "step": 635,
+            "n_actual": 2047,
+            "n_fft": 2048,
+            "cfar_snr_db": 65.39718332546373,
+            "delta_from_baseline_db": 10.116417477503227,
+            "theory_cfar_db": 66.35117842662505,
+            "theory_delta_db": -28.028255096443303
+          },
+          {
+            "target_n_fft": 4096,
+            "step": 318,
+            "n_actual": 4088,
+            "n_fft": 4096,
+            "cfar_snr_db": 66.29597323668726,
+            "delta_from_baseline_db": 11.015207388726758,
+            "theory_cfar_db": 69.35510887126655,
+            "theory_delta_db": -25.024324651801805
+          },
+          {
+            "target_n_fft": 8192,
+            "step": 159,
+            "n_actual": 8176,
+            "n_fft": 8192,
+            "cfar_snr_db": 67.9937281683217,
+            "delta_from_baseline_db": 12.712962320361193,
+            "theory_cfar_db": 72.36540882790636,
+            "theory_delta_db": -22.014024695161993
+          },
+          {
+            "target_n_fft": 16384,
+            "step": 80,
+            "n_actual": 16250,
+            "n_fft": 16384,
+            "cfar_snr_db": 75.18896524769302,
+            "delta_from_baseline_db": 19.908199399732517,
+            "theory_cfar_db": 75.34853365314892,
+            "theory_delta_db": -19.030899869919438
+          },
+          {
+            "target_n_fft": 32768,
+            "step": 40,
+            "n_actual": 32500,
+            "n_fft": 32768,
+            "cfar_snr_db": 76.89837883347568,
+            "delta_from_baseline_db": 21.617612985515173,
+            "theory_cfar_db": 78.35883360978873,
+            "theory_delta_db": -16.020599913279625
+          },
+          {
+            "target_n_fft": 65536,
+            "step": 20,
+            "n_actual": 65000,
+            "n_fft": 65536,
+            "cfar_snr_db": 77.83622626115803,
+            "delta_from_baseline_db": 22.55546041319753,
+            "theory_cfar_db": 81.36913356642854,
+            "theory_delta_db": -13.010299956639813
+          },
+          {
+            "target_n_fft": 131072,
+            "step": 10,
+            "n_actual": 130000,
+            "n_fft": 131072,
+            "cfar_snr_db": 78.8687776324607,
+            "delta_from_baseline_db": 23.588011784500203,
+            "theory_cfar_db": 84.37943352306836,
+            "theory_delta_db": -10.0
+          },
+          {
+            "target_n_fft": 262144,
+            "step": 5,
+            "n_actual": 260000,
+            "n_fft": 262144,
+            "cfar_snr_db": 79.55485614753988,
+            "delta_from_baseline_db": 24.274090299579377,
+            "theory_cfar_db": 87.38973347970817,
+            "theory_delta_db": -6.9897000433601875
+          },
+          {
+            "target_n_fft": 524288,
+            "step": 3,
+            "n_actual": 433333,
+            "n_fft": 524288,
+            "cfar_snr_db": 61.6038426806739,
+            "delta_from_baseline_db": 6.323076832713397,
+            "theory_cfar_db": 89.60821763514367,
+            "theory_delta_db": -4.771215887924683
+          },
+          {
+            "target_n_fft": 1048576,
+            "step": 2,
+            "n_actual": 650000,
+            "n_fft": 1048576,
+            "cfar_snr_db": 55.286618211080935,
+            "delta_from_baseline_db": 0.005852363120432358,
+            "theory_cfar_db": 91.36913356642854,
+            "theory_delta_db": -3.0102999566398125
+          }
+        ]
+      },
+      "40": {
+        "baseline": {
+          "step": 1,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.279951404283096,
+          "theory_db": 99.37943352306836
+        },
+        "decimated": [
+          {
+            "target_n_fft": 1024,
+            "step": 1270,
+            "n_actual": 1023,
+            "n_fft": 1024,
+            "cfar_snr_db": 67.56094766175885,
+            "delta_from_baseline_db": 12.28099625747575,
+            "theory_cfar_db": 68.3387563371216,
+            "theory_delta_db": -31.040677185946763
+          },
+          {
+            "target_n_fft": 2048,
+            "step": 635,
+            "n_actual": 2047,
+            "n_fft": 2048,
+            "cfar_snr_db": 70.37406710431091,
+            "delta_from_baseline_db": 15.094115700027814,
+            "theory_cfar_db": 71.35117842662505,
+            "theory_delta_db": -28.028255096443303
+          },
+          {
+            "target_n_fft": 4096,
+            "step": 318,
+            "n_actual": 4088,
+            "n_fft": 4096,
+            "cfar_snr_db": 68.36026959952801,
+            "delta_from_baseline_db": 13.080318195244914,
+            "theory_cfar_db": 74.35510887126655,
+            "theory_delta_db": -25.024324651801805
+          },
+          {
+            "target_n_fft": 8192,
+            "step": 159,
+            "n_actual": 8176,
+            "n_fft": 8192,
+            "cfar_snr_db": 69.38141572940708,
+            "delta_from_baseline_db": 14.101464325123985,
+            "theory_cfar_db": 77.36540882790636,
+            "theory_delta_db": -22.014024695161993
+          },
+          {
+            "target_n_fft": 16384,
+            "step": 80,
+            "n_actual": 16250,
+            "n_fft": 16384,
+            "cfar_snr_db": 77.98635457412485,
+            "delta_from_baseline_db": 22.70640316984175,
+            "theory_cfar_db": 80.34853365314892,
+            "theory_delta_db": -19.030899869919438
+          },
+          {
+            "target_n_fft": 32768,
+            "step": 40,
+            "n_actual": 32500,
+            "n_fft": 32768,
+            "cfar_snr_db": 78.98365057727815,
+            "delta_from_baseline_db": 23.70369917299506,
+            "theory_cfar_db": 83.35883360978873,
+            "theory_delta_db": -16.020599913279625
+          },
+          {
+            "target_n_fft": 65536,
+            "step": 20,
+            "n_actual": 65000,
+            "n_fft": 65536,
+            "cfar_snr_db": 79.41776538371018,
+            "delta_from_baseline_db": 24.13781397942708,
+            "theory_cfar_db": 86.36913356642854,
+            "theory_delta_db": -13.010299956639813
+          },
+          {
+            "target_n_fft": 131072,
+            "step": 10,
+            "n_actual": 130000,
+            "n_fft": 131072,
+            "cfar_snr_db": 79.82648164125169,
+            "delta_from_baseline_db": 24.546530236968593,
+            "theory_cfar_db": 89.37943352306836,
+            "theory_delta_db": -10.0
+          },
+          {
+            "target_n_fft": 262144,
+            "step": 5,
+            "n_actual": 260000,
+            "n_fft": 262144,
+            "cfar_snr_db": 80.16083581110821,
+            "delta_from_baseline_db": 24.880884406825118,
+            "theory_cfar_db": 92.38973347970817,
+            "theory_delta_db": -6.9897000433601875
+          },
+          {
+            "target_n_fft": 524288,
+            "step": 3,
+            "n_actual": 433333,
+            "n_fft": 524288,
+            "cfar_snr_db": 61.60391779344398,
+            "delta_from_baseline_db": 6.323966389160887,
+            "theory_cfar_db": 94.60821763514367,
+            "theory_delta_db": -4.771215887924683
+          },
+          {
+            "target_n_fft": 1048576,
+            "step": 2,
+            "n_actual": 650000,
+            "n_fft": 1048576,
+            "cfar_snr_db": 55.28341577723652,
+            "delta_from_baseline_db": 0.0034643729534238332,
+            "theory_cfar_db": 96.36913356642854,
+            "theory_delta_db": -3.0102999566398125
+          }
+        ]
+      },
+      "45": {
+        "baseline": {
+          "step": 1,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.27942348693891,
+          "theory_db": 104.37943352306836
+        },
+        "decimated": [
+          {
+            "target_n_fft": 1024,
+            "step": 1270,
+            "n_actual": 1023,
+            "n_fft": 1024,
+            "cfar_snr_db": 72.47404482575081,
+            "delta_from_baseline_db": 17.1946213388119,
+            "theory_cfar_db": 73.3387563371216,
+            "theory_delta_db": -31.040677185946763
+          },
+          {
+            "target_n_fft": 2048,
+            "step": 635,
+            "n_actual": 2047,
+            "n_fft": 2048,
+            "cfar_snr_db": 75.32919766517914,
+            "delta_from_baseline_db": 20.049774178240227,
+            "theory_cfar_db": 76.35117842662505,
+            "theory_delta_db": -28.028255096443303
+          },
+          {
+            "target_n_fft": 4096,
+            "step": 318,
+            "n_actual": 4088,
+            "n_fft": 4096,
+            "cfar_snr_db": 69.37396445045425,
+            "delta_from_baseline_db": 14.094540963515342,
+            "theory_cfar_db": 79.35510887126655,
+            "theory_delta_db": -25.024324651801805
+          },
+          {
+            "target_n_fft": 8192,
+            "step": 159,
+            "n_actual": 8176,
+            "n_fft": 8192,
+            "cfar_snr_db": 69.90991376262734,
+            "delta_from_baseline_db": 14.63049027568843,
+            "theory_cfar_db": 82.36540882790636,
+            "theory_delta_db": -22.014024695161993
+          },
+          {
+            "target_n_fft": 16384,
+            "step": 80,
+            "n_actual": 16250,
+            "n_fft": 16384,
+            "cfar_snr_db": 79.49366086558355,
+            "delta_from_baseline_db": 24.21423737864464,
+            "theory_cfar_db": 85.34853365314892,
+            "theory_delta_db": -19.030899869919438
+          },
+          {
+            "target_n_fft": 32768,
+            "step": 40,
+            "n_actual": 32500,
+            "n_fft": 32768,
+            "cfar_snr_db": 79.95566494408484,
+            "delta_from_baseline_db": 24.676241457145935,
+            "theory_cfar_db": 88.35883360978873,
+            "theory_delta_db": -16.020599913279625
+          },
+          {
+            "target_n_fft": 65536,
+            "step": 20,
+            "n_actual": 65000,
+            "n_fft": 65536,
+            "cfar_snr_db": 80.11350845986007,
+            "delta_from_baseline_db": 24.83408497292116,
+            "theory_cfar_db": 91.36913356642854,
+            "theory_delta_db": -13.010299956639813
+          },
+          {
+            "target_n_fft": 131072,
+            "step": 10,
+            "n_actual": 130000,
+            "n_fft": 131072,
+            "cfar_snr_db": 80.24382952503572,
+            "delta_from_baseline_db": 24.96440603809681,
+            "theory_cfar_db": 94.37943352306836,
+            "theory_delta_db": -10.0
+          },
+          {
+            "target_n_fft": 262144,
+            "step": 5,
+            "n_actual": 260000,
+            "n_fft": 262144,
+            "cfar_snr_db": 80.4042509225936,
+            "delta_from_baseline_db": 25.124827435654694,
+            "theory_cfar_db": 97.38973347970817,
+            "theory_delta_db": -6.9897000433601875
+          },
+          {
+            "target_n_fft": 524288,
+            "step": 3,
+            "n_actual": 433333,
+            "n_fft": 524288,
+            "cfar_snr_db": 61.60283339251087,
+            "delta_from_baseline_db": 6.323409905571957,
+            "theory_cfar_db": 99.60821763514367,
+            "theory_delta_db": -4.771215887924683
+          },
+          {
+            "target_n_fft": 1048576,
+            "step": 2,
+            "n_actual": 650000,
+            "n_fft": 1048576,
+            "cfar_snr_db": 55.28141467697894,
+            "delta_from_baseline_db": 0.001991190040030233,
+            "theory_cfar_db": 101.36913356642854,
+            "theory_delta_db": -3.0102999566398125
+          }
+        ]
+      },
+      "50": {
+        "baseline": {
+          "step": 1,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.27910583439115,
+          "theory_db": 109.37943352306836
+        },
+        "decimated": [
+          {
+            "target_n_fft": 1024,
+            "step": 1270,
+            "n_actual": 1023,
+            "n_fft": 1024,
+            "cfar_snr_db": 77.29127218800063,
+            "delta_from_baseline_db": 22.01216635360948,
+            "theory_cfar_db": 78.3387563371216,
+            "theory_delta_db": -31.040677185946763
+          },
+          {
+            "target_n_fft": 2048,
+            "step": 635,
+            "n_actual": 2047,
+            "n_fft": 2048,
+            "cfar_snr_db": 80.23465034979796,
+            "delta_from_baseline_db": 24.955544515406807,
+            "theory_cfar_db": 81.35117842662505,
+            "theory_delta_db": -28.028255096443303
+          },
+          {
+            "target_n_fft": 4096,
+            "step": 318,
+            "n_actual": 4088,
+            "n_fft": 4096,
+            "cfar_snr_db": 69.80418752980283,
+            "delta_from_baseline_db": 14.525081695411679,
+            "theory_cfar_db": 84.35510887126655,
+            "theory_delta_db": -25.024324651801805
+          },
+          {
+            "target_n_fft": 8192,
+            "step": 159,
+            "n_actual": 8176,
+            "n_fft": 8192,
+            "cfar_snr_db": 70.0785349280943,
+            "delta_from_baseline_db": 14.799429093703147,
+            "theory_cfar_db": 87.36540882790636,
+            "theory_delta_db": -22.014024695161993
+          },
+          {
+            "target_n_fft": 16384,
+            "step": 80,
+            "n_actual": 16250,
+            "n_fft": 16384,
+            "cfar_snr_db": 80.13357940812847,
+            "delta_from_baseline_db": 24.854473573737316,
+            "theory_cfar_db": 90.34853365314892,
+            "theory_delta_db": -19.030899869919438
+          },
+          {
+            "target_n_fft": 32768,
+            "step": 40,
+            "n_actual": 32500,
+            "n_fft": 32768,
+            "cfar_snr_db": 80.3333778414985,
+            "delta_from_baseline_db": 25.05427200710735,
+            "theory_cfar_db": 93.35883360978873,
+            "theory_delta_db": -16.020599913279625
+          },
+          {
+            "target_n_fft": 65536,
+            "step": 20,
+            "n_actual": 65000,
+            "n_fft": 65536,
+            "cfar_snr_db": 80.3866491671458,
+            "delta_from_baseline_db": 25.107543332754652,
+            "theory_cfar_db": 96.36913356642854,
+            "theory_delta_db": -13.010299956639813
+          },
+          {
+            "target_n_fft": 131072,
+            "step": 10,
+            "n_actual": 130000,
+            "n_fft": 131072,
+            "cfar_snr_db": 80.42255913436323,
+            "delta_from_baseline_db": 25.143453299972073,
+            "theory_cfar_db": 99.37943352306836,
+            "theory_delta_db": -10.0
+          },
+          {
+            "target_n_fft": 262144,
+            "step": 5,
+            "n_actual": 260000,
+            "n_fft": 262144,
+            "cfar_snr_db": 80.50301629855991,
+            "delta_from_baseline_db": 25.22391046416876,
+            "theory_cfar_db": 102.38973347970817,
+            "theory_delta_db": -6.9897000433601875
+          },
+          {
+            "target_n_fft": 524288,
+            "step": 3,
+            "n_actual": 433333,
+            "n_fft": 524288,
+            "cfar_snr_db": 61.601868270743836,
+            "delta_from_baseline_db": 6.322762436352683,
+            "theory_cfar_db": 104.60821763514367,
+            "theory_delta_db": -4.771215887924683
+          },
+          {
+            "target_n_fft": 1048576,
+            "step": 2,
+            "n_actual": 650000,
+            "n_fft": 1048576,
+            "cfar_snr_db": 55.28022781053215,
+            "delta_from_baseline_db": 0.0011219761410004025,
+            "theory_cfar_db": 106.36913356642854,
+            "theory_delta_db": -3.0102999566398125
+          }
+        ]
+      }
+    }
+  },
+  "part_b": {
+    "target_n_fft_fixed": 2048,
+    "input_lengths": [
+      1300000,
+      650000,
+      325000,
+      162500,
+      81250,
+      40625,
+      20312,
+      10156,
+      5078,
+      4096
+    ],
+    "data": {
+      "5": [
+        {
+          "n_input": 1300000,
+          "step": 635,
+          "n_actual": 2047,
+          "n_fft": 2048,
+          "cfar_snr_db": 35.49818566887057,
+          "theory_db": 36.35117842662506
+        },
+        {
+          "n_input": 650000,
+          "step": 318,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 36.14506695153852,
+          "theory_db": 36.34480891462675
+        },
+        {
+          "n_input": 325000,
+          "step": 159,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 36.21276629064501,
+          "theory_db": 36.34480891462675
+        },
+        {
+          "n_input": 162500,
+          "step": 80,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 35.63360940191105,
+          "theory_db": 36.31709923404807
+        },
+        {
+          "n_input": 81250,
+          "step": 40,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 34.36016070162935,
+          "theory_db": 36.31709923404807
+        },
+        {
+          "n_input": 40625,
+          "step": 20,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 36.62952217802846,
+          "theory_db": 36.31709923404807
+        },
+        {
+          "n_input": 20312,
+          "step": 10,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 38.48690490542602,
+          "theory_db": 36.31709923404807
+        },
+        {
+          "n_input": 10156,
+          "step": 5,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 37.153426221995815,
+          "theory_db": 36.31709923404807
+        },
+        {
+          "n_input": 5078,
+          "step": 3,
+          "n_actual": 1692,
+          "n_fft": 2048,
+          "cfar_snr_db": 33.99077565373935,
+          "theory_db": 35.52400358703005
+        },
+        {
+          "n_input": 4096,
+          "step": 2,
+          "n_actual": 2048,
+          "n_fft": 2048,
+          "cfar_snr_db": 35.50346757524136,
+          "theory_db": 36.35329952303793
+        }
+      ],
+      "10": [
+        {
+          "n_input": 1300000,
+          "step": 635,
+          "n_actual": 2047,
+          "n_fft": 2048,
+          "cfar_snr_db": 40.46294891248138,
+          "theory_db": 41.35117842662506
+        },
+        {
+          "n_input": 650000,
+          "step": 318,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 41.18780976062191,
+          "theory_db": 41.34480891462675
+        },
+        {
+          "n_input": 325000,
+          "step": 159,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 41.21432008114994,
+          "theory_db": 41.34480891462675
+        },
+        {
+          "n_input": 162500,
+          "step": 80,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 40.67789107546341,
+          "theory_db": 41.31709923404807
+        },
+        {
+          "n_input": 81250,
+          "step": 40,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 39.412425827292815,
+          "theory_db": 41.31709923404807
+        },
+        {
+          "n_input": 40625,
+          "step": 20,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 41.58734357297825,
+          "theory_db": 41.31709923404807
+        },
+        {
+          "n_input": 20312,
+          "step": 10,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 43.51439641732652,
+          "theory_db": 41.31709923404807
+        },
+        {
+          "n_input": 10156,
+          "step": 5,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 42.15612942258911,
+          "theory_db": 41.31709923404807
+        },
+        {
+          "n_input": 5078,
+          "step": 3,
+          "n_actual": 1692,
+          "n_fft": 2048,
+          "cfar_snr_db": 38.97496663214019,
+          "theory_db": 40.52400358703005
+        },
+        {
+          "n_input": 4096,
+          "step": 2,
+          "n_actual": 2048,
+          "n_fft": 2048,
+          "cfar_snr_db": 40.421744665103425,
+          "theory_db": 41.35329952303793
+        }
+      ],
+      "15": [
+        {
+          "n_input": 1300000,
+          "step": 635,
+          "n_actual": 2047,
+          "n_fft": 2048,
+          "cfar_snr_db": 45.44246798475744,
+          "theory_db": 46.35117842662506
+        },
+        {
+          "n_input": 650000,
+          "step": 318,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 46.188693732260795,
+          "theory_db": 46.34480891462675
+        },
+        {
+          "n_input": 325000,
+          "step": 159,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 46.210250621147935,
+          "theory_db": 46.34480891462675
+        },
+        {
+          "n_input": 162500,
+          "step": 80,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 45.7013074003001,
+          "theory_db": 46.31709923404807
+        },
+        {
+          "n_input": 81250,
+          "step": 40,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 44.441176739766924,
+          "theory_db": 46.31709923404807
+        },
+        {
+          "n_input": 40625,
+          "step": 20,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 46.56556182809705,
+          "theory_db": 46.31709923404807
+        },
+        {
+          "n_input": 20312,
+          "step": 10,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 48.52558442915834,
+          "theory_db": 46.31709923404807
+        },
+        {
+          "n_input": 10156,
+          "step": 5,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 47.15109172824946,
+          "theory_db": 46.31709923404807
+        },
+        {
+          "n_input": 5078,
+          "step": 3,
+          "n_actual": 1692,
+          "n_fft": 2048,
+          "cfar_snr_db": 43.933713581184996,
+          "theory_db": 45.52400358703005
+        },
+        {
+          "n_input": 4096,
+          "step": 2,
+          "n_actual": 2048,
+          "n_fft": 2048,
+          "cfar_snr_db": 45.3220567501242,
+          "theory_db": 46.35329952303793
+        }
+      ],
+      "20": [
+        {
+          "n_input": 1300000,
+          "step": 635,
+          "n_actual": 2047,
+          "n_fft": 2048,
+          "cfar_snr_db": 50.42968820194864,
+          "theory_db": 51.35117842662506
+        },
+        {
+          "n_input": 650000,
+          "step": 318,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 51.10491229468278,
+          "theory_db": 51.34480891462675
+        },
+        {
+          "n_input": 325000,
+          "step": 159,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 51.18547448735522,
+          "theory_db": 51.34480891462675
+        },
+        {
+          "n_input": 162500,
+          "step": 80,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 50.7104783956126,
+          "theory_db": 51.31709923404807
+        },
+        {
+          "n_input": 81250,
+          "step": 40,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 49.45506896575891,
+          "theory_db": 51.31709923404807
+        },
+        {
+          "n_input": 40625,
+          "step": 20,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 51.554871539869815,
+          "theory_db": 51.31709923404807
+        },
+        {
+          "n_input": 20312,
+          "step": 10,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 53.521633775065,
+          "theory_db": 51.31709923404807
+        },
+        {
+          "n_input": 10156,
+          "step": 5,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 52.13475811589649,
+          "theory_db": 51.31709923404807
+        },
+        {
+          "n_input": 5078,
+          "step": 3,
+          "n_actual": 1692,
+          "n_fft": 2048,
+          "cfar_snr_db": 48.79715237863353,
+          "theory_db": 50.52400358703005
+        },
+        {
+          "n_input": 4096,
+          "step": 2,
+          "n_actual": 2048,
+          "n_fft": 2048,
+          "cfar_snr_db": 50.13961603517646,
+          "theory_db": 51.35329952303793
+        }
+      ],
+      "25": [
+        {
+          "n_input": 1300000,
+          "step": 635,
+          "n_actual": 2047,
+          "n_fft": 2048,
+          "cfar_snr_db": 55.420186280243286,
+          "theory_db": 56.35117842662506
+        },
+        {
+          "n_input": 650000,
+          "step": 318,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 55.786132877392845,
+          "theory_db": 56.34480891462675
+        },
+        {
+          "n_input": 325000,
+          "step": 159,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 56.08945687570227,
+          "theory_db": 56.34480891462675
+        },
+        {
+          "n_input": 162500,
+          "step": 80,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 55.70449358418286,
+          "theory_db": 56.31709923404807
+        },
+        {
+          "n_input": 81250,
+          "step": 40,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 54.45576391927044,
+          "theory_db": 56.31709923404807
+        },
+        {
+          "n_input": 40625,
+          "step": 20,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 56.54665499925101,
+          "theory_db": 56.31709923404807
+        },
+        {
+          "n_input": 20312,
+          "step": 10,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 58.493586380116334,
+          "theory_db": 56.31709923404807
+        },
+        {
+          "n_input": 10156,
+          "step": 5,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 57.09617487577952,
+          "theory_db": 56.31709923404807
+        },
+        {
+          "n_input": 5078,
+          "step": 3,
+          "n_actual": 1692,
+          "n_fft": 2048,
+          "cfar_snr_db": 53.36630146302552,
+          "theory_db": 55.52400358703005
+        },
+        {
+          "n_input": 4096,
+          "step": 2,
+          "n_actual": 2048,
+          "n_fft": 2048,
+          "cfar_snr_db": 54.7292067718588,
+          "theory_db": 56.35329952303793
+        }
+      ],
+      "30": [
+        {
+          "n_input": 1300000,
+          "step": 635,
+          "n_actual": 2047,
+          "n_fft": 2048,
+          "cfar_snr_db": 60.410585415247084,
+          "theory_db": 61.35117842662506
+        },
+        {
+          "n_input": 650000,
+          "step": 318,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 59.85290569968412,
+          "theory_db": 61.34480891462675
+        },
+        {
+          "n_input": 325000,
+          "step": 159,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 60.76949085774187,
+          "theory_db": 61.34480891462675
+        },
+        {
+          "n_input": 162500,
+          "step": 80,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 60.668806033432645,
+          "theory_db": 61.31709923404807
+        },
+        {
+          "n_input": 81250,
+          "step": 40,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 59.43403577621077,
+          "theory_db": 61.31709923404807
+        },
+        {
+          "n_input": 40625,
+          "step": 20,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 61.52275476471222,
+          "theory_db": 61.31709923404807
+        },
+        {
+          "n_input": 20312,
+          "step": 10,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 63.40878040067377,
+          "theory_db": 61.31709923404807
+        },
+        {
+          "n_input": 10156,
+          "step": 5,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 62.005879491436,
+          "theory_db": 61.31709923404807
+        },
+        {
+          "n_input": 5078,
+          "step": 3,
+          "n_actual": 1692,
+          "n_fft": 2048,
+          "cfar_snr_db": 57.1922248358758,
+          "theory_db": 60.52400358703005
+        },
+        {
+          "n_input": 4096,
+          "step": 2,
+          "n_actual": 2048,
+          "n_fft": 2048,
+          "cfar_snr_db": 58.77946330636125,
+          "theory_db": 61.35329952303793
+        }
+      ],
+      "35": [
+        {
+          "n_input": 1300000,
+          "step": 635,
+          "n_actual": 2047,
+          "n_fft": 2048,
+          "cfar_snr_db": 65.39718332546373,
+          "theory_db": 66.35117842662505
+        },
+        {
+          "n_input": 650000,
+          "step": 318,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 62.731769283065695,
+          "theory_db": 66.34480891462674
+        },
+        {
+          "n_input": 325000,
+          "step": 159,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 64.84742471435278,
+          "theory_db": 66.34480891462674
+        },
+        {
+          "n_input": 162500,
+          "step": 80,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 65.5533122599552,
+          "theory_db": 66.31709923404806
+        },
+        {
+          "n_input": 81250,
+          "step": 40,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 64.35342440513625,
+          "theory_db": 66.31709923404806
+        },
+        {
+          "n_input": 40625,
+          "step": 20,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 66.42772788314775,
+          "theory_db": 66.31709923404806
+        },
+        {
+          "n_input": 20312,
+          "step": 10,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 68.17144245245585,
+          "theory_db": 66.31709923404806
+        },
+        {
+          "n_input": 10156,
+          "step": 5,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 66.78584673605735,
+          "theory_db": 66.31709923404806
+        },
+        {
+          "n_input": 5078,
+          "step": 3,
+          "n_actual": 1692,
+          "n_fft": 2048,
+          "cfar_snr_db": 59.72320415745996,
+          "theory_db": 65.52400358703004
+        },
+        {
+          "n_input": 4096,
+          "step": 2,
+          "n_actual": 2048,
+          "n_fft": 2048,
+          "cfar_snr_db": 61.82807567904723,
+          "theory_db": 66.35329952303793
+        }
+      ],
+      "40": [
+        {
+          "n_input": 1300000,
+          "step": 635,
+          "n_actual": 2047,
+          "n_fft": 2048,
+          "cfar_snr_db": 70.37406710431091,
+          "theory_db": 71.35117842662505
+        },
+        {
+          "n_input": 650000,
+          "step": 318,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 64.22883319967455,
+          "theory_db": 71.34480891462674
+        },
+        {
+          "n_input": 325000,
+          "step": 159,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 67.74691467387024,
+          "theory_db": 71.34480891462674
+        },
+        {
+          "n_input": 162500,
+          "step": 80,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 70.21235169938367,
+          "theory_db": 71.31709923404806
+        },
+        {
+          "n_input": 81250,
+          "step": 40,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 69.10220985082726,
+          "theory_db": 71.31709923404806
+        },
+        {
+          "n_input": 40625,
+          "step": 20,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 71.09429548053396,
+          "theory_db": 71.31709923404806
+        },
+        {
+          "n_input": 20312,
+          "step": 10,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 72.53535216548181,
+          "theory_db": 71.31709923404806
+        },
+        {
+          "n_input": 10156,
+          "step": 5,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 71.24145648079666,
+          "theory_db": 71.31709923404806
+        },
+        {
+          "n_input": 5078,
+          "step": 3,
+          "n_actual": 1692,
+          "n_fft": 2048,
+          "cfar_snr_db": 60.9426173658397,
+          "theory_db": 70.52400358703004
+        },
+        {
+          "n_input": 4096,
+          "step": 2,
+          "n_actual": 2048,
+          "n_fft": 2048,
+          "cfar_snr_db": 63.637147016843976,
+          "theory_db": 71.35329952303793
+        }
+      ],
+      "45": [
+        {
+          "n_input": 1300000,
+          "step": 635,
+          "n_actual": 2047,
+          "n_fft": 2048,
+          "cfar_snr_db": 75.32919766517914,
+          "theory_db": 76.35117842662505
+        },
+        {
+          "n_input": 650000,
+          "step": 318,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 64.81211727892688,
+          "theory_db": 76.34480891462674
+        },
+        {
+          "n_input": 325000,
+          "step": 159,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 69.26119331853342,
+          "theory_db": 76.34480891462674
+        },
+        {
+          "n_input": 162500,
+          "step": 80,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 74.29582152771115,
+          "theory_db": 76.31709923404806
+        },
+        {
+          "n_input": 81250,
+          "step": 40,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 73.39046965077199,
+          "theory_db": 76.31709923404806
+        },
+        {
+          "n_input": 40625,
+          "step": 20,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 75.11130948038995,
+          "theory_db": 76.31709923404806
+        },
+        {
+          "n_input": 20312,
+          "step": 10,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 76.0314822985845,
+          "theory_db": 76.31709923404806
+        },
+        {
+          "n_input": 10156,
+          "step": 5,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 74.98104539545875,
+          "theory_db": 76.31709923404806
+        },
+        {
+          "n_input": 5078,
+          "step": 3,
+          "n_actual": 1692,
+          "n_fft": 2048,
+          "cfar_snr_db": 61.39307424624639,
+          "theory_db": 75.52400358703004
+        },
+        {
+          "n_input": 4096,
+          "step": 2,
+          "n_actual": 2048,
+          "n_fft": 2048,
+          "cfar_snr_db": 64.49556887657862,
+          "theory_db": 76.35329952303793
+        }
+      ],
+      "50": [
+        {
+          "n_input": 1300000,
+          "step": 635,
+          "n_actual": 2047,
+          "n_fft": 2048,
+          "cfar_snr_db": 80.23465034979796,
+          "theory_db": 81.35117842662505
+        },
+        {
+          "n_input": 650000,
+          "step": 318,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 65.00119077019244,
+          "theory_db": 81.34480891462674
+        },
+        {
+          "n_input": 325000,
+          "step": 159,
+          "n_actual": 2044,
+          "n_fft": 2048,
+          "cfar_snr_db": 69.85210416628718,
+          "theory_db": 81.34480891462674
+        },
+        {
+          "n_input": 162500,
+          "step": 80,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 77.2670781690534,
+          "theory_db": 81.31709923404806
+        },
+        {
+          "n_input": 81250,
+          "step": 40,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 76.69494254088121,
+          "theory_db": 81.31709923404806
+        },
+        {
+          "n_input": 40625,
+          "step": 20,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 77.88407438512002,
+          "theory_db": 81.31709923404806
+        },
+        {
+          "n_input": 20312,
+          "step": 10,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 78.23548725203847,
+          "theory_db": 81.31709923404806
+        },
+        {
+          "n_input": 10156,
+          "step": 5,
+          "n_actual": 2031,
+          "n_fft": 2048,
+          "cfar_snr_db": 77.55363546620762,
+          "theory_db": 81.31709923404806
+        },
+        {
+          "n_input": 5078,
+          "step": 3,
+          "n_actual": 1692,
+          "n_fft": 2048,
+          "cfar_snr_db": 61.53464110606369,
+          "theory_db": 80.52400358703004
+        },
+        {
+          "n_input": 4096,
+          "step": 2,
+          "n_actual": 2048,
+          "n_fft": 2048,
+          "cfar_snr_db": 64.85774611859084,
+          "theory_db": 81.35329952303793
+        }
+      ]
+    }
+  },
+  "part_c": {
+    "step_fixed": 1,
+    "input_lengths": [
+      1300000,
+      650000,
+      325000,
+      162500,
+      81250,
+      40625,
+      20312,
+      10156,
+      5078,
+      2539
+    ],
+    "data": {
+      "5": [
+        {
+          "n_input": 1300000,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 54.95944189083117,
+          "theory_db": 64.37943352306836
+        },
+        {
+          "n_input": 650000,
+          "n_actual": 650000,
+          "n_fft": 1048576,
+          "cfar_snr_db": 54.087668389067204,
+          "theory_db": 61.36913356642856
+        },
+        {
+          "n_input": 325000,
+          "n_actual": 325000,
+          "n_fft": 524288,
+          "cfar_snr_db": 53.538904338067724,
+          "theory_db": 58.358833609788746
+        },
+        {
+          "n_input": 162500,
+          "n_actual": 162500,
+          "n_fft": 262144,
+          "cfar_snr_db": 51.0515405850863,
+          "theory_db": 55.348533653148934
+        },
+        {
+          "n_input": 81250,
+          "n_actual": 81250,
+          "n_fft": 131072,
+          "cfar_snr_db": 49.45169081899276,
+          "theory_db": 52.33823369650912
+        },
+        {
+          "n_input": 40625,
+          "n_actual": 40625,
+          "n_fft": 65536,
+          "cfar_snr_db": 46.521689928913645,
+          "theory_db": 49.32793373986931
+        },
+        {
+          "n_input": 20312,
+          "n_actual": 20312,
+          "n_fft": 32768,
+          "cfar_snr_db": 46.86709894699998,
+          "theory_db": 46.31752687865666
+        },
+        {
+          "n_input": 10156,
+          "n_actual": 10156,
+          "n_fft": 16384,
+          "cfar_snr_db": 43.803681066425426,
+          "theory_db": 43.307226922016845
+        },
+        {
+          "n_input": 5078,
+          "n_actual": 5078,
+          "n_fft": 8192,
+          "cfar_snr_db": 41.767471206354216,
+          "theory_db": 40.29692696537704
+        },
+        {
+          "n_input": 2539,
+          "n_actual": 2539,
+          "n_fft": 4096,
+          "cfar_snr_db": 35.07668807998199,
+          "theory_db": 37.28662700873723
+        }
+      ],
+      "10": [
+        {
+          "n_input": 1300000,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.19409435697394,
+          "theory_db": 69.37943352306836
+        },
+        {
+          "n_input": 650000,
+          "n_actual": 650000,
+          "n_fft": 1048576,
+          "cfar_snr_db": 54.611910139505014,
+          "theory_db": 66.36913356642854
+        },
+        {
+          "n_input": 325000,
+          "n_actual": 325000,
+          "n_fft": 524288,
+          "cfar_snr_db": 54.678897496148046,
+          "theory_db": 63.35883360978874
+        },
+        {
+          "n_input": 162500,
+          "n_actual": 162500,
+          "n_fft": 262144,
+          "cfar_snr_db": 52.9294882920174,
+          "theory_db": 60.348533653148934
+        },
+        {
+          "n_input": 81250,
+          "n_actual": 81250,
+          "n_fft": 131072,
+          "cfar_snr_db": 52.26687258817285,
+          "theory_db": 57.33823369650912
+        },
+        {
+          "n_input": 40625,
+          "n_actual": 40625,
+          "n_fft": 65536,
+          "cfar_snr_db": 50.360335919942194,
+          "theory_db": 54.32793373986931
+        },
+        {
+          "n_input": 20312,
+          "n_actual": 20312,
+          "n_fft": 32768,
+          "cfar_snr_db": 50.94841384398635,
+          "theory_db": 51.31752687865666
+        },
+        {
+          "n_input": 10156,
+          "n_actual": 10156,
+          "n_fft": 16384,
+          "cfar_snr_db": 47.956606390389275,
+          "theory_db": 48.307226922016845
+        },
+        {
+          "n_input": 5078,
+          "n_actual": 5078,
+          "n_fft": 8192,
+          "cfar_snr_db": 46.34257671167498,
+          "theory_db": 45.29692696537704
+        },
+        {
+          "n_input": 2539,
+          "n_actual": 2539,
+          "n_fft": 4096,
+          "cfar_snr_db": 39.884673541533864,
+          "theory_db": 42.28662700873723
+        }
+      ],
+      "15": [
+        {
+          "n_input": 1300000,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.26262662943937,
+          "theory_db": 74.37943352306836
+        },
+        {
+          "n_input": 650000,
+          "n_actual": 650000,
+          "n_fft": 1048576,
+          "cfar_snr_db": 54.757068210825146,
+          "theory_db": 71.36913356642854
+        },
+        {
+          "n_input": 325000,
+          "n_actual": 325000,
+          "n_fft": 524288,
+          "cfar_snr_db": 55.09804168124212,
+          "theory_db": 68.35883360978873
+        },
+        {
+          "n_input": 162500,
+          "n_actual": 162500,
+          "n_fft": 262144,
+          "cfar_snr_db": 53.89430516091406,
+          "theory_db": 65.34853365314892
+        },
+        {
+          "n_input": 81250,
+          "n_actual": 81250,
+          "n_fft": 131072,
+          "cfar_snr_db": 53.89381936336743,
+          "theory_db": 62.338233696509114
+        },
+        {
+          "n_input": 40625,
+          "n_actual": 40625,
+          "n_fft": 65536,
+          "cfar_snr_db": 52.90716586625755,
+          "theory_db": 59.32793373986931
+        },
+        {
+          "n_input": 20312,
+          "n_actual": 20312,
+          "n_fft": 32768,
+          "cfar_snr_db": 53.674607427671205,
+          "theory_db": 56.31752687865666
+        },
+        {
+          "n_input": 10156,
+          "n_actual": 10156,
+          "n_fft": 16384,
+          "cfar_snr_db": 51.15203381703693,
+          "theory_db": 53.307226922016845
+        },
+        {
+          "n_input": 5078,
+          "n_actual": 5078,
+          "n_fft": 8192,
+          "cfar_snr_db": 50.2417553203314,
+          "theory_db": 50.29692696537704
+        },
+        {
+          "n_input": 2539,
+          "n_actual": 2539,
+          "n_fft": 4096,
+          "cfar_snr_db": 44.469912968663024,
+          "theory_db": 47.28662700873723
+        }
+      ],
+      "20": [
+        {
+          "n_input": 1300000,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.27974660574091,
+          "theory_db": 79.37943352306836
+        },
+        {
+          "n_input": 650000,
+          "n_actual": 650000,
+          "n_fft": 1048576,
+          "cfar_snr_db": 54.78424240654392,
+          "theory_db": 76.36913356642854
+        },
+        {
+          "n_input": 325000,
+          "n_actual": 325000,
+          "n_fft": 524288,
+          "cfar_snr_db": 55.231252302040104,
+          "theory_db": 73.35883360978873
+        },
+        {
+          "n_input": 162500,
+          "n_actual": 162500,
+          "n_fft": 262144,
+          "cfar_snr_db": 54.343804736560855,
+          "theory_db": 70.34853365314892
+        },
+        {
+          "n_input": 81250,
+          "n_actual": 81250,
+          "n_fft": 131072,
+          "cfar_snr_db": 54.66470977400423,
+          "theory_db": 67.3382336965091
+        },
+        {
+          "n_input": 40625,
+          "n_actual": 40625,
+          "n_fft": 65536,
+          "cfar_snr_db": 54.1328846388658,
+          "theory_db": 64.3279337398693
+        },
+        {
+          "n_input": 20312,
+          "n_actual": 20312,
+          "n_fft": 32768,
+          "cfar_snr_db": 54.91011349964652,
+          "theory_db": 61.31752687865666
+        },
+        {
+          "n_input": 10156,
+          "n_actual": 10156,
+          "n_fft": 16384,
+          "cfar_snr_db": 53.1026114232681,
+          "theory_db": 58.307226922016845
+        },
+        {
+          "n_input": 5078,
+          "n_actual": 5078,
+          "n_fft": 8192,
+          "cfar_snr_db": 52.946724608272916,
+          "theory_db": 55.29692696537704
+        },
+        {
+          "n_input": 2539,
+          "n_actual": 2539,
+          "n_fft": 4096,
+          "cfar_snr_db": 48.51200429495786,
+          "theory_db": 52.28662700873723
+        }
+      ],
+      "25": [
+        {
+          "n_input": 1300000,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.28247887383608,
+          "theory_db": 84.37943352306836
+        },
+        {
+          "n_input": 650000,
+          "n_actual": 650000,
+          "n_fft": 1048576,
+          "cfar_snr_db": 54.78175294850077,
+          "theory_db": 81.36913356642854
+        },
+        {
+          "n_input": 325000,
+          "n_actual": 325000,
+          "n_fft": 524288,
+          "cfar_snr_db": 55.26956030395514,
+          "theory_db": 78.35883360978873
+        },
+        {
+          "n_input": 162500,
+          "n_actual": 162500,
+          "n_fft": 262144,
+          "cfar_snr_db": 54.55161222318936,
+          "theory_db": 75.34853365314892
+        },
+        {
+          "n_input": 81250,
+          "n_actual": 81250,
+          "n_fft": 131072,
+          "cfar_snr_db": 54.998554642208504,
+          "theory_db": 72.3382336965091
+        },
+        {
+          "n_input": 40625,
+          "n_actual": 40625,
+          "n_fft": 65536,
+          "cfar_snr_db": 54.581888731687336,
+          "theory_db": 69.3279337398693
+        },
+        {
+          "n_input": 20312,
+          "n_actual": 20312,
+          "n_fft": 32768,
+          "cfar_snr_db": 55.284767600900466,
+          "theory_db": 66.31752687865665
+        },
+        {
+          "n_input": 10156,
+          "n_actual": 10156,
+          "n_fft": 16384,
+          "cfar_snr_db": 54.047605494332124,
+          "theory_db": 63.307226922016845
+        },
+        {
+          "n_input": 5078,
+          "n_actual": 5078,
+          "n_fft": 8192,
+          "cfar_snr_db": 54.35838554504083,
+          "theory_db": 60.29692696537704
+        },
+        {
+          "n_input": 2539,
+          "n_actual": 2539,
+          "n_fft": 4096,
+          "cfar_snr_db": 51.538578825386416,
+          "theory_db": 57.28662700873723
+        }
+      ],
+      "30": [
+        {
+          "n_input": 1300000,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.28182561031998,
+          "theory_db": 89.37943352306836
+        },
+        {
+          "n_input": 650000,
+          "n_actual": 650000,
+          "n_fft": 1048576,
+          "cfar_snr_db": 54.77472373774184,
+          "theory_db": 86.36913356642854
+        },
+        {
+          "n_input": 325000,
+          "n_actual": 325000,
+          "n_fft": 524288,
+          "cfar_snr_db": 55.27910504753959,
+          "theory_db": 83.35883360978873
+        },
+        {
+          "n_input": 162500,
+          "n_actual": 162500,
+          "n_fft": 262144,
+          "cfar_snr_db": 54.65140161126623,
+          "theory_db": 80.34853365314892
+        },
+        {
+          "n_input": 81250,
+          "n_actual": 81250,
+          "n_fft": 131072,
+          "cfar_snr_db": 55.14371036840366,
+          "theory_db": 77.3382336965091
+        },
+        {
+          "n_input": 40625,
+          "n_actual": 40625,
+          "n_fft": 65536,
+          "cfar_snr_db": 54.7202341320796,
+          "theory_db": 74.3279337398693
+        },
+        {
+          "n_input": 20312,
+          "n_actual": 20312,
+          "n_fft": 32768,
+          "cfar_snr_db": 55.35197163736974,
+          "theory_db": 71.31752687865665
+        },
+        {
+          "n_input": 10156,
+          "n_actual": 10156,
+          "n_fft": 16384,
+          "cfar_snr_db": 54.44914345851501,
+          "theory_db": 68.30722692201684
+        },
+        {
+          "n_input": 5078,
+          "n_actual": 5078,
+          "n_fft": 8192,
+          "cfar_snr_db": 54.937430645445374,
+          "theory_db": 65.29692696537704
+        },
+        {
+          "n_input": 2539,
+          "n_actual": 2539,
+          "n_fft": 4096,
+          "cfar_snr_db": 53.315461518954734,
+          "theory_db": 62.286627008737234
+        }
+      ],
+      "35": [
+        {
+          "n_input": 1300000,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.2807658479605,
+          "theory_db": 94.37943352306836
+        },
+        {
+          "n_input": 650000,
+          "n_actual": 650000,
+          "n_fft": 1048576,
+          "cfar_snr_db": 54.76899701405807,
+          "theory_db": 91.36913356642854
+        },
+        {
+          "n_input": 325000,
+          "n_actual": 325000,
+          "n_fft": 524288,
+          "cfar_snr_db": 55.28064074560463,
+          "theory_db": 88.35883360978873
+        },
+        {
+          "n_input": 162500,
+          "n_actual": 162500,
+          "n_fft": 262144,
+          "cfar_snr_db": 54.7016421296296,
+          "theory_db": 85.34853365314892
+        },
+        {
+          "n_input": 81250,
+          "n_actual": 81250,
+          "n_fft": 131072,
+          "cfar_snr_db": 55.21007172235652,
+          "theory_db": 82.3382336965091
+        },
+        {
+          "n_input": 40625,
+          "n_actual": 40625,
+          "n_fft": 65536,
+          "cfar_snr_db": 54.75701943130051,
+          "theory_db": 79.3279337398693
+        },
+        {
+          "n_input": 20312,
+          "n_actual": 20312,
+          "n_fft": 32768,
+          "cfar_snr_db": 55.3408129740064,
+          "theory_db": 76.31752687865665
+        },
+        {
+          "n_input": 10156,
+          "n_actual": 10156,
+          "n_fft": 16384,
+          "cfar_snr_db": 54.61606251584648,
+          "theory_db": 73.30722692201684
+        },
+        {
+          "n_input": 5078,
+          "n_actual": 5078,
+          "n_fft": 8192,
+          "cfar_snr_db": 55.14777722063104,
+          "theory_db": 70.29692696537704
+        },
+        {
+          "n_input": 2539,
+          "n_actual": 2539,
+          "n_fft": 4096,
+          "cfar_snr_db": 54.14648531231541,
+          "theory_db": 67.28662700873723
+        }
+      ],
+      "40": [
+        {
+          "n_input": 1300000,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.279951404283096,
+          "theory_db": 99.37943352306836
+        },
+        {
+          "n_input": 650000,
+          "n_actual": 650000,
+          "n_fft": 1048576,
+          "cfar_snr_db": 54.765217147857605,
+          "theory_db": 96.36913356642854
+        },
+        {
+          "n_input": 325000,
+          "n_actual": 325000,
+          "n_fft": 524288,
+          "cfar_snr_db": 55.28029082291045,
+          "theory_db": 93.35883360978873
+        },
+        {
+          "n_input": 162500,
+          "n_actual": 162500,
+          "n_fft": 262144,
+          "cfar_snr_db": 54.72795816645288,
+          "theory_db": 90.34853365314892
+        },
+        {
+          "n_input": 81250,
+          "n_actual": 81250,
+          "n_fft": 131072,
+          "cfar_snr_db": 55.24228399352075,
+          "theory_db": 87.3382336965091
+        },
+        {
+          "n_input": 40625,
+          "n_actual": 40625,
+          "n_fft": 65536,
+          "cfar_snr_db": 54.76426628697926,
+          "theory_db": 84.3279337398693
+        },
+        {
+          "n_input": 20312,
+          "n_actual": 20312,
+          "n_fft": 32768,
+          "cfar_snr_db": 55.31906277924012,
+          "theory_db": 81.31752687865665
+        },
+        {
+          "n_input": 10156,
+          "n_actual": 10156,
+          "n_fft": 16384,
+          "cfar_snr_db": 54.68843888201663,
+          "theory_db": 78.30722692201684
+        },
+        {
+          "n_input": 5078,
+          "n_actual": 5078,
+          "n_fft": 8192,
+          "cfar_snr_db": 55.2221594076818,
+          "theory_db": 75.29692696537704
+        },
+        {
+          "n_input": 2539,
+          "n_actual": 2539,
+          "n_fft": 4096,
+          "cfar_snr_db": 54.49149668503573,
+          "theory_db": 72.28662700873723
+        }
+      ],
+      "45": [
+        {
+          "n_input": 1300000,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.27942348693891,
+          "theory_db": 104.37943352306836
+        },
+        {
+          "n_input": 650000,
+          "n_actual": 650000,
+          "n_fft": 1048576,
+          "cfar_snr_db": 54.76291608920454,
+          "theory_db": 101.36913356642854
+        },
+        {
+          "n_input": 325000,
+          "n_actual": 325000,
+          "n_fft": 524288,
+          "cfar_snr_db": 55.2797105632735,
+          "theory_db": 98.35883360978873
+        },
+        {
+          "n_input": 162500,
+          "n_actual": 162500,
+          "n_fft": 262144,
+          "cfar_snr_db": 54.74213108923577,
+          "theory_db": 95.34853365314892
+        },
+        {
+          "n_input": 81250,
+          "n_actual": 81250,
+          "n_fft": 131072,
+          "cfar_snr_db": 55.258740171627565,
+          "theory_db": 92.3382336965091
+        },
+        {
+          "n_input": 40625,
+          "n_actual": 40625,
+          "n_fft": 65536,
+          "cfar_snr_db": 54.76405673826953,
+          "theory_db": 89.3279337398693
+        },
+        {
+          "n_input": 20312,
+          "n_actual": 20312,
+          "n_fft": 32768,
+          "cfar_snr_db": 55.302005749708634,
+          "theory_db": 86.31752687865665
+        },
+        {
+          "n_input": 10156,
+          "n_actual": 10156,
+          "n_fft": 16384,
+          "cfar_snr_db": 54.721920611035785,
+          "theory_db": 83.30722692201684
+        },
+        {
+          "n_input": 5078,
+          "n_actual": 5078,
+          "n_fft": 8192,
+          "cfar_snr_db": 55.24916791671345,
+          "theory_db": 80.29692696537704
+        },
+        {
+          "n_input": 2539,
+          "n_actual": 2539,
+          "n_fft": 4096,
+          "cfar_snr_db": 54.63287824591235,
+          "theory_db": 77.28662700873723
+        }
+      ],
+      "50": [
+        {
+          "n_input": 1300000,
+          "n_actual": 1300000,
+          "n_fft": 2097152,
+          "cfar_snr_db": 55.27910583439115,
+          "theory_db": 109.37943352306836
+        },
+        {
+          "n_input": 650000,
+          "n_actual": 650000,
+          "n_fft": 1048576,
+          "cfar_snr_db": 54.761566531320994,
+          "theory_db": 106.36913356642854
+        },
+        {
+          "n_input": 325000,
+          "n_actual": 325000,
+          "n_fft": 524288,
+          "cfar_snr_db": 55.27926301680984,
+          "theory_db": 103.35883360978873
+        },
+        {
+          "n_input": 162500,
+          "n_actual": 162500,
+          "n_fft": 262144,
+          "cfar_snr_db": 54.74990098172886,
+          "theory_db": 100.34853365314892
+        },
+        {
+          "n_input": 81250,
+          "n_actual": 81250,
+          "n_fft": 131072,
+          "cfar_snr_db": 55.2674628210608,
+          "theory_db": 97.3382336965091
+        },
+        {
+          "n_input": 40625,
+          "n_actual": 40625,
+          "n_fft": 65536,
+          "cfar_snr_db": 54.762582803381164,
+          "theory_db": 94.3279337398693
+        },
+        {
+          "n_input": 20312,
+          "n_actual": 20312,
+          "n_fft": 32768,
+          "cfar_snr_db": 55.290907202895745,
+          "theory_db": 91.31752687865665
+        },
+        {
+          "n_input": 10156,
+          "n_actual": 10156,
+          "n_fft": 16384,
+          "cfar_snr_db": 54.73840364817792,
+          "theory_db": 88.30722692201684
+        },
+        {
+          "n_input": 5078,
+          "n_actual": 5078,
+          "n_fft": 8192,
+          "cfar_snr_db": 55.259561400057294,
+          "theory_db": 85.29692696537704
+        },
+        {
+          "n_input": 2539,
+          "n_actual": 2539,
+          "n_fft": 4096,
+          "cfar_snr_db": 54.693580366273345,
+          "theory_db": 82.28662700873723
+        }
+      ]
+    }
+  }
+}
