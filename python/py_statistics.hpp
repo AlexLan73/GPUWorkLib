@@ -18,6 +18,7 @@
 #include "statistics_processor.hpp"
 #include "statistics_types.hpp"
 #include "branch_selector.hpp"  // SNR_07
+#include "types/window_type.hpp"  // fft_processor::WindowType (for SnrEstimationConfig::window)
 
 // ============================================================================
 // PyStatisticsProcessor — GPU statistics on complex signal data (ROCm)
@@ -351,6 +352,16 @@ private:
 inline void register_snr_types(py::module& m) {
   using namespace statistics;
 
+  // ── WindowType enum (fft_processor, re-exported for SnrEstimationConfig) ──
+  py::enum_<fft_processor::WindowType>(m, "WindowType",
+      "Оконная функция для SNR-estimator FFT (SNR_02b).\n\n"
+      "NoWindow = прямоугольное окно (Rect), Hann = по умолчанию.")
+    .value("NoWindow", fft_processor::WindowType::None)
+    .value("Hann",     fft_processor::WindowType::Hann)
+    .value("Hamming",  fft_processor::WindowType::Hamming)
+    .value("Blackman", fft_processor::WindowType::Blackman)
+    .export_values();
+
   // ── BranchType enum ────────────────────────────────────────────────────
   py::enum_<BranchType>(m, "BranchType",
       "SNR branch category for Low/Mid/High processing paths.")
@@ -382,6 +393,8 @@ inline void register_snr_types(py::module& m) {
     .def_readwrite("search_full_spectrum", &SnrEstimationConfig::search_full_spectrum)
     .def_readwrite("with_dechirp",         &SnrEstimationConfig::with_dechirp)
     .def_readwrite("thresholds",           &SnrEstimationConfig::thresholds)
+    .def_readwrite("window",               &SnrEstimationConfig::window,
+                   "Оконная функция (WindowType). Default = Hann.")
     .def("validate", &SnrEstimationConfig::Validate,
          "Validate invariants, throws ValueError on error.");
 

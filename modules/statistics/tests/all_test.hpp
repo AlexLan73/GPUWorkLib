@@ -35,9 +35,9 @@ inline void run() {
   // ComputeAll benchmark (раскомментировать для профилирования):
   // test_statistics_compute_all_benchmark::run();
 
-  // SNR-estimator: написано 2026-04-09, запуск в понедельник на Debian/AMD
-  // test_snr_estimator_rocm::run_all();
-  // test_snr_estimator_benchmark::run_benchmark();
+  // SNR-estimator (SNR_08, SNR_09) — 2026-04-13 запуск на Debian/AMD
+  test_snr_estimator_rocm::run_all();
+  // test_snr_estimator_benchmark::run_benchmark();  // раскомментировать для профилирования
 #endif
 }
 

@@ -69,11 +69,13 @@ target_include_directories(${MODULE_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/DrvGPU
+        ${CMAKE_SOURCE_DIR}/modules/fft_func/include  # SNR_01: WindowType, FFTProcessorROCm
 )
 
 target_link_libraries(${MODULE_NAME}
     PUBLIC
         drvgpu
+        fft_func                                      # SNR_05: SnrEstimatorOp uses FFTProcessorROCm
         hip::host
         roc::rocprim
 )

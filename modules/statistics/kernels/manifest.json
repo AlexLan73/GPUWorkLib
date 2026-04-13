@@ -11,7 +11,7 @@
     {
       "name": "Statistics_kernels",
       "comment": "Statistics hiprtc kernels",
-      "created": "2026-03-16T10:47:46",
+      "created": "2026-04-13T11:34:56",
       "params": "",
       "backend": "rocm"
     }

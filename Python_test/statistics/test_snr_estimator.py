@@ -72,7 +72,7 @@ class TestSnrEstimator:
 
     def __init__(self):
         self.gw = _get_gpu_module_or_skip()
-        self.ctx = self.gw.GPUContext()
+        self.ctx = self.gw.ROCmGPUContext()
         self.stat_proc = self.gw.StatisticsProcessor(self.ctx)
         self.cfar_mod = _import_cfar_or_skip()
 

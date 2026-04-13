@@ -2,13 +2,6 @@
   "version": 1,
   "kernels": [
     {
-      "name": "FFTProc_kernels",
-      "comment": "ROCm FFTProcessorROCm hiprtc kernels",
-      "created": "2026-03-16T16:11:00",
-      "params": "",
-      "backend": "rocm"
-    },
-    {
       "name": "c2mp_kernels",
       "comment": "ROCm complex_to_mag_phase hiprtc kernel",
       "created": "2026-03-02T12:34:22",
@@ -40,6 +33,13 @@
       "name": "SpectrumMaxima_kernels",
       "comment": "SpectrumMaxima hiprtc kernels",
       "created": "2026-03-23T10:39:47",
+      "params": "",
+      "backend": "rocm"
+    },
+    {
+      "name": "FFTProc_kernels",
+      "comment": "FFTProc hiprtc kernels",
+      "created": "2026-04-13T11:44:27",
       "params": "",
       "backend": "rocm"
     }

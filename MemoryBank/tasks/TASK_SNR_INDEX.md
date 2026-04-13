@@ -75,17 +75,17 @@ SNR_04 (ProcessMag2GPU) ──► SNR_05 (SnrEstimatorOp) ──► SNR_06 (Faca
 | # | Файл | Что делает | Зависимости | Где пишется | Статус |
 |---|------|-----------|-------------|-------------|--------|
 | 00 | [TASK_SNR_00_python_model.md](TASK_SNR_00_python_model.md) | Python модель (5 экспериментов) — калибровка параметров и порогов | — | `PyPanelAntennas/SNR/` | ✅ **DONE** |
-| 01 | [TASK_SNR_01_types.md](TASK_SNR_01_types.md) | Дополнить `statistics_types.hpp` (Config, Result, BranchType, `window`, shared_buf) | 02b (WindowType) | `modules/statistics/include/` | ✅ **CODE DONE** (compile Mon) |
-| 02 | [TASK_SNR_02_fft_func_squared.md](TASK_SNR_02_fft_func_squared.md) | Новый kernel `complex_to_magnitude_squared` + параметр `squared` в `MagnitudeOp` | — | `modules/fft_func/` | ✅ **CODE DONE** (compile Mon) |
-| **02b** | [TASK_SNR_02b_pad_data_windowed.md](TASK_SNR_02b_pad_data_windowed.md) | 🆕 `WindowType` enum + kernel `pad_data_windowed` + параметр `window` в `PadDataOp` | — | `modules/fft_func/` | ✅ **CODE DONE** (compile Mon) |
-| 03 | [TASK_SNR_03_gather_kernel.md](TASK_SNR_03_gather_kernel.md) | HIP kernel `gather_decimated_kernel` (thread-per-antenna) | — | `modules/statistics/kernels/` | ✅ **CODE DONE** (compile Mon) |
-| 04 | [TASK_SNR_04_fft_process_to_gpu.md](TASK_SNR_04_fft_process_to_gpu.md) | Новый метод `FFTProcessorROCm::ProcessMagnitudesToGPU(window)` | 02, 02b | `modules/fft_func/` | ✅ **CODE DONE** (compile Mon) |
-| 05 | [TASK_SNR_05_snr_estimator_op.md](TASK_SNR_05_snr_estimator_op.md) | `SnrEstimatorOp` (Layer 5) + `peak_cfar_kernel` + `BranchSelector` | 01, 03, 04 | `modules/statistics/include/operations/` | ✅ **CODE DONE** (compile Mon) |
-| 06 | [TASK_SNR_06_facade.md](TASK_SNR_06_facade.md) | `ComputeSnrDb` в `StatisticsProcessor` (Layer 6 Facade, stateless) | 05 | `modules/statistics/` | ✅ **CODE DONE** (compile Mon) |
-| 07 | [TASK_SNR_07_python_bindings.md](TASK_SNR_07_python_bindings.md) | pybind11 экспорт: Config, Result, BranchSelector, compute_snr_db | 06 | `modules/statistics/python/` | ✅ **CODE DONE** (compile Mon) |
-| 08 | [TASK_SNR_08_cpp_tests.md](TASK_SNR_08_cpp_tests.md) | C++ тесты (test_01..test_06b) + `snr_test_helpers.hpp` | 06 | `modules/statistics/tests/` | ✅ **CODE DONE** (run Mon) |
-| 09 | [TASK_SNR_09_benchmark.md](TASK_SNR_09_benchmark.md) | `snr_estimator_benchmark.hpp` + runner (наследник `GpuBenchmarkBase`) | 06 | `modules/statistics/tests/` | ✅ **CODE DONE** (run Mon) |
-| 10 | [TASK_SNR_10_python_e2e.md](TASK_SNR_10_python_e2e.md) | Python e2e: signal_generators → heterodyne → SNR → сверка с numpy | 07 | `Python_test/statistics/` | ✅ **CODE DONE** (run Mon) |
+| 01 | [TASK_SNR_01_types.md](TASK_SNR_01_types.md) | Дополнить `statistics_types.hpp` (Config, Result, BranchType, `window`, shared_buf) | 02b (WindowType) | `modules/statistics/include/` | ✅ **DONE** (2026-04-13) |
+| 02 | [TASK_SNR_02_fft_func_squared.md](TASK_SNR_02_fft_func_squared.md) | Новый kernel `complex_to_magnitude_squared` + параметр `squared` в `MagnitudeOp` | — | `modules/fft_func/` | ✅ **DONE** (2026-04-13) |
+| **02b** | [TASK_SNR_02b_pad_data_windowed.md](TASK_SNR_02b_pad_data_windowed.md) | 🆕 `WindowType` enum + kernel `pad_data_windowed` + параметр `window` в `PadDataOp` | — | `modules/fft_func/` | ✅ **DONE** (2026-04-13) |
+| 03 | [TASK_SNR_03_gather_kernel.md](TASK_SNR_03_gather_kernel.md) | HIP kernel `gather_decimated_kernel` (thread-per-antenna) | — | `modules/statistics/kernels/` | ✅ **DONE** (2026-04-13) |
+| 04 | [TASK_SNR_04_fft_process_to_gpu.md](TASK_SNR_04_fft_process_to_gpu.md) | Новый метод `FFTProcessorROCm::ProcessMagnitudesToGPU(window)` | 02, 02b | `modules/fft_func/` | ✅ **DONE** (2026-04-13) |
+| 05 | [TASK_SNR_05_snr_estimator_op.md](TASK_SNR_05_snr_estimator_op.md) | `SnrEstimatorOp` (Layer 5) + `peak_cfar_kernel` + `BranchSelector` | 01, 03, 04 | `modules/statistics/include/operations/` | ✅ **DONE** (2026-04-13) |
+| 06 | [TASK_SNR_06_facade.md](TASK_SNR_06_facade.md) | `ComputeSnrDb` в `StatisticsProcessor` (Layer 6 Facade, stateless) | 05 | `modules/statistics/` | ✅ **DONE** (2026-04-13) |
+| 07 | [TASK_SNR_07_python_bindings.md](TASK_SNR_07_python_bindings.md) | pybind11 экспорт: Config, Result, BranchSelector, compute_snr_db | 06 | `modules/statistics/python/` | ✅ **DONE** (2026-04-13) |
+| 08 | [TASK_SNR_08_cpp_tests.md](TASK_SNR_08_cpp_tests.md) | C++ тесты (test_01..test_06b) + `snr_test_helpers.hpp` | 06 | `modules/statistics/tests/` | ✅ **DONE** 7/7 PASS (2026-04-13) |
+| 09 | [TASK_SNR_09_benchmark.md](TASK_SNR_09_benchmark.md) | `snr_estimator_benchmark.hpp` + runner (наследник `GpuBenchmarkBase`) | 06 | `modules/statistics/tests/` | ✅ **DONE** (код исправлен, 2026-04-13) |
+| 10 | [TASK_SNR_10_python_e2e.md](TASK_SNR_10_python_e2e.md) | Python e2e: signal_generators → heterodyne → SNR → сверка с numpy | 07 | `Python_test/statistics/` | ✅ **DONE** 4/4 PASS (2026-04-13) |
 | 11 | [TASK_SNR_11_docs.md](TASK_SNR_11_docs.md) | Full.md / API.md / Quick.md / Python API | T1, T2 | `Doc/Modules/statistics/` | ⏳ BACKLOG |
 
 ---
@@ -162,4 +162,4 @@ Python модель в [`PyPanelAntennas/SNR/`](../../PyPanelAntennas/SNR/):
 
 ---
 
-*Created 2026-04-09 | Reviewed & updated 2026-04-09 (v4 plan sync) | Кодо*
+*Created 2026-04-09 | Reviewed & updated 2026-04-09 (v4 plan sync) | Last run: 2026-04-13 — C++ 7/7 PASS, Python 4/4 PASS | Кодо*
