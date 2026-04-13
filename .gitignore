@@ -81,6 +81,12 @@ Logs/
 # Generated test artifacts
 Results/Profiler/
 
+# KernelCacheService — HIP/ROCm kernel cache (runtime generated, NOT OpenCL!)
+# .cl = исходник HIP kernel на диске (кэш hiprtc), .hsaco = скомпилированный бинарь
+modules/*/kernels/*.cl
+modules/*/kernels/bin/
+modules/*/kernels/manifest.json
+
 # Python
 __pycache__/
 *.py[cod]
